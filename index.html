@@ -1,28 +1,14 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!--
-     ______                            __
-    / ____/___  ____ ___  ____  __  __/ /____  _____
-   / /   / __ \/ __ `__ \/ __ \/ / / / __/ _ \/ ___/
-  / /___/ /_/ / / / / / / /_/ / /_/ / /_/  __/ /
-  \____/\____/_/ /_/ /_/ .___/\__,_/\__/\___/_/
-                      /_/
-          Created with Perplexity Computer
-          https://www.perplexity.ai/computer
-  -->
-  <meta name="generator" content="Perplexity Computer">
-  <meta name="author" content="Perplexity Computer">
-  <meta property="og:see_also" content="https://www.perplexity.ai/computer">
-  <link rel="author" href="https://www.perplexity.ai/computer">
-
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>ZeroX — Engineering products from zero to extraordinary</title>
-  <meta name="description" content="ZeroX is an IT product development company that designs and builds software products with precision engineering. From AI-powered media players to intelligent platforms.">
-  <meta property="og:title" content="ZeroX — Engineering products from zero to extraordinary">
-  <meta property="og:description" content="IT product development company building software that sets new standards.">
+  <meta name="description" content="ZeroX is an IT product development company. Home of Neuron — AI-powered semantic file search for Windows. Search by meaning, summarize any file with local AI.">
+  <meta property="og:title" content="ZeroX — Home of Neuron AI File Search">
+  <meta property="og:description" content="AI-powered semantic file search for Windows. Search by meaning, not keywords.">
   <meta property="og:type" content="website">
+  <meta property="og:url" content="https://zero-x.live">
 
   <!-- Fonts -->
   <link href="https://api.fontshare.com/v2/css?f[]=cabinet-grotesk@400,500,700,800&f[]=satoshi@300,400,500,700&display=swap" rel="stylesheet">
@@ -33,26 +19,450 @@
   <link rel="stylesheet" href="./base.css">
   <link rel="stylesheet" href="./style.css">
 
-  <!-- JSON-LD Structured Data -->
+  <!-- JSON-LD -->
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
     "@type": "Organization",
     "name": "ZeroX",
-    "description": "IT product development company that designs and builds software products with precision engineering.",
-    "url": "#",
+    "description": "IT product development company. Home of Neuron AI File Search.",
+    "url": "https://zero-x.live",
     "foundingDate": "2026",
-    "founder": {
-      "@type": "Person",
-      "name": "Rahul"
-    },
-    "creator": {
-      "@type": "SoftwareApplication",
-      "name": "Perplexity Computer",
-      "url": "https://www.perplexity.ai/computer"
-    }
+    "founder": { "@type": "Person", "name": "Rahul" }
   }
   </script>
+
+  <!-- Neuron-specific styles -->
+  <style>
+    /* ═══ Neuron Product Hero ═══ */
+    .neuron-hero {
+      position: relative;
+      padding: 6rem 2rem 4rem;
+      overflow: hidden;
+      background: linear-gradient(135deg, #0a0a12 0%, #0d1117 40%, #0f0a1e 100%);
+    }
+    .neuron-hero::before {
+      content: '';
+      position: absolute;
+      top: -50%;
+      left: -50%;
+      width: 200%;
+      height: 200%;
+      background: radial-gradient(circle at 30% 40%, rgba(99, 102, 241, 0.08) 0%, transparent 50%),
+                  radial-gradient(circle at 70% 60%, rgba(168, 85, 247, 0.06) 0%, transparent 50%);
+      animation: neuron-pulse 8s ease-in-out infinite;
+    }
+    @keyframes neuron-pulse {
+      0%, 100% { transform: scale(1); opacity: 0.6; }
+      50% { transform: scale(1.05); opacity: 1; }
+    }
+    .neuron-hero-inner {
+      max-width: 1200px;
+      margin: 0 auto;
+      position: relative;
+      z-index: 1;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 4rem;
+      align-items: center;
+    }
+    .neuron-hero-text h1 {
+      font-family: 'Cabinet Grotesk', sans-serif;
+      font-size: clamp(2.5rem, 5vw, 4rem);
+      font-weight: 800;
+      line-height: 1.1;
+      color: #fff;
+      margin-bottom: 1.5rem;
+    }
+    .neuron-hero-text h1 .n-gradient {
+      background: linear-gradient(135deg, #818cf8, #a78bfa, #c084fc);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .neuron-hero-text .n-tagline {
+      font-size: 1.2rem;
+      color: rgba(255,255,255,0.6);
+      margin-bottom: 2rem;
+      max-width: 480px;
+    }
+    .neuron-hero-text .n-version {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      background: rgba(99, 102, 241, 0.15);
+      border: 1px solid rgba(99, 102, 241, 0.3);
+      border-radius: 100px;
+      padding: 0.35rem 1rem;
+      font-size: 0.8rem;
+      color: #a5b4fc;
+      font-family: 'JetBrains Mono', monospace;
+      margin-bottom: 1.5rem;
+    }
+    .n-version .pulse-dot {
+      width: 6px; height: 6px;
+      background: #34d399;
+      border-radius: 50%;
+      animation: dot-pulse 2s ease-in-out infinite;
+    }
+    @keyframes dot-pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+    .neuron-hero-ctas {
+      display: flex;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+    .btn-neuron-download {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.6rem;
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      color: #fff;
+      padding: 0.85rem 1.8rem;
+      border-radius: 12px;
+      font-weight: 600;
+      font-size: 1rem;
+      text-decoration: none;
+      transition: all 0.3s ease;
+      box-shadow: 0 4px 20px rgba(99, 102, 241, 0.3);
+    }
+    .btn-neuron-download:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 30px rgba(99, 102, 241, 0.45);
+    }
+    .btn-neuron-ghost {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.12);
+      color: rgba(255,255,255,0.8);
+      padding: 0.85rem 1.8rem;
+      border-radius: 12px;
+      font-weight: 500;
+      font-size: 1rem;
+      text-decoration: none;
+      transition: all 0.3s ease;
+    }
+    .btn-neuron-ghost:hover {
+      background: rgba(255,255,255,0.1);
+      border-color: rgba(255,255,255,0.2);
+    }
+
+    /* ═══ Neuron Visual ═══ */
+    .neuron-visual {
+      position: relative;
+    }
+    .neuron-mockup {
+      background: rgba(15, 15, 25, 0.9);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 16px;
+      overflow: hidden;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+    }
+    .neuron-mockup-bar {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 12px 16px;
+      background: rgba(255,255,255,0.03);
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+    }
+    .neuron-mockup-bar span {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+    }
+    .neuron-mockup-bar span:nth-child(1) { background: #ff5f57; }
+    .neuron-mockup-bar span:nth-child(2) { background: #ffbd2e; }
+    .neuron-mockup-bar span:nth-child(3) { background: #28c840; }
+    .neuron-mockup-bar .bar-title {
+      flex: 1;
+      text-align: center;
+      font-size: 0.75rem;
+      color: rgba(255,255,255,0.4);
+      font-family: 'JetBrains Mono', monospace;
+      width: auto; height: auto; border-radius: 0; background: none;
+    }
+    .neuron-mockup-body {
+      padding: 2rem;
+      min-height: 200px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 1rem;
+    }
+    .search-demo {
+      width: 100%;
+      max-width: 400px;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 10px;
+      padding: 0.8rem 1rem;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.85rem;
+      color: #a5b4fc;
+      text-align: center;
+    }
+    .search-results-demo {
+      width: 100%;
+      max-width: 400px;
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+    .result-item {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 8px;
+      padding: 0.6rem 0.8rem;
+      font-size: 0.78rem;
+      color: rgba(255,255,255,0.7);
+      transition: all 0.2s;
+    }
+    .result-item:hover { background: rgba(99,102,241,0.1); border-color: rgba(99,102,241,0.3); }
+    .result-icon { font-size: 1rem; }
+    .result-score {
+      margin-left: auto;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.7rem;
+      color: #34d399;
+    }
+
+    /* ═══ Features Grid ═══ */
+    .neuron-features {
+      padding: 5rem 2rem;
+      background: var(--color-bg);
+    }
+    .neuron-features-inner {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+    .n-features-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1.5rem;
+      margin-top: 3rem;
+    }
+    .n-feature-card {
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: 16px;
+      padding: 2rem;
+      transition: all 0.3s ease;
+    }
+    .n-feature-card:hover {
+      border-color: rgba(99, 102, 241, 0.4);
+      transform: translateY(-4px);
+      box-shadow: 0 12px 40px rgba(0,0,0,0.15);
+    }
+    .n-feature-icon {
+      width: 48px; height: 48px;
+      display: flex; align-items: center; justify-content: center;
+      background: linear-gradient(135deg, rgba(99,102,241,0.15), rgba(168,85,247,0.15));
+      border-radius: 12px;
+      margin-bottom: 1rem;
+      font-size: 1.4rem;
+    }
+    .n-feature-card h3 {
+      font-family: 'Cabinet Grotesk', sans-serif;
+      font-size: 1.1rem;
+      font-weight: 700;
+      margin-bottom: 0.5rem;
+    }
+    .n-feature-card p {
+      font-size: 0.9rem;
+      color: var(--color-text-muted);
+      line-height: 1.6;
+    }
+
+    /* ═══ Pricing ═══ */
+    .neuron-pricing {
+      padding: 5rem 2rem;
+      background: linear-gradient(135deg, #0a0a12 0%, #0d1117 100%);
+    }
+    .neuron-pricing-inner {
+      max-width: 1000px;
+      margin: 0 auto;
+    }
+    .pricing-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1.5rem;
+      margin-top: 3rem;
+    }
+    .pricing-card {
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 16px;
+      padding: 2.5rem 2rem;
+      text-align: center;
+      transition: all 0.3s ease;
+      position: relative;
+    }
+    .pricing-card:hover {
+      border-color: rgba(99,102,241,0.4);
+      transform: translateY(-4px);
+    }
+    .pricing-card.popular {
+      border-color: rgba(99, 102, 241, 0.5);
+      background: rgba(99, 102, 241, 0.06);
+    }
+    .pricing-card.popular::before {
+      content: 'MOST POPULAR';
+      position: absolute;
+      top: -12px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      color: #fff;
+      padding: 0.25rem 1rem;
+      border-radius: 100px;
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+    }
+    .pricing-tier {
+      font-size: 0.85rem;
+      color: rgba(255,255,255,0.5);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      margin-bottom: 0.5rem;
+    }
+    .pricing-price {
+      font-family: 'Cabinet Grotesk', sans-serif;
+      font-size: 2.5rem;
+      font-weight: 800;
+      color: #fff;
+      margin-bottom: 0.25rem;
+    }
+    .pricing-price .currency { font-size: 1.2rem; vertical-align: super; opacity: 0.7; }
+    .pricing-period {
+      font-size: 0.8rem;
+      color: rgba(255,255,255,0.4);
+      margin-bottom: 1.5rem;
+    }
+    .pricing-features {
+      list-style: none;
+      padding: 0;
+      text-align: left;
+      margin-bottom: 2rem;
+    }
+    .pricing-features li {
+      padding: 0.4rem 0;
+      font-size: 0.85rem;
+      color: rgba(255,255,255,0.7);
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .pricing-features li::before {
+      content: '✓';
+      color: #34d399;
+      font-weight: 700;
+    }
+    .pricing-features li.disabled {
+      color: rgba(255,255,255,0.25);
+    }
+    .pricing-features li.disabled::before {
+      content: '—';
+      color: rgba(255,255,255,0.15);
+    }
+    .btn-pricing {
+      display: inline-block;
+      width: 100%;
+      padding: 0.75rem;
+      border-radius: 10px;
+      text-decoration: none;
+      font-weight: 600;
+      font-size: 0.9rem;
+      text-align: center;
+      transition: all 0.3s;
+    }
+    .btn-pricing-primary {
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      color: #fff;
+    }
+    .btn-pricing-primary:hover { box-shadow: 0 4px 20px rgba(99,102,241,0.4); }
+    .btn-pricing-outline {
+      background: transparent;
+      border: 1px solid rgba(255,255,255,0.15);
+      color: rgba(255,255,255,0.8);
+    }
+    .btn-pricing-outline:hover { border-color: rgba(99,102,241,0.5); }
+
+    /* ═══ Architecture ═══ */
+    .neuron-arch {
+      padding: 5rem 2rem;
+      background: var(--color-surface);
+    }
+    .neuron-arch-inner {
+      max-width: 900px;
+      margin: 0 auto;
+    }
+    .arch-layers {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+      margin-top: 3rem;
+    }
+    .arch-layer {
+      display: flex;
+      align-items: center;
+      gap: 1.5rem;
+      background: var(--color-bg);
+      border: 1px solid var(--color-border);
+      border-radius: 12px;
+      padding: 1.2rem 1.5rem;
+      transition: all 0.3s;
+    }
+    .arch-layer:hover { border-color: rgba(99,102,241,0.4); }
+    .arch-layer-icon { font-size: 1.5rem; min-width: 40px; text-align: center; }
+    .arch-layer-info h4 {
+      font-family: 'Cabinet Grotesk', sans-serif;
+      font-weight: 700;
+      font-size: 1rem;
+    }
+    .arch-layer-info p {
+      font-size: 0.8rem;
+      color: var(--color-text-muted);
+      margin-top: 0.2rem;
+    }
+    .arch-layer-tech {
+      margin-left: auto;
+      display: flex;
+      gap: 0.4rem;
+      flex-wrap: wrap;
+    }
+    .arch-pill {
+      background: rgba(99,102,241,0.1);
+      border: 1px solid rgba(99,102,241,0.2);
+      color: #a5b4fc;
+      padding: 0.2rem 0.6rem;
+      border-radius: 6px;
+      font-size: 0.7rem;
+      font-family: 'JetBrains Mono', monospace;
+      white-space: nowrap;
+    }
+
+    /* ═══ Responsive ═══ */
+    @media (max-width: 768px) {
+      .neuron-hero-inner { grid-template-columns: 1fr; text-align: center; }
+      .neuron-hero-text .n-tagline { margin-left: auto; margin-right: auto; }
+      .neuron-hero-ctas { justify-content: center; }
+      .n-features-grid { grid-template-columns: 1fr; }
+      .pricing-grid { grid-template-columns: 1fr; max-width: 400px; margin-left: auto; margin-right: auto; }
+      .arch-layer { flex-direction: column; text-align: center; }
+      .arch-layer-tech { justify-content: center; margin-left: 0; }
+    }
+    @media (max-width: 1024px) and (min-width: 769px) {
+      .n-features-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+  </style>
 </head>
 <body>
 
@@ -60,7 +470,6 @@
   <header class="header" id="header">
     <div class="header-inner">
       <a href="#" class="logo" aria-label="ZeroX Home">
-        <!-- ZeroX Logo SVG -->
         <svg width="32" height="32" viewBox="0 0 32 32" fill="none" aria-hidden="true">
           <rect x="2" y="2" width="28" height="28" rx="6" stroke="currentColor" stroke-width="1.5" opacity="0.3"/>
           <path d="M8 8L16 16M16 16L24 8M16 16L8 24M16 16L24 24" stroke="var(--color-primary)" stroke-width="2.5" stroke-linecap="round"/>
@@ -71,8 +480,10 @@
 
       <nav>
         <ul class="nav-links" id="navLinks" role="list">
+          <li><a href="#neuron">Neuron</a></li>
+          <li><a href="#features">Features</a></li>
+          <li><a href="#pricing">Pricing</a></li>
           <li><a href="#products">Products</a></li>
-          <li><a href="#capabilities">Capabilities</a></li>
           <li><a href="#about">About</a></li>
           <li><a href="#contact">Contact</a></li>
         </ul>
@@ -109,80 +520,71 @@
           From concept to deployment, every line of code is intentional.
         </p>
         <div class="hero-ctas">
-          <a href="#products" class="btn btn-primary">Explore Products</a>
+          <a href="#neuron" class="btn btn-primary">Explore Neuron</a>
           <a href="#about" class="btn btn-ghost">Learn More</a>
         </div>
       </div>
     </section>
 
-    <!-- ========== FLAGSHIP PRODUCT ========== -->
-    <section class="section" id="products">
-      <div class="section-inner">
-        <div class="section-header fade-in">
-          <div class="section-label">Flagship Product</div>
-          <h2 class="section-title">LuminaPlayer</h2>
-          <p class="section-desc">
-            An AI-powered media player that generates real-time subtitles, detects audio events, and translates content — all offline.
+    <!-- ═══════════════════════════════════════════════════ -->
+    <!-- ========== NEURON — FLAGSHIP PRODUCT ========== -->
+    <!-- ═══════════════════════════════════════════════════ -->
+    <section class="neuron-hero" id="neuron">
+      <div class="neuron-hero-inner">
+        <div class="neuron-hero-text">
+          <div class="n-version">
+            <span class="pulse-dot"></span>
+            Neuron v4.2 — Now Available
+          </div>
+          <h1>
+            Search your files<br>
+            by <span class="n-gradient">meaning</span>
+          </h1>
+          <p class="n-tagline">
+            AI-powered semantic file search for Windows. Unlike traditional search that matches filenames, Neuron understands what you're looking for — even when the words don't match.
+          </p>
+          <div class="neuron-hero-ctas">
+            <a href="https://github.com/RAHUL-DevelopeRR/deepseekfs/releases/latest" class="btn-neuron-download" id="downloadBtn">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              Download for Windows
+            </a>
+            <a href="https://github.com/RAHUL-DevelopeRR/deepseekfs" target="_blank" class="btn-neuron-ghost">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+              View Source
+            </a>
+          </div>
+          <p style="font-size: 0.75rem; color: rgba(255,255,255,0.3); margin-top: 1rem;">
+            Windows 10/11 (64-bit) · ~259 MB · Includes AI engine
           </p>
         </div>
-
-        <div class="featured-product fade-in">
-          <div class="featured-inner">
-            <div class="featured-info">
-              <h3>Intelligent media playback, <br>redefined.</h3>
-              <p>
-                LuminaPlayer integrates cutting-edge AI models into a seamless desktop experience.
-                No cloud dependency, no subscriptions — pure on-device intelligence.
-              </p>
-              <ul class="feature-list" role="list">
-                <li>
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
-                  Real-time subtitle generation via Whisper ASR
-                </li>
-                <li>
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
-                  521-class audio event detection with YAMNet
-                </li>
-                <li>
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
-                  Offline translation via Argos Translate
-                </li>
-                <li>
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
-                  Parallel multi-threaded pipeline architecture
-                </li>
-                <li>
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
-                  Custom .dsrt subtitle format with binary search
-                </li>
-              </ul>
-              <a href="https://github.com/RAHUL-DevelopeRR/astra-player" target="_blank" rel="noopener noreferrer" class="btn btn-primary">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
-                View on GitHub
-              </a>
+        <div class="neuron-visual">
+          <div class="neuron-mockup">
+            <div class="neuron-mockup-bar">
+              <span></span><span></span><span></span>
+              <span class="bar-title">Neuron — Shift+Space to search</span>
             </div>
-            <div class="featured-visual">
-              <!-- Player Mockup -->
-              <div class="player-mockup">
-                <div class="player-titlebar">
-                  <span class="player-dot red"></span>
-                  <span class="player-dot yellow"></span>
-                  <span class="player-dot green"></span>
-                  <span class="player-titlebar-text">LuminaPlayer v2.0</span>
+            <div class="neuron-mockup-body">
+              <div class="search-demo">🔍 quarterly revenue report</div>
+              <div class="search-results-demo">
+                <div class="result-item">
+                  <span class="result-icon">📊</span>
+                  Q3_2024_financial_summary.xlsx
+                  <span class="result-score">98.2%</span>
                 </div>
-                <div class="player-body">
-                  <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                    <polygon points="5 3 19 12 5 21 5 3" fill="currentColor" opacity="0.15"/>
-                    <polygon points="5 3 19 12 5 21 5 3"/>
-                  </svg>
-                  <div class="player-subtitle">[CC] AI-generated subtitle in real-time</div>
+                <div class="result-item">
+                  <span class="result-icon">📄</span>
+                  Annual_Revenue_Analysis.pdf
+                  <span class="result-score">94.7%</span>
                 </div>
-                <div class="player-controls">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="color:var(--color-text-faint)"><polygon points="5 3 19 12 5 21"/></svg>
-                  <div class="player-progress">
-                    <div class="player-progress-fill"></div>
-                  </div>
-                  <span class="player-time">01:24 / 03:58</span>
+                <div class="result-item">
+                  <span class="result-icon">📝</span>
+                  budget_projection_notes.docx
+                  <span class="result-score">89.1%</span>
+                </div>
+                <div class="result-item">
+                  <span class="result-icon">📑</span>
+                  sales_metrics_dashboard.pptx
+                  <span class="result-score">85.4%</span>
                 </div>
               </div>
             </div>
@@ -191,8 +593,191 @@
       </div>
     </section>
 
+    <!-- ========== NEURON FEATURES ========== -->
+    <section class="neuron-features" id="features">
+      <div class="neuron-features-inner">
+        <div class="section-header fade-in" style="text-align:center;">
+          <div class="section-label">Capabilities</div>
+          <h2 class="section-title">Why Neuron is different</h2>
+          <p class="section-desc" style="margin:0 auto;">
+            Neuron doesn't do keyword matching. It understands the semantic meaning behind your search query using neural embeddings.
+          </p>
+        </div>
+
+        <div class="n-features-grid fade-in">
+          <div class="n-feature-card">
+            <div class="n-feature-icon">🧠</div>
+            <h3>Semantic Search</h3>
+            <p>Powered by all-MiniLM-L6-v2 neural embeddings. Search "budget report" and find "Q3_financial_summary.xlsx" — even when the words don't match.</p>
+          </div>
+          <div class="n-feature-card">
+            <div class="n-feature-icon">🤖</div>
+            <h3>Encyl AI Summarizer</h3>
+            <p>Select any file and press Tab to get an instant AI-generated summary. Uses llama3.2:1b via Ollama — 100% local, zero cloud.</p>
+          </div>
+          <div class="n-feature-card">
+            <div class="n-feature-icon">🪟</div>
+            <h3>Windows 11 Native</h3>
+            <p>DWM Mica/Acrylic frosted glass, Segoe Fluent icons, native context menus. Feels like it's built into Windows.</p>
+          </div>
+          <div class="n-feature-card">
+            <div class="n-feature-icon">⚡</div>
+            <h3>Lightning Fast</h3>
+            <p>FAISS vector index with HNSW graph search. Finds results in &lt;5ms across 100,000+ files. Instant, no waiting.</p>
+          </div>
+          <div class="n-feature-card">
+            <div class="n-feature-icon">🔒</div>
+            <h3>100% Offline</h3>
+            <p>Everything runs on your machine. No cloud, no telemetry, no data leaves your PC. Your files are your business.</p>
+          </div>
+          <div class="n-feature-card">
+            <div class="n-feature-icon">📁</div>
+            <h3>40+ File Types</h3>
+            <p>PDF, DOCX, PPTX, XLSX, TXT, MD, Python, JavaScript, JSON, YAML, HTML, CSS, and dozens more — all indexed automatically.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========== ARCHITECTURE ========== -->
+    <section class="neuron-arch" id="architecture">
+      <div class="neuron-arch-inner">
+        <div class="section-header fade-in" style="text-align:center;">
+          <div class="section-label">Under the Hood</div>
+          <h2 class="section-title">Layered architecture</h2>
+          <p class="section-desc" style="margin:0 auto;">
+            Enterprise-grade design patterns in a desktop application. Each layer is independent, testable, and replaceable.
+          </p>
+        </div>
+        <div class="arch-layers fade-in">
+          <div class="arch-layer">
+            <div class="arch-layer-icon">🖥️</div>
+            <div class="arch-layer-info">
+              <h4>UI Layer</h4>
+              <p>PyQt6 Fluent Design with DWM glass effects</p>
+            </div>
+            <div class="arch-layer-tech">
+              <span class="arch-pill">PyQt6</span>
+              <span class="arch-pill">DWM</span>
+            </div>
+          </div>
+          <div class="arch-layer">
+            <div class="arch-layer-icon">⚙️</div>
+            <div class="arch-layer-info">
+              <h4>Service Layer</h4>
+              <p>Desktop, Ollama AI, and Startup Indexer services</p>
+            </div>
+            <div class="arch-layer-tech">
+              <span class="arch-pill">Ollama</span>
+              <span class="arch-pill">REST</span>
+            </div>
+          </div>
+          <div class="arch-layer">
+            <div class="arch-layer-icon">🧠</div>
+            <div class="arch-layer-info">
+              <h4>Core Engine</h4>
+              <p>Embeddings, hybrid search, query parser, time scoring</p>
+            </div>
+            <div class="arch-layer-tech">
+              <span class="arch-pill">MiniLM</span>
+              <span class="arch-pill">FAISS</span>
+              <span class="arch-pill">HNSW</span>
+            </div>
+          </div>
+          <div class="arch-layer">
+            <div class="arch-layer-icon">💾</div>
+            <div class="arch-layer-info">
+              <h4>Storage Layer</h4>
+              <p>SQLite metadata + FAISS vector index + SHA256 cache</p>
+            </div>
+            <div class="arch-layer-tech">
+              <span class="arch-pill">SQLite</span>
+              <span class="arch-pill">NumPy</span>
+            </div>
+          </div>
+          <div class="arch-layer">
+            <div class="arch-layer-icon">📦</div>
+            <div class="arch-layer-info">
+              <h4>Ingestion</h4>
+              <p>40+ file parsers with PyMuPDF, python-docx, python-pptx</p>
+            </div>
+            <div class="arch-layer-tech">
+              <span class="arch-pill">PyMuPDF</span>
+              <span class="arch-pill">docx</span>
+              <span class="arch-pill">pptx</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========== PRICING ========== -->
+    <section class="neuron-pricing" id="pricing">
+      <div class="neuron-pricing-inner">
+        <div class="section-header fade-in" style="text-align:center;">
+          <div class="section-label" style="color:rgba(255,255,255,0.5);">Pricing</div>
+          <h2 class="section-title" style="color:#fff;">Simple, transparent pricing</h2>
+          <p class="section-desc" style="margin:0 auto; color:rgba(255,255,255,0.5);">
+            Get started free. Upgrade when you need AI summarization and unlimited watch paths.
+          </p>
+        </div>
+        <div class="pricing-grid fade-in">
+          <!-- Free -->
+          <div class="pricing-card">
+            <div class="pricing-tier">Free</div>
+            <div class="pricing-price"><span class="currency">₹</span>0</div>
+            <div class="pricing-period">forever</div>
+            <ul class="pricing-features">
+              <li>Semantic file search</li>
+              <li>3 watch directories</li>
+              <li>40+ file types</li>
+              <li>Windows 11 UI</li>
+              <li>Keyboard shortcuts</li>
+              <li class="disabled">Encyl AI summaries</li>
+              <li class="disabled">Priority indexing</li>
+            </ul>
+            <a href="https://github.com/RAHUL-DevelopeRR/deepseekfs/releases/latest" class="btn-pricing btn-pricing-outline">Download Free</a>
+          </div>
+
+          <!-- Pro -->
+          <div class="pricing-card popular">
+            <div class="pricing-tier">Pro</div>
+            <div class="pricing-price"><span class="currency">₹</span>1,499</div>
+            <div class="pricing-period">per year</div>
+            <ul class="pricing-features">
+              <li>Everything in Free</li>
+              <li>Unlimited watch paths</li>
+              <li>Encyl AI file summaries</li>
+              <li>Priority indexing</li>
+              <li>Export search results</li>
+              <li>Custom themes</li>
+              <li>Priority support</li>
+            </ul>
+            <a href="mailto:rahultech72216@gmail.com?subject=Neuron%20Pro%20License" class="btn-pricing btn-pricing-primary">Get Pro</a>
+          </div>
+
+          <!-- Lifetime -->
+          <div class="pricing-card">
+            <div class="pricing-tier">Lifetime</div>
+            <div class="pricing-price"><span class="currency">₹</span>4,999</div>
+            <div class="pricing-period">one-time payment</div>
+            <ul class="pricing-features">
+              <li>Everything in Pro</li>
+              <li>Lifetime updates</li>
+              <li>All future features</li>
+              <li>Commercial use license</li>
+              <li>API access (coming soon)</li>
+              <li>Multi-machine license</li>
+              <li>Founding member badge</li>
+            </ul>
+            <a href="mailto:rahultech72216@gmail.com?subject=Neuron%20Lifetime%20License" class="btn-pricing btn-pricing-outline">Get Lifetime</a>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <!-- ========== MORE PRODUCTS ========== -->
-    <section class="section" style="padding-top: 0;">
+    <section class="section" id="products">
       <div class="section-inner">
         <div class="section-header fade-in">
           <div class="section-label">Product Pipeline</div>
@@ -203,6 +788,15 @@
         </div>
 
         <div class="products-grid fade-in">
+          <div class="product-card">
+            <div class="product-icon">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+            </div>
+            <h3>LuminaPlayer</h3>
+            <p>AI-powered media player with real-time subtitle generation via Whisper ASR, 521-class audio event detection with YAMNet, and offline translation via Argos Translate.</p>
+            <span class="product-tag">Flagship</span>
+          </div>
+
           <div class="product-card">
             <div class="product-icon">
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
@@ -219,15 +813,6 @@
             <h3>Lab Viva Assistant</h3>
             <p>Full-stack web platform for secure online lab examinations. AI-generated MCQs, Google Sheets integration, anti-cheat enforcement, and role-based access control.</p>
             <span class="product-tag">Active Development</span>
-          </div>
-
-          <div class="product-card">
-            <div class="product-icon">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-            </div>
-            <h3>ZeroX Platform</h3>
-            <p>Our upcoming product management and developer tools platform. Designed to streamline how we build, test, and ship products at scale.</p>
-            <span class="product-tag coming-soon">Coming Soon</span>
           </div>
         </div>
       </div>
@@ -248,12 +833,12 @@
           <div class="capability-card">
             <div class="capability-num">01</div>
             <h3>AI/ML Integration</h3>
-            <p>Offline-first AI systems using Whisper, YAMNet, Argos Translate, and custom models. Real-time inference pipelines that run entirely on-device.</p>
+            <p>Offline-first AI systems using Whisper, YAMNet, FAISS, Sentence-Transformers, and Ollama. Real-time inference pipelines that run entirely on-device.</p>
           </div>
           <div class="capability-card">
             <div class="capability-num">02</div>
             <h3>Desktop Applications</h3>
-            <p>Cross-platform desktop software with PySide6, Qt6, and JavaFX. Multi-threaded architectures designed for responsiveness and performance.</p>
+            <p>Cross-platform desktop software with PyQt6, PySide6, and Qt6. Multi-threaded architectures designed for responsiveness and performance.</p>
           </div>
           <div class="capability-card">
             <div class="capability-num">03</div>
@@ -267,8 +852,8 @@
           </div>
           <div class="capability-card">
             <div class="capability-num">05</div>
-            <h3>Media Processing</h3>
-            <p>Video/audio processing pipelines, subtitle generation, format conversion, and real-time streaming. Deep integration with FFmpeg and libVLC.</p>
+            <h3>Semantic Search</h3>
+            <p>Neural embedding pipelines, FAISS vector databases, hybrid scoring algorithms, and query intent parsing for human-like search experiences.</p>
           </div>
           <div class="capability-card">
             <div class="capability-num">06</div>
@@ -290,17 +875,19 @@
           <span class="tech-pill">Python</span>
           <span class="tech-pill">Java</span>
           <span class="tech-pill">JavaScript</span>
+          <span class="tech-pill">PyQt6</span>
+          <span class="tech-pill">PySide6</span>
           <span class="tech-pill">Flask</span>
-          <span class="tech-pill">PySide6 / Qt6</span>
+          <span class="tech-pill">PyTorch</span>
+          <span class="tech-pill">FAISS</span>
+          <span class="tech-pill">Ollama</span>
+          <span class="tech-pill">Sentence-Transformers</span>
           <span class="tech-pill">Faster-Whisper</span>
-          <span class="tech-pill">YAMNet</span>
-          <span class="tech-pill">Argos Translate</span>
           <span class="tech-pill">FFmpeg</span>
-          <span class="tech-pill">libVLC</span>
-          <span class="tech-pill">HTML/CSS</span>
           <span class="tech-pill">SQLite</span>
           <span class="tech-pill">Git</span>
-          <span class="tech-pill">Docker</span>
+          <span class="tech-pill">GitHub Actions</span>
+          <span class="tech-pill">Inno Setup</span>
         </div>
       </div>
     </section>
@@ -325,11 +912,11 @@
           <div class="about-visual">
             <div class="stats-grid">
               <div class="stat-card">
-                <div class="stat-value">15K+</div>
+                <div class="stat-value">22K+</div>
                 <div class="stat-label">Lines of production code</div>
               </div>
               <div class="stat-card">
-                <div class="stat-value">4+</div>
+                <div class="stat-value">5+</div>
                 <div class="stat-label">Active projects</div>
               </div>
               <div class="stat-card">
@@ -386,16 +973,16 @@
         <div class="footer-col">
           <h4>Products</h4>
           <ul role="list">
+            <li><a href="#neuron">Neuron</a></li>
             <li><a href="#products">LuminaPlayer</a></li>
             <li><a href="#products">Astra Player</a></li>
-            <li><a href="#products">Lab Viva Assistant</a></li>
           </ul>
         </div>
         <div class="footer-col">
           <h4>Company</h4>
           <ul role="list">
             <li><a href="#about">About</a></li>
-            <li><a href="#capabilities">Capabilities</a></li>
+            <li><a href="#pricing">Pricing</a></li>
             <li><a href="#contact">Contact</a></li>
           </ul>
         </div>
@@ -409,7 +996,6 @@
       </div>
       <div class="footer-bottom">
         <p>&copy; 2026 ZeroX. All rights reserved.</p>
-        <a href="https://www.perplexity.ai/computer" target="_blank" rel="noopener noreferrer">Created with Perplexity Computer</a>
       </div>
     </div>
   </footer>
@@ -420,7 +1006,7 @@
     (function(){
       const t = document.querySelector('[data-theme-toggle]');
       const r = document.documentElement;
-      let d = 'dark'; // ZeroX is dark-first
+      let d = 'dark';
       r.setAttribute('data-theme', d);
       updateIcon();
       t && t.addEventListener('click', () => {
@@ -440,11 +1026,8 @@
     // Header scroll state
     (function(){
       const header = document.getElementById('header');
-      let lastY = 0;
       window.addEventListener('scroll', () => {
-        const y = window.scrollY;
-        header.classList.toggle('header--scrolled', y > 20);
-        lastY = y;
+        header.classList.toggle('header--scrolled', window.scrollY > 20);
       }, { passive: true });
     })();
 
@@ -452,9 +1035,7 @@
     (function(){
       const btn = document.getElementById('mobileToggle');
       const nav = document.getElementById('navLinks');
-      btn && btn.addEventListener('click', () => {
-        nav.classList.toggle('open');
-      });
+      btn && btn.addEventListener('click', () => nav.classList.toggle('open'));
     })();
 
     // Smooth anchor scrolling
@@ -466,13 +1047,12 @@
         if (target) {
           e.preventDefault();
           target.scrollIntoView({ behavior: 'smooth' });
-          // Close mobile nav
           document.getElementById('navLinks')?.classList.remove('open');
         }
       });
     });
 
-    // Scroll-driven fade-in via IntersectionObserver
+    // Scroll-driven fade-in
     (function(){
       const obs = new IntersectionObserver((entries) => {
         entries.forEach(entry => {
