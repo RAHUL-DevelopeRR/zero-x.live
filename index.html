@@ -9,18 +9,25 @@
   <meta property="og:description" content="AI-powered semantic file search for Windows. Search by meaning, not keywords.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://zero-x.live">
-  <link rel="icon" type="image/png" href="./Assets/NeuronG.png">
-  <link rel="apple-touch-icon" href="./Assets/NeuronG.png">
+  <link rel="icon" type="image/png" href="./Assets/zerox-favicon.png">
+  <link rel="apple-touch-icon" href="./Assets/zerox-favicon.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    :root {
+    :root, [data-theme="dark"] {
       --bg: #09090b; --surface: #18181b; --surface-2: #27272a;
       --border: #3f3f46; --text: #fafafa; --text-muted: #a1a1aa;
       --text-dim: #71717a; --accent: #6366f1; --accent-light: #818cf8;
       --green: #22c55e; --radius: 12px;
+      --logo-filter: none;
+    }
+    [data-theme="light"] {
+      --bg: #ffffff; --surface: #f4f4f5; --surface-2: #e4e4e7;
+      --border: #d4d4d8; --text: #09090b; --text-muted: #52525b;
+      --text-dim: #71717a; --accent: #4f46e5; --accent-light: #6366f1;
+      --green: #16a34a; --logo-filter: none;
     }
     html { scroll-behavior: smooth; -webkit-font-smoothing: antialiased; }
     body { font-family: 'Inter', -apple-system, sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; }
@@ -40,6 +47,9 @@
     .nav-cta { background: var(--accent); color: #fff; padding: 8px 20px; border-radius: 8px; font-size: 14px; font-weight: 600; transition: all 0.2s; border: none; cursor: pointer; }
     .nav-cta:hover { background: var(--accent-light); transform: translateY(-1px); }
     .nav-mobile { display: none; background: none; border: none; color: var(--text); cursor: pointer; }
+    .theme-toggle { background: none; border: 1px solid var(--border); color: var(--text-muted); padding: 8px; border-radius: 8px; cursor: pointer; transition: all 0.2s; display: flex; align-items: center; justify-content: center; }
+    .theme-toggle:hover { color: var(--text); border-color: var(--text-dim); background: var(--surface); }
+    .nav-right { display: flex; align-items: center; gap: 12px; }
 
     /* === HERO === */
     .hero { padding: 100px 24px 80px; text-align: center; position: relative; overflow: hidden; }
@@ -205,7 +215,7 @@
 <nav class="nav">
   <div class="nav-inner">
     <a href="#" class="nav-brand">
-      <img src="./Assets/NeuronG.png" alt="ZeroX">
+      <img src="./Assets/zero-x/screen.png" alt="ZeroX" style="border-radius:50%;">
       Zero<span>X</span>
     </a>
     <div class="nav-links">
@@ -215,10 +225,15 @@
       <a href="#products">Products</a>
       <a href="#about">About</a>
     </div>
-    <a href="https://github.com/RAHUL-DevelopeRR/deepseekfs/releases/tag/v4.2.0" class="nav-cta">Download Free</a>
-    <button class="nav-mobile" id="mobBtn" aria-label="Menu">
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
-    </button>
+    <div class="nav-right">
+      <button class="theme-toggle" id="themeToggle" aria-label="Toggle theme">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" id="themeIcon"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+      </button>
+      <a href="https://github.com/RAHUL-DevelopeRR/deepseekfs/releases/tag/v4.2.0" class="nav-cta">Download Free</a>
+      <button class="nav-mobile" id="mobBtn" aria-label="Menu">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
+      </button>
+    </div>
   </div>
 </nav>
 
@@ -255,7 +270,7 @@
     <div class="section-desc">AI-powered semantic file search that understands meaning — not just keywords.</div>
     <div class="product-card fade-up">
       <div class="logo-showcase">
-        <img src="./Assets/NeuronG.png" alt="Neuron — AI File Intelligence">
+        <img src="./Assets/NeuronG_transparent.png" alt="Neuron — AI File Intelligence">
       </div>
       <div class="product-info">
         <h3>Search your files by meaning</h3>
@@ -421,7 +436,7 @@
   <div class="footer-inner">
     <div class="footer-grid">
       <div>
-        <div class="footer-brand"><img src="./Assets/NeuronG.png" alt="ZeroX"> Zero<span style="color:var(--accent-light)">X</span></div>
+        <div class="footer-brand"><img src="./Assets/zero-x/screen.png" alt="ZeroX" style="border-radius:50%;"> Zero<span style="color:var(--accent-light)">X</span></div>
         <div class="footer-desc">Engineering products from zero to extraordinary. An IT product development company.</div>
       </div>
       <div class="footer-col"><h4>Products</h4><a href="#neuron">Neuron</a><a href="#products">LuminaPlayer</a><a href="#products">Astra Player</a></div>
@@ -433,6 +448,30 @@
 </footer>
 
 <script>
+// Theme toggle
+(function(){
+  const toggle = document.getElementById('themeToggle');
+  const icon = document.getElementById('themeIcon');
+  const root = document.documentElement;
+  let theme = localStorage.getItem('zx-theme') || 'dark';
+  root.setAttribute('data-theme', theme);
+  updateIcon();
+
+  toggle && toggle.addEventListener('click', () => {
+    theme = theme === 'dark' ? 'light' : 'dark';
+    root.setAttribute('data-theme', theme);
+    localStorage.setItem('zx-theme', theme);
+    updateIcon();
+  });
+
+  function updateIcon() {
+    if (!icon) return;
+    icon.innerHTML = theme === 'dark'
+      ? '<circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>'
+      : '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>';
+  }
+})();
+
 // Scroll fade-in
 const obs = new IntersectionObserver((entries) => {
   entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('visible'); obs.unobserve(e.target); } });
