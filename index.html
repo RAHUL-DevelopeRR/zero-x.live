@@ -232,7 +232,7 @@
       <button class="theme-toggle" id="themeToggle" aria-label="Toggle theme">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" id="themeIcon"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
       </button>
-      <a href="https://github.com/RAHUL-DevelopeRR/deepseekfs/releases/tag/v4.6.0" class="nav-cta">Download Free</a>
+      <a href="#pricing" class="nav-cta">Get Neuron</a>
       <button class="nav-mobile" id="mobBtn" aria-label="Menu">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
       </button>
@@ -347,28 +347,67 @@
 <section class="pricing-section" id="pricing">
   <div class="pricing-inner">
     <div class="section-label">Pricing</div>
-    <div class="section-title">One product. One price. Forever yours.</div>
+    <div class="section-title">One product. Three tiers. Forever yours.</div>
     <div class="section-desc" style="margin:0 auto;">Neuron is an offline desktop product — no subscriptions, no recurring fees. Pay once, own it forever.</div>
-    <div class="pricing-grid fade-up" style="grid-template-columns: 1fr 1fr; max-width: 720px; margin: 48px auto 0;">
+    <div class="pricing-grid fade-up" style="grid-template-columns: 1fr 1fr 1fr; max-width: 960px; margin: 48px auto 0;">
+
+      <!-- BASIC -->
       <div class="price-card">
-        <div class="price-tier">Free</div>
-        <div class="price-amount"><span class="cur">₹</span>0</div>
-        <div class="price-period">forever — no card needed</div>
-        <ul class="price-features">
-          <li>Semantic file search</li><li>3 watch directories</li><li>40+ file types</li><li>Windows 11 UI</li><li>Keyboard shortcuts</li><li>Typo tolerance</li>
-          <li class="off">Encyl AI summaries</li><li class="off">LLM re-ranking</li><li class="off">Unlimited watch paths</li>
-        </ul>
-        <a href="https://github.com/RAHUL-DevelopeRR/deepseekfs/releases/tag/v4.6.0" class="price-btn price-btn-outline">Download Free</a>
-      </div>
-      <div class="price-card popular">
-        <div class="price-tier">Pro License</div>
+        <div class="price-tier">Basic</div>
         <div class="price-amount"><span class="cur">₹</span>119</div>
-        <div class="price-period">one-time payment · lifetime license</div>
+        <div class="price-period">one-time · lifetime license</div>
         <ul class="price-features">
-          <li>Everything in Free</li><li>Unlimited watch paths</li><li>Encyl AI file summaries</li><li>LLM-powered re-ranking</li><li>Priority indexing</li><li>Export search results</li><li>All future updates</li><li>Commercial use license</li><li>Priority support</li>
+          <li>Semantic file search</li>
+          <li>3 watch directories</li>
+          <li>40+ file types</li>
+          <li>Windows 11 native UI</li>
+          <li>Keyboard shortcuts</li>
+          <li>Typo tolerance</li>
+          <li class="off">Encyl AI summaries</li>
+          <li class="off">LLM re-ranking</li>
+          <li class="off">Unlimited watch paths</li>
         </ul>
-        <a href="mailto:rahultech72216@gmail.com?subject=Neuron%20Pro%20License%20-%20Rs%20119" class="price-btn price-btn-primary">Buy Pro — ₹119</a>
+        <button onclick="buyNeuron('Basic', 11900, 'Neuron Basic License')" class="price-btn price-btn-outline" id="rzp-basic-btn">Buy Basic — ₹119</button>
       </div>
+
+      <!-- PRO (recommended) -->
+      <div class="price-card popular">
+        <div class="price-tier">Pro</div>
+        <div class="price-amount"><span class="cur">₹</span>249</div>
+        <div class="price-period">one-time · lifetime license</div>
+        <ul class="price-features">
+          <li>Everything in Basic</li>
+          <li>Unlimited watch paths</li>
+          <li>Encyl AI file summaries</li>
+          <li>LLM-powered re-ranking</li>
+          <li>Priority indexing</li>
+          <li>Export search results</li>
+          <li>All future updates</li>
+          <li class="off">Activity search & Memory OS</li>
+          <li class="off">Commercial use license</li>
+        </ul>
+        <button onclick="buyNeuron('Pro', 24900, 'Neuron Pro License')" class="price-btn price-btn-primary" id="rzp-pro-btn">Buy Pro — ₹249</button>
+      </div>
+
+      <!-- FULL-SEARCH -->
+      <div class="price-card">
+        <div class="price-tier">Full-Search</div>
+        <div class="price-amount"><span class="cur">₹</span>499</div>
+        <div class="price-period">one-time · lifetime license</div>
+        <ul class="price-features">
+          <li>Everything in Pro</li>
+          <li>Activity search & Memory OS</li>
+          <li>Session-grouped results</li>
+          <li>Commercial use license</li>
+          <li>Priority support</li>
+          <li>Early access to new features</li>
+          <li>All future major updates</li>
+          <li>Custom watch exclusions</li>
+          <li>Dedicated onboarding</li>
+        </ul>
+        <button onclick="buyNeuron('Full-Search', 49900, 'Neuron Full-Search License')" class="price-btn price-btn-outline" id="rzp-full-btn">Buy Full-Search — ₹499</button>
+      </div>
+
     </div>
   </div>
 </section>
@@ -441,6 +480,9 @@
   </div>
 </footer>
 
+<!-- Razorpay Checkout SDK -->
+<script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+
 <script>
 // Theme toggle
 (function(){
@@ -484,6 +526,67 @@ document.querySelectorAll('a[href^="#"]').forEach(a => {
 window.addEventListener('scroll', () => {
   document.querySelector('.nav').style.boxShadow = window.scrollY > 20 ? '0 4px 12px rgba(0,0,0,0.15)' : 'none';
 }, { passive: true });
+
+// ── Razorpay Checkout (handles all 3 tiers) ─────────────────
+function buyNeuron(tier, amountPaise, description) {
+  const btnId = 'rzp-' + tier.toLowerCase().replace('-', '') + '-btn';
+  const options = {
+    key: 'rzp_live_SZsvcPuBbSv5TA',
+    amount: amountPaise,
+    currency: 'INR',
+    name: 'ZeroX',
+    description: description + ' — Lifetime',
+    image: './Assets/neuron_circular.png',
+    handler: function(response) {
+      const btn = document.getElementById(btnId);
+      if (btn) {
+        btn.textContent = '✓ Payment Successful';
+        btn.style.background = '#22c55e';
+        btn.style.borderColor = '#22c55e';
+        btn.style.color = '#fff';
+        btn.disabled = true;
+      }
+
+      const mailto = 'mailto:rahultech72216@gmail.com'
+        + '?subject=' + encodeURIComponent(description + ' — Payment ' + response.razorpay_payment_id)
+        + '&body=' + encodeURIComponent(
+          'Hi,\n\nI just purchased ' + description + '.\n\n'
+          + 'Payment ID: ' + response.razorpay_payment_id + '\n'
+          + 'Tier: ' + tier + '\n'
+          + 'Please send my license key.\n\nThanks!'
+        );
+
+      setTimeout(() => {
+        if (confirm('Payment successful! 🎉\n\nPayment ID: ' + response.razorpay_payment_id
+          + '\nTier: ' + tier
+          + '\n\nClick OK to email us your payment ID and receive your license key.')) {
+          window.location.href = mailto;
+        }
+      }, 500);
+    },
+    prefill: {},
+    theme: {
+      color: '#0078D4',
+      backdrop_color: 'rgba(0,0,0,0.7)'
+    },
+    modal: {
+      ondismiss: function() {
+        console.log('Razorpay checkout dismissed: ' + tier);
+      }
+    },
+    notes: {
+      product: description,
+      tier: tier,
+      version: 'v4.6'
+    }
+  };
+
+  const rzp = new Razorpay(options);
+  rzp.on('payment.failed', function(response) {
+    alert('Payment failed: ' + response.error.description + '\n\nPlease try again or contact rahultech72216@gmail.com');
+  });
+  rzp.open();
+}
 </script>
 </body>
 </html>
