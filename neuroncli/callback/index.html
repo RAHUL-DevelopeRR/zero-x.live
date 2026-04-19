@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NeuronCLI — Connecting</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, 'Segoe UI', Roboto, sans-serif;
+            display: flex; justify-content: center; align-items: center;
+            min-height: 100vh;
+            background: linear-gradient(135deg, #0f0f23 0%, #1a1a3e 100%);
+            color: #e0e0e0;
+        }
+        .card {
+            text-align: center; padding: 60px 40px;
+            background: rgba(255,255,255,0.04);
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 24px;
+            backdrop-filter: blur(20px);
+            max-width: 480px;
+        }
+        .spinner {
+            width: 40px; height: 40px; margin: 0 auto 20px;
+            border: 3px solid rgba(240,160,40,0.2);
+            border-top: 3px solid #f0a028;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        h1 { color: #f0a028; font-size: 1.6em; margin-bottom: 12px; }
+        p { color: #888; font-size: 1em; line-height: 1.6; }
+        .success { color: #00ff88; }
+        .error { color: #ff4444; }
+        .code-box {
+            background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 8px; padding: 16px; margin: 20px 0;
+            font-family: monospace; font-size: 0.85em; word-break: break-all;
+            color: #f0a028; user-select: all;
+        }
+        .btn {
+            display: inline-block; margin-top: 16px; padding: 10px 28px;
+            background: #f0a028; color: #000; border: none; border-radius: 8px;
+            font-size: 0.95em; font-weight: 600; cursor: pointer;
+            text-decoration: none;
+        }
+        .btn:hover { background: #ffb840; }
+    </style>
+</head>
+<body>
+    <div class="card" id="card">
+        <div class="spinner" id="spinner"></div>
+        <h1 id="title">Connecting NeuronCLI...</h1>
+        <p id="message">Redirecting to your terminal...</p>
+    </div>
+
+    <script>
+        const params = new URLSearchParams(window.location.search);
+        const code = params.get('code');
+        const title = document.getElementById('title');
+        const message = document.getElementById('message');
+        const spinner = document.getElementById('spinner');
+
+        if (code) {
+            // Redirect to the local CLI server with the auth code
+            const localUrl = 'http://localhost:19284?code=' + encodeURIComponent(code);
+
+            // Try fetch first (for CORS-enabled local server)
+            fetch(localUrl, { mode: 'no-cors' })
+                .then(() => {
+                    spinner.style.display = 'none';
+                    title.innerHTML = '&#10003; NeuronCLI Connected';
+                    title.classList.add('success');
+                    message.textContent = 'API key provisioned! You can close this tab and return to your terminal.';
+                    setTimeout(() => { window.location.href = localUrl; }, 500);
+                })
+                .catch(() => {
+                    // Fetch failed, try direct redirect
+                    window.location.href = localUrl;
+                });
+
+            // Fallback: if redirect doesn't work after 3s, show the code
+            setTimeout(() => {
+                if (title.classList.contains('success')) return;
+                spinner.style.display = 'none';
+                title.innerHTML = '&#10003; Authorization Complete';
+                title.classList.add('success');
+                message.innerHTML =
+                    'If your terminal didn\'t auto-connect, copy this code and paste it when prompted:<br>' +
+                    '<div class="code-box">' + code + '</div>' +
+                    '<p style="color:#666;font-size:0.85em;">Or close this tab and run <code style="color:#f0a028;">neuron</code> again.</p>';
+            }, 3000);
+        } else {
+            spinner.style.display = 'none';
+            title.textContent = 'Error';
+            title.classList.add('error');
+            message.innerHTML = 'No authorization code received.<br><a href="https://zero-x.live" class="btn">Go to zero-x.live</a>';
+        }
+    </script>
+</body>
+</html>
