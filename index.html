@@ -21,16 +21,16 @@
       theme: {
         extend: {
           colors: {
-            "base": "#0d0d10",
-            "surface-1": "#131316",
+            "base": "#08070b",
+            "surface-1": "#0f0f12",
             "surface-2": "#1a1a1f",
             "border-subtle": "#2a2a30",
             "text-primary": "#f0f0f0",
             "text-muted": "#888896",
             "text-faint": "#555566",
             "accent": "#5e6ad2",
-            "accent-light": "#7b85e0",
-            "accent-glow": "rgba(94,106,210,0.15)",
+            "accent-light": "#8b8fea",
+            "accent-glow": "rgba(94,106,210,0.12)",
             "accent-container": "#5e5bff",
             "green-dot": "#22c55e",
           },
@@ -49,11 +49,11 @@
     };
   </script>
   <style>
-    body { background-color: #0d0d10; color: #f0f0f0; font-family: 'Inter', sans-serif; }
+    body { background-color: #08070b; color: #f0f0f0; font-family: 'Inter', sans-serif; }
     .text-muted-custom { color: #888896; }
     .text-faint-custom { color: #555566; }
     .border-line { border-color: rgba(255,255,255,0.07); }
-    .bg-surface-1 { background-color: #131316; }
+    .bg-surface-1 { background-color: #0f0f12; }
     .bg-surface-2 { background-color: #1a1a1f; }
     .grid-bg {
       background-image: linear-gradient(to right, rgba(255,255,255,0.03) 1px, transparent 1px),
@@ -75,10 +75,10 @@
 <body class="font-inter text-body antialiased min-h-screen flex flex-col relative overflow-x-hidden selection:bg-accent/25 selection:text-white">
 
 <!-- NAV -->
-<header id="site-nav" class="fixed top-0 w-full h-14 z-50 border-b border-white/10 bg-[#131316]/85 backdrop-blur-md flex items-center justify-between px-4 md:px-6">
+<header id="site-nav" class="fixed top-0 w-full h-14 z-50 border-b border-white/10 bg-[#08070b]/85 backdrop-blur-md flex items-center justify-between px-4 md:px-6">
   <div class="max-w-7xl w-full mx-auto flex items-center justify-between">
     <a href="#" class="flex items-center gap-3">
-      <img src="./Assets/zeroxlogo.png" alt="zero-x.live" class="h-8 md:h-9 w-auto brightness-0 invert" />
+      <img src="./Assets/Zero-xBnW.png" alt="zero-x.live" class="h-7 md:h-8 w-auto" />
     </a>
     <nav class="hidden md:flex items-center gap-8">
       <a class="text-text-muted text-sm font-normal hover:text-accent-light transition-colors duration-200" href="#neuron">Neuron</a>
@@ -88,8 +88,8 @@
       <a class="text-text-muted text-sm font-normal hover:text-accent-light transition-colors duration-200" href="#about">About</a>
     </nav>
     <div class="flex items-center gap-4">
-      <a href="#pricing" class="hidden md:flex items-center gap-2 bg-accent-container text-white px-5 py-2 rounded-lg text-sm font-medium hover:bg-accent-light transition-colors">
-        Get Neuron <span class="material-symbols-outlined text-[16px]">arrow_forward</span>
+      <a href="#pricing" class="hidden md:flex items-center gap-2 bg-white text-[#08070b] px-4 py-1.5 rounded-full text-sm font-medium hover:bg-gray-200 transition-colors">
+        Get Neuron
       </a>
       <button id="mobBtn" class="md:hidden text-white" aria-label="Menu">
         <span class="material-symbols-outlined text-[28px]">menu</span>
@@ -150,8 +150,13 @@
 
 <!-- NEURON PRODUCT -->
 <section class="px-4 md:px-6 max-w-6xl mx-auto py-16 md:py-24" id="neuron">
-  <div class="text-label-up text-accent-light uppercase tracking-widest mb-3">Flagship Product</div>
-  <div class="text-section text-text-primary mb-4">Meet Neuron</div>
+  <div class="flex items-center gap-4 mb-6">
+    <img src="./Assets/NeuronBnW.png" alt="Neuron" class="w-14 h-14 rounded-2xl" />
+    <div>
+      <div class="text-label-up text-accent-light uppercase tracking-widest mb-1">Flagship Product</div>
+      <div class="text-section text-text-primary">Meet Neuron</div>
+    </div>
+  </div>
   <p class="text-body text-muted-custom max-w-xl mb-10">AI-powered semantic file search that understands meaning — not just keywords.</p>
 
   <div class="bg-surface-1 border border-white/7 rounded-2xl overflow-hidden fade-up">
@@ -176,29 +181,29 @@
       </div>
       <!-- Browser Frame Mockup -->
       <div class="bg-[#0d0d10]/40 border-t lg:border-t-0 lg:border-l border-white/7">
-        <div class="h-10 border-b border-white/7 flex items-center px-4 gap-2 bg-[#0d0d10]/50">
+        <div class="h-10 border-b border-white/7 flex items-center px-4 gap-2 bg-[#08070b]/50">
           <div class="w-2.5 h-2.5 rounded-full bg-white/15"></div>
           <div class="w-2.5 h-2.5 rounded-full bg-white/15"></div>
           <div class="w-2.5 h-2.5 rounded-full bg-white/15"></div>
-          <div class="ml-4 text-label text-muted-custom">neuron / semantic-search</div>
+          <div class="ml-auto flex items-center gap-2"><img src="./Assets/neuron_circular.png" class="w-5 h-5 rounded-full" alt=""><span class="text-label text-muted-custom">neuron / semantic-search</span></div>
         </div>
         <div class="p-4 flex flex-col gap-3">
           <div class="relative">
             <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-muted-custom text-[18px]">search</span>
-            <input class="w-full bg-[#0d0d10] border border-white/7 rounded-lg py-2.5 pl-10 pr-4 text-label text-text-primary focus:outline-none" readonly type="text" value="design system guidelines 2024" />
+            <input class="w-full bg-[#08070b] border border-white/7 rounded-lg py-2.5 pl-10 pr-4 text-label text-text-primary focus:outline-none" readonly type="text" value="design system guidelines 2024" />
           </div>
           <div class="flex flex-col gap-2">
             <div class="p-3 border border-white/7 rounded-lg bg-surface-1 flex items-start justify-between group hover:border-accent/50 transition-colors">
               <div><h4 class="text-sm text-text-primary font-medium mb-0.5">ZeroX_Design_System_v2.pdf</h4><p class="text-label text-muted-custom">/docs/design/guidelines</p></div>
-              <div class="flex items-center gap-2"><div class="w-20 h-1.5 bg-[#0d0d10] rounded-full overflow-hidden"><div class="h-full bg-accent-container w-[97%]"></div></div><span class="text-label text-accent-light">0.97</span></div>
+              <div class="flex items-center gap-2"><div class="w-20 h-1.5 bg-[#08070b] rounded-full overflow-hidden"><div class="h-full bg-accent-container w-[97%]"></div></div><span class="text-label text-accent-light">0.97</span></div>
             </div>
             <div class="p-3 border border-white/7 rounded-lg bg-surface-1 flex items-start justify-between">
               <div><h4 class="text-sm text-text-primary font-medium mb-0.5">Brand_Anchors_2024.json</h4><p class="text-label text-muted-custom">/src/config/theme</p></div>
-              <div class="flex items-center gap-2"><div class="w-20 h-1.5 bg-[#0d0d10] rounded-full overflow-hidden"><div class="h-full bg-accent-container w-[82%] opacity-80"></div></div><span class="text-label text-muted-custom">0.82</span></div>
+              <div class="flex items-center gap-2"><div class="w-20 h-1.5 bg-[#08070b] rounded-full overflow-hidden"><div class="h-full bg-accent-container w-[82%] opacity-80"></div></div><span class="text-label text-muted-custom">0.82</span></div>
             </div>
             <div class="p-3 border border-white/7 rounded-lg bg-surface-1 flex items-start justify-between">
               <div><h4 class="text-sm text-text-primary font-medium mb-0.5">style_guide_draft.md</h4><p class="text-label text-muted-custom">/notes/meetings/Q1</p></div>
-              <div class="flex items-center gap-2"><div class="w-20 h-1.5 bg-[#0d0d10] rounded-full overflow-hidden"><div class="h-full bg-accent-container w-[65%] opacity-60"></div></div><span class="text-label text-muted-custom">0.65</span></div>
+              <div class="flex items-center gap-2"><div class="w-20 h-1.5 bg-[#08070b] rounded-full overflow-hidden"><div class="h-full bg-accent-container w-[65%] opacity-60"></div></div><span class="text-label text-muted-custom">0.65</span></div>
             </div>
           </div>
         </div>
@@ -488,11 +493,11 @@
 </section>
 
 <!-- FOOTER -->
-<footer class="w-full pt-20 pb-10 border-t border-white/5 bg-[#0d0d10]">
+<footer class="w-full pt-20 pb-10 border-t border-white/5 bg-[#08070b]">
   <div class="grid grid-cols-2 md:grid-cols-5 gap-12 px-4 md:px-6 max-w-7xl mx-auto">
     <div class="col-span-2 flex flex-col gap-4">
       <a href="#" class="flex items-center gap-3 mb-2">
-        <img src="./Assets/zeroxlogo.png" alt="zero-x.live" class="h-8 w-auto brightness-0 invert" />
+        <img src="./Assets/Zero-xBnW.png" alt="zero-x.live" class="h-7 w-auto" />
       </a>
       <p class="text-sm text-faint-custom leading-relaxed max-w-xs">Engineering products from zero to extraordinary. An IT product development company.</p>
     </div>
