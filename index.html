@@ -1,619 +1,342 @@
 <!DOCTYPE html>
 <html class="dark" lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta content="width=device-width, initial-scale=1.0" name="viewport" />
-  <title>ZeroX Corporation | zero-x.live</title>
-  <meta name="description" content="ZeroX builds AI-powered desktop software. Home of Neuron — semantic file search that understands meaning, not just keywords." />
-  <meta property="og:title" content="ZeroX — Home of Neuron AI" />
-  <meta property="og:description" content="AI-powered semantic file search for Windows. Search by meaning, not keywords." />
-  <meta property="og:type" content="website" />
-  <meta property="og:url" content="https://zero-x.live" />
-  <link rel="icon" type="image/svg+xml" href="./Assets/round.svg" />
-  <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
-  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet" />
-  <link href="https://fonts.googleapis.com" rel="preconnect" />
-  <link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect" />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+  <meta charset="utf-8"/>
+  <meta content="width=device-width,initial-scale=1" name="viewport"/>
+  <title>ZeroX — Engineering Intelligence</title>
+  <meta name="description" content="ZeroX builds AI-powered desktop software. Home of Neuron — semantic file search that understands meaning."/>
+  <link rel="icon" type="image/svg+xml" href="./Assets/round.svg"/>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet"/>
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+  <script src="https://cdn.tailwindcss.com"></script>
   <script>
-    tailwind.config = {
-      darkMode: "class",
-      theme: {
-        extend: {
-          colors: {
-            "base": "#08070b",
-            "surface-1": "#0f0f12",
-            "surface-2": "#1a1a1f",
-            "border-subtle": "#2a2a30",
-            "text-primary": "#f0f0f0",
-            "text-muted": "#888896",
-            "text-faint": "#555566",
-            "accent": "#5e6ad2",
-            "accent-light": "#8b8fea",
-            "accent-glow": "rgba(94,106,210,0.12)",
-            "accent-container": "#5e5bff",
-            "green-dot": "#22c55e",
-          },
-          fontFamily: { "inter": ["Inter", "sans-serif"] },
-          fontSize: {
-            "hero": ["clamp(40px, 6vw, 64px)", { lineHeight: "1.08", letterSpacing: "-0.025em", fontWeight: "500" }],
-            "section": ["clamp(28px, 4vw, 36px)", { lineHeight: "1.2", letterSpacing: "-0.02em", fontWeight: "500" }],
-            "sub": ["20px", { lineHeight: "1.4", letterSpacing: "-0.01em", fontWeight: "500" }],
-            "body-lg": ["18px", { lineHeight: "1.6", fontWeight: "400" }],
-            "body": ["15px", { lineHeight: "1.6", fontWeight: "400" }],
-            "label": ["12px", { lineHeight: "1", letterSpacing: "0.05em", fontWeight: "500" }],
-            "label-up": ["13px", { lineHeight: "1", letterSpacing: "0.08em", fontWeight: "500" }],
-          },
-        },
-      },
-    };
+    tailwind.config={darkMode:"class",theme:{extend:{colors:{"zx-bg":"#08070b","zx-surface":"#0f0f12","zx-card":"#16161a","zx-border":"rgba(255,255,255,0.08)","zx-text":"#f0f0f0","zx-muted":"#8a8a96","zx-faint":"#555566","zx-accent":"#5e6ad2","zx-accent-h":"#8b8fea"},fontFamily:{inter:["Inter","sans-serif"]}}}}
   </script>
   <style>
-    body { background-color: #08070b; color: #f0f0f0; font-family: 'Inter', sans-serif; }
-    .text-muted-custom { color: #888896; }
-    .text-faint-custom { color: #555566; }
-    .border-line { border-color: rgba(255,255,255,0.07); }
-    .bg-surface-1 { background-color: #0f0f12; }
-    .bg-surface-2 { background-color: #1a1a1f; }
-    .grid-bg {
-      background-image: linear-gradient(to right, rgba(255,255,255,0.03) 1px, transparent 1px),
-        linear-gradient(to bottom, rgba(255,255,255,0.03) 1px, transparent 1px);
-      background-size: 40px 40px;
-    }
-    @keyframes float-orb {
-      0%, 100% { transform: translate(0, 0) scale(1); }
-      33% { transform: translate(30px, -20px) scale(1.05); }
-      66% { transform: translate(-20px, 15px) scale(0.95); }
-    }
-    @keyframes pulse-dot { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
-    .fade-up { opacity: 0; transform: translateY(20px); transition: opacity 0.6s ease-out, transform 0.6s ease-out; }
-    .fade-up.visible { opacity: 1; transform: translateY(0); }
-    .orb { animation: float-orb 25s ease-in-out infinite; }
-    .orb-2 { animation: float-orb 30s ease-in-out infinite reverse; }
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{background:#08070b;color:#f0f0f0;font-family:'Inter',sans-serif;-webkit-font-smoothing:antialiased}
+    ::selection{background:rgba(94,106,210,.25);color:#fff}
+    @keyframes orb-drift{0%,100%{transform:translate(0,0)}50%{transform:translate(30px,-20px)}}
+    @keyframes fade-in-up{from{opacity:0;transform:translateY(24px)}to{opacity:1;transform:translateY(0)}}
+    .anim-orb{animation:orb-drift 20s ease-in-out infinite}
+    .anim-orb2{animation:orb-drift 28s ease-in-out infinite reverse}
+    .reveal{opacity:0;transform:translateY(20px);transition:opacity .7s ease,transform .7s ease}
+    .reveal.visible{opacity:1;transform:translateY(0)}
+    .nav-blur{background:rgba(8,7,11,.8);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px)}
   </style>
 </head>
-<body class="font-inter text-body antialiased min-h-screen flex flex-col relative overflow-x-hidden selection:bg-accent/25 selection:text-white">
+<body class="font-inter antialiased overflow-x-hidden">
 
-<!-- NAV -->
-<header id="site-nav" class="fixed top-0 w-full h-14 z-50 border-b border-white/10 bg-[#08070b]/85 backdrop-blur-md flex items-center justify-between px-4 md:px-6">
-  <div class="max-w-7xl w-full mx-auto flex items-center justify-between">
-    <a href="#" class="flex items-center gap-2 text-lg font-bold text-white tracking-tighter">
-      <svg class="text-accent-light" fill="none" height="24" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" width="24"><circle cx="12" cy="12" r="10"></circle><path d="M8 8l8 8m0-8l-8 8"></path></svg>
-      zero-x.live
-    </a>
-    <nav class="hidden md:flex items-center gap-8">
-      <a class="text-text-muted text-sm font-normal hover:text-accent-light transition-colors duration-200" href="#neuron">Neuron</a>
-      <a class="text-text-muted text-sm font-normal hover:text-accent-light transition-colors duration-200" href="#features">Features</a>
-      <a class="text-text-muted text-sm font-normal hover:text-accent-light transition-colors duration-200" href="#pricing">Pricing</a>
-      <a class="text-text-muted text-sm font-normal hover:text-accent-light transition-colors duration-200" href="#products">Products</a>
-      <a class="text-text-muted text-sm font-normal hover:text-accent-light transition-colors duration-200" href="#about">About</a>
+<!-- ═══ NAV ═══ -->
+<header class="fixed top-0 w-full h-14 z-50 nav-blur border-b border-white/[0.06]">
+  <div class="max-w-[1200px] mx-auto h-full flex items-center justify-between px-5">
+    <a href="#" class="shrink-0"><img src="./Assets/Zero-xBnW.png" alt="zero-x.live" class="h-6"/></a>
+    <nav class="hidden md:flex items-center gap-7">
+      <a href="#neuron" class="text-[14px] text-zx-muted hover:text-white transition-colors">Products</a>
+      <a href="#features" class="text-[14px] text-zx-muted hover:text-white transition-colors">Features</a>
+      <a href="#pricing" class="text-[14px] text-zx-muted hover:text-white transition-colors">Pricing</a>
+      <a href="#about" class="text-[14px] text-zx-muted hover:text-white transition-colors">About</a>
+      <a href="#contact" class="text-[14px] text-zx-muted hover:text-white transition-colors">Contact</a>
     </nav>
-    <div class="flex items-center gap-4">
-      <a href="#pricing" class="hidden md:flex items-center gap-2 bg-white text-[#08070b] px-4 py-1.5 rounded-full text-sm font-medium hover:bg-gray-200 transition-colors">
-        Get Neuron
-      </a>
-      <button id="mobBtn" class="md:hidden text-white" aria-label="Menu">
-        <span class="material-symbols-outlined text-[28px]">menu</span>
-      </button>
+    <div class="flex items-center gap-3">
+      <a href="#pricing" class="hidden md:block bg-white text-[#08070b] text-[13px] font-medium px-4 py-[6px] rounded-full hover:bg-gray-200 transition-colors">Get Neuron</a>
+      <button id="mobBtn" class="md:hidden text-white"><span class="material-symbols-outlined">menu</span></button>
     </div>
   </div>
 </header>
 
-<!-- MOBILE NAV OVERLAY -->
-<div id="mobileNav" class="fixed inset-0 z-[60] bg-base/95 backdrop-blur-lg flex-col items-center justify-center gap-8 hidden">
-  <button id="mobClose" class="absolute top-4 right-4 text-white"><span class="material-symbols-outlined text-[32px]">close</span></button>
-  <a class="text-2xl font-medium text-text-primary hover:text-accent-light transition-colors" href="#neuron" onclick="closeMobileNav()">Neuron</a>
-  <a class="text-2xl font-medium text-text-primary hover:text-accent-light transition-colors" href="#features" onclick="closeMobileNav()">Features</a>
-  <a class="text-2xl font-medium text-text-primary hover:text-accent-light transition-colors" href="#pricing" onclick="closeMobileNav()">Pricing</a>
-  <a class="text-2xl font-medium text-text-primary hover:text-accent-light transition-colors" href="#products" onclick="closeMobileNav()">Products</a>
-  <a class="text-2xl font-medium text-text-primary hover:text-accent-light transition-colors" href="#about" onclick="closeMobileNav()">About</a>
-  <a href="#pricing" onclick="closeMobileNav()" class="mt-4 bg-accent-container text-white px-8 py-3 rounded-lg text-lg font-medium">Get Neuron</a>
+<!-- ═══ MOBILE NAV ═══ -->
+<div id="mobileNav" class="fixed inset-0 z-[60] bg-zx-bg/95 backdrop-blur-xl hidden flex-col items-center justify-center gap-6">
+  <button id="mobClose" class="absolute top-4 right-5 text-white"><span class="material-symbols-outlined text-3xl">close</span></button>
+  <a href="#neuron" onclick="closeMob()" class="text-xl text-white">Products</a>
+  <a href="#features" onclick="closeMob()" class="text-xl text-white">Features</a>
+  <a href="#pricing" onclick="closeMob()" class="text-xl text-white">Pricing</a>
+  <a href="#about" onclick="closeMob()" class="text-xl text-white">About</a>
+  <a href="#contact" onclick="closeMob()" class="text-xl text-white">Contact</a>
+  <a href="#pricing" onclick="closeMob()" class="mt-4 bg-white text-black px-8 py-3 rounded-full font-medium">Get Neuron</a>
 </div>
 
-<main class="flex-grow pt-14">
+<!-- ═══ HERO ═══ -->
+<section class="relative min-h-screen flex flex-col items-center justify-center text-center px-5 pt-14 overflow-hidden">
+  <div class="absolute top-[20%] left-1/2 -translate-x-1/2 w-[700px] h-[700px] bg-zx-accent/[0.07] rounded-full blur-[140px] pointer-events-none anim-orb"></div>
+  <div class="absolute top-[40%] left-[30%] w-[400px] h-[400px] bg-purple-700/[0.05] rounded-full blur-[120px] pointer-events-none anim-orb2"></div>
 
-<!-- HERO -->
-<section class="relative px-4 md:px-6 max-w-5xl mx-auto pt-16 md:pt-24 pb-20 md:pb-32 flex flex-col items-center text-center">
-  <div class="absolute inset-0 grid-bg opacity-50 -z-10 pointer-events-none"></div>
-  <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-accent/10 rounded-full blur-[120px] -z-10 pointer-events-none orb"></div>
-  <div class="absolute top-1/3 left-1/4 w-[300px] h-[300px] bg-purple-600/8 rounded-full blur-[100px] -z-10 pointer-events-none orb-2"></div>
-
-  <div class="fade-up">
-    <div class="inline-flex items-center gap-2 px-4 py-1.5 bg-accent/10 border border-accent/20 rounded-full text-label text-accent-light mb-8">
-      <span class="w-1.5 h-1.5 bg-green-dot rounded-full" style="animation:pulse-dot 2s infinite"></span> Now shipping v5.1.0
+  <div class="relative z-10 max-w-[860px] mx-auto" style="animation:fade-in-up .8s ease both">
+    <div class="inline-flex items-center gap-2 px-4 py-1.5 border border-zx-accent/20 bg-zx-accent/[0.06] rounded-full text-[12px] text-zx-accent-h font-medium tracking-wide mb-10">
+      <span class="w-[6px] h-[6px] bg-emerald-400 rounded-full"></span>Now shipping v5.1.0
     </div>
-    <h1 class="text-hero text-text-primary max-w-4xl mx-auto mb-6">
-      The software company<br/>
-      <span class="text-muted-custom">that ships what it</span><br/>
-      promises.
+    <h1 class="text-[clamp(36px,6vw,64px)] font-medium leading-[1.08] tracking-[-0.025em] text-white mb-6">
+      Purpose-built for<br>semantic search.<br><span class="text-zx-muted">Designed for local-first AI.</span>
     </h1>
-    <p class="text-body-lg text-muted-custom max-w-2xl mx-auto mb-8">
-      We build engineering-grade tools for semantic search, local-first intelligence, and rapid development. Precision instrumentation for modern workflows.
+    <p class="text-[17px] text-zx-muted leading-relaxed max-w-[540px] mx-auto mb-10">
+      We build engineering-grade tools that run entirely on your machine. No cloud. No telemetry. Just intelligent software that respects your privacy.
     </p>
-    <div class="flex flex-wrap justify-center gap-4 mb-12">
-      <a href="#neuron" class="bg-accent-container text-white px-6 py-3 rounded-lg text-body font-medium flex items-center gap-2 hover:bg-accent-light transition-colors">
-        Explore Neuron <span class="material-symbols-outlined text-[18px]">arrow_forward</span>
-      </a>
-      <a href="https://github.com/RAHUL-DevelopeRR" target="_blank" class="bg-transparent border border-white/10 text-text-primary px-6 py-3 rounded-lg text-body hover:bg-surface-1 transition-colors flex items-center gap-2">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
-        View on GitHub
-      </a>
+    <div class="flex flex-wrap justify-center gap-4 mb-16">
+      <a href="#neuron" class="bg-white text-black px-6 py-3 rounded-full text-[15px] font-medium hover:bg-gray-200 transition-colors">Explore Neuron</a>
+      <a href="https://github.com/RAHUL-DevelopeRR" target="_blank" class="border border-white/10 text-white px-6 py-3 rounded-full text-[15px] hover:bg-white/5 transition-colors">View on GitHub</a>
     </div>
-    <!-- Stats -->
-    <div class="flex flex-wrap justify-center gap-8 md:gap-16 py-6 border-t border-white/10">
-      <div class="text-center"><div class="text-xl md:text-2xl font-bold text-text-primary">22K+</div><div class="text-label-up text-muted-custom uppercase mt-1">Lines of Code</div></div>
-      <div class="text-center"><div class="text-xl md:text-2xl font-bold text-text-primary">&lt;5ms</div><div class="text-label-up text-muted-custom uppercase mt-1">Search Latency</div></div>
-      <div class="text-center"><div class="text-xl md:text-2xl font-bold text-text-primary">100%</div><div class="text-label-up text-muted-custom uppercase mt-1">Offline</div></div>
-      <div class="text-center"><div class="text-xl md:text-2xl font-bold text-text-primary">40+</div><div class="text-label-up text-muted-custom uppercase mt-1">File Types</div></div>
+  </div>
+
+  <!-- Hero Product Visual -->
+  <div class="relative z-10 w-full max-w-[1000px] mx-auto reveal">
+    <div class="bg-zx-surface border border-white/[0.06] rounded-xl overflow-hidden shadow-2xl shadow-black/40">
+      <div class="h-10 border-b border-white/[0.06] flex items-center px-4 gap-2 bg-zx-bg/60">
+        <div class="flex gap-1.5"><span class="w-[10px] h-[10px] rounded-full bg-white/10"></span><span class="w-[10px] h-[10px] rounded-full bg-white/10"></span><span class="w-[10px] h-[10px] rounded-full bg-white/10"></span></div>
+        <div class="ml-auto flex items-center gap-2"><img src="./Assets/neuron_circular.png" class="w-4 h-4 rounded-full"/><span class="text-[11px] text-zx-muted font-mono">neuron — semantic-search</span></div>
+      </div>
+      <div class="flex min-h-[380px] md:min-h-[440px]">
+        <div class="hidden md:flex w-52 border-r border-white/[0.06] p-4 flex-col gap-3 bg-zx-bg/30">
+          <div class="text-[11px] text-zx-muted font-medium tracking-widest uppercase mb-1">Sources</div>
+          <div class="flex items-center gap-2 text-white text-[13px] p-2 bg-white/[0.04] rounded-lg"><span class="material-symbols-outlined text-[15px]">folder</span>Local Vault</div>
+          <div class="flex items-center gap-2 text-zx-muted text-[13px] p-2 hover:bg-white/[0.04] rounded-lg cursor-pointer transition"><span class="material-symbols-outlined text-[15px]">cloud</span>Cloud Sync</div>
+          <div class="flex items-center gap-2 text-zx-muted text-[13px] p-2 hover:bg-white/[0.04] rounded-lg cursor-pointer transition"><span class="material-symbols-outlined text-[15px]">integration_instructions</span>GitHub</div>
+        </div>
+        <div class="flex-1 flex flex-col bg-zx-bg/40">
+          <div class="p-4 border-b border-white/[0.06]">
+            <div class="relative"><span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-zx-muted text-[17px]">search</span><input class="w-full bg-zx-bg border border-white/[0.06] rounded-lg py-2.5 pl-10 pr-4 text-[12px] text-white focus:outline-none font-mono" readonly value="design system guidelines 2024"/></div>
+          </div>
+          <div class="flex-1 p-4 flex flex-col gap-2.5 overflow-hidden">
+            <div class="p-3.5 border border-white/[0.06] rounded-lg bg-zx-surface flex justify-between items-start hover:border-zx-accent/40 transition-colors">
+              <div><div class="text-[13px] text-white font-medium">ZeroX_Design_System_v2.pdf</div><div class="text-[11px] text-zx-muted font-mono mt-0.5">/docs/design/guidelines</div></div>
+              <div class="flex items-center gap-2"><div class="w-16 h-1 bg-zx-bg rounded-full overflow-hidden"><div class="h-full bg-zx-accent w-[97%]"></div></div><span class="text-[11px] text-zx-accent-h font-mono">0.97</span></div>
+            </div>
+            <div class="p-3.5 border border-white/[0.06] rounded-lg bg-zx-surface flex justify-between items-start">
+              <div><div class="text-[13px] text-white font-medium">Brand_Anchors_2024.json</div><div class="text-[11px] text-zx-muted font-mono mt-0.5">/src/config/theme</div></div>
+              <div class="flex items-center gap-2"><div class="w-16 h-1 bg-zx-bg rounded-full overflow-hidden"><div class="h-full bg-zx-accent w-[82%] opacity-80"></div></div><span class="text-[11px] text-zx-muted font-mono">0.82</span></div>
+            </div>
+            <div class="p-3.5 border border-white/[0.06] rounded-lg bg-zx-surface flex justify-between items-start">
+              <div><div class="text-[13px] text-white font-medium">style_guide_draft.md</div><div class="text-[11px] text-zx-muted font-mono mt-0.5">/notes/meetings/Q1</div></div>
+              <div class="flex items-center gap-2"><div class="w-16 h-1 bg-zx-bg rounded-full overflow-hidden"><div class="h-full bg-zx-accent w-[65%] opacity-60"></div></div><span class="text-[11px] text-zx-muted font-mono">0.65</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </section>
 
-<!-- NEURON PRODUCT -->
-<section class="px-4 md:px-6 max-w-6xl mx-auto py-16 md:py-24" id="neuron">
-  <div class="flex items-center gap-4 mb-6">
-    <img src="./Assets/neuron_circular.png" alt="Neuron" class="w-14 h-14 rounded-2xl shadow-lg shadow-accent/20" />
-    <div>
-      <div class="text-label-up text-accent-light uppercase tracking-widest mb-1">Flagship Product</div>
-      <div class="text-section text-text-primary">Meet Neuron</div>
-    </div>
-  </div>
-  <p class="text-body text-muted-custom max-w-xl mb-10">AI-powered semantic file search that understands meaning — not just keywords.</p>
-
-  <div class="bg-surface-1 border border-white/7 rounded-2xl overflow-hidden fade-up">
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-0">
-      <!-- Info -->
-      <div class="p-6 md:p-10 flex flex-col justify-center">
-        <h3 class="text-sub text-text-primary font-medium mb-4">Search your files by meaning</h3>
-        <p class="text-body text-muted-custom mb-6">Type "quarterly revenue report" and find <code class="bg-white/5 px-1.5 py-0.5 rounded text-accent-light text-sm">Q3_2024_financial_summary.xlsx</code> — even when the words don't match.</p>
-        <div class="flex flex-col gap-3 mb-8">
-          <div class="flex items-center gap-3 text-body text-muted-custom"><span class="material-symbols-outlined text-green-dot text-[18px]">check_circle</span> Semantic search across 100K+ files in under 5ms</div>
-          <div class="flex items-center gap-3 text-body text-muted-custom"><span class="material-symbols-outlined text-green-dot text-[18px]">check_circle</span> AI file summaries via Ollama (runs 100% locally)</div>
-          <div class="flex items-center gap-3 text-body text-muted-custom"><span class="material-symbols-outlined text-green-dot text-[18px]">check_circle</span> Windows 11 native design with Mica glass</div>
-          <div class="flex items-center gap-3 text-body text-muted-custom"><span class="material-symbols-outlined text-green-dot text-[18px]">check_circle</span> Zero cloud, zero telemetry — your files stay yours</div>
+<!-- ═══ NEURON — Full-Width Feature Showcase (Linear-style) ═══ -->
+<section class="py-32 md:py-40 px-5" id="neuron">
+  <div class="max-w-[1100px] mx-auto">
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-16 lg:gap-24 items-center reveal">
+      <div>
+        <a href="#neuron" class="inline-flex items-center gap-2 text-zx-accent-h text-[13px] font-medium tracking-wide mb-6 hover:underline">1.0&ensp;Neuron&ensp;→</a>
+        <h2 class="text-[clamp(28px,4vw,40px)] font-medium tracking-[-0.02em] leading-[1.15] text-white mb-6">Search your files<br>by meaning</h2>
+        <p class="text-[16px] text-zx-muted leading-relaxed mb-8 max-w-md">Type "quarterly revenue report" and find the right file — even when the words don't match. Neuron uses neural embeddings to understand what you actually mean.</p>
+        <div class="flex flex-col gap-3 mb-10">
+          <div class="flex items-center gap-3 text-[14px] text-zx-muted"><span class="text-emerald-400 text-[16px]">✓</span>Semantic search across 100K+ files in &lt;5ms</div>
+          <div class="flex items-center gap-3 text-[14px] text-zx-muted"><span class="text-emerald-400 text-[16px]">✓</span>AI file summaries via Ollama — 100% local</div>
+          <div class="flex items-center gap-3 text-[14px] text-zx-muted"><span class="text-emerald-400 text-[16px]">✓</span>Windows 11 native with Mica glass</div>
+          <div class="flex items-center gap-3 text-[14px] text-zx-muted"><span class="text-emerald-400 text-[16px]">✓</span>Zero cloud, zero telemetry</div>
         </div>
         <div class="flex flex-wrap gap-3">
-          <a href="https://github.com/RAHUL-DevelopeRR/neuron-app/releases/download/v5.1.0/NeuronSetup_v5.1.exe" class="bg-accent-container text-white px-5 py-2.5 rounded-lg text-sm font-medium flex items-center gap-2 hover:bg-accent-light transition-colors">
-            <span class="material-symbols-outlined text-[16px]">download</span> Download v5.1
-          </a>
-          <a href="https://github.com/RAHUL-DevelopeRR/neuron-app" target="_blank" class="border border-white/10 text-text-primary px-5 py-2.5 rounded-lg text-sm hover:bg-white/5 transition-colors">Learn More</a>
+          <a href="https://github.com/RAHUL-DevelopeRR/neuron-app/releases/download/v5.1.0/NeuronSetup_v5.1.exe" class="bg-white text-black px-5 py-2.5 rounded-full text-[14px] font-medium hover:bg-gray-200 transition">Download v5.1</a>
+          <a href="https://github.com/RAHUL-DevelopeRR/neuron-app" target="_blank" class="border border-white/10 text-white px-5 py-2.5 rounded-full text-[14px] hover:bg-white/5 transition">Learn More</a>
         </div>
-        <div class="text-label text-faint-custom mt-4">Windows 10/11 (64-bit) · ~253 MB · ONNX Neural AI engine</div>
+        <div class="text-[11px] text-zx-faint mt-4">Windows 10/11 (64-bit) · ~253 MB · ONNX engine included</div>
       </div>
-      <!-- Browser Frame Mockup -->
-      <div class="bg-[#0d0d10]/40 border-t lg:border-t-0 lg:border-l border-white/7">
-        <div class="h-10 border-b border-white/7 flex items-center px-4 gap-2 bg-[#08070b]/50">
-          <div class="w-2.5 h-2.5 rounded-full bg-white/15"></div>
-          <div class="w-2.5 h-2.5 rounded-full bg-white/15"></div>
-          <div class="w-2.5 h-2.5 rounded-full bg-white/15"></div>
-          <div class="ml-auto flex items-center gap-2"><img src="./Assets/neuron_circular.png" class="w-5 h-5 rounded-full" alt=""><span class="text-label text-muted-custom">neuron / semantic-search</span></div>
-        </div>
-        <div class="p-4 flex flex-col gap-3">
-          <div class="relative">
-            <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-muted-custom text-[18px]">search</span>
-            <input class="w-full bg-[#08070b] border border-white/7 rounded-lg py-2.5 pl-10 pr-4 text-label text-text-primary focus:outline-none" readonly type="text" value="design system guidelines 2024" />
-          </div>
-          <div class="flex flex-col gap-2">
-            <div class="p-3 border border-white/7 rounded-lg bg-surface-1 flex items-start justify-between group hover:border-accent/50 transition-colors">
-              <div><h4 class="text-sm text-text-primary font-medium mb-0.5">ZeroX_Design_System_v2.pdf</h4><p class="text-label text-muted-custom">/docs/design/guidelines</p></div>
-              <div class="flex items-center gap-2"><div class="w-20 h-1.5 bg-[#08070b] rounded-full overflow-hidden"><div class="h-full bg-accent-container w-[97%]"></div></div><span class="text-label text-accent-light">0.97</span></div>
-            </div>
-            <div class="p-3 border border-white/7 rounded-lg bg-surface-1 flex items-start justify-between">
-              <div><h4 class="text-sm text-text-primary font-medium mb-0.5">Brand_Anchors_2024.json</h4><p class="text-label text-muted-custom">/src/config/theme</p></div>
-              <div class="flex items-center gap-2"><div class="w-20 h-1.5 bg-[#08070b] rounded-full overflow-hidden"><div class="h-full bg-accent-container w-[82%] opacity-80"></div></div><span class="text-label text-muted-custom">0.82</span></div>
-            </div>
-            <div class="p-3 border border-white/7 rounded-lg bg-surface-1 flex items-start justify-between">
-              <div><h4 class="text-sm text-text-primary font-medium mb-0.5">style_guide_draft.md</h4><p class="text-label text-muted-custom">/notes/meetings/Q1</p></div>
-              <div class="flex items-center gap-2"><div class="w-20 h-1.5 bg-[#08070b] rounded-full overflow-hidden"><div class="h-full bg-accent-container w-[65%] opacity-60"></div></div><span class="text-label text-muted-custom">0.65</span></div>
-            </div>
-          </div>
-        </div>
+      <div class="flex items-center justify-center">
+        <img src="./Assets/NeuronBnW.png" alt="Neuron" class="w-full max-w-[360px] rounded-3xl shadow-2xl shadow-zx-accent/10"/>
       </div>
     </div>
   </div>
 </section>
 
-<!-- FEATURES -->
-<section class="px-4 md:px-6 max-w-6xl mx-auto py-16 md:py-24 border-t border-white/5" id="features">
-  <div class="text-center mb-12 md:mb-16">
-    <div class="text-label-up text-accent-light uppercase tracking-widest mb-3">Capabilities</div>
-    <div class="text-section text-text-primary mb-4">Why Neuron is different</div>
-    <p class="text-body text-muted-custom max-w-xl mx-auto">It doesn't match keywords. It understands the semantic meaning behind your search using neural embeddings.</p>
-  </div>
-  <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 fade-up">
-    <div class="bg-surface-1 border border-white/7 rounded-xl p-6 hover:border-accent/40 transition-all duration-300 hover:-translate-y-1">
-      <div class="w-10 h-10 bg-accent/10 rounded-lg flex items-center justify-center mb-5"><span class="material-symbols-outlined text-accent-light text-[20px]">psychology</span></div>
-      <h3 class="text-base font-medium text-text-primary mb-2">Semantic Search</h3>
-      <p class="text-sm text-muted-custom leading-relaxed">Powered by all-MiniLM-L6-v2 neural embeddings. Search by meaning, not exact keywords.</p>
+<!-- ═══ CAPABILITIES — Linear-style numbered sections ═══ -->
+<section class="py-32 md:py-40 px-5 border-t border-white/[0.04]" id="features">
+  <div class="max-w-[1100px] mx-auto">
+    <div class="text-center mb-20 reveal">
+      <a class="inline-flex items-center gap-2 text-zx-accent-h text-[13px] font-medium tracking-wide mb-6">2.0&ensp;Capabilities&ensp;→</a>
+      <h2 class="text-[clamp(28px,4vw,40px)] font-medium tracking-[-0.02em] leading-[1.15] text-white mb-5">Built different.<br><span class="text-zx-muted">Engineered with precision.</span></h2>
+      <p class="text-[16px] text-zx-muted max-w-lg mx-auto leading-relaxed">Every component earns its place. No bloat, no decoration for its own sake.</p>
     </div>
-    <div class="bg-surface-1 border border-white/7 rounded-xl p-6 hover:border-accent/40 transition-all duration-300 hover:-translate-y-1">
-      <div class="w-10 h-10 bg-accent/10 rounded-lg flex items-center justify-center mb-5"><span class="material-symbols-outlined text-accent-light text-[20px]">smart_toy</span></div>
-      <h3 class="text-base font-medium text-text-primary mb-2">Encyl AI Summarizer</h3>
-      <p class="text-sm text-muted-custom leading-relaxed">Press Tab on any file for an instant AI summary. Uses llama3.2:1b via Ollama — 100% local.</p>
-    </div>
-    <div class="bg-surface-1 border border-white/7 rounded-xl p-6 hover:border-accent/40 transition-all duration-300 hover:-translate-y-1">
-      <div class="w-10 h-10 bg-accent/10 rounded-lg flex items-center justify-center mb-5"><span class="material-symbols-outlined text-accent-light text-[20px]">desktop_windows</span></div>
-      <h3 class="text-base font-medium text-text-primary mb-2">Windows 11 Native</h3>
-      <p class="text-sm text-muted-custom leading-relaxed">DWM Mica/Acrylic frosted glass, Segoe Fluent icons, native context menus.</p>
-    </div>
-    <div class="bg-surface-1 border border-white/7 rounded-xl p-6 hover:border-accent/40 transition-all duration-300 hover:-translate-y-1">
-      <div class="w-10 h-10 bg-accent/10 rounded-lg flex items-center justify-center mb-5"><span class="material-symbols-outlined text-accent-light text-[20px]">bolt</span></div>
-      <h3 class="text-base font-medium text-text-primary mb-2">Lightning Fast</h3>
-      <p class="text-sm text-muted-custom leading-relaxed">FAISS vector index with HNSW graph search. Results in &lt;5ms across 100,000+ files.</p>
-    </div>
-    <div class="bg-surface-1 border border-white/7 rounded-xl p-6 hover:border-accent/40 transition-all duration-300 hover:-translate-y-1">
-      <div class="w-10 h-10 bg-accent/10 rounded-lg flex items-center justify-center mb-5"><span class="material-symbols-outlined text-accent-light text-[20px]">lock</span></div>
-      <h3 class="text-base font-medium text-text-primary mb-2">100% Offline</h3>
-      <p class="text-sm text-muted-custom leading-relaxed">Everything runs on your machine. No cloud, no telemetry, no data ever leaves your PC.</p>
-    </div>
-    <div class="bg-surface-1 border border-white/7 rounded-xl p-6 hover:border-accent/40 transition-all duration-300 hover:-translate-y-1">
-      <div class="w-10 h-10 bg-accent/10 rounded-lg flex items-center justify-center mb-5"><span class="material-symbols-outlined text-accent-light text-[20px]">folder_open</span></div>
-      <h3 class="text-base font-medium text-text-primary mb-2">40+ File Types</h3>
-      <p class="text-sm text-muted-custom leading-relaxed">PDF, DOCX, PPTX, XLSX, Python, JavaScript, JSON, YAML, and dozens more.</p>
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 reveal">
+      <div class="bg-zx-card border border-white/[0.06] rounded-xl p-7 hover:border-white/[0.12] transition-colors"><h3 class="text-[15px] font-medium text-white mb-2">Semantic Search</h3><p class="text-[14px] text-zx-muted leading-relaxed">Powered by all-MiniLM-L6-v2 neural embeddings. Search by meaning, not keywords.</p></div>
+      <div class="bg-zx-card border border-white/[0.06] rounded-xl p-7 hover:border-white/[0.12] transition-colors"><h3 class="text-[15px] font-medium text-white mb-2">Encyl AI Summarizer</h3><p class="text-[14px] text-zx-muted leading-relaxed">Press Tab for an instant AI summary. Uses llama3.2:1b via Ollama — 100% local.</p></div>
+      <div class="bg-zx-card border border-white/[0.06] rounded-xl p-7 hover:border-white/[0.12] transition-colors"><h3 class="text-[15px] font-medium text-white mb-2">Windows 11 Native</h3><p class="text-[14px] text-zx-muted leading-relaxed">DWM Mica/Acrylic frosted glass, Segoe Fluent icons, native context menus.</p></div>
+      <div class="bg-zx-card border border-white/[0.06] rounded-xl p-7 hover:border-white/[0.12] transition-colors"><h3 class="text-[15px] font-medium text-white mb-2">Lightning Fast</h3><p class="text-[14px] text-zx-muted leading-relaxed">FAISS vector index with HNSW graph search. Results in &lt;5ms across 100K+ files.</p></div>
+      <div class="bg-zx-card border border-white/[0.06] rounded-xl p-7 hover:border-white/[0.12] transition-colors"><h3 class="text-[15px] font-medium text-white mb-2">100% Offline</h3><p class="text-[14px] text-zx-muted leading-relaxed">Everything runs on your machine. No cloud, no telemetry, no data ever leaves.</p></div>
+      <div class="bg-zx-card border border-white/[0.06] rounded-xl p-7 hover:border-white/[0.12] transition-colors"><h3 class="text-[15px] font-medium text-white mb-2">40+ File Types</h3><p class="text-[14px] text-zx-muted leading-relaxed">PDF, DOCX, PPTX, XLSX, Python, JavaScript, JSON, YAML, and dozens more.</p></div>
     </div>
   </div>
 </section>
 
-<!-- HOW IT WORKS -->
-<section class="px-4 md:px-6 max-w-5xl mx-auto py-16 md:py-24 border-t border-white/5">
-  <div class="text-center mb-12 md:mb-16">
-    <div class="text-label-up text-accent-light uppercase tracking-widest mb-3">Getting Started</div>
-    <div class="text-section text-text-primary">Up and running in 3 steps</div>
-  </div>
-  <div class="grid grid-cols-1 md:grid-cols-3 gap-8 md:gap-12 fade-up">
-    <div class="text-center">
-      <div class="w-12 h-12 bg-accent-container rounded-full flex items-center justify-center text-white font-bold text-lg mx-auto mb-5">1</div>
-      <h3 class="text-base font-medium text-text-primary mb-2">Download & Install</h3>
-      <p class="text-sm text-muted-custom leading-relaxed">Download the installer from GitHub Releases. Run it and follow the wizard — everything is bundled.</p>
-    </div>
-    <div class="text-center">
-      <div class="w-12 h-12 bg-accent-container rounded-full flex items-center justify-center text-white font-bold text-lg mx-auto mb-5">2</div>
-      <h3 class="text-base font-medium text-text-primary mb-2">Choose Your Folders</h3>
-      <p class="text-sm text-muted-custom leading-relaxed">Select which directories Neuron should index. It watches for changes and re-indexes automatically.</p>
-    </div>
-    <div class="text-center">
-      <div class="w-12 h-12 bg-accent-container rounded-full flex items-center justify-center text-white font-bold text-lg mx-auto mb-5">3</div>
-      <h3 class="text-base font-medium text-text-primary mb-2">Search by Meaning</h3>
-      <p class="text-sm text-muted-custom leading-relaxed">Press Shift+Space anytime. Type what you're looking for in natural language — Neuron finds it instantly.</p>
-    </div>
-  </div>
-</section>
-
-<!-- ARCHITECTURE -->
-<section class="px-4 md:px-6 max-w-4xl mx-auto py-16 md:py-24 border-t border-white/5" id="architecture">
-  <div class="text-center mb-12 md:mb-16">
-    <div class="text-label-up text-accent-light uppercase tracking-widest mb-3">Under the Hood</div>
-    <div class="text-section text-text-primary mb-4">Layered architecture</div>
-    <p class="text-body text-muted-custom max-w-xl mx-auto">Enterprise-grade design patterns. Each layer is independent, testable, and replaceable.</p>
-  </div>
-  <div class="flex flex-col gap-3 fade-up">
-    <div class="flex items-center gap-4 bg-surface-1 border border-white/7 rounded-xl p-4 md:p-5 hover:border-accent/40 transition-colors">
-      <div class="w-10 h-10 bg-accent/10 rounded-lg flex items-center justify-center shrink-0"><span class="material-symbols-outlined text-accent-light text-[20px]">web_asset</span></div>
-      <div class="flex-1">
-        <h4 class="text-body font-medium text-text-primary">UI Layer</h4>
-        <p class="text-sm text-muted-custom">PyQt6 Fluent Design with DWM glass effects</p>
-      </div>
-      <div class="hidden sm:flex gap-2">
-        <span class="px-2.5 py-1 bg-accent/10 border border-accent/20 text-accent-light text-[11px] font-mono rounded-md">PyQt6</span>
-        <span class="px-2.5 py-1 bg-accent/10 border border-accent/20 text-accent-light text-[11px] font-mono rounded-md">DWM</span>
-      </div>
-    </div>
-    <div class="flex items-center gap-4 bg-surface-1 border border-white/7 rounded-xl p-4 md:p-5 hover:border-accent/40 transition-colors">
-      <div class="w-10 h-10 bg-accent/10 rounded-lg flex items-center justify-center shrink-0"><span class="material-symbols-outlined text-accent-light text-[20px]">dns</span></div>
-      <div class="flex-1">
-        <h4 class="text-body font-medium text-text-primary">Service Layer</h4>
-        <p class="text-sm text-muted-custom">Desktop, Ollama AI, and Startup Indexer services</p>
-      </div>
-      <div class="hidden sm:flex gap-2">
-        <span class="px-2.5 py-1 bg-accent/10 border border-accent/20 text-accent-light text-[11px] font-mono rounded-md">Ollama</span>
-        <span class="px-2.5 py-1 bg-accent/10 border border-accent/20 text-accent-light text-[11px] font-mono rounded-md">REST</span>
-      </div>
-    </div>
-    <div class="flex items-center gap-4 bg-surface-1 border border-white/7 rounded-xl p-4 md:p-5 hover:border-accent/40 transition-colors">
-      <div class="w-10 h-10 bg-accent/10 rounded-lg flex items-center justify-center shrink-0"><span class="material-symbols-outlined text-accent-light text-[20px]">memory</span></div>
-      <div class="flex-1">
-        <h4 class="text-body font-medium text-text-primary">Core Engine</h4>
-        <p class="text-sm text-muted-custom">Embeddings, hybrid search, query parser, time scoring</p>
-      </div>
-      <div class="hidden sm:flex gap-2">
-        <span class="px-2.5 py-1 bg-accent/10 border border-accent/20 text-accent-light text-[11px] font-mono rounded-md">MiniLM</span>
-        <span class="px-2.5 py-1 bg-accent/10 border border-accent/20 text-accent-light text-[11px] font-mono rounded-md">FAISS</span>
-        <span class="px-2.5 py-1 bg-accent/10 border border-accent/20 text-accent-light text-[11px] font-mono rounded-md">HNSW</span>
-      </div>
-    </div>
-    <div class="flex items-center gap-4 bg-surface-1 border border-white/7 rounded-xl p-4 md:p-5 hover:border-accent/40 transition-colors">
-      <div class="w-10 h-10 bg-accent/10 rounded-lg flex items-center justify-center shrink-0"><span class="material-symbols-outlined text-accent-light text-[20px]">database</span></div>
-      <div class="flex-1">
-        <h4 class="text-body font-medium text-text-primary">Storage Layer</h4>
-        <p class="text-sm text-muted-custom">SQLite metadata + FAISS vector index + SHA256 cache</p>
-      </div>
-      <div class="hidden sm:flex gap-2">
-        <span class="px-2.5 py-1 bg-accent/10 border border-accent/20 text-accent-light text-[11px] font-mono rounded-md">SQLite</span>
-        <span class="px-2.5 py-1 bg-accent/10 border border-accent/20 text-accent-light text-[11px] font-mono rounded-md">NumPy</span>
-      </div>
-    </div>
-    <div class="flex items-center gap-4 bg-surface-1 border border-white/7 rounded-xl p-4 md:p-5 hover:border-accent/40 transition-colors">
-      <div class="w-10 h-10 bg-accent/10 rounded-lg flex items-center justify-center shrink-0"><span class="material-symbols-outlined text-accent-light text-[20px]">input</span></div>
-      <div class="flex-1">
-        <h4 class="text-body font-medium text-text-primary">Ingestion</h4>
-        <p class="text-sm text-muted-custom">40+ file parsers with PyMuPDF, python-docx, python-pptx</p>
-      </div>
-      <div class="hidden sm:flex gap-2">
-        <span class="px-2.5 py-1 bg-accent/10 border border-accent/20 text-accent-light text-[11px] font-mono rounded-md">PyMuPDF</span>
-        <span class="px-2.5 py-1 bg-accent/10 border border-accent/20 text-accent-light text-[11px] font-mono rounded-md">docx</span>
-        <span class="px-2.5 py-1 bg-accent/10 border border-accent/20 text-accent-light text-[11px] font-mono rounded-md">pptx</span>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- PRICING -->
-<section class="px-4 md:px-6 max-w-5xl mx-auto py-16 md:py-24 border-t border-white/5" id="pricing">
-  <div class="text-center mb-12 md:mb-16">
-    <div class="text-label-up text-accent-light uppercase tracking-widest mb-3">Pricing</div>
-    <div class="text-section text-text-primary mb-4">One product. Three tiers. Forever yours.</div>
-    <p class="text-body text-muted-custom max-w-xl mx-auto">Neuron is an offline desktop product — no subscriptions, no recurring fees. Pay once, own it forever.</p>
-  </div>
-  <div class="grid grid-cols-1 md:grid-cols-3 gap-6 fade-up">
-    <!-- BASIC -->
-    <div class="bg-surface-1 border border-white/7 rounded-2xl p-8 flex flex-col hover:-translate-y-1 transition-transform duration-300">
-      <div class="text-label-up text-muted-custom uppercase tracking-widest mb-2">Basic</div>
-      <div class="text-4xl font-bold text-text-primary mb-1"><span class="text-xl align-top opacity-60">₹</span>119</div>
-      <div class="text-sm text-muted-custom mb-8">one-time · lifetime license</div>
-      <ul class="flex flex-col gap-3 mb-8 flex-grow">
-        <li class="flex items-center gap-3 text-sm text-text-primary"><span class="material-symbols-outlined text-green-dot text-[16px]">check</span> Semantic file search</li>
-        <li class="flex items-center gap-3 text-sm text-text-primary"><span class="material-symbols-outlined text-green-dot text-[16px]">check</span> 3 watch directories</li>
-        <li class="flex items-center gap-3 text-sm text-text-primary"><span class="material-symbols-outlined text-green-dot text-[16px]">check</span> 40+ file types</li>
-        <li class="flex items-center gap-3 text-sm text-text-primary"><span class="material-symbols-outlined text-green-dot text-[16px]">check</span> Windows 11 native UI</li>
-        <li class="flex items-center gap-3 text-sm text-text-primary"><span class="material-symbols-outlined text-green-dot text-[16px]">check</span> Keyboard shortcuts</li>
-        <li class="flex items-center gap-3 text-sm text-text-primary"><span class="material-symbols-outlined text-green-dot text-[16px]">check</span> Typo tolerance</li>
-        <li class="flex items-center gap-3 text-sm text-faint-custom"><span class="material-symbols-outlined text-[16px]">remove</span> Encyl AI summaries</li>
-        <li class="flex items-center gap-3 text-sm text-faint-custom"><span class="material-symbols-outlined text-[16px]">remove</span> LLM re-ranking</li>
-        <li class="flex items-center gap-3 text-sm text-faint-custom"><span class="material-symbols-outlined text-[16px]">remove</span> Unlimited watch paths</li>
-      </ul>
-      <button onclick="buyNeuron('Basic', 11900, 'Neuron Basic License')" id="rzp-basic-btn" class="w-full bg-transparent border border-white/10 text-text-primary py-3 rounded-lg text-sm font-medium hover:border-accent/50 transition-colors">Buy Basic — ₹119</button>
-    </div>
-
-    <!-- PRO (recommended) -->
-    <div class="bg-surface-2 border border-accent/50 rounded-2xl p-8 flex flex-col relative hover:-translate-y-1 transition-transform duration-300">
-      <div class="absolute -top-3 left-1/2 -translate-x-1/2 bg-accent-container text-white px-3 py-1 rounded-full text-[11px] font-bold tracking-wider uppercase">Recommended</div>
-      <div class="text-label-up text-muted-custom uppercase tracking-widest mb-2">Pro</div>
-      <div class="text-4xl font-bold text-text-primary mb-1"><span class="text-xl align-top opacity-60">₹</span>249</div>
-      <div class="text-sm text-muted-custom mb-8">one-time · lifetime license</div>
-      <ul class="flex flex-col gap-3 mb-8 flex-grow">
-        <li class="flex items-center gap-3 text-sm text-text-primary"><span class="material-symbols-outlined text-green-dot text-[16px]">check</span> Everything in Basic</li>
-        <li class="flex items-center gap-3 text-sm text-text-primary"><span class="material-symbols-outlined text-green-dot text-[16px]">check</span> Unlimited watch paths</li>
-        <li class="flex items-center gap-3 text-sm text-text-primary"><span class="material-symbols-outlined text-green-dot text-[16px]">check</span> Encyl AI file summaries</li>
-        <li class="flex items-center gap-3 text-sm text-text-primary"><span class="material-symbols-outlined text-green-dot text-[16px]">check</span> LLM-powered re-ranking</li>
-        <li class="flex items-center gap-3 text-sm text-text-primary"><span class="material-symbols-outlined text-green-dot text-[16px]">check</span> Priority indexing</li>
-        <li class="flex items-center gap-3 text-sm text-text-primary"><span class="material-symbols-outlined text-green-dot text-[16px]">check</span> Export search results</li>
-        <li class="flex items-center gap-3 text-sm text-text-primary"><span class="material-symbols-outlined text-green-dot text-[16px]">check</span> All future updates</li>
-        <li class="flex items-center gap-3 text-sm text-faint-custom"><span class="material-symbols-outlined text-[16px]">remove</span> Activity search & Memory OS</li>
-        <li class="flex items-center gap-3 text-sm text-faint-custom"><span class="material-symbols-outlined text-[16px]">remove</span> Commercial use license</li>
-      </ul>
-      <button onclick="buyNeuron('Pro', 24900, 'Neuron Pro License')" id="rzp-pro-btn" class="w-full bg-accent-container text-white py-3 rounded-lg text-sm font-medium hover:bg-accent-light transition-colors">Buy Pro — ₹249</button>
-    </div>
-
-    <!-- FULL-SEARCH -->
-    <div class="bg-surface-1 border border-white/7 rounded-2xl p-8 flex flex-col hover:-translate-y-1 transition-transform duration-300">
-      <div class="text-label-up text-muted-custom uppercase tracking-widest mb-2">Full-Search</div>
-      <div class="text-4xl font-bold text-text-primary mb-1"><span class="text-xl align-top opacity-60">₹</span>499</div>
-      <div class="text-sm text-muted-custom mb-8">one-time · lifetime license</div>
-      <ul class="flex flex-col gap-3 mb-8 flex-grow">
-        <li class="flex items-center gap-3 text-sm text-text-primary"><span class="material-symbols-outlined text-green-dot text-[16px]">check</span> Everything in Pro</li>
-        <li class="flex items-center gap-3 text-sm text-text-primary"><span class="material-symbols-outlined text-green-dot text-[16px]">check</span> Activity search & Memory OS</li>
-        <li class="flex items-center gap-3 text-sm text-text-primary"><span class="material-symbols-outlined text-green-dot text-[16px]">check</span> Session-grouped results</li>
-        <li class="flex items-center gap-3 text-sm text-text-primary"><span class="material-symbols-outlined text-green-dot text-[16px]">check</span> Commercial use license</li>
-        <li class="flex items-center gap-3 text-sm text-text-primary"><span class="material-symbols-outlined text-green-dot text-[16px]">check</span> Priority support</li>
-        <li class="flex items-center gap-3 text-sm text-text-primary"><span class="material-symbols-outlined text-green-dot text-[16px]">check</span> Early access to new features</li>
-        <li class="flex items-center gap-3 text-sm text-text-primary"><span class="material-symbols-outlined text-green-dot text-[16px]">check</span> All future major updates</li>
-        <li class="flex items-center gap-3 text-sm text-text-primary"><span class="material-symbols-outlined text-green-dot text-[16px]">check</span> Custom watch exclusions</li>
-        <li class="flex items-center gap-3 text-sm text-text-primary"><span class="material-symbols-outlined text-green-dot text-[16px]">check</span> Dedicated onboarding</li>
-      </ul>
-      <button onclick="buyNeuron('Full-Search', 49900, 'Neuron Full-Search License')" id="rzp-full-btn" class="w-full bg-transparent border border-white/10 text-text-primary py-3 rounded-lg text-sm font-medium hover:border-accent/50 transition-colors">Buy Full-Search — ₹499</button>
-    </div>
-  </div>
-</section>
-
-<!-- PRODUCT PIPELINE -->
-<section class="px-4 md:px-6 max-w-6xl mx-auto py-16 md:py-24 border-t border-white/5" id="products">
-  <div class="text-label-up text-accent-light uppercase tracking-widest mb-3">Product Pipeline</div>
-  <div class="text-section text-text-primary mb-4">What we're building</div>
-  <p class="text-body text-muted-custom max-w-2xl mb-12">Every product starts with a real problem. We engineer solutions that are offline-first, privacy-respecting, and built to last.</p>
-  
-  <div class="grid grid-cols-1 md:grid-cols-3 gap-6 fade-up">
-    <div class="bg-surface-1 border border-white/7 rounded-xl p-8 relative overflow-hidden group hover:border-accent/50 transition-colors">
-      <div class="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-accent to-purple-500 opacity-0 group-hover:opacity-100 transition-opacity"></div>
-      <h3 class="text-lg font-medium text-text-primary mb-3">LuminaPlayer</h3>
-      <p class="text-sm text-muted-custom leading-relaxed mb-6">AI-powered media player with real-time subtitle generation via Whisper ASR, 521-class audio event detection with YAMNet, and offline translation.</p>
-      <span class="inline-block px-3 py-1 bg-accent/10 text-accent-light text-xs font-medium rounded-full">Flagship</span>
-    </div>
-    <div class="bg-surface-1 border border-white/7 rounded-xl p-8 relative overflow-hidden group hover:border-accent/50 transition-colors">
-      <div class="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-accent to-purple-500 opacity-0 group-hover:opacity-100 transition-opacity"></div>
-      <h3 class="text-lg font-medium text-text-primary mb-3">Astra Player</h3>
-      <p class="text-sm text-muted-custom leading-relaxed mb-6">Next-gen evolution of LuminaPlayer. Pure Python with PySide6/Qt6, parallel AI pipeline, plugin architecture, and streaming inference.</p>
-      <span class="inline-block px-3 py-1 bg-green-500/10 text-green-400 text-xs font-medium rounded-full">Active Development</span>
-    </div>
-    <div class="bg-surface-1 border border-white/7 rounded-xl p-8 relative overflow-hidden group hover:border-accent/50 transition-colors">
-      <div class="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-accent to-purple-500 opacity-0 group-hover:opacity-100 transition-opacity"></div>
-      <h3 class="text-lg font-medium text-text-primary mb-3">Lab Viva Assistant</h3>
-      <p class="text-sm text-muted-custom leading-relaxed mb-6">Full-stack web platform for secure online lab examinations. AI-generated MCQs, Google Sheets integration, and anti-cheat enforcement.</p>
-      <span class="inline-block px-3 py-1 bg-green-500/10 text-green-400 text-xs font-medium rounded-full">Active Development</span>
-    </div>
-  </div>
-</section>
-
-<!-- ABOUT -->
-<section class="px-4 md:px-6 max-w-6xl mx-auto py-16 md:py-24 border-t border-white/5" id="about">
-  <div class="grid grid-cols-1 lg:grid-cols-2 gap-12 lg:gap-24 items-center fade-up">
-    <div>
-      <div class="text-label-up text-accent-light uppercase tracking-widest mb-3">About ZeroX</div>
-      <h2 class="text-section text-text-primary mb-6">Built by engineers,<br>for the world.</h2>
-      <p class="text-body text-muted-custom leading-relaxed mb-4">ZeroX is a product-based IT company founded with a simple belief: great software starts with great engineering. We don't outsource. We don't cut corners. Every product we ship is designed, architected, and coded in-house.</p>
-      <p class="text-body text-muted-custom leading-relaxed mb-6">Our focus is on building products that work offline, respect privacy, and solve problems that matter.</p>
-      <p class="text-sm text-faint-custom">Based in Tamil Nadu, India. Building for the world.</p>
-    </div>
-    <div class="grid grid-cols-2 gap-4">
-      <div class="bg-surface-1 border border-white/7 rounded-xl p-6 text-center">
-        <div class="text-3xl font-bold text-accent-light mb-1">22K+</div>
-        <div class="text-xs text-muted-custom">Lines of production code</div>
-      </div>
-      <div class="bg-surface-1 border border-white/7 rounded-xl p-6 text-center">
-        <div class="text-3xl font-bold text-accent-light mb-1">5+</div>
-        <div class="text-xs text-muted-custom">Active projects</div>
-      </div>
-      <div class="bg-surface-1 border border-white/7 rounded-xl p-6 text-center">
-        <div class="text-3xl font-bold text-accent-light mb-1">100%</div>
-        <div class="text-xs text-muted-custom">Offline-first approach</div>
-      </div>
-      <div class="bg-surface-1 border border-white/7 rounded-xl p-6 text-center">
-        <div class="text-3xl font-bold text-accent-light mb-1">2026</div>
-        <div class="text-xs text-muted-custom">Founded</div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- CTA -->
-<section class="relative px-4 md:px-6 max-w-6xl mx-auto py-24 md:py-32 border-t border-white/5 text-center overflow-hidden" id="contact">
-  <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-accent/10 rounded-full blur-[100px] -z-10 pointer-events-none"></div>
-  <div class="fade-up relative z-10">
-    <div class="text-label-up text-accent-light uppercase tracking-widest mb-3">Get in Touch</div>
-    <h2 class="text-section text-text-primary mb-6">Ready to build<br>something extraordinary?</h2>
-    <p class="text-body text-muted-custom max-w-xl mx-auto mb-10">Whether you have a product idea, want to collaborate, or just want to talk engineering — we'd love to hear from you.</p>
-    <div class="flex flex-wrap justify-center gap-4">
-      <a href="mailto:rahultech72216@gmail.com" class="bg-accent-container text-white px-6 py-3 rounded-lg text-body font-medium flex items-center gap-2 hover:bg-accent-light transition-colors">
-        <span class="material-symbols-outlined text-[18px]">mail</span> Contact Us
-      </a>
-      <a href="https://github.com/RAHUL-DevelopeRR" target="_blank" class="bg-transparent border border-white/10 text-text-primary px-6 py-3 rounded-lg text-body hover:bg-surface-1 transition-colors flex items-center gap-2">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
-        GitHub
-      </a>
-    </div>
-  </div>
-</section>
-
-<!-- FOOTER -->
-<footer class="w-full pt-20 pb-10 border-t border-white/5 bg-[#08070b]">
-  <div class="grid grid-cols-2 md:grid-cols-5 gap-12 px-4 md:px-6 max-w-7xl mx-auto">
-    <div class="col-span-2 flex flex-col gap-4">
-      <a href="#" class="flex items-center gap-2 text-xl font-bold text-white">
-        <svg class="text-accent-light" fill="none" height="24" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" width="24"><circle cx="12" cy="12" r="10"></circle><path d="M8 8l8 8m0-8l-8 8"></path></svg>
-        zero-x.live
-      </a>
-      <p class="text-sm text-faint-custom leading-relaxed max-w-xs">Engineering products from zero to extraordinary. An IT product development company.</p>
-    </div>
+<!-- ═══ ARCHITECTURE — Linear-style full showcase ═══ -->
+<section class="py-32 md:py-40 px-5 border-t border-white/[0.04]" id="architecture">
+  <div class="max-w-[900px] mx-auto reveal">
+    <a class="inline-flex items-center gap-2 text-zx-accent-h text-[13px] font-medium tracking-wide mb-6">3.0&ensp;Under the Hood&ensp;→</a>
+    <h2 class="text-[clamp(28px,4vw,40px)] font-medium tracking-[-0.02em] leading-[1.15] text-white mb-5">Layered architecture</h2>
+    <p class="text-[16px] text-zx-muted max-w-lg leading-relaxed mb-12">Enterprise-grade design. Each layer is independent, testable, and replaceable.</p>
     <div class="flex flex-col gap-3">
-      <span class="text-sm font-semibold text-text-primary mb-1">Products</span>
-      <a class="text-sm text-muted-custom hover:text-accent-light transition-colors" href="#neuron">Neuron</a>
-      <a class="text-sm text-muted-custom hover:text-accent-light transition-colors" href="#products">LuminaPlayer</a>
-      <a class="text-sm text-muted-custom hover:text-accent-light transition-colors" href="#products">Astra Player</a>
-    </div>
-    <div class="flex flex-col gap-3">
-      <span class="text-sm font-semibold text-text-primary mb-1">Company</span>
-      <a class="text-sm text-muted-custom hover:text-accent-light transition-colors" href="#about">About</a>
-      <a class="text-sm text-muted-custom hover:text-accent-light transition-colors" href="#pricing">Pricing</a>
-      <a class="text-sm text-muted-custom hover:text-accent-light transition-colors" href="#contact">Contact</a>
-    </div>
-    <div class="flex flex-col gap-3">
-      <span class="text-sm font-semibold text-text-primary mb-1">Connect</span>
-      <a class="text-sm text-muted-custom hover:text-accent-light transition-colors" href="https://github.com/RAHUL-DevelopeRR" target="_blank">GitHub</a>
-      <a class="text-sm text-muted-custom hover:text-accent-light transition-colors" href="mailto:rahultech72216@gmail.com">Email</a>
+      <div class="flex items-center gap-4 bg-zx-card border border-white/[0.06] rounded-xl p-5 hover:border-white/[0.12] transition-colors"><div class="flex-1"><div class="text-[14px] font-medium text-white">UI Layer</div><div class="text-[13px] text-zx-muted">PyQt6 Fluent Design with DWM glass</div></div><div class="hidden sm:flex gap-1.5"><span class="px-2 py-0.5 bg-white/[0.04] text-zx-muted text-[11px] font-mono rounded">PyQt6</span><span class="px-2 py-0.5 bg-white/[0.04] text-zx-muted text-[11px] font-mono rounded">DWM</span></div></div>
+      <div class="flex items-center gap-4 bg-zx-card border border-white/[0.06] rounded-xl p-5 hover:border-white/[0.12] transition-colors"><div class="flex-1"><div class="text-[14px] font-medium text-white">Service Layer</div><div class="text-[13px] text-zx-muted">Desktop, Ollama AI, Startup Indexer</div></div><div class="hidden sm:flex gap-1.5"><span class="px-2 py-0.5 bg-white/[0.04] text-zx-muted text-[11px] font-mono rounded">Ollama</span><span class="px-2 py-0.5 bg-white/[0.04] text-zx-muted text-[11px] font-mono rounded">REST</span></div></div>
+      <div class="flex items-center gap-4 bg-zx-card border border-white/[0.06] rounded-xl p-5 hover:border-white/[0.12] transition-colors"><div class="flex-1"><div class="text-[14px] font-medium text-white">Core Engine</div><div class="text-[13px] text-zx-muted">Embeddings, hybrid search, query parser</div></div><div class="hidden sm:flex gap-1.5"><span class="px-2 py-0.5 bg-white/[0.04] text-zx-muted text-[11px] font-mono rounded">MiniLM</span><span class="px-2 py-0.5 bg-white/[0.04] text-zx-muted text-[11px] font-mono rounded">FAISS</span></div></div>
+      <div class="flex items-center gap-4 bg-zx-card border border-white/[0.06] rounded-xl p-5 hover:border-white/[0.12] transition-colors"><div class="flex-1"><div class="text-[14px] font-medium text-white">Storage</div><div class="text-[13px] text-zx-muted">SQLite metadata + FAISS vector index</div></div><div class="hidden sm:flex gap-1.5"><span class="px-2 py-0.5 bg-white/[0.04] text-zx-muted text-[11px] font-mono rounded">SQLite</span><span class="px-2 py-0.5 bg-white/[0.04] text-zx-muted text-[11px] font-mono rounded">NumPy</span></div></div>
+      <div class="flex items-center gap-4 bg-zx-card border border-white/[0.06] rounded-xl p-5 hover:border-white/[0.12] transition-colors"><div class="flex-1"><div class="text-[14px] font-medium text-white">Ingestion</div><div class="text-[13px] text-zx-muted">40+ parsers with PyMuPDF, python-docx</div></div><div class="hidden sm:flex gap-1.5"><span class="px-2 py-0.5 bg-white/[0.04] text-zx-muted text-[11px] font-mono rounded">PyMuPDF</span><span class="px-2 py-0.5 bg-white/[0.04] text-zx-muted text-[11px] font-mono rounded">pptx</span></div></div>
     </div>
   </div>
-  <div class="mt-16 pt-8 border-t border-white/5 px-4 md:px-6 max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
-    <p class="text-xs text-faint-custom">© 2026 ZeroX Corporation. Built by builders.</p>
+</section>
+
+<!-- ═══ PRICING ═══ -->
+<section class="py-32 md:py-40 px-5 border-t border-white/[0.04]" id="pricing">
+  <div class="max-w-[1100px] mx-auto">
+    <div class="text-center mb-20 reveal">
+      <a class="inline-flex items-center gap-2 text-zx-accent-h text-[13px] font-medium tracking-wide mb-6">4.0&ensp;Pricing&ensp;→</a>
+      <h2 class="text-[clamp(28px,4vw,40px)] font-medium tracking-[-0.02em] leading-[1.15] text-white mb-5">One product. Three tiers.<br><span class="text-zx-muted">Forever yours.</span></h2>
+      <p class="text-[16px] text-zx-muted max-w-lg mx-auto leading-relaxed">Pay once. Own it forever. No subscriptions.</p>
+    </div>
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-5 reveal">
+      <div class="bg-zx-card border border-white/[0.06] rounded-2xl p-8 flex flex-col">
+        <div class="text-[12px] text-zx-muted font-medium tracking-widest uppercase mb-3">Basic</div>
+        <div class="text-4xl font-bold text-white mb-1"><span class="text-lg opacity-50">₹</span>119</div>
+        <div class="text-[13px] text-zx-muted mb-8">one-time · lifetime</div>
+        <ul class="flex flex-col gap-2.5 mb-8 flex-grow text-[13px]">
+          <li class="flex items-center gap-2.5 text-white"><span class="text-emerald-400">✓</span>Semantic file search</li>
+          <li class="flex items-center gap-2.5 text-white"><span class="text-emerald-400">✓</span>3 watch directories</li>
+          <li class="flex items-center gap-2.5 text-white"><span class="text-emerald-400">✓</span>40+ file types</li>
+          <li class="flex items-center gap-2.5 text-white"><span class="text-emerald-400">✓</span>Windows 11 native UI</li>
+          <li class="flex items-center gap-2.5 text-white"><span class="text-emerald-400">✓</span>Keyboard shortcuts</li>
+          <li class="flex items-center gap-2.5 text-white"><span class="text-emerald-400">✓</span>Typo tolerance</li>
+          <li class="flex items-center gap-2.5 text-zx-faint"><span>—</span>Encyl AI summaries</li>
+          <li class="flex items-center gap-2.5 text-zx-faint"><span>—</span>LLM re-ranking</li>
+        </ul>
+        <button onclick="buyNeuron('Basic',11900,'Neuron Basic License')" id="rzp-basic-btn" class="w-full border border-white/10 text-white py-3 rounded-full text-[13px] font-medium hover:bg-white/5 transition-colors">Buy Basic — ₹119</button>
+      </div>
+      <div class="bg-zx-card border border-zx-accent/40 rounded-2xl p-8 flex flex-col relative">
+        <div class="absolute -top-3 left-1/2 -translate-x-1/2 bg-white text-black px-3 py-1 rounded-full text-[11px] font-bold tracking-wider uppercase">Recommended</div>
+        <div class="text-[12px] text-zx-muted font-medium tracking-widest uppercase mb-3">Pro</div>
+        <div class="text-4xl font-bold text-white mb-1"><span class="text-lg opacity-50">₹</span>249</div>
+        <div class="text-[13px] text-zx-muted mb-8">one-time · lifetime</div>
+        <ul class="flex flex-col gap-2.5 mb-8 flex-grow text-[13px]">
+          <li class="flex items-center gap-2.5 text-white"><span class="text-emerald-400">✓</span>Everything in Basic</li>
+          <li class="flex items-center gap-2.5 text-white"><span class="text-emerald-400">✓</span>Unlimited watch paths</li>
+          <li class="flex items-center gap-2.5 text-white"><span class="text-emerald-400">✓</span>Encyl AI summaries</li>
+          <li class="flex items-center gap-2.5 text-white"><span class="text-emerald-400">✓</span>LLM-powered re-ranking</li>
+          <li class="flex items-center gap-2.5 text-white"><span class="text-emerald-400">✓</span>Priority indexing</li>
+          <li class="flex items-center gap-2.5 text-white"><span class="text-emerald-400">✓</span>Export search results</li>
+          <li class="flex items-center gap-2.5 text-white"><span class="text-emerald-400">✓</span>All future updates</li>
+          <li class="flex items-center gap-2.5 text-zx-faint"><span>—</span>Activity search</li>
+        </ul>
+        <button onclick="buyNeuron('Pro',24900,'Neuron Pro License')" id="rzp-pro-btn" class="w-full bg-white text-black py-3 rounded-full text-[13px] font-medium hover:bg-gray-200 transition-colors">Buy Pro — ₹249</button>
+      </div>
+      <div class="bg-zx-card border border-white/[0.06] rounded-2xl p-8 flex flex-col">
+        <div class="text-[12px] text-zx-muted font-medium tracking-widest uppercase mb-3">Full-Search</div>
+        <div class="text-4xl font-bold text-white mb-1"><span class="text-lg opacity-50">₹</span>499</div>
+        <div class="text-[13px] text-zx-muted mb-8">one-time · lifetime</div>
+        <ul class="flex flex-col gap-2.5 mb-8 flex-grow text-[13px]">
+          <li class="flex items-center gap-2.5 text-white"><span class="text-emerald-400">✓</span>Everything in Pro</li>
+          <li class="flex items-center gap-2.5 text-white"><span class="text-emerald-400">✓</span>Activity search & Memory OS</li>
+          <li class="flex items-center gap-2.5 text-white"><span class="text-emerald-400">✓</span>Session-grouped results</li>
+          <li class="flex items-center gap-2.5 text-white"><span class="text-emerald-400">✓</span>Commercial use license</li>
+          <li class="flex items-center gap-2.5 text-white"><span class="text-emerald-400">✓</span>Priority support</li>
+          <li class="flex items-center gap-2.5 text-white"><span class="text-emerald-400">✓</span>Early access features</li>
+          <li class="flex items-center gap-2.5 text-white"><span class="text-emerald-400">✓</span>All major updates</li>
+          <li class="flex items-center gap-2.5 text-white"><span class="text-emerald-400">✓</span>Dedicated onboarding</li>
+        </ul>
+        <button onclick="buyNeuron('Full-Search',49900,'Neuron Full-Search License')" id="rzp-full-btn" class="w-full border border-white/10 text-white py-3 rounded-full text-[13px] font-medium hover:bg-white/5 transition-colors">Buy Full-Search — ₹499</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ PIPELINE ═══ -->
+<section class="py-32 md:py-40 px-5 border-t border-white/[0.04]" id="pipeline">
+  <div class="max-w-[1100px] mx-auto reveal">
+    <a class="inline-flex items-center gap-2 text-zx-accent-h text-[13px] font-medium tracking-wide mb-6">5.0&ensp;Pipeline&ensp;→</a>
+    <h2 class="text-[clamp(28px,4vw,40px)] font-medium tracking-[-0.02em] leading-[1.15] text-white mb-5">What we're building</h2>
+    <p class="text-[16px] text-zx-muted max-w-lg leading-relaxed mb-12">Every product starts with a real problem. Offline-first, privacy-respecting, built to last.</p>
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-5">
+      <div class="bg-zx-card border border-white/[0.06] rounded-xl p-7 hover:border-white/[0.12] transition-colors"><div class="text-[11px] text-zx-accent-h font-medium tracking-widest uppercase mb-4">Flagship</div><h3 class="text-[16px] font-medium text-white mb-3">LuminaPlayer</h3><p class="text-[14px] text-zx-muted leading-relaxed">AI-powered media player with real-time subtitles via Whisper, 521-class audio event detection via YAMNet.</p></div>
+      <div class="bg-zx-card border border-white/[0.06] rounded-xl p-7 hover:border-white/[0.12] transition-colors"><div class="text-[11px] text-emerald-400 font-medium tracking-widest uppercase mb-4">Active</div><h3 class="text-[16px] font-medium text-white mb-3">Astra Player</h3><p class="text-[14px] text-zx-muted leading-relaxed">Next-gen LuminaPlayer. Pure Python, PySide6/Qt6, parallel AI pipeline, plugin architecture.</p></div>
+      <div class="bg-zx-card border border-white/[0.06] rounded-xl p-7 hover:border-white/[0.12] transition-colors"><div class="text-[11px] text-emerald-400 font-medium tracking-widest uppercase mb-4">Active</div><h3 class="text-[16px] font-medium text-white mb-3">Lab Viva Assistant</h3><p class="text-[14px] text-zx-muted leading-relaxed">Full-stack examination platform. AI-generated MCQs, Google Sheets integration, anti-cheat.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ ABOUT ═══ -->
+<section class="py-32 md:py-40 px-5 border-t border-white/[0.04]" id="about">
+  <div class="max-w-[1100px] mx-auto">
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-16 lg:gap-24 items-center reveal">
+      <div>
+        <a class="inline-flex items-center gap-2 text-zx-accent-h text-[13px] font-medium tracking-wide mb-6">6.0&ensp;Company&ensp;→</a>
+        <h2 class="text-[clamp(28px,4vw,40px)] font-medium tracking-[-0.02em] leading-[1.15] text-white mb-6">Built by engineers,<br><span class="text-zx-muted">for the world.</span></h2>
+        <p class="text-[16px] text-zx-muted leading-relaxed mb-4">ZeroX is a product-based IT company. Great software starts with great engineering. We don't outsource. We don't cut corners.</p>
+        <p class="text-[16px] text-zx-muted leading-relaxed mb-6">Our focus is on building products that work offline, respect privacy, and solve problems that matter.</p>
+        <p class="text-[13px] text-zx-faint">Based in Tamil Nadu, India. Building for the world.</p>
+      </div>
+      <div class="grid grid-cols-2 gap-4">
+        <div class="bg-zx-card border border-white/[0.06] rounded-xl p-6 text-center"><div class="text-3xl font-bold text-white mb-1">22K+</div><div class="text-[12px] text-zx-muted">Lines of code</div></div>
+        <div class="bg-zx-card border border-white/[0.06] rounded-xl p-6 text-center"><div class="text-3xl font-bold text-white mb-1">5+</div><div class="text-[12px] text-zx-muted">Active projects</div></div>
+        <div class="bg-zx-card border border-white/[0.06] rounded-xl p-6 text-center"><div class="text-3xl font-bold text-white mb-1">100%</div><div class="text-[12px] text-zx-muted">Offline-first</div></div>
+        <div class="bg-zx-card border border-white/[0.06] rounded-xl p-6 text-center"><div class="text-3xl font-bold text-white mb-1">2026</div><div class="text-[12px] text-zx-muted">Founded</div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ CTA ═══ -->
+<section class="relative py-40 md:py-48 px-5 border-t border-white/[0.04] text-center overflow-hidden" id="contact">
+  <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-zx-accent/[0.06] rounded-full blur-[120px] pointer-events-none"></div>
+  <div class="relative z-10 reveal">
+    <h2 class="text-[clamp(28px,5vw,48px)] font-medium tracking-[-0.02em] leading-[1.15] text-white mb-6">Built for engineers.<br><span class="text-zx-muted">Available today.</span></h2>
+    <div class="flex flex-wrap justify-center gap-4 mt-10">
+      <a href="mailto:rahultech72216@gmail.com" class="bg-white text-black px-6 py-3 rounded-full text-[15px] font-medium hover:bg-gray-200 transition-colors">Contact us</a>
+      <a href="https://github.com/RAHUL-DevelopeRR" target="_blank" class="border border-white/10 text-white px-6 py-3 rounded-full text-[15px] hover:bg-white/5 transition-colors">GitHub</a>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ FOOTER ═══ -->
+<footer class="border-t border-white/[0.04] bg-zx-bg pt-16 pb-10 px-5">
+  <div class="max-w-[1100px] mx-auto grid grid-cols-2 md:grid-cols-5 gap-10">
+    <div class="col-span-2">
+      <a href="#" class="block mb-4"><img src="./Assets/Zero-xBnW.png" alt="zero-x.live" class="h-5"/></a>
+      <p class="text-[13px] text-zx-faint leading-relaxed max-w-[260px]">Engineering products from zero to extraordinary.</p>
+    </div>
+    <div class="flex flex-col gap-2.5">
+      <span class="text-[13px] font-medium text-white mb-1">Product</span>
+      <a href="#neuron" class="text-[13px] text-zx-muted hover:text-white transition-colors">Neuron</a>
+      <a href="#pipeline" class="text-[13px] text-zx-muted hover:text-white transition-colors">LuminaPlayer</a>
+      <a href="#pipeline" class="text-[13px] text-zx-muted hover:text-white transition-colors">Astra Player</a>
+      <a href="#pricing" class="text-[13px] text-zx-muted hover:text-white transition-colors">Pricing</a>
+    </div>
+    <div class="flex flex-col gap-2.5">
+      <span class="text-[13px] font-medium text-white mb-1">Company</span>
+      <a href="#about" class="text-[13px] text-zx-muted hover:text-white transition-colors">About</a>
+      <a href="#contact" class="text-[13px] text-zx-muted hover:text-white transition-colors">Contact</a>
+    </div>
+    <div class="flex flex-col gap-2.5">
+      <span class="text-[13px] font-medium text-white mb-1">Connect</span>
+      <a href="https://github.com/RAHUL-DevelopeRR" target="_blank" class="text-[13px] text-zx-muted hover:text-white transition-colors">GitHub</a>
+      <a href="mailto:rahultech72216@gmail.com" class="text-[13px] text-zx-muted hover:text-white transition-colors">Email</a>
+    </div>
+  </div>
+  <div class="max-w-[1100px] mx-auto mt-14 pt-6 border-t border-white/[0.04]">
+    <p class="text-[12px] text-zx-faint">© 2026 ZeroX Corporation. Built by builders.</p>
   </div>
 </footer>
 
-<!-- Razorpay Checkout SDK -->
 <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
-
 <script>
-// Mobile Nav
-const mobBtn = document.getElementById('mobBtn');
-const mobClose = document.getElementById('mobClose');
-const mobileNav = document.getElementById('mobileNav');
-
-mobBtn.addEventListener('click', () => {
-  mobileNav.classList.remove('hidden');
-  mobileNav.classList.add('flex');
-  document.body.style.overflow = 'hidden';
-});
-
-function closeMobileNav() {
-  mobileNav.classList.add('hidden');
-  mobileNav.classList.remove('flex');
-  document.body.style.overflow = '';
-}
-mobClose.addEventListener('click', closeMobileNav);
-
-// Scroll fade-in
-const obs = new IntersectionObserver((entries) => {
-  entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('visible'); obs.unobserve(e.target); } });
-}, { threshold: 0.1, rootMargin: '0px 0px -40px 0px' });
-document.querySelectorAll('.fade-up').forEach(el => obs.observe(el));
-
-// Smooth scrolling
-document.querySelectorAll('a[href^="#"]').forEach(a => {
-  a.addEventListener('click', e => {
-    const targetId = a.getAttribute('href');
-    if (targetId === '#') return;
-    const t = document.querySelector(targetId);
-    if (t) {
-      e.preventDefault();
-      t.scrollIntoView({ behavior: 'smooth' });
-    }
-  });
-});
-
-// Sticky header styling on scroll
-window.addEventListener('scroll', () => {
-  const nav = document.getElementById('site-nav');
-  if (window.scrollY > 20) {
-    nav.classList.add('border-white/10', 'bg-[#131316]/85');
-    nav.classList.remove('border-transparent', 'bg-transparent');
-  } else {
-    nav.classList.add('border-transparent', 'bg-transparent');
-    nav.classList.remove('border-white/10', 'bg-[#131316]/85');
-  }
-}, { passive: true });
-
-// Razorpay Checkout
-function buyNeuron(tier, amountPaise, description) {
-  const btnId = 'rzp-' + tier.toLowerCase().replace('-', '') + '-btn';
-  const options = {
-    key: 'rzp_live_SZsvcPuBbSv5TA',
-    amount: amountPaise,
-    currency: 'INR',
-    name: 'ZeroX',
-    description: description + ' — Lifetime',
-    image: './Assets/neuron_circular.png',
-    handler: function(response) {
-      const btn = document.getElementById(btnId);
-      if (btn) {
-        btn.innerHTML = '<span class="material-symbols-outlined text-[18px]">check_circle</span> Payment Successful';
-        btn.className = 'w-full bg-green-500/20 text-green-400 py-3 rounded-lg text-sm font-medium flex items-center justify-center gap-2 border border-green-500/50';
-        btn.disabled = true;
-      }
-      const mailto = 'mailto:rahultech72216@gmail.com'
-        + '?subject=' + encodeURIComponent(description + ' — Payment ' + response.razorpay_payment_id)
-        + '&body=' + encodeURIComponent('Hi,\n\nI just purchased ' + description + '.\n\nPayment ID: ' + response.razorpay_payment_id + '\nTier: ' + tier + '\nPlease send my license key.\n\nThanks!');
-      setTimeout(() => {
-        if (confirm('Payment successful! 🎉\n\nPayment ID: ' + response.razorpay_payment_id + '\nTier: ' + tier + '\n\nClick OK to email us your payment ID and receive your license key.')) {
-          window.location.href = mailto;
-        }
-      }, 500);
-    },
-    theme: { color: '#5e5bff' }
-  };
-  const rzp = new Razorpay(options);
-  rzp.on('payment.failed', function(response) {
-    alert('Payment failed: ' + response.error.description + '\n\nPlease try again or contact rahultech72216@gmail.com');
-  });
-  rzp.open();
-}
+const mobBtn=document.getElementById('mobBtn'),mobClose=document.getElementById('mobClose'),mobileNav=document.getElementById('mobileNav');
+mobBtn.addEventListener('click',()=>{mobileNav.classList.remove('hidden');mobileNav.classList.add('flex');document.body.style.overflow='hidden'});
+function closeMob(){mobileNav.classList.add('hidden');mobileNav.classList.remove('flex');document.body.style.overflow=''}
+mobClose.addEventListener('click',closeMob);
+const obs=new IntersectionObserver(e=>{e.forEach(el=>{if(el.isIntersecting){el.target.classList.add('visible');obs.unobserve(el.target)}})},{threshold:.08,rootMargin:'0px 0px -60px 0px'});
+document.querySelectorAll('.reveal').forEach(el=>obs.observe(el));
+document.querySelectorAll('a[href^="#"]').forEach(a=>{a.addEventListener('click',e=>{const id=a.getAttribute('href');if(id==='#')return;const t=document.querySelector(id);if(t){e.preventDefault();t.scrollIntoView({behavior:'smooth'})}})});
+function buyNeuron(tier,amt,desc){
+  const bid='rzp-'+tier.toLowerCase().replace('-','')+'Btn';
+  const opts={key:'rzp_live_SZsvcPuBbSv5TA',amount:amt,currency:'INR',name:'ZeroX',description:desc+' — Lifetime',image:'./Assets/neuron_circular.png',
+    handler:function(r){
+      const b=document.getElementById('rzp-'+tier.toLowerCase().replace('-','')+ '-btn');
+      if(b){b.textContent='✓ Payment Successful';b.className='w-full bg-emerald-500/20 text-emerald-400 py-3 rounded-full text-[13px] font-medium border border-emerald-500/40';b.disabled=true}
+      const ml='mailto:rahultech72216@gmail.com?subject='+encodeURIComponent(desc+' — Payment '+r.razorpay_payment_id)+'&body='+encodeURIComponent('Hi,\n\nI purchased '+desc+'.\nPayment ID: '+r.razorpay_payment_id+'\nTier: '+tier+'\nPlease send my license key.\n\nThanks!');
+      setTimeout(()=>{if(confirm('Payment successful! 🎉\n\nPayment ID: '+r.razorpay_payment_id+'\nTier: '+tier+'\n\nClick OK to email us for your license key.')){window.location.href=ml}},500)},
+    theme:{color:'#5e5bff'}};
+  const rzp=new Razorpay(opts);
+  rzp.on('payment.failed',function(r){alert('Payment failed: '+r.error.description+'\n\nPlease try again or contact rahultech72216@gmail.com')});
+  rzp.open()}
 </script>
-</main>
 </body>
 </html>
