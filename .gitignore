@@ -5,8 +5,13 @@
 *.zip
 
 # Sensitive files
+.env
+*.env.local
 Assets/rzp-key.csv
 Assets/password.html
+
+# Dependencies
+node_modules/
 
 # Large binaries
 *.pdf

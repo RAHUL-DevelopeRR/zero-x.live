@@ -3,99 +3,232 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>NeuronCLI — Connecting</title>
+    <title>NeuronCLI — Auth Callback</title>
+    <link rel="icon" type="image/svg+xml" href="../../Assets/round.svg">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
-            font-family: -apple-system, 'Segoe UI', Roboto, sans-serif;
+            font-family: 'Inter', -apple-system, 'Segoe UI', Roboto, sans-serif;
             display: flex; justify-content: center; align-items: center;
             min-height: 100vh;
-            background: linear-gradient(135deg, #0f0f23 0%, #1a1a3e 100%);
-            color: #e0e0e0;
+            background: #08070b;
+            color: #f0f0f0;
         }
         .card {
-            text-align: center; padding: 60px 40px;
-            background: rgba(255,255,255,0.04);
-            border: 1px solid rgba(255,255,255,0.08);
-            border-radius: 24px;
+            text-align: center; padding: 48px 40px;
+            background: rgba(255,255,255,0.03);
+            border: 1px solid rgba(255,255,255,0.06);
+            border-radius: 20px;
             backdrop-filter: blur(20px);
             max-width: 480px;
+            width: 90%;
         }
         .spinner {
-            width: 40px; height: 40px; margin: 0 auto 20px;
-            border: 3px solid rgba(240,160,40,0.2);
-            border-top: 3px solid #f0a028;
+            width: 36px; height: 36px; margin: 0 auto 20px;
+            border: 2px solid rgba(94,106,210,0.15);
+            border-top: 2px solid #5e6ad2;
             border-radius: 50%;
-            animation: spin 1s linear infinite;
+            animation: spin 0.8s linear infinite;
         }
         @keyframes spin { to { transform: rotate(360deg); } }
-        h1 { color: #f0a028; font-size: 1.6em; margin-bottom: 12px; }
-        p { color: #888; font-size: 1em; line-height: 1.6; }
-        .success { color: #00ff88; }
-        .error { color: #ff4444; }
+        @keyframes fade-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+        h1 {
+            font-size: 1.5em; font-weight: 600; margin-bottom: 8px;
+            letter-spacing: -0.02em; animation: fade-in 0.4s ease;
+        }
+        p { color: #8a8a96; font-size: 0.95em; line-height: 1.7; }
+        .success-icon {
+            width: 48px; height: 48px; margin: 0 auto 20px;
+            border-radius: 50%; background: rgba(45,140,60,0.15);
+            display: flex; align-items: center; justify-content: center;
+            font-size: 24px; color: #2D8C3C;
+        }
+        .error-icon {
+            width: 48px; height: 48px; margin: 0 auto 20px;
+            border-radius: 50%; background: rgba(200,50,40,0.15);
+            display: flex; align-items: center; justify-content: center;
+            font-size: 24px; color: #C83228;
+        }
+        .provider-badge {
+            display: inline-block; margin: 8px auto 16px;
+            padding: 4px 14px; border-radius: 20px;
+            font-size: 0.78em; font-weight: 500;
+            letter-spacing: 0.03em; text-transform: uppercase;
+        }
+        .provider-azure { background: rgba(0,120,212,0.15); color: #4fc3f7; border: 1px solid rgba(0,120,212,0.3); }
+        .provider-openrouter { background: rgba(168,85,247,0.15); color: #c084fc; border: 1px solid rgba(168,85,247,0.3); }
         .code-box {
-            background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1);
-            border-radius: 8px; padding: 16px; margin: 20px 0;
-            font-family: monospace; font-size: 0.85em; word-break: break-all;
-            color: #f0a028; user-select: all;
+            background: rgba(0,0,0,0.4); border: 1px solid rgba(255,255,255,0.06);
+            border-radius: 8px; padding: 14px 16px; margin: 16px 0;
+            font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+            font-size: 0.82em; word-break: break-all;
+            color: #F0A028; user-select: all;
         }
         .btn {
-            display: inline-block; margin-top: 16px; padding: 10px 28px;
-            background: #f0a028; color: #000; border: none; border-radius: 8px;
-            font-size: 0.95em; font-weight: 600; cursor: pointer;
-            text-decoration: none;
+            display: inline-block; margin-top: 16px; padding: 10px 24px;
+            background: #5e6ad2; color: #fff; border: none; border-radius: 8px;
+            font-size: 0.9em; font-weight: 500; cursor: pointer;
+            text-decoration: none; transition: background 0.2s;
         }
-        .btn:hover { background: #ffb840; }
+        .btn:hover { background: #6b77e0; }
+        .meta { color: #555566; font-size: 0.78em; margin-top: 16px; }
+        .steps { text-align: left; margin: 16px 0; padding-left: 20px; }
+        .steps li { color: #8a8a96; font-size: 0.88em; margin-bottom: 6px; }
+        .steps li.done { color: #2D8C3C; }
+        .steps li.active { color: #5e6ad2; }
     </style>
 </head>
 <body>
     <div class="card" id="card">
         <div class="spinner" id="spinner"></div>
-        <h1 id="title">Connecting NeuronCLI...</h1>
-        <p id="message">Redirecting to your terminal...</p>
+        <h1 id="title">Authenticating...</h1>
+        <div id="badge"></div>
+        <p id="message">Connecting to NeuronCLI...</p>
+        <div id="steps"></div>
+        <p class="meta" id="meta">v6.2.4 · zero-x.live</p>
     </div>
 
     <script>
+        // Auto-detect: use local server in dev, zero-x.live in production
+        const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+        const AUTH_SERVER = isLocal ? 'http://localhost:19284' : 'https://zero-x.live/neuroncli/auth-server';
         const params = new URLSearchParams(window.location.search);
         const code = params.get('code');
+        const state = params.get('state');
+        const provider = params.get('provider') || (code ? 'openrouter' : 'azure');
+        const session_token = params.get('session_token');
+
         const title = document.getElementById('title');
         const message = document.getElementById('message');
         const spinner = document.getElementById('spinner');
+        const badge = document.getElementById('badge');
+        const stepsEl = document.getElementById('steps');
 
-        if (code) {
-            // Redirect to the local CLI server with the auth code
-            const localUrl = 'http://localhost:19284?code=' + encodeURIComponent(code);
+        function showSuccess(msg) {
+            spinner.outerHTML = '<div class="success-icon">✓</div>';
+            title.textContent = 'Authentication Complete';
+            title.style.color = '#2D8C3C';
+            message.innerHTML = msg;
+        }
 
-            // Try fetch first (for CORS-enabled local server)
-            fetch(localUrl, { mode: 'no-cors' })
-                .then(() => {
-                    spinner.style.display = 'none';
-                    title.innerHTML = '&#10003; NeuronCLI Connected';
-                    title.classList.add('success');
-                    message.textContent = 'API key provisioned! You can close this tab and return to your terminal.';
-                    setTimeout(() => { window.location.href = localUrl; }, 500);
+        function showError(msg) {
+            spinner.outerHTML = '<div class="error-icon">✗</div>';
+            title.textContent = 'Authentication Failed';
+            title.style.color = '#C83228';
+            message.innerHTML = msg;
+        }
+
+        // ── OpenRouter PKCE Callback ──────────────────────────
+        if (provider === 'openrouter' && code) {
+            badge.innerHTML = '<span class="provider-badge provider-openrouter">OpenRouter</span>';
+            title.textContent = 'Completing OpenRouter Auth...';
+
+            // Forward code+state to local auth server for PKCE exchange
+            const callbackUrl = `${AUTH_SERVER}/auth/openrouter/callback?code=${encodeURIComponent(code)}&state=${encodeURIComponent(state || '')}`;
+
+            fetch(callbackUrl)
+                .then(res => res.ok ? res.text() : Promise.reject(res.statusText))
+                .then(html => {
+                    showSuccess(
+                        'OpenRouter API key obtained.<br>' +
+                        '<span style="color:#555566;">Your terminal has been authenticated. You can close this tab.</span>'
+                    );
                 })
-                .catch(() => {
-                    // Fetch failed, try direct redirect
-                    window.location.href = localUrl;
+                .catch(err => {
+                    // Fallback: try redirect
+                    showSuccess(
+                        'Authorization code received.<br>' +
+                        '<div class="code-box">' + code.slice(0, 20) + '...</div>' +
+                        '<span style="color:#555566;">If your terminal didn\'t auto-connect, run <code style="color:#F0A028;">neuron auth login</code> and paste the code.</span>'
+                    );
                 });
 
-            // Fallback: if redirect doesn't work after 3s, show the code
+            // Safety timeout
             setTimeout(() => {
-                if (title.classList.contains('success')) return;
-                spinner.style.display = 'none';
-                title.innerHTML = '&#10003; Authorization Complete';
-                title.classList.add('success');
-                message.innerHTML =
-                    'If your terminal didn\'t auto-connect, copy this code and paste it when prompted:<br>' +
-                    '<div class="code-box">' + code + '</div>' +
-                    '<p style="color:#666;font-size:0.85em;">Or close this tab and run <code style="color:#f0a028;">neuron</code> again.</p>';
-            }, 3000);
-        } else {
-            spinner.style.display = 'none';
-            title.textContent = 'Error';
-            title.classList.add('error');
-            message.innerHTML = 'No authorization code received.<br><a href="https://zero-x.live" class="btn">Go to zero-x.live</a>';
+                if (title.style.color !== 'rgb(45, 140, 60)') {
+                    showSuccess(
+                        'Authorization code received.<br>' +
+                        '<div class="code-box">' + code + '</div>' +
+                        '<span style="color:#555566;">Paste in terminal or run <code style="color:#F0A028;">neuron auth login</code></span>'
+                    );
+                }
+            }, 5000);
+        }
+
+        // ── Azure Session Callback ───────────────────────────
+        else if (provider === 'azure' && session_token) {
+            badge.innerHTML = '<span class="provider-badge provider-azure">Azure AI Foundry</span>';
+            title.textContent = 'Azure Session Active';
+
+            // Verify session with auth server
+            fetch(`${AUTH_SERVER}/auth/azure/session`, {
+                headers: { Authorization: `Bearer ${session_token}` }
+            })
+            .then(res => res.json())
+            .then(session => {
+                showSuccess(
+                    'Azure AI Foundry session verified.<br><br>' +
+                    '<span style="color:#8a8a96;">Models: Kimi-K2.5, DeepSeek-V3.2, MiniMax-M2.5</span><br>' +
+                    '<span style="color:#555566;">TTL: ' + Math.round(session.ttl_remaining_seconds / 3600) + 'h remaining</span><br>' +
+                    '<span style="color:#555566;">Requests: ' + session.requests + ' · Tokens: ' + session.tokens_used + '</span>'
+                );
+            })
+            .catch(() => {
+                showError('Session token invalid or auth server not running.<br>' +
+                    '<span style="color:#8a8a96;">Start the auth server: <code style="color:#F0A028;">node server.js</code></span>');
+            });
+        }
+
+        // ── Azure Exchange (initial auth) ────────────────────
+        else if (provider === 'azure' && !session_token) {
+            badge.innerHTML = '<span class="provider-badge provider-azure">Azure AI Foundry</span>';
+            title.textContent = 'Requesting Azure Session...';
+
+            const fingerprint = 'web-' + crypto.randomUUID().slice(0, 8);
+
+            fetch(`${AUTH_SERVER}/auth/azure/exchange`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ machine_fingerprint: fingerprint, version: '6.2.1' })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.session_token) {
+                    showSuccess(
+                        'Azure session created!<br><br>' +
+                        '<div class="code-box">' + data.session_token.slice(0, 16) + '...' + data.session_token.slice(-8) + '</div>' +
+                        '<span style="color:#8a8a96;">Models: ' + data.models.join(', ') + '</span><br>' +
+                        '<span style="color:#555566;">Quota: ' + (data.quota.remaining / 1000).toFixed(0) + 'K tokens/day</span><br><br>' +
+                        '<span style="color:#555566;">This token was auto-forwarded to your CLI.</span>'
+                    );
+
+                    // Forward to CLI
+                    fetch('http://localhost:4545/oauth/callback', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ session_token: data.session_token, provider: 'azure', endpoint: data.endpoint, models: data.models })
+                    }).catch(() => {});
+                } else {
+                    showError('Azure exchange failed: ' + (data.error || 'Unknown error'));
+                }
+            })
+            .catch(err => {
+                showError('Auth server not reachable.<br>' +
+                    '<span style="color:#8a8a96;">Start it with: <code style="color:#F0A028;">node server.js</code></span>');
+            });
+        }
+
+        // ── No parameters — direct visit ─────────────────────
+        else {
+            spinner.outerHTML = '<div class="error-icon">✗</div>';
+            title.textContent = 'NeuronCLI Auth Callback';
+            title.style.color = '#8a8a96';
+            message.innerHTML =
+                'This page handles NeuronCLI authentication callbacks.<br><br>' +
+                '<span style="color:#555566;">To authenticate, run one of:</span><br><br>' +
+                '<div class="code-box">neuron auth login          # OpenRouter PKCE<br>neuron auth azure          # Azure AI Foundry</div>' +
+                '<a href="https://zero-x.live" class="btn">Go to zero-x.live</a>';
         }
     </script>
 </body>
