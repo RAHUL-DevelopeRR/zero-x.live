@@ -3,15 +3,98 @@
 <head>
   <meta charset="utf-8"/>
   <meta content="width=device-width,initial-scale=1" name="viewport"/>
-  <title>ZeroX — Engineering Intelligence</title>
-  <meta name="description" content="ZeroX builds AI-powered desktop software. Home of Neuron — semantic file search that understands meaning."/>
+
+  <!-- ═══ WWW Redirect (fallback) ═══ -->
+  <script>if(location.hostname==='zero-x.live')location.replace('https://www.zero-x.live'+location.pathname+location.search+location.hash);</script>
+
+  <title>ZeroX — Engineering Intelligence | AI-Powered Desktop Software</title>
+  <meta name="description" content="ZeroX builds AI-powered desktop software that runs 100% offline. Home of Neuron — semantic file search powered by neural embeddings. No cloud, no telemetry, just intelligent software."/>
+  <meta name="keywords" content="ZeroX, Neuron, semantic search, AI desktop software, local AI, offline file search, neural embeddings, FAISS, privacy-first software, Windows 11 app, file search tool"/>
+  <meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1"/>
+  <meta name="author" content="ZeroX Corporation"/>
+  <meta name="theme-color" content="#08070b"/>
+
+  <!-- ═══ Canonical ═══ -->
+  <link rel="canonical" href="https://www.zero-x.live/"/>
+
+  <!-- ═══ Open Graph ═══ -->
+  <meta property="og:type" content="website"/>
+  <meta property="og:site_name" content="ZeroX"/>
+  <meta property="og:title" content="ZeroX — Engineering Intelligence"/>
+  <meta property="og:description" content="AI-powered desktop software that runs 100% offline. Home of Neuron — semantic file search powered by neural embeddings."/>
+  <meta property="og:url" content="https://www.zero-x.live/"/>
+  <meta property="og:image" content="https://www.zero-x.live/Assets/Zero-xBnW.png"/>
+  <meta property="og:image:alt" content="ZeroX Logo"/>
+  <meta property="og:locale" content="en_US"/>
+
+  <!-- ═══ Twitter Card ═══ -->
+  <meta name="twitter:card" content="summary_large_image"/>
+  <meta name="twitter:title" content="ZeroX — Engineering Intelligence"/>
+  <meta name="twitter:description" content="AI-powered desktop software. Neuron brings semantic file search to your desktop — 100% offline, zero telemetry."/>
+  <meta name="twitter:image" content="https://www.zero-x.live/Assets/Zero-xBnW.png"/>
+
+  <!-- ═══ Favicons ═══ -->
   <link rel="icon" type="image/svg+xml" href="./Assets/round.svg"/>
+  <link rel="apple-touch-icon" sizes="180x180" href="./Assets/zerox-favicon.png"/>
+  <link rel="icon" type="image/png" sizes="32x32" href="./Assets/zerox-favicon.png"/>
+
+  <!-- ═══ Fonts ═══ -->
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet"/>
   <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+
+  <!-- ═══ Tailwind ═══ -->
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config={darkMode:"class",theme:{extend:{colors:{"zx-bg":"#08070b","zx-surface":"#0f0f12","zx-card":"#16161a","zx-border":"rgba(255,255,255,0.08)","zx-text":"#f0f0f0","zx-muted":"#8a8a96","zx-faint":"#555566","zx-accent":"#5e6ad2","zx-accent-h":"#8b8fea"},fontFamily:{inter:["Inter","sans-serif"]}}}}
   </script>
+
+  <!-- ═══ Structured Data (JSON-LD) ═══ -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "Organization",
+        "name": "ZeroX Corporation",
+        "url": "https://www.zero-x.live",
+        "logo": "https://www.zero-x.live/Assets/Zero-xBnW.png",
+        "description": "ZeroX is a product-based IT company building AI-powered desktop software that runs 100% offline.",
+        "foundingDate": "2026",
+        "contactPoint": {
+          "@type": "ContactPoint",
+          "email": "rahultech72216@gmail.com",
+          "contactType": "customer support"
+        },
+        "sameAs": [
+          "https://github.com/RAHUL-DevelopeRR"
+        ]
+      },
+      {
+        "@type": "SoftwareApplication",
+        "name": "Neuron",
+        "applicationCategory": "UtilitiesApplication",
+        "operatingSystem": "Windows 10, Windows 11",
+        "description": "Semantic file search desktop application powered by neural embeddings. Search 100K+ files by meaning in under 5ms. 100% offline, zero telemetry.",
+        "url": "https://www.zero-x.live/#neuron",
+        "softwareVersion": "5.1.0",
+        "offers": {
+          "@type": "AggregateOffer",
+          "priceCurrency": "INR",
+          "lowPrice": "119",
+          "highPrice": "499",
+          "offerCount": "3"
+        },
+        "author": {
+          "@type": "Organization",
+          "name": "ZeroX Corporation"
+        }
+      }
+    ]
+  }
+  </script>
+
   <style>
     *{box-sizing:border-box;margin:0;padding:0}
     body{background:#08070b;color:#f0f0f0;font-family:'Inter',sans-serif;-webkit-font-smoothing:antialiased}
@@ -23,6 +106,8 @@
     .reveal{opacity:0;transform:translateY(20px);transition:opacity .7s ease,transform .7s ease}
     .reveal.visible{opacity:1;transform:translateY(0)}
     .nav-blur{background:rgba(8,7,11,.8);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px)}
+    @keyframes pulse-live{0%,100%{opacity:1;box-shadow:0 0 0 0 rgba(52,211,153,.5)}50%{opacity:.7;box-shadow:0 0 0 5px rgba(52,211,153,0)}}
+    .live-dot{width:7px;height:7px;border-radius:50%;background:#34d399;animation:pulse-live 2s ease-in-out infinite}
   </style>
 </head>
 <body class="font-inter antialiased overflow-x-hidden">
@@ -31,7 +116,7 @@
 <header class="fixed top-0 w-full h-20 z-50 nav-blur border-b border-white/[0.06]">
   <div class="max-w-[1200px] mx-auto h-full flex items-center justify-between px-5">
     <a href="#" class="shrink-0"><img src="./Assets/Zero-xBnW.png" alt="zero-x.live" class="h-14" style="mix-blend-mode:lighten"/></a>
-    <nav class="hidden md:flex items-center gap-7">
+    <nav class="hidden md:flex items-center gap-7" aria-label="Main navigation">
       <a href="#neuron" class="text-[14px] text-zx-muted hover:text-white transition-colors">Products</a>
       <a href="#features" class="text-[14px] text-zx-muted hover:text-white transition-colors">Features</a>
       <a href="#pricing" class="text-[14px] text-zx-muted hover:text-white transition-colors">Pricing</a>
@@ -267,8 +352,22 @@
       <div class="grid grid-cols-2 gap-4">
         <div class="bg-zx-card border border-white/[0.06] rounded-xl p-6 text-center"><div class="text-3xl font-bold text-white mb-1">22K+</div><div class="text-[12px] text-zx-muted">Lines of code</div></div>
         <div class="bg-zx-card border border-white/[0.06] rounded-xl p-6 text-center"><div class="text-3xl font-bold text-white mb-1">5+</div><div class="text-[12px] text-zx-muted">Active projects</div></div>
-        <div class="bg-zx-card border border-white/[0.06] rounded-xl p-6 text-center"><div class="text-3xl font-bold text-white mb-1">100%</div><div class="text-[12px] text-zx-muted">Offline-first</div></div>
-        <div class="bg-zx-card border border-white/[0.06] rounded-xl p-6 text-center"><div class="text-3xl font-bold text-white mb-1">2026</div><div class="text-[12px] text-zx-muted">Founded</div></div>
+        <div class="bg-zx-card border border-white/[0.06] rounded-xl p-6 text-center">
+          <div class="flex items-center justify-center gap-2 mb-1">
+            <div class="live-dot"></div>
+            <span class="text-[10px] text-emerald-400 font-medium tracking-wider uppercase">Live</span>
+          </div>
+          <div class="text-3xl font-bold text-white mb-1" id="visitor-count">—</div>
+          <div class="text-[12px] text-zx-muted">Visitors</div>
+        </div>
+        <div class="bg-zx-card border border-white/[0.06] rounded-xl p-6 text-center">
+          <div class="flex items-center justify-center gap-2 mb-1">
+            <div class="live-dot"></div>
+            <span class="text-[10px] text-emerald-400 font-medium tracking-wider uppercase">Live</span>
+          </div>
+          <div class="text-3xl font-bold text-white mb-1" id="pageview-count">—</div>
+          <div class="text-[12px] text-zx-muted">Page views</div>
+        </div>
       </div>
     </div>
   </div>
@@ -312,19 +411,73 @@
     </div>
   </div>
   <div class="max-w-[1100px] mx-auto mt-14 pt-6 border-t border-white/[0.04]">
-    <p class="text-[12px] text-zx-faint">© 2026 ZeroX Corporation. Built by builders.</p>
+    <p class="text-[12px] text-zx-faint">© <script>document.write(new Date().getFullYear())</script> ZeroX Corporation. Built by builders.</p>
   </div>
 </footer>
 
 <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
 <script>
+/* ═══ Navigation ═══ */
 const mobBtn=document.getElementById('mobBtn'),mobClose=document.getElementById('mobClose'),mobileNav=document.getElementById('mobileNav');
 mobBtn.addEventListener('click',()=>{mobileNav.classList.remove('hidden');mobileNav.classList.add('flex');document.body.style.overflow='hidden'});
 function closeMob(){mobileNav.classList.add('hidden');mobileNav.classList.remove('flex');document.body.style.overflow=''}
 mobClose.addEventListener('click',closeMob);
+
+/* ═══ Reveal Animations ═══ */
 const obs=new IntersectionObserver(e=>{e.forEach(el=>{if(el.isIntersecting){el.target.classList.add('visible');obs.unobserve(el.target)}})},{threshold:.08,rootMargin:'0px 0px -60px 0px'});
 document.querySelectorAll('.reveal').forEach(el=>obs.observe(el));
+
+/* ═══ Smooth Scroll ═══ */
 document.querySelectorAll('a[href^="#"]').forEach(a=>{a.addEventListener('click',e=>{const id=a.getAttribute('href');if(id==='#')return;const t=document.querySelector(id);if(t){e.preventDefault();t.scrollIntoView({behavior:'smooth'})}})});
+
+/* ═══ Number Ticker Animation ═══ */
+function animateCount(el,target){
+  if(!target||isNaN(target))return;
+  const duration=1200;
+  const start=performance.now();
+  const fmt=n=>n>=1000?((n/1000).toFixed(1)+'K'):n.toString();
+  function tick(now){
+    const elapsed=now-start;
+    const progress=Math.min(elapsed/duration,1);
+    const eased=1-Math.pow(1-progress,3);
+    const current=Math.round(eased*target);
+    el.textContent=fmt(current);
+    if(progress<1)requestAnimationFrame(tick);
+    else el.textContent=fmt(target);
+  }
+  requestAnimationFrame(tick);
+}
+
+/* ═══ Visitor Counter (CounterAPI.dev) ═══ */
+(async function(){
+  const visitorEl=document.getElementById('visitor-count');
+  const pageviewEl=document.getElementById('pageview-count');
+  try{
+    /* Page views — always increment */
+    const pvRes=await fetch('https://api.counterapi.dev/v1/zero-x-live/pageviews/up');
+    const pvData=await pvRes.json();
+    if(pvData&&typeof pvData.count==='number')animateCount(pageviewEl,pvData.count);
+    else pageviewEl.textContent='—';
+  }catch(e){pageviewEl.textContent='—';}
+  try{
+    /* Unique visitors — increment only once per session */
+    if(!sessionStorage.getItem('zx_counted')){
+      const vRes=await fetch('https://api.counterapi.dev/v1/zero-x-live/visitors/up');
+      const vData=await vRes.json();
+      sessionStorage.setItem('zx_counted','1');
+      if(vData&&typeof vData.count==='number')animateCount(visitorEl,vData.count);
+      else visitorEl.textContent='—';
+    }else{
+      /* Already counted this session — just read current value */
+      const vRes=await fetch('https://api.counterapi.dev/v1/zero-x-live/visitors');
+      const vData=await vRes.json();
+      if(vData&&typeof vData.count==='number')animateCount(visitorEl,vData.count);
+      else visitorEl.textContent='—';
+    }
+  }catch(e){visitorEl.textContent='—';}
+})();
+
+/* ═══ Razorpay Payments ═══ */
 function buyNeuron(tier,amt,desc){
   const bid='rzp-'+tier.toLowerCase().replace('-','')+'Btn';
   const opts={key:'rzp_live_SZsvcPuBbSv5TA',amount:amt,currency:'INR',name:'ZeroX',description:desc+' — Lifetime',image:'./Assets/neuron_circular.png',
