@@ -10,9 +10,11 @@
     "deploy": "wrangler deploy"
   },
   "dependencies": {
-    "express": "^4.21.0",
+    "@clerk/hono": "^0.1.33",
+    "@neondatabase/serverless": "^1.1.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.0",
+    "express": "^4.21.0",
     "hono": "^4.3.0"
   }
 }

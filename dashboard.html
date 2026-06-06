@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html class="dark" lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta content="width=device-width,initial-scale=1" name="viewport"/>
+  <title>ZeroX — Developer Dashboard</title>
+  
+  <!-- ═══ Favicons ═══ -->
+  <link rel="icon" type="image/svg+xml" href="./Assets/round.svg"/>
+  <link rel="apple-touch-icon" sizes="180x180" href="./Assets/zerox-favicon.png"/>
+  
+  <!-- ═══ Fonts ═══ -->
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet"/>
+  
+  <!-- ═══ Tailwind ═══ -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: "class",
+      theme: {
+        extend: {
+          colors: {
+            "zx-bg": "#08070b",
+            "zx-surface": "#0f0f12",
+            "zx-card": "#16161a",
+            "zx-border": "rgba(255,255,255,0.08)",
+            "zx-text": "#f0f0f0",
+            "zx-muted": "#8a8a96",
+            "zx-faint": "#555566",
+            "zx-accent": "#5e6ad2",
+            "zx-accent-h": "#8b8fea"
+          },
+          fontFamily: {
+            inter: ["Inter", "sans-serif"]
+          }
+        }
+      }
+    }
+  </script>
+
+  <!-- ═══ Clerk Authentication ═══ -->
+  <script
+    async
+    crossorigin="anonymous"
+    data-clerk-publishable-key="pk_test_bW9kZWwtYmVhci0yOS5jbGVyay5hY2NvdW50cy5kZXYk"
+    src="https://model-bear-29.clerk.accounts.dev/npm/@clerk/clerk-js@latest/dist/clerk.browser.js"
+    type="text/javascript">
+  </script>
+
+  <style>
+    body { background: #08070b; color: #f0f0f0; font-family: 'Inter', sans-serif; }
+    .nav-blur { background: rgba(8,7,11,0.8); backdrop-filter: blur(16px); }
+    pre { background: #0b0a0e; border: 1px solid rgba(255,255,255,0.05); }
+  </style>
+</head>
+<body class="font-inter antialiased overflow-x-hidden min-h-screen flex flex-col justify-between">
+
+  <!-- ═══ NAV ═══ -->
+  <header class="fixed top-0 w-full h-20 z-50 nav-blur border-b border-white/[0.06]">
+    <div class="max-w-[1200px] mx-auto h-full flex items-center justify-between px-5">
+      <div class="flex items-center gap-3">
+        <a href="./index.html" class="shrink-0">
+          <img src="./Assets/Zero-xBnW.png" alt="zero-x.live" class="h-14" style="mix-blend-mode:lighten"/>
+        </a>
+        <span class="text-[12px] uppercase tracking-widest text-zx-muted border-l border-white/10 pl-3 hidden sm:inline">Dashboard</span>
+      </div>
+      <nav class="flex items-center gap-7">
+        <a href="./index.html" class="text-[14px] text-zx-muted hover:text-white transition-colors">Home</a>
+        <a href="./dashboard.html" class="text-[14px] text-white font-medium">Dashboard</a>
+      </nav>
+      <div class="flex items-center gap-3">
+        <div id="user-button"></div>
+      </div>
+    </div>
+  </header>
+
+  <!-- ═══ MAIN CONTENT ═══ -->
+  <main class="max-w-[1200px] mx-auto w-full px-5 pt-32 pb-20 flex-grow">
+    <!-- Loading State -->
+    <div id="loading-state" class="flex flex-col items-center justify-center py-20">
+      <div class="animate-spin rounded-full h-10 w-10 border-b-2 border-zx-accent mb-4"></div>
+      <p class="text-zx-muted text-[14px]">Verifying your Clerk session...</p>
+    </div>
+
+    <!-- Dashboard Content (Hidden by default) -->
+    <div id="dashboard-content" class="hidden">
+      <div class="mb-10">
+        <h1 class="text-3xl font-bold tracking-tight text-white mb-2">Developer Workspace</h1>
+        <p class="text-zx-muted text-[14px]">Welcome back. Inspect your authentication state and profile information.</p>
+      </div>
+
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        
+        <!-- User Profile Card -->
+        <div class="bg-zx-card border border-zx-border rounded-2xl p-8 flex flex-col items-center text-center h-fit">
+          <div class="relative mb-6">
+            <img 
+              id="user-avatar" 
+              src="https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80" 
+              alt="Avatar" 
+              class="w-24 h-24 rounded-full border-2 border-zx-accent object-cover"
+            />
+            <span class="absolute bottom-0 right-0 bg-emerald-500 text-[10px] text-zx-bg font-bold px-2 py-0.5 rounded-full uppercase tracking-wider">Active</span>
+          </div>
+
+          <h2 id="user-name" class="text-xl font-semibold text-white mb-1">Developer</h2>
+          <p id="user-email" class="text-zx-muted text-[14px] mb-6">no-email@example.com</p>
+
+          <div class="w-full border-t border-white/[0.06] pt-6 flex flex-col gap-4 text-left">
+            <div class="flex justify-between items-center text-[13px]">
+              <span class="text-zx-muted">Clerk ID:</span>
+              <span id="user-id" class="font-mono text-white/80 opacity-90 truncate max-w-[160px]">N/A</span>
+            </div>
+            <div class="flex justify-between items-center text-[13px]">
+              <span class="text-zx-muted">First Name:</span>
+              <span id="user-firstname" class="text-white">N/A</span>
+            </div>
+            <div class="flex justify-between items-center text-[13px]">
+              <span class="text-zx-muted">Last Name:</span>
+              <span id="user-lastname" class="text-white">N/A</span>
+            </div>
+            <div class="flex justify-between items-center text-[13px]">
+              <span class="text-zx-muted">DB Sync Status:</span>
+              <span id="db-sync-status" class="text-amber-400 flex items-center gap-1.5">
+                <span class="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>Pending
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <!-- JWT Claims Inspector -->
+        <div class="bg-zx-card border border-zx-border rounded-2xl p-8 lg:col-span-2 flex flex-col">
+          <div class="flex items-center justify-between border-b border-white/[0.06] pb-4 mb-6">
+            <h2 class="text-lg font-semibold text-white">JWT Claims & Session Inspector</h2>
+            <span class="text-[11px] font-mono text-zx-accent bg-zx-accent/[0.06] border border-zx-accent/20 px-2 py-0.5 rounded">RS256 Decoded</span>
+          </div>
+          
+          <p class="text-zx-muted text-[13px] mb-6">
+            The JSON block below displays the decoded payload claims from your Clerk session token.
+          </p>
+
+          <div class="flex-grow rounded-xl overflow-hidden font-mono text-[12px] text-emerald-400 p-5 bg-[#0b0a0e] border border-white/[0.05]">
+            <pre class="w-full h-full overflow-x-auto whitespace-pre-wrap"><code id="jwt-claims-code">Loading session claims...</code></pre>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </main>
+
+  <!-- ═══ FOOTER ═══ -->
+  <footer class="border-t border-white/[0.04] py-8 px-5 text-center text-zx-faint text-[12px]">
+    <div class="max-w-[1200px] mx-auto">
+      <p>© 2026 ZeroX Corporation. Secure Developer Dashboard.</p>
+    </div>
+  </footer>
+
+  <script>
+    // Decode JWT payload client-side
+    function parseJWT(token) {
+      try {
+        const base64Url = token.split('.')[1];
+        const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+        const jsonPayload = decodeURIComponent(atob(base64).split('').map(function(c) {
+            return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+        }).join(''));
+        return JSON.parse(jsonPayload);
+      } catch (e) {
+        return null;
+      }
+    }
+
+    // Clerk SDK Init & Protection Check
+    window.addEventListener('load', async () => {
+      if (!window.Clerk) {
+        console.error("Clerk JS SDK not loaded");
+        document.getElementById('loading-state').innerHTML = `<p class="text-red-500 text-[14px]">Failed to load Clerk Auth SDK.</p>`;
+        return;
+      }
+
+      try {
+        await window.Clerk.load();
+        
+        if (!window.Clerk.user) {
+          // Redirect to index if not authenticated
+          window.location.replace('./index.html');
+          return;
+        }
+
+        // Populate User Info
+        const user = window.Clerk.user;
+        document.getElementById('user-avatar').src = user.imageUrl;
+        document.getElementById('user-name').innerText = user.fullName || "Developer User";
+        document.getElementById('user-email').innerText = user.primaryEmailAddress.emailAddress;
+        document.getElementById('user-id').innerText = user.id;
+        document.getElementById('user-firstname').innerText = user.firstName || "N/A";
+        document.getElementById('user-lastname').innerText = user.lastName || "N/A";
+
+        // Mount Clerk UserButton
+        window.Clerk.mountUserButton(document.getElementById('user-button'), {
+          afterSignOutUrl: window.location.origin
+        });
+
+        // Parse claims
+        const token = await window.Clerk.session.getToken();
+        const claims = parseJWT(token);
+        if (claims) {
+          // Append raw user properties to claims just like Next.js playground
+          const rawClaims = {
+            userId: user.id,
+            sessionId: window.Clerk.session.id,
+            fullName: user.fullName || 'N/A',
+            primaryEmail: user.primaryEmailAddress.emailAddress || 'N/A',
+            emailVerified: user.primaryEmailAddress.verification?.status || 'N/A',
+            createdAt: user.createdAt,
+            updatedAt: user.updatedAt,
+            publicMetadata: user.publicMetadata || {},
+            unsafeMetadata: user.unsafeMetadata || {},
+            jwtPayload: claims
+          };
+          document.getElementById('jwt-claims-code').innerText = JSON.stringify(rawClaims, null, 2);
+        } else {
+          document.getElementById('jwt-claims-code').innerText = "Failed to parse JWT token.";
+        }
+
+        // Hide loading, show dashboard
+        document.getElementById('loading-state').classList.add('hidden');
+        document.getElementById('dashboard-content').classList.remove('hidden');
+
+        // Sync with backend DB
+        await syncUserWithBackend(user, token);
+
+      } catch (err) {
+        console.error("Dashboard init error:", err);
+        document.getElementById('loading-state').innerHTML = `<p class="text-red-500 text-[14px]">An error occurred during authentication verification.</p>`;
+      }
+    });
+
+    async function syncUserWithBackend(user, token) {
+      const syncStatusEl = document.getElementById('db-sync-status');
+      try {
+        const response = await fetch('/auth/sync', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({
+            email: user.primaryEmailAddress.emailAddress,
+            firstName: user.firstName,
+            lastName: user.lastName
+          })
+        });
+
+        if (response.ok) {
+          syncStatusEl.innerHTML = `<span class="w-2 h-2 rounded-full bg-emerald-500"></span>Synced`;
+          syncStatusEl.className = "text-emerald-500 flex items-center gap-1.5";
+        } else {
+          const errText = await response.text();
+          throw new Error(errText || "Sync failed");
+        }
+      } catch (err) {
+        console.error("Failed to sync user with backend:", err);
+        syncStatusEl.innerHTML = `<span class="w-2 h-2 rounded-full bg-red-500"></span>Failed to Sync`;
+        syncStatusEl.className = "text-red-500 flex items-center gap-1.5";
+      }
+    }
+  </script>
+</body>
+</html>

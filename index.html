@@ -44,6 +44,16 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet"/>
   <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
 
+  <!-- ═══ Clerk Authentication ═══ -->
+  <script
+    async
+    crossorigin="anonymous"
+    data-clerk-publishable-key="pk_test_bW9kZWwtYmVhci0yOS5jbGVyay5hY2NvdW50cy5kZXYk"
+    src="https://model-bear-29.clerk.accounts.dev/npm/@clerk/clerk-js@latest/dist/clerk.browser.js"
+    type="text/javascript">
+  </script>
+
+
   <!-- ═══ Tailwind ═══ -->
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
@@ -124,6 +134,8 @@
       <a href="#contact" class="text-[14px] text-zx-muted hover:text-white transition-colors">Contact</a>
     </nav>
     <div class="flex items-center gap-3">
+      <a href="#" id="signin-btn" class="hidden md:block text-[14px] text-zx-muted hover:text-white transition-colors mr-2">Sign In</a>
+      <div id="user-button"></div>
       <a href="#pricing" class="hidden md:block bg-white text-[#08070b] text-[13px] font-medium px-4 py-[6px] rounded-full hover:bg-gray-200 transition-colors">Get Neuron</a>
       <button id="mobBtn" class="md:hidden text-white"><span class="material-symbols-outlined">menu</span></button>
     </div>
@@ -490,6 +502,75 @@ function buyNeuron(tier,amt,desc){
   const rzp=new Razorpay(opts);
   rzp.on('payment.failed',function(r){alert('Payment failed: '+r.error.description+'\n\nPlease try again or contact rahultech72216@gmail.com')});
   rzp.open()}
+
+/* ═══ Clerk Authentication Integration ═══ */
+window.addEventListener('load', async () => {
+  if (!window.Clerk) {
+    console.warn("Clerk JS SDK not loaded yet.");
+    return;
+  }
+  try {
+    await window.Clerk.load();
+    const signinBtn = document.getElementById('signin-btn');
+    const userButtonDiv = document.getElementById('user-button');
+    const navLinks = document.querySelector('header nav');
+    
+    if (window.Clerk.user) {
+      // User is signed in
+      if (signinBtn) signinBtn.style.display = 'none';
+      
+      // Add Dashboard link to Desktop Nav
+      if (navLinks && !document.getElementById('nav-dashboard')) {
+        const dashboardLink = document.createElement('a');
+        dashboardLink.id = 'nav-dashboard';
+        dashboardLink.href = './dashboard.html';
+        dashboardLink.className = 'text-[14px] text-zx-muted hover:text-white transition-colors';
+        dashboardLink.innerText = 'Dashboard';
+        navLinks.appendChild(dashboardLink);
+      }
+      
+      // Mount Clerk UserButton
+      if (userButtonDiv) {
+        window.Clerk.mountUserButton(userButtonDiv, {
+          afterSignOutUrl: window.location.origin
+        });
+      }
+      
+      // Sync user with PostgreSQL database via Hono backend
+      syncUserWithBackend(window.Clerk.user);
+    } else {
+      // User is signed out
+      if (signinBtn) {
+        signinBtn.addEventListener('click', (e) => {
+          e.preventDefault();
+          window.Clerk.openSignIn();
+        });
+      }
+    }
+  } catch (err) {
+    console.error("Clerk load error:", err);
+  }
+});
+
+async function syncUserWithBackend(user) {
+  try {
+    const token = await window.Clerk.session.getToken();
+    await fetch('/auth/sync', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify({
+        email: user.primaryEmailAddress.emailAddress,
+        firstName: user.firstName,
+        lastName: user.lastName
+      })
+    });
+  } catch (err) {
+    console.error("Failed to sync user with backend:", err);
+  }
+}
 </script>
 </body>
 </html>

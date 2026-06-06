@@ -1,5 +1,7 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
+import { clerkMiddleware, getAuth } from '@clerk/hono';
+import { neon } from '@neondatabase/serverless';
 
 const app = new Hono();
 const api = new Hono();
@@ -165,6 +167,61 @@ const verifySessionHandler = async (c) => {
 
 api.get('/auth/session', verifySessionHandler);
 api.get('/auth/azure/session', verifySessionHandler);
+
+// 3.5 Clerk user profile DB sync
+api.post('/auth/sync', clerkMiddleware(), async (c) => {
+  const auth = getAuth(c);
+  if (!auth || !auth.userId) {
+    return c.json({ error: "Unauthorized", message: "Invalid session" }, 401);
+  }
+
+  const dbUrl = c.env.DATABASE_URL;
+  if (!dbUrl) {
+    console.warn("DATABASE_URL not configured. Sync skipped.");
+    return c.json({ status: "skipped", message: "Database URL not configured on worker" });
+  }
+
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const { email, firstName, lastName } = body;
+
+    if (!email) {
+      return c.json({ error: "Bad Request", message: "Email is required" }, 400);
+    }
+
+    const sql = neon(dbUrl);
+
+    // Auto-create table if not exists
+    await sql`
+      CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        clerk_id VARCHAR(255) UNIQUE NOT NULL,
+        email VARCHAR(255) NOT NULL,
+        first_name VARCHAR(255),
+        last_name VARCHAR(255),
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      );
+    `;
+
+    // Upsert user details
+    await sql`
+      INSERT INTO users (clerk_id, email, first_name, last_name)
+      VALUES (${auth.userId}, ${email}, ${firstName || ''}, ${lastName || ''})
+      ON CONFLICT (clerk_id)
+      DO UPDATE SET
+        email = ${email},
+        first_name = ${firstName || ''},
+        last_name = ${lastName || ''},
+        updated_at = CURRENT_TIMESTAMP
+    `;
+
+    return c.json({ status: "success", clerk_id: auth.userId });
+  } catch (err) {
+    console.error("Database sync error:", err);
+    return c.json({ error: "Internal Server Error", message: err.message }, 500);
+  }
+});
 
 // 4. LLM Streaming Proxy
 const chatCompletionsHandler = async (c) => {
