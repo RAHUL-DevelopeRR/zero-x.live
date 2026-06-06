@@ -118,6 +118,38 @@
     .nav-blur{background:rgba(8,7,11,.8);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px)}
     @keyframes pulse-live{0%,100%{opacity:1;box-shadow:0 0 0 0 rgba(52,211,153,.5)}50%{opacity:.7;box-shadow:0 0 0 5px rgba(52,211,153,0)}}
     .live-dot{width:7px;height:7px;border-radius:50%;background:#34d399;animation:pulse-live 2s ease-in-out infinite}
+
+    /* ═══ Clerk UI Custom Overrides ═══ */
+    .cl-headerTitle, .cl-headerSubtitle {
+      text-align: center !important;
+      width: 100% !important;
+    }
+    .cl-header {
+      align-items: center !important;
+      text-align: center !important;
+    }
+    .cl-header::before {
+      content: "";
+      display: block;
+      width: 44px;
+      height: 44px;
+      margin: 0 auto 12px auto;
+      background-image: url('./Assets/neuron_circular.png');
+      background-size: contain;
+      background-repeat: no-repeat;
+      background-position: center;
+    }
+    .cl-internal-b38t62,
+    .cl-internal-1dauvto,
+    .cl-internal-18y98x0,
+    .cl-internal-157297e,
+    .cl-internal-19t50n4,
+    .cl-internal-16gq0l2,
+    [class*="cl-internal-"],
+    .cl-branding,
+    .cl-footerAction__branding {
+      display: none !important;
+    }
   </style>
 </head>
 <body class="font-inter antialiased overflow-x-hidden">
@@ -510,7 +542,22 @@ window.addEventListener('load', async () => {
     return;
   }
   try {
-    await window.Clerk.load();
+    await window.Clerk.load({
+      localization: {
+        signIn: {
+          start: {
+            title: "Sign in",
+            subtitle: "to continue to ZeroX"
+          }
+        },
+        signUp: {
+          start: {
+            title: "Create your account",
+            subtitle: "to continue to ZeroX"
+          }
+        }
+      }
+    });
     const signinBtn = document.getElementById('signin-btn');
     const userButtonDiv = document.getElementById('user-button');
     const navLinks = document.querySelector('header nav');

@@ -53,6 +53,38 @@
     body { background: #08070b; color: #f0f0f0; font-family: 'Inter', sans-serif; }
     .nav-blur { background: rgba(8,7,11,0.8); backdrop-filter: blur(16px); }
     pre { background: #0b0a0e; border: 1px solid rgba(255,255,255,0.05); }
+
+    /* ═══ Clerk UI Custom Overrides ═══ */
+    .cl-headerTitle, .cl-headerSubtitle {
+      text-align: center !important;
+      width: 100% !important;
+    }
+    .cl-header {
+      align-items: center !important;
+      text-align: center !important;
+    }
+    .cl-header::before {
+      content: "";
+      display: block;
+      width: 44px;
+      height: 44px;
+      margin: 0 auto 12px auto;
+      background-image: url('./Assets/neuron_circular.png');
+      background-size: contain;
+      background-repeat: no-repeat;
+      background-position: center;
+    }
+    .cl-internal-b38t62,
+    .cl-internal-1dauvto,
+    .cl-internal-18y98x0,
+    .cl-internal-157297e,
+    .cl-internal-19t50n4,
+    .cl-internal-16gq0l2,
+    [class*="cl-internal-"],
+    .cl-branding,
+    .cl-footerAction__branding {
+      display: none !important;
+    }
   </style>
 </head>
 <body class="font-inter antialiased overflow-x-hidden min-h-screen flex flex-col justify-between">
@@ -181,7 +213,22 @@
       }
 
       try {
-        await window.Clerk.load();
+        await window.Clerk.load({
+          localization: {
+            signIn: {
+              start: {
+                title: "Sign in",
+                subtitle: "to continue to ZeroX"
+              }
+            },
+            signUp: {
+              start: {
+                title: "Create your account",
+                subtitle: "to continue to ZeroX"
+              }
+            }
+          }
+        });
         
         if (!window.Clerk.user) {
           // Redirect to index if not authenticated
