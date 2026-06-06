@@ -1,0 +1,16 @@
+# Exclude heavy installer files
+Assets/*.exe
+Assets/*.msi
+Assets/*.zip
+Assets/*.pdf
+Assets/*.mp4
+Assets/*.crdownload
+
+# Exclude source code / server-side stuff from asset upload
+neuroncli/auth-server/node_modules/
+neuroncli/auth-server/src/
+neuroncli/auth-server/server.js
+neuroncli/auth-server/package*
+neuroncli/auth-server/.env
+.git/
+.gitignore

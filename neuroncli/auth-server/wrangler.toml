@@ -1,0 +1,20 @@
+name = "zero-x-callback-api"
+main = "src/index.js"
+compatibility_date = "2024-05-02"
+
+[assets]
+directory = "../../"
+binding = "ASSETS"
+
+
+[vars]
+AZURE_OPENAI_ENDPOINT = "https://rahul-mok8ryyn-eastus2.services.ai.azure.com"
+AZURE_API_VERSION = "2024-05-01-preview"
+OPENROUTER_CLIENT_ID = "neuroncli"
+OPENROUTER_CALLBACK_URL = "https://zero-x.live/neuroncli/callback/"
+SESSION_TTL_HOURS = "24"
+MAX_REQUESTS_PER_SESSION = "1000"
+
+[[kv_namespaces]]
+binding = "SESSIONS_KV"
+id = "717e03bfc7cf4efa84648ccd82e4c9ed"

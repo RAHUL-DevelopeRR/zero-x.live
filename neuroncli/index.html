@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html class="dark" lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NeuronCLI — AI Coding Agent by ZeroX</title>
+  <meta name="description" content="NeuronCLI is a free, open-source AI coding agent. 44K tokens/day via Azure, OpenRouter fallback, encrypted local vault. Install via pip or npm.">
+  <link rel="icon" type="image/svg+xml" href="../Assets/round.svg">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #08070b; color: #f0f0f0;
+      font-family: 'Inter', sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    ::selection { background: rgba(94,106,210,.25); }
+    a { color: inherit; text-decoration: none; }
+
+    .container { max-width: 720px; margin: 0 auto; padding: 0 24px; }
+
+    /* ── Hero ── */
+    .hero {
+      min-height: 80vh; display: flex; flex-direction: column;
+      justify-content: center; align-items: center; text-align: center;
+      padding-top: 80px;
+    }
+    .badge {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 6px 16px; border: 1px solid rgba(94,106,210,0.2);
+      background: rgba(94,106,210,0.06); border-radius: 999px;
+      font-size: 12px; color: #8b8fea; font-weight: 500;
+      letter-spacing: 0.03em; margin-bottom: 32px;
+    }
+    .badge .dot { width: 6px; height: 6px; background: #34d399; border-radius: 50%; }
+    h1 {
+      font-size: clamp(32px, 5vw, 48px); font-weight: 600;
+      line-height: 1.15; letter-spacing: -0.025em;
+      margin-bottom: 16px;
+    }
+    h1 .muted { color: #8a8a96; }
+    .subtitle {
+      font-size: 16px; color: #8a8a96; line-height: 1.7;
+      max-width: 500px; margin-bottom: 32px;
+    }
+
+    /* ── Install box ── */
+    .install-box {
+      background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 12px; padding: 20px 24px; margin-bottom: 32px;
+      text-align: left; width: 100%; max-width: 520px;
+    }
+    .install-label {
+      font-size: 11px; color: #555566; font-weight: 600;
+      text-transform: uppercase; letter-spacing: 0.08em;
+      margin-bottom: 8px;
+    }
+    .install-cmd {
+      font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+      font-size: 14px; color: #F0A028; user-select: all;
+      padding: 10px 0;
+    }
+    .install-cmd .dim { color: #555566; }
+    .install-alt { font-size: 12px; color: #555566; margin-top: 8px; }
+    .install-alt code { color: #5e6ad2; }
+
+    /* ── Features ── */
+    .features {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 12px; margin: 40px 0 60px;
+    }
+    .feature {
+      background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.04);
+      border-radius: 10px; padding: 20px;
+    }
+    .feature h3 { font-size: 14px; font-weight: 600; margin-bottom: 6px; }
+    .feature p { font-size: 13px; color: #8a8a96; line-height: 1.6; }
+    .feature .icon { font-size: 18px; margin-bottom: 8px; display: block; }
+
+    /* ── Architecture ── */
+    .arch { margin: 0 0 60px; }
+    .arch h2 {
+      font-size: 20px; font-weight: 600; margin-bottom: 16px;
+      letter-spacing: -0.02em;
+    }
+    .arch-row {
+      display: flex; align-items: center; gap: 12px;
+      padding: 12px 16px; border-bottom: 1px solid rgba(255,255,255,0.04);
+      font-size: 13px;
+    }
+    .arch-row .label { color: #8a8a96; min-width: 100px; }
+    .arch-row .value { color: #f0f0f0; }
+    .arch-row .tag {
+      margin-left: auto; padding: 2px 8px;
+      background: rgba(255,255,255,0.04); border-radius: 4px;
+      font-size: 11px; color: #555566; font-family: monospace;
+    }
+
+    /* ── Footer ── */
+    .footer {
+      border-top: 1px solid rgba(255,255,255,0.04);
+      padding: 32px 0; text-align: center;
+      font-size: 12px; color: #555566;
+    }
+    .footer a { color: #5e6ad2; }
+    .footer a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- Hero -->
+    <section class="hero">
+      <div class="badge"><span class="dot"></span> v6.2.0 — Free AI Coding Agent</div>
+      <h1>Code with AI.<br><span class="muted">Ship with confidence.</span></h1>
+      <p class="subtitle">
+        NeuronCLI is an open-source AI coding agent with 44K tokens/day via Azure,
+        OpenRouter free fallback, encrypted local vault, and full tool execution.
+      </p>
+
+      <div class="install-box">
+        <div class="install-label">Install via pip</div>
+        <div class="install-cmd">pip install neuroncli</div>
+        <div class="install-alt">Then run <code>neuron</code> in any project directory.</div>
+      </div>
+
+      <div class="install-box">
+        <div class="install-label">Install via npm (React TUI)</div>
+        <div class="install-cmd">npx @zero-x/neuron</div>
+        <div class="install-alt">Requires Node.js 18+. React/Ink frontend with Rust backend.</div>
+      </div>
+    </section>
+
+    <!-- Features -->
+    <section class="features">
+      <div class="feature">
+        <span class="icon" style="color:#2D8C3C;">✓</span>
+        <h3>44K Free Tokens/Day</h3>
+        <p>Azure AI Foundry with Kimi-K2.5. Automatic fallback to OpenRouter free tier.</p>
+      </div>
+      <div class="feature">
+        <span class="icon" style="color:#4169C3;">◆</span>
+        <h3>Encrypted Vault</h3>
+        <p>AES-256-GCM encrypted credentials. Machine-fingerprinted. PBKDF2 key derivation.</p>
+      </div>
+      <div class="feature">
+        <span class="icon" style="color:#F0A028;">▸</span>
+        <h3>Full Tool Execution</h3>
+        <p>Bash, file read/write, grep, glob search. Claude Code-grade tool parity.</p>
+      </div>
+      <div class="feature">
+        <span class="icon" style="color:#C83228;">●</span>
+        <h3>Session Memory</h3>
+        <p>Local JSONL persistence with compaction. Fork, branch, and resume sessions.</p>
+      </div>
+      <div class="feature">
+        <span class="icon" style="color:#5AC8FA;">◎</span>
+        <h3>React/Ink TUI</h3>
+        <p>Premium terminal UI with block-border Neuron logo. React frontend, Rust engine.</p>
+      </div>
+      <div class="feature">
+        <span class="icon" style="color:#2D8C3C;">◉</span>
+        <h3>Open Source</h3>
+        <p>MIT license. Built by ZeroX. Contributions welcome on GitHub.</p>
+      </div>
+    </section>
+
+    <!-- Architecture -->
+    <section class="arch">
+      <h2>Architecture</h2>
+      <div class="arch-row">
+        <span class="label">Frontend</span>
+        <span class="value">React/Ink TUI or Rust LiveCli</span>
+        <span class="tag">TypeScript</span>
+      </div>
+      <div class="arch-row">
+        <span class="label">Backend</span>
+        <span class="value">Rust binary — tools, streaming, sessions</span>
+        <span class="tag">Rust</span>
+      </div>
+      <div class="arch-row">
+        <span class="label">Auth</span>
+        <span class="value">OpenRouter PKCE + encrypted vault</span>
+        <span class="tag">AES-256</span>
+      </div>
+      <div class="arch-row">
+        <span class="label">Provider</span>
+        <span class="value">Azure → OpenAI → OpenRouter (priority)</span>
+        <span class="tag">multi</span>
+      </div>
+      <div class="arch-row">
+        <span class="label">Sessions</span>
+        <span class="value">JSONL with compaction, fork, branch</span>
+        <span class="tag">local</span>
+      </div>
+      <div class="arch-row">
+        <span class="label">Distribution</span>
+        <span class="value">PyPI (neuroncli) + npm (@zero-x/neuron)</span>
+        <span class="tag">cross</span>
+      </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="footer">
+      <p>
+        <a href="https://github.com/RAHUL-DevelopeRR/claw-code" target="_blank">GitHub</a> ·
+        <a href="https://pypi.org/project/neuroncli/" target="_blank">PyPI</a> ·
+        <a href="https://zero-x.live">zero-x.live</a>
+      </p>
+      <p style="margin-top:8px;">© 2026 ZeroX Corporation. Built by builders.</p>
+    </footer>
+  </div>
+</body>
+</html>

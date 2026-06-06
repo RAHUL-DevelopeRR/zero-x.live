@@ -27,3 +27,9 @@ Assets/pdfcrowd*
 Assets/CursorUserSetup*
 Assets/WindsurfUserSetup*
 Assets/pp.png
+
+# Wrangler cache and local logs
+.wrangler/
+neuroncli/auth-server/.wrangler/
+wrangler.log
+

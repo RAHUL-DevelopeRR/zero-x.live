@@ -1,0 +1,140 @@
+
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: var(--font-sans); }
+  .wrap { padding: 1rem 0; }
+  .section { margin-bottom: 2rem; border: 0.5px solid var(--color-border-tertiary); border-radius: var(--border-radius-lg); overflow: hidden; }
+  .sec-head { padding: 10px 16px; background: var(--color-background-secondary); border-bottom: 0.5px solid var(--color-border-tertiary); display: flex; align-items: center; gap: 8px; }
+  .sec-num { width: 20px; height: 20px; border-radius: 50%; background: #0f0f0f; color: #fff; font-size: 11px; font-weight: 500; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .sec-title { font-size: 13px; font-weight: 500; color: var(--color-text-primary); }
+  .sec-body { padding: 12px 16px; display: grid; gap: 8px; }
+  .row { display: flex; gap: 8px; align-items: flex-start; }
+  .label { font-size: 11px; font-weight: 500; color: var(--color-text-secondary); min-width: 90px; padding-top: 1px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .val { font-size: 12px; color: var(--color-text-primary); line-height: 1.5; }
+  .chip { display: inline-block; background: var(--color-background-tertiary); border: 0.5px solid var(--color-border-tertiary); border-radius: 4px; font-size: 11px; padding: 2px 7px; margin: 2px 2px 2px 0; color: var(--color-text-primary); }
+  .swatch { display: inline-block; width: 14px; height: 14px; border-radius: 3px; vertical-align: middle; margin-right: 4px; border: 0.5px solid rgba(0,0,0,0.15); }
+  .divider { height: 0.5px; background: var(--color-border-tertiary); margin: 2px 0; }
+  h2.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); }
+</style>
+<div class="wrap">
+  <h2 class="sr-only">Linear.app landing page design breakdown — every element analyzed</h2>
+
+  <div class="section">
+    <div class="sec-head"><div class="sec-num">1</div><span class="sec-title">Visual Foundation &amp; Tone</span></div>
+    <div class="sec-body">
+      <div class="row"><span class="label">Theme</span><span class="val">Pure dark. Background is near-black (#0f0f12), not true black — gives depth without harshness</span></div>
+      <div class="row"><span class="label">Mood</span><span class="val">Engineering-grade precision. Silent confidence. No noise, no decoration for its own sake</span></div>
+      <div class="row"><span class="label">Principle</span><span class="val">"Designed to the last pixel, engineered with unforgiving precision" — every element earns its place</span></div>
+      <div class="row"><span class="label">Texture</span><span class="val">Subtle grain/noise overlay on the hero — adds depth without breaking the dark theme</span></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="sec-head"><div class="sec-num">2</div><span class="sec-title">Color System</span></div>
+    <div class="sec-body">
+      <div class="row"><span class="label">Background</span><span class="val"><span class="swatch" style="background:#0f0f12"></span>#0f0f12 — base canvas</span></div>
+      <div class="row"><span class="label">Surface</span><span class="val"><span class="swatch" style="background:#1a1a1f"></span>#1a1a1f — cards, panels, UI chrome</span></div>
+      <div class="row"><span class="label">Borders</span><span class="val"><span class="swatch" style="background:#2a2a30"></span>#2a2a30 — ultra-subtle, 1px lines only</span></div>
+      <div class="row"><span class="label">Text primary</span><span class="val"><span class="swatch" style="background:#f0f0f0"></span>#f0f0f0 — off-white, not pure white (prevents harshness)</span></div>
+      <div class="row"><span class="label">Text secondary</span><span class="val"><span class="swatch" style="background:#888896"></span>#888896 — muted labels, captions</span></div>
+      <div class="row"><span class="label">Accent</span><span class="val"><span class="swatch" style="background:#5e6ad2"></span>#5e6ad2 — Linear purple. Used sparingly on CTAs and active states only</span></div>
+      <div class="row"><span class="label">Glow blobs</span><span class="val">Radial gradient "light sources" — purple/violet orbs at 10–15% opacity, blurred 120px+. Create depth illusion behind hero</span></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="sec-head"><div class="sec-num">3</div><span class="sec-title">Typography</span></div>
+    <div class="sec-body">
+      <div class="row"><span class="label">Font</span><span class="val">Inter exclusively — the entire page. Chosen to feel "invisible" — like reading code, not marketing</span></div>
+      <div class="row"><span class="label">Hero headline</span><span class="val">56–64px, weight 500 (not bold). Line-height 1.1. Tight tracking (-0.02em). 2–3 lines max</span></div>
+      <div class="row"><span class="label">Hero subhead</span><span class="val">18–20px, weight 400, color #888896. Max 2 lines. Never more than 15 words</span></div>
+      <div class="row"><span class="label">Body / features</span><span class="val">15–16px, weight 400, line-height 1.6. Section headers 13px uppercase, letter-spacing 0.08em, muted</span></div>
+      <div class="row"><span class="label">Hierarchy</span><span class="val">Weight contrast only — no size jumps. 500 vs 400 does all the work</span></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="sec-head"><div class="sec-num">4</div><span class="sec-title">Navigation Bar</span></div>
+    <div class="sec-body">
+      <div class="row"><span class="label">Structure</span><span class="val">Full-width, sticky. Logo left · Links center · CTA right</span></div>
+      <div class="row"><span class="label">Style</span><span class="val">Translucent dark background with backdrop-filter blur. 1px bottom border. Height ~56px</span></div>
+      <div class="row"><span class="label">Logo</span><span class="val">Mark (circle with partial fill) + wordmark "Linear" in 500 weight. Pure white</span></div>
+      <div class="row"><span class="label">Nav links</span><span class="val">5–6 items, 14px, weight 400, #888 default → white on hover. No underlines. No dropdown</span></div>
+      <div class="row"><span class="label">CTA button</span><span class="val">"Sign up" — white bg, dark text, 32px height, 8px radius. Compact. Never purple in nav</span></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="sec-head"><div class="sec-num">5</div><span class="sec-title">Hero Section</span></div>
+    <div class="sec-body">
+      <div class="row"><span class="label">Layout</span><span class="val">Full-viewport centered column. Text block top, product screenshot below</span></div>
+      <div class="row"><span class="label">Eyebrow</span><span class="val">Pill badge above headline — e.g. "New: Linear Agent" with subtle purple border. 12px, rounded-full</span></div>
+      <div class="row"><span class="label">Headline</span><span class="val">"Linear is shaped by the practices and principles of world-class product teams" — Statement of belief, not a feature list</span></div>
+      <div class="row"><span class="label">CTA cluster</span><span class="val">Two buttons side by side: primary (white filled) + secondary (ghost/outline). Gap 12px</span></div>
+      <div class="row"><span class="label">Social proof</span><span class="val">"Powers over 25,000 product teams" — 1 line, muted, below CTA. No logos in hero</span></div>
+      <div class="row"><span class="label">Hero visual</span><span class="val">Actual app UI screenshot in a dark browser frame. Floats with subtle shadow. Shows real product</span></div>
+      <div class="row"><span class="label">Background fx</span><span class="val">2–3 blurred radial gradient orbs (purple, blue) at very low opacity behind hero text</span></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="sec-head"><div class="sec-num">6</div><span class="sec-title">Feature Sections</span></div>
+    <div class="sec-body">
+      <div class="row"><span class="label">Pattern</span><span class="val">Alternating: text left + visual right, then text right + visual left. Clean 2-col grid</span></div>
+      <div class="row"><span class="label">Section label</span><span class="val">13px uppercase muted tag above the headline — e.g. "ISSUES" or "CYCLES". Tiny eyebrow</span></div>
+      <div class="row"><span class="label">Feature headline</span><span class="val">28–32px, weight 500, 2 lines max. Direct noun phrase — not a question</span></div>
+      <div class="row"><span class="label">Feature copy</span><span class="val">2–3 sentences max. 16px, muted. Specific, never vague marketing speak</span></div>
+      <div class="row"><span class="label">Visuals</span><span class="val">Dark UI mockups in bordered containers. Keyboard shortcut overlays. Animated micro-interactions</span></div>
+      <div class="row"><span class="label">Spacing</span><span class="val">120px+ between sections. Enormous whitespace is the visual rhythm</span></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="sec-head"><div class="sec-num">7</div><span class="sec-title">Social Proof / Testimonials</span></div>
+    <div class="sec-body">
+      <div class="row"><span class="label">Format</span><span class="val">3-column card grid. Dark surface cards (#1a1a1f). Quote in 15px italic. Author name + role below</span></div>
+      <div class="row"><span class="label">Quotes</span><span class="val">Short, punchy, specific. "You just have to use it and you will see, you will just feel it." — no fluff</span></div>
+      <div class="row"><span class="label">Company logos</span><span class="val">Shown as a horizontal scrolling strip above or below testimonials — white/muted, not colored</span></div>
+      <div class="row"><span class="label">Stat block</span><span class="val">"25,000+ teams" — large number, small label below. Used as standalone trust element</span></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="sec-head"><div class="sec-num">8</div><span class="sec-title">Interactive Product Demo (live UI embed)</span></div>
+    <div class="sec-body">
+      <div class="row"><span class="label">What it is</span><span class="val">Actual animated product UI embedded in the page. Shows real-time issue creation, keyboard shortcuts, command palette</span></div>
+      <div class="row"><span class="label">Style</span><span class="val">Runs inside a rounded dark frame (simulated browser or app window). No fake screenshots</span></div>
+      <div class="row"><span class="label">Motion</span><span class="val">Smooth 60fps animations. Text appears typed out. Status badges update. Feels alive</span></div>
+      <div class="row"><span class="label">Purpose</span><span class="val">Prove the product before signup. "50ms interactions" — you experience it, not read about it</span></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="sec-head"><div class="sec-num">9</div><span class="sec-title">Bottom CTA / Footer</span></div>
+    <div class="sec-body">
+      <div class="row"><span class="label">CTA section</span><span class="val">Full-width dark panel. Centered headline "Start building with Linear" + 2 buttons. Same orb glow behind</span></div>
+      <div class="row"><span class="label">Footer</span><span class="val">4-col link grid: Product / Company / Resources / Legal. 13px muted links. Logo + tagline left</span></div>
+      <div class="row"><span class="label">Footer border</span><span class="val">1px top border only. Absolutely no footer background color change</span></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="sec-head"><div class="sec-num">10</div><span class="sec-title">Motion &amp; Micro-interactions</span></div>
+    <div class="sec-body">
+      <div class="row"><span class="label">Scroll reveals</span><span class="val">Elements fade-up on scroll. 300ms ease-out. Never dramatic — subtle and fast</span></div>
+      <div class="row"><span class="label">Hover states</span><span class="val">Links: color shift 150ms. Buttons: subtle scale(1.01) + brightness. Cards: border brightens</span></div>
+      <div class="row"><span class="label">No parallax</span><span class="val">Zero parallax scrolling. No scroll-jacking. Fast page, native scroll speed always</span></div>
+      <div class="row"><span class="label">Gradient orbs</span><span class="val">Slowly drifting radial blobs. CSS keyframe animation, very slow (20–40s loop). Purely ambient</span></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="sec-head"><div class="sec-num">11</div><span class="sec-title">What Linear Never Does</span></div>
+    <div class="sec-body">
+      <div class="row"><span class="label">No</span><span class="val"><span class="chip">stock photos</span><span class="chip">rounded hero images</span><span class="chip">emoji in copy</span><span class="chip">bright color splashes</span><span class="chip">gradient text</span></span></div>
+      <div class="row"><span class="label">No</span><span class="val"><span class="chip">carousels</span><span class="chip">accordions</span><span class="chip">sticky popups</span><span class="chip">chat widgets</span><span class="chip">countdown timers</span></span></div>
+      <div class="row"><span class="label">No</span><span class="val"><span class="chip">"pricing starts at"</span><span class="chip">comparison tables in hero</span><span class="chip">auto-play video</span><span class="chip">full-bleed hero image</span></span></div>
+    </div>
+  </div>
+
+</div>

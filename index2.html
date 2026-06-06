@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta content="width=device-width, initial-scale=1.0" name="viewport" />
+    <title>ZeroX Corporation | zero-x.live</title>
+    <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap"
+        rel="stylesheet" />
+    <link href="https://fonts.googleapis.com" rel="preconnect" />
+    <link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700;900&amp;display=swap"
+        rel="stylesheet" />
+    <link
+        href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap"
+        rel="stylesheet" />
+    <script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "primary-fixed": "#e2dfff",
+                        "on-background": "#e2e2e2",
+                        "surface-dim": "#121414",
+                        "on-tertiary": "#542100",
+                        "surface-variant": "#333535",
+                        "on-primary": "#1800a7",
+                        "outline-variant": "#464556",
+                        "inverse-primary": "#4843ea",
+                        "surface-tint": "#c2c1ff",
+                        "secondary": "#c8c5ca",
+                        "error": "#ffb4ab",
+                        "surface-container": "#1e2020",
+                        "primary-container": "#5e5bff",
+                        "secondary-fixed-dim": "#c8c5ca",
+                        "surface-container-highest": "#333535",
+                        "on-error": "#690005",
+                        "inverse-surface": "#e2e2e2",
+                        "on-tertiary-fixed": "#331100",
+                        "on-tertiary-container": "#fff8f6",
+                        "on-secondary": "#303033",
+                        "inverse-on-surface": "#2f3131",
+                        "primary": "#c2c1ff",
+                        "on-primary-container": "#fcf8ff",
+                        "surface": "#121414",
+                        "surface-container-high": "#282a2b",
+                        "on-surface-variant": "#c7c4d8",
+                        "on-error-container": "#ffdad6",
+                        "on-primary-fixed-variant": "#2d1fd3",
+                        "secondary-fixed": "#e5e1e6",
+                        "tertiary": "#ffb690",
+                        "surface-container-low": "#1a1c1c",
+                        "tertiary-container": "#bd5300",
+                        "tertiary-fixed": "#ffdbca",
+                        "surface-bright": "#38393a",
+                        "error-container": "#93000a",
+                        "background": "#121414",
+                        "tertiary-fixed-dim": "#ffb690",
+                        "primary-fixed-dim": "#c2c1ff",
+                        "on-surface": "#e2e2e2",
+                        "on-secondary-fixed-variant": "#47464a",
+                        "secondary-container": "#47464a",
+                        "surface-container-lowest": "#0c0f0f",
+                        "on-tertiary-fixed-variant": "#783200",
+                        "on-secondary-container": "#b7b4b8",
+                        "outline": "#908fa1",
+                        "on-secondary-fixed": "#1b1b1e",
+                        "on-primary-fixed": "#0b006b"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.125rem",
+                        "lg": "0.25rem",
+                        "xl": "0.5rem",
+                        "full": "0.75rem"
+                    },
+                    "spacing": {
+                        "section-padding": "120px",
+                        "stack-md": "16px",
+                        "stack-lg": "32px",
+                        "stack-sm": "8px",
+                        "grid-unit": "4px",
+                        "container-max": "1200px",
+                        "gutter": "24px"
+                    },
+                    "fontFamily": {
+                        "h2-section": [
+                            "Inter"
+                        ],
+                        "body-lg": [
+                            "Inter"
+                        ],
+                        "label-mono": [
+                            "Inter"
+                        ],
+                        "body-base": [
+                            "Inter"
+                        ],
+                        "h3-sub": [
+                            "Inter"
+                        ],
+                        "h1-hero": [
+                            "Inter"
+                        ]
+                    },
+                    "fontSize": {
+                        "h2-section": [
+                            "36px",
+                            {
+                                "lineHeight": "1.2",
+                                "letterSpacing": "-0.02em",
+                                "fontWeight": "500"
+                            }
+                        ],
+                        "body-lg": [
+                            "18px",
+                            {
+                                "lineHeight": "1.6",
+                                "fontWeight": "400"
+                            }
+                        ],
+                        "label-mono": [
+                            "12px",
+                            {
+                                "lineHeight": "1",
+                                "letterSpacing": "0.05em",
+                                "fontWeight": "500"
+                            }
+                        ],
+                        "body-base": [
+                            "15px",
+                            {
+                                "lineHeight": "1.6",
+                                "fontWeight": "400"
+                            }
+                        ],
+                        "h3-sub": [
+                            "20px",
+                            {
+                                "lineHeight": "1.4",
+                                "letterSpacing": "-0.01em",
+                                "fontWeight": "500"
+                            }
+                        ],
+                        "h1-hero": [
+                            "60px",
+                            {
+                                "lineHeight": "1.08",
+                                "letterSpacing": "-0.025em",
+                                "fontWeight": "500"
+                            }
+                        ]
+                    }
+                },
+            },
+        }
+    </script>
+    <style>
+        body {
+            background-color: #0d0d10;
+            color: #f0f0f0;
+        }
+
+        .text-muted {
+            color: #6b6b7b;
+        }
+
+        .border-line {
+            border-color: rgba(255, 255, 255, 0.07);
+        }
+
+        .bg-surface-level1 {
+            background-color: #131316;
+        }
+
+        /* Subtle grid background */
+        .grid-bg {
+            background-image:
+                linear-gradient(to right, rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+                linear-gradient(to bottom, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+            background-size: 40px 40px;
+        }
+    </style>
+</head>
+
+<body
+    class="font-body-base text-body-base antialiased min-h-screen flex flex-col relative overflow-x-hidden selection:bg-primary-container selection:text-on-primary-container">
+    <!-- TopNavBar -->
+    <header
+        class="fixed top-0 w-full h-[56px] z-50 border-b border-white/10 flat no-shadows bg-[#131316]/85 backdrop-blur-md flex items-center justify-between px-6 max-w-7xl mx-auto left-0 right-0">
+        <div class="flex items-center gap-2 text-lg font-bold text-slate-50 tracking-tighter">
+            <svg class="text-indigo-500 dark:text-indigo-400" fill="none" height="24" stroke="currentColor"
+                stroke-width="2" viewbox="0 0 24 24" width="24">
+                <circle cx="12" cy="12" r="10"></circle>
+                <path d="M8 8l8 8m0-8l-8 8"></path>
+            </svg>
+            zero-x.live
+        </div>
+        <nav class="hidden md:flex items-center gap-8">
+            <a class="text-slate-400 font-normal hover:text-indigo-400 transition-colors duration-200 active:scale-95 transition-transform font-inter text-sm tracking-tight"
+                href="#">Products</a>
+            <a class="text-slate-400 font-normal hover:text-indigo-400 transition-colors duration-200 active:scale-95 transition-transform font-inter text-sm tracking-tight"
+                href="#">About</a>
+            <a class="text-slate-400 font-normal hover:text-indigo-400 transition-colors duration-200 active:scale-95 transition-transform font-inter text-sm tracking-tight"
+                href="#">Changelog</a>
+            <a class="text-slate-400 font-normal hover:text-indigo-400 transition-colors duration-200 active:scale-95 transition-transform font-inter text-sm tracking-tight"
+                href="#">Contact</a>
+        </nav>
+        <div class="flex items-center gap-4">
+            <button
+                class="hidden md:flex items-center gap-2 text-indigo-500 dark:text-indigo-400 hover:text-indigo-400 transition-colors duration-200 active:scale-95 transition-transform font-inter text-sm font-medium tracking-tight">
+                Get in touch
+                <span class="material-symbols-outlined text-[18px]">terminal</span>
+            </button>
+            <button class="md:hidden text-slate-50">
+                <span class="material-symbols-outlined">menu</span>
+            </button>
+        </div>
+    </header>
+    <main class="flex-grow pt-[120px]">
+        <!-- Hero Section -->
+        <section
+            class="relative px-6 max-w-container-max mx-auto pb-section-padding flex flex-col items-center text-center">
+            <div class="absolute inset-0 grid-bg opacity-50 -z-10 pointer-events-none"></div>
+            <!-- Radial Orb (CSS simulated) -->
+            <div
+                class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-primary-container/10 rounded-full blur-[120px] -z-10 pointer-events-none">
+            </div>
+            <h1 class="font-h1-hero text-h1-hero text-on-background max-w-4xl mx-auto mb-stack-md">
+                The software company<br />
+                <span class="text-muted">that ships what it</span><br />
+                promises.
+            </h1>
+            <p class="font-body-lg text-body-lg text-muted max-w-2xl mx-auto mb-stack-lg">
+                We build engineering-grade tools for semantic search, local-first intelligence, and rapid development.
+                Precision instrumentation for modern workflows.
+            </p>
+            <div class="flex flex-wrap justify-center gap-4 mb-[80px]">
+                <button
+                    class="bg-primary-container text-on-primary-container px-6 py-3 rounded DEFAULT font-body-base font-medium flex items-center gap-2 hover:bg-inverse-primary transition-colors">
+                    Explore Neuron <span class="material-symbols-outlined text-[18px]">arrow_forward</span>
+                </button>
+                <button
+                    class="bg-transparent border border-line text-on-background px-6 py-3 rounded DEFAULT font-body-base hover:bg-surface-level1 transition-colors">
+                    Read the manifesto
+                </button>
+            </div>
+            <!-- Browser-Frame UI Mockup -->
+            <div
+                class="w-full max-w-5xl mx-auto bg-surface-level1 border border-line rounded-lg overflow-hidden shadow-2xl backdrop-blur-sm relative">
+                <!-- Window Controls -->
+                <div class="h-10 border-b border-line flex items-center px-4 gap-2 bg-[#0d0d10]/50">
+                    <div class="w-2.5 h-2.5 rounded-full bg-outline-variant"></div>
+                    <div class="w-2.5 h-2.5 rounded-full bg-outline-variant"></div>
+                    <div class="w-2.5 h-2.5 rounded-full bg-outline-variant"></div>
+                    <div class="ml-4 font-label-mono text-label-mono text-muted">neuron / semantic-search</div>
+                </div>
+                <div class="flex h-[500px]">
+                    <!-- Sidebar -->
+                    <div class="w-64 border-r border-line p-4 flex flex-col gap-4 bg-[#0d0d10]/20 hidden md:flex">
+                        <div class="font-label-mono text-label-mono text-muted mb-2">SOURCES</div>
+                        <div class="flex items-center gap-2 text-on-background font-body-base p-2 bg-white/5 rounded">
+                            <span class="material-symbols-outlined text-[16px]">folder</span> Local Vault
+                        </div>
+                        <div
+                            class="flex items-center gap-2 text-muted font-body-base p-2 hover:bg-white/5 rounded cursor-pointer transition-colors">
+                            <span class="material-symbols-outlined text-[16px]">cloud</span> Cloud Sync
+                        </div>
+                        <div
+                            class="flex items-center gap-2 text-muted font-body-base p-2 hover:bg-white/5 rounded cursor-pointer transition-colors">
+                            <span class="material-symbols-outlined text-[16px]">integration_instructions</span> GitHub
+                            Repo
+                        </div>
+                    </div>
+                    <!-- Main Area -->
+                    <div class="flex-1 flex flex-col bg-[#0d0d10]/40">
+                        <!-- Search Bar -->
+                        <div class="p-4 border-b border-line">
+                            <div class="relative">
+                                <span
+                                    class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-muted text-[18px]">search</span>
+                                <input
+                                    class="w-full bg-[#0d0d10] border border-line rounded DEFAULT py-2.5 pl-10 pr-4 font-label-mono text-on-background focus:outline-none focus:border-primary-container transition-colors"
+                                    readonly="" type="text" value="design system guidelines 2024" />
+                            </div>
+                        </div>
+                        <!-- Results List -->
+                        <div class="flex-1 p-4 overflow-y-auto flex flex-col gap-2">
+                            <!-- Result 1 -->
+                            <div
+                                class="p-4 border border-line rounded bg-surface-level1 flex items-start justify-between group hover:border-primary-container/50 transition-colors">
+                                <div>
+                                    <h4
+                                        class="font-body-base text-on-background font-medium mb-1 group-hover:text-primary-fixed transition-colors">
+                                        ZeroX_Design_System_v2.pdf</h4>
+                                    <p class="font-label-mono text-label-mono text-muted">/docs/design/guidelines</p>
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    <div class="w-24 h-1.5 bg-[#0d0d10] rounded-full overflow-hidden">
+                                        <div class="h-full bg-primary-container w-[97%]"></div>
+                                    </div>
+                                    <span class="font-label-mono text-label-mono text-primary-fixed">0.97</span>
+                                </div>
+                            </div>
+                            <!-- Result 2 -->
+                            <div
+                                class="p-4 border border-line rounded bg-surface-level1 flex items-start justify-between">
+                                <div>
+                                    <h4 class="font-body-base text-on-background font-medium mb-1">
+                                        Brand_Anchors_2024.json</h4>
+                                    <p class="font-label-mono text-label-mono text-muted">/src/config/theme</p>
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    <div class="w-24 h-1.5 bg-[#0d0d10] rounded-full overflow-hidden">
+                                        <div class="h-full bg-primary-container w-[82%] opacity-80"></div>
+                                    </div>
+                                    <span class="font-label-mono text-label-mono text-muted">0.82</span>
+                                </div>
+                            </div>
+                            <!-- Result 3 -->
+                            <div
+                                class="p-4 border border-line rounded bg-surface-level1 flex items-start justify-between">
+                                <div>
+                                    <h4 class="font-body-base text-on-background font-medium mb-1">style_guide_draft.md
+                                    </h4>
+                                    <p class="font-label-mono text-label-mono text-muted">/notes/meetings/Q1</p>
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    <div class="w-24 h-1.5 bg-[#0d0d10] rounded-full overflow-hidden">
+                                        <div class="h-full bg-primary-container w-[65%] opacity-60"></div>
+                                    </div>
+                                    <span class="font-label-mono text-label-mono text-muted">0.65</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+        <!-- Footer -->
+        <footer class="w-full pt-32 pb-16 border-t border-white/10 bg-[#0d0d10] flat no-shadows">
+            <div class="grid grid-cols-2 md:grid-cols-5 gap-12 px-6 max-w-7xl mx-auto">
+                <div class="col-span-2 md:col-span-2 flex flex-col gap-4">
+                    <div class="flex items-center gap-2 text-xl font-black text-slate-50">
+                        <svg class="text-indigo-500 dark:text-indigo-400" fill="none" height="24" stroke="currentColor"
+                            stroke-width="2" viewbox="0 0 24 24" width="24">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <path d="M8 8l8 8m0-8l-8 8"></path>
+                        </svg>
+                        zero-x.live
+                    </div>
+                    <p class="font-inter text-[13px] leading-relaxed text-slate-500">© 2024 ZeroX Corporation. Built by
+                        builders.</p>
+                </div>
+                <div class="flex flex-col gap-3">
+                    <span class="font-inter text-[13px] leading-relaxed font-bold text-slate-50">Products</span>
+                    <a class="font-inter text-[13px] leading-relaxed text-slate-500 hover:text-slate-50 transition-colors duration-200 opacity-80 hover:opacity-100 transition-opacity"
+                        href="#">Neuron</a>
+                    <a class="font-inter text-[13px] leading-relaxed text-slate-500 hover:text-slate-50 transition-colors duration-200 opacity-80 hover:opacity-100 transition-opacity"
+                        href="#">NeuronCLI</a>
+                    <a class="font-inter text-[13px] leading-relaxed text-slate-500 hover:text-slate-50 transition-colors duration-200 opacity-80 hover:opacity-100 transition-opacity"
+                        href="#">Neuron RAG</a>
+                </div>
+                <div class="flex flex-col gap-3">
+                    <span class="font-inter text-[13px] leading-relaxed font-bold text-slate-50">Company</span>
+                    <a class="font-inter text-[13px] leading-relaxed text-slate-500 hover:text-slate-50 transition-colors duration-200 opacity-80 hover:opacity-100 transition-opacity"
+                        href="#">About</a>
+                    <a class="font-inter text-[13px] leading-relaxed text-slate-500 hover:text-slate-50 transition-colors duration-200 opacity-80 hover:opacity-100 transition-opacity"
+                        href="#">Blog</a>
+                    <a class="font-inter text-[13px] leading-relaxed text-slate-500 hover:text-slate-50 transition-colors duration-200 opacity-80 hover:opacity-100 transition-opacity"
+                        href="#">Changelog</a>
+                    <a class="font-inter text-[13px] leading-relaxed text-slate-500 hover:text-slate-50 transition-colors duration-200 opacity-80 hover:opacity-100 transition-opacity"
+                        href="#">Contact</a>
+                </div>
+                <div class="flex flex-col gap-3">
+                    <span class="font-inter text-[13px] leading-relaxed font-bold text-slate-50">Resources</span>
+                    <a class="font-inter text-[13px] leading-relaxed text-slate-500 hover:text-slate-50 transition-colors duration-200 opacity-80 hover:opacity-100 transition-opacity"
+                        href="#">GitHub</a>
+                    <a class="font-inter text-[13px] leading-relaxed text-slate-500 hover:text-slate-50 transition-colors duration-200 opacity-80 hover:opacity-100 transition-opacity"
+                        href="#">Docs</a>
+                    <a class="font-inter text-[13px] leading-relaxed text-slate-500 hover:text-slate-50 transition-colors duration-200 opacity-80 hover:opacity-100 transition-opacity"
+                        href="#">Releases</a>
+                    <a class="font-inter text-[13px] leading-relaxed text-slate-500 hover:text-slate-50 transition-colors duration-200 opacity-80 hover:opacity-100 transition-opacity"
+                        href="#">Privacy</a>
+                    <a class="font-inter text-[13px] leading-relaxed text-slate-500 hover:text-slate-50 transition-colors duration-200 opacity-80 hover:opacity-100 transition-opacity"
+                        href="#">Terms</a>
+                </div>
+            </div>
+        </footer>
+    </main>
+</body>
+
+</html>
