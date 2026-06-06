@@ -536,28 +536,52 @@ function buyNeuron(tier,amt,desc){
   rzp.open()}
 
 /* ═══ Clerk Authentication Integration ═══ */
+const clerkConfig = {
+  appearance: {
+    layout: {
+      logoImageUrl: window.location.origin + '/Assets/neuron_circular.png',
+      logoPlacement: 'inside',
+    },
+    elements: {
+      headerTitle: {
+        textAlign: 'center',
+        width: '100%',
+      },
+      headerSubtitle: {
+        textAlign: 'center',
+        width: '100%',
+      },
+      branding: {
+        display: 'none',
+      },
+      footerAction__branding: {
+        display: 'none',
+      }
+    }
+  },
+  localization: {
+    signIn: {
+      start: {
+        title: "Sign in",
+        subtitle: "to continue to ZeroX"
+      }
+    },
+    signUp: {
+      start: {
+        title: "Create your account",
+        subtitle: "to continue to ZeroX"
+      }
+    }
+  }
+};
+
 window.addEventListener('load', async () => {
   if (!window.Clerk) {
     console.warn("Clerk JS SDK not loaded yet.");
     return;
   }
   try {
-    await window.Clerk.load({
-      localization: {
-        signIn: {
-          start: {
-            title: "Sign in",
-            subtitle: "to continue to ZeroX"
-          }
-        },
-        signUp: {
-          start: {
-            title: "Create your account",
-            subtitle: "to continue to ZeroX"
-          }
-        }
-      }
-    });
+    await window.Clerk.load(clerkConfig);
     const signinBtn = document.getElementById('signin-btn');
     const userButtonDiv = document.getElementById('user-button');
     const navLinks = document.querySelector('header nav');
@@ -590,7 +614,7 @@ window.addEventListener('load', async () => {
       if (signinBtn) {
         signinBtn.addEventListener('click', (e) => {
           e.preventDefault();
-          window.Clerk.openSignIn();
+          window.Clerk.openSignIn(clerkConfig);
         });
       }
     }

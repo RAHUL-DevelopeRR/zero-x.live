@@ -205,6 +205,45 @@
     }
 
     // Clerk SDK Init & Protection Check
+    const clerkConfig = {
+      appearance: {
+        layout: {
+          logoImageUrl: window.location.origin + '/Assets/neuron_circular.png',
+          logoPlacement: 'inside',
+        },
+        elements: {
+          headerTitle: {
+            textAlign: 'center',
+            width: '100%',
+          },
+          headerSubtitle: {
+            textAlign: 'center',
+            width: '100%',
+          },
+          branding: {
+            display: 'none',
+          },
+          footerAction__branding: {
+            display: 'none',
+          }
+        }
+      },
+      localization: {
+        signIn: {
+          start: {
+            title: "Sign in",
+            subtitle: "to continue to ZeroX"
+          }
+        },
+        signUp: {
+          start: {
+            title: "Create your account",
+            subtitle: "to continue to ZeroX"
+          }
+        }
+      }
+    };
+
     window.addEventListener('load', async () => {
       if (!window.Clerk) {
         console.error("Clerk JS SDK not loaded");
@@ -213,22 +252,7 @@
       }
 
       try {
-        await window.Clerk.load({
-          localization: {
-            signIn: {
-              start: {
-                title: "Sign in",
-                subtitle: "to continue to ZeroX"
-              }
-            },
-            signUp: {
-              start: {
-                title: "Create your account",
-                subtitle: "to continue to ZeroX"
-              }
-            }
-          }
-        });
+        await window.Clerk.load(clerkConfig);
         
         if (!window.Clerk.user) {
           // Redirect to index if not authenticated
