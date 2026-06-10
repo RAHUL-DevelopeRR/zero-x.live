@@ -6,6 +6,51 @@ import { neon } from '@neondatabase/serverless';
 const app = new Hono();
 const api = new Hono();
 
+// Hostname-based subdomain routing middleware
+app.use('*', async (c, next) => {
+  const url = new URL(c.req.url);
+  const hostname = url.hostname;
+  const path = url.pathname;
+
+  // Let Hono handle OPTIONS/CORS preflight
+  if (c.req.method === 'OPTIONS') {
+    return next();
+  }
+
+  // 1. Static asset paths (images, fonts, stylesheets, JS files)
+  const isAsset = path.startsWith('/Assets/') || 
+                  path.startsWith('/assets/') || 
+                  (path.includes('.') && !path.endsWith('/'));
+  
+  if (isAsset) {
+    if (c.env && c.env.ASSETS) {
+      return c.env.ASSETS.fetch(c.req.raw);
+    }
+  }
+
+  // 2. Subdomain and clean HTML path routing
+  if (hostname === 'dashboard.zero-x.live') {
+    if (path === '/' || path === '/index.html') {
+      if (c.env && c.env.ASSETS) {
+        const newUrl = new URL('/dashboard.html', c.req.url);
+        const newReq = new Request(newUrl.toString(), c.req.raw);
+        return c.env.ASSETS.fetch(newReq);
+      }
+    }
+  } else if (hostname === 'zero-x.live' || hostname === 'www.zero-x.live') {
+    if (path === '/' || path === '/index.html') {
+      if (c.env && c.env.ASSETS) {
+        const newUrl = new URL('/index.html', c.req.url);
+        const newReq = new Request(newUrl.toString(), c.req.raw);
+        return c.env.ASSETS.fetch(newReq);
+      }
+    }
+  }
+
+  // 3. Continue Hono routing for API paths
+  return next();
+});
+
 // Global sessions in-memory fallback (useful for dev/zero-config, ephemerally persists per isolate)
 const sessions = new Map();
 
@@ -458,5 +503,26 @@ function successPage(sessionToken, provider) {
 
 app.route('/neuroncli/auth-server', api);
 app.route('/', api);
+
+// Unmatched routes fall back to static assets (supporting clean URLs like /about -> /about.html)
+app.notFound(async (c) => {
+  const url = new URL(c.req.url);
+  const path = url.pathname;
+
+  if (c.env && c.env.ASSETS) {
+    if (!path.includes('.')) {
+      const cleanPath = path.endsWith('/') ? path.slice(0, -1) : path;
+      const htmlUrl = new URL(`${cleanPath}.html`, c.req.url);
+      const htmlReq = new Request(htmlUrl.toString(), c.req.raw);
+      const res = await c.env.ASSETS.fetch(htmlReq);
+      if (res.status === 200) {
+        return res;
+      }
+    }
+    return c.env.ASSETS.fetch(c.req.raw);
+  }
+  
+  return c.text('Not Found', 404);
+});
 
 export default app;

@@ -1,0 +1,369 @@
+/* 
+   nitro.css — Premium Framer "Nitro" Layout and Style System
+   Customized for ZeroX Brand Identity:
+     Primary Accent: Electric Cyan (#00E5FF)
+     Secondary Accent: Electric Purple (#7C4DFF)
+     Base Canvas: Deep Charcoal Black (#0A0A0C)
+     Borders: Thin slate-border (#2A2A32)
+     Fonts: Cabinet Grotesk (headings) & Satoshi (body)
+*/
+
+@import url('https://api.fontshare.com/v2/css?f[]=cabinet-grotesk@800,700,500,400&f[]=satoshi@700,500,400&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap');
+
+:root {
+  --zx-bg: #0A0A0C;
+  --zx-surface: #111114;
+  --zx-surface-2: #18181C;
+  --zx-border: #2A2A32;
+  --zx-border-glow: rgba(0, 229, 255, 0.15);
+  --zx-border-hover: rgba(255, 255, 255, 0.15);
+  --zx-text: #E8E8EC;
+  --zx-muted: #8A8A96;
+  --zx-faint: #4E4E5A;
+  --zx-cyan: #00E5FF;
+  --zx-cyan-hover: #00B8D4;
+  --zx-purple: #7C4DFF;
+  --zx-purple-glow: rgba(124, 77, 255, 0.12);
+  
+  --font-display: 'Cabinet Grotesk', sans-serif;
+  --font-body: 'Satoshi', sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+}
+
+/* Base Styles */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  background-color: var(--zx-bg);
+  color: var(--zx-text);
+  font-family: var(--font-body);
+  overflow-x: hidden;
+  line-height: 1.6;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-display);
+  font-weight: 700;
+  color: #fff;
+  letter-spacing: -0.02em;
+}
+
+a {
+  text-decoration: none;
+  color: inherit;
+  transition: all 0.2s ease;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+}
+::-webkit-scrollbar-track {
+  background: var(--zx-bg);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--zx-border);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--zx-muted);
+}
+
+::selection {
+  background: rgba(0, 229, 255, 0.15);
+  color: var(--zx-cyan);
+}
+
+/* ambient glow background blobs */
+.glow-container {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.glow-orb {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(140px);
+  opacity: 0.08;
+  mix-blend-mode: screen;
+}
+
+.glow-orb-primary {
+  width: 600px;
+  height: 600px;
+  background: var(--zx-cyan);
+  top: -10%;
+  left: 20%;
+  animation: float-orb 25s ease-in-out infinite;
+}
+
+.glow-orb-secondary {
+  width: 500px;
+  height: 500px;
+  background: var(--zx-purple);
+  top: 30%;
+  right: 15%;
+  animation: float-orb 32s ease-in-out infinite reverse;
+}
+
+@keyframes float-orb {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(40px, -30px) scale(1.05); }
+}
+
+/* Navigation Bar (Glassmorphic) */
+.nitro-nav {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 64px;
+  z-index: 100;
+  background: rgba(10, 10, 12, 0.75);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-bottom: 1px solid var(--zx-border);
+  transition: border-color 0.3s;
+}
+
+.nitro-nav-inner {
+  max-width: 1200px;
+  height: 100%;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px;
+}
+
+.nitro-logo {
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 700;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.nitro-logo img {
+  height: 28px;
+}
+
+.nitro-nav-links {
+  display: flex;
+  align-items: center;
+  gap: 32px;
+}
+
+.nitro-nav-link {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--zx-muted);
+}
+
+.nitro-nav-link:hover, .nitro-nav-link.active {
+  color: #fff;
+}
+
+/* Buttons */
+.nitro-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 8px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  border: 1px solid transparent;
+}
+
+.nitro-btn-primary {
+  background: #fff;
+  color: #000;
+}
+
+.nitro-btn-primary:hover {
+  background: #e8e8ec;
+  transform: translateY(-1px);
+}
+
+.nitro-btn-outline {
+  border-color: var(--zx-border);
+  color: var(--zx-text);
+  background: transparent;
+}
+
+.nitro-btn-outline:hover {
+  border-color: var(--zx-border-hover);
+  background: rgba(255, 255, 255, 0.03);
+  transform: translateY(-1px);
+}
+
+.nitro-btn-accent {
+  background: var(--zx-cyan);
+  color: #000;
+  font-weight: 600;
+}
+
+.nitro-btn-accent:hover {
+  background: var(--zx-cyan-hover);
+  box-shadow: 0 0 20px rgba(0, 229, 255, 0.25);
+  transform: translateY(-1px);
+}
+
+/* Floating Card Base */
+.nitro-card {
+  background: var(--zx-surface);
+  border: 1px solid var(--zx-border);
+  border-radius: 16px;
+  padding: 32px;
+  transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  position: relative;
+  overflow: hidden;
+}
+
+.nitro-card:hover {
+  transform: translateY(-4px);
+  border-color: var(--zx-border-hover);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.6), 0 0 40px rgba(124, 77, 255, 0.03);
+}
+
+/* Bento Grid System */
+.bento-grid {
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap: 20px;
+}
+
+.col-12 { grid-column: span 12; }
+.col-8 { grid-column: span 8; }
+.col-6 { grid-column: span 6; }
+.col-4 { grid-column: span 4; }
+.col-3 { grid-column: span 3; }
+
+@media (max-width: 991px) {
+  .col-8, .col-6, .col-4, .col-3 { grid-column: span 12; }
+}
+
+/* Interactive Desktop/App Window Mockup */
+.mock-window {
+  background: #0d0d11;
+  border: 1px solid var(--zx-border);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 20px 50px rgba(0,0,0,0.8);
+}
+
+.mock-titlebar {
+  background: #131318;
+  height: 38px;
+  border-bottom: 1px solid var(--zx-border);
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  gap: 8px;
+}
+
+.mock-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+.mock-dot.red { background: #FF5F56; }
+.mock-dot.yellow { background: #FFBD2E; }
+.mock-dot.green { background: #27C93F; }
+
+.mock-title {
+  flex: 1;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--zx-muted);
+  margin-right: 48px; /* Offset for dots to center text */
+}
+
+.mock-body {
+  padding: 20px;
+  min-height: 250px;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Pulse indicator dot */
+.live-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: rgba(0, 229, 255, 0.08);
+  border: 1px solid rgba(0, 229, 255, 0.2);
+  border-radius: 99px;
+  font-size: 11px;
+  color: var(--zx-cyan);
+  font-weight: 500;
+}
+
+.live-dot-pulse {
+  width: 6px;
+  height: 6px;
+  background: var(--zx-cyan);
+  border-radius: 50%;
+  position: relative;
+}
+
+.live-dot-pulse::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--zx-cyan);
+  border-radius: 50%;
+  animation: pulse-ring 1.8s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+}
+
+@keyframes pulse-ring {
+  0% { transform: scale(0.5); opacity: 0.9; }
+  100% { transform: scale(2.8); opacity: 0; }
+}
+
+/* Specs Details Styling */
+.specs-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 16px;
+}
+
+.specs-row {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.specs-row:last-child {
+  border-bottom: none;
+}
+
+.specs-label {
+  padding: 12px 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--zx-muted);
+  width: 140px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.specs-value {
+  padding: 12px 0;
+  font-size: 14px;
+  color: #fff;
+}

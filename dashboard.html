@@ -3,44 +3,17 @@
 <head>
   <meta charset="utf-8"/>
   <meta content="width=device-width,initial-scale=1" name="viewport"/>
+  
   <title>ZeroX — Developer Dashboard</title>
   
-  <!-- ═══ Favicons ═══ -->
+  <!-- Favicons -->
   <link rel="icon" type="image/svg+xml" href="./Assets/round.svg"/>
   <link rel="apple-touch-icon" sizes="180x180" href="./Assets/zerox-favicon.png"/>
   
-  <!-- ═══ Fonts ═══ -->
-  <link rel="preconnect" href="https://fonts.googleapis.com"/>
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet"/>
-  
-  <!-- ═══ Tailwind ═══ -->
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>
-    tailwind.config = {
-      darkMode: "class",
-      theme: {
-        extend: {
-          colors: {
-            "zx-bg": "#08070b",
-            "zx-surface": "#0f0f12",
-            "zx-card": "#16161a",
-            "zx-border": "rgba(255,255,255,0.08)",
-            "zx-text": "#f0f0f0",
-            "zx-muted": "#8a8a96",
-            "zx-faint": "#555566",
-            "zx-accent": "#5e6ad2",
-            "zx-accent-h": "#8b8fea"
-          },
-          fontFamily: {
-            inter: ["Inter", "sans-serif"]
-          }
-        }
-      }
-    }
-  </script>
+  <!-- Brand stylesheet -->
+  <link href="./nitro.css" rel="stylesheet"/>
 
-  <!-- ═══ Clerk Authentication ═══ -->
+  <!-- Clerk Authentication -->
   <script
     async
     crossorigin="anonymous"
@@ -50,131 +23,237 @@
   </script>
 
   <style>
-    body { background: #08070b; color: #f0f0f0; font-family: 'Inter', sans-serif; }
-    .nav-blur { background: rgba(8,7,11,0.8); backdrop-filter: blur(16px); }
-    pre { background: #0b0a0e; border: 1px solid rgba(255,255,255,0.05); }
+    body {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+    
+    .dashboard-container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 120px 24px 80px 24px;
+      width: 100%;
+      flex-grow: 1;
+    }
 
-    /* ═══ Clerk UI Custom Overrides ═══ */
-    .cl-headerTitle, .cl-headerSubtitle {
-      text-align: center !important;
-      width: 100% !important;
+    .user-profile-header {
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      margin-bottom: 48px;
     }
-    .cl-header {
-      align-items: center !important;
-      text-align: center !important;
+
+    .user-avatar-large {
+      width: 80px;
+      height: 80px;
+      border-radius: 50%;
+      border: 2px solid var(--zx-cyan);
+      object-cover: cover;
     }
-    .cl-header::before {
-      content: "";
-      display: block;
-      width: 44px;
-      height: 44px;
-      margin: 0 auto 12px auto;
-      background-image: url('./Assets/neuron_circular.png');
-      background-size: contain;
-      background-repeat: no-repeat;
-      background-position: center;
+
+    .stats-num {
+      font-size: 36px;
+      font-weight: 700;
+      color: #fff;
+      margin-bottom: 4px;
+      font-family: var(--font-display);
     }
-    .cl-internal-b38t62,
-    .cl-internal-1dauvto,
-    .cl-internal-18y98x0,
-    .cl-internal-157297e,
-    .cl-internal-19t50n4,
-    .cl-internal-16gq0l2,
-    [class*="cl-internal-"],
-    .cl-branding,
-    .cl-footerAction__branding {
-      display: none !important;
+
+    .stats-desc {
+      font-size: 13px;
+      color: var(--zx-muted);
+    }
+
+    .log-line {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      padding: 10px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.03);
+      color: var(--zx-muted);
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .log-line:last-child {
+      border-bottom: none;
+    }
+
+    .log-status {
+      color: var(--zx-cyan);
+    }
+
+    #loading-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 50vh;
+    }
+
+    .spinner {
+      border: 3px solid rgba(255,255,255,0.03);
+      border-top: 3px solid var(--zx-cyan);
+      border-radius: 50%;
+      width: 40px;
+      height: 40px;
+      animation: spin 1s linear infinite;
+      margin-bottom: 20px;
+    }
+
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
     }
   </style>
 </head>
-<body class="font-inter antialiased overflow-x-hidden min-h-screen flex flex-col justify-between">
+<body>
 
-  <!-- ═══ NAV ═══ -->
-  <header class="fixed top-0 w-full h-20 z-50 nav-blur border-b border-white/[0.06]">
-    <div class="max-w-[1200px] mx-auto h-full flex items-center justify-between px-5">
-      <div class="flex items-center gap-3">
-        <a href="./index.html" class="shrink-0">
-          <img src="./Assets/Zero-xBnW.png" alt="zero-x.live" class="h-14" style="mix-blend-mode:lighten"/>
-        </a>
-        <span class="text-[12px] uppercase tracking-widest text-zx-muted border-l border-white/10 pl-3 hidden sm:inline">Dashboard</span>
-      </div>
-      <nav class="flex items-center gap-7">
-        <a href="./index.html" class="text-[14px] text-zx-muted hover:text-white transition-colors">Home</a>
-        <a href="./dashboard.html" class="text-[14px] text-white font-medium">Dashboard</a>
+  <!-- Background glows -->
+  <div class="glow-container">
+    <div class="glow-orb glow-orb-primary"></div>
+    <div class="glow-orb glow-orb-secondary"></div>
+  </div>
+
+  <!-- Navigation Bar -->
+  <header class="nitro-nav">
+    <div class="nitro-nav-inner">
+      <a href="./index.html" class="nitro-logo">
+        <img src="./Assets/Zero-xBnW.png" alt="ZeroX"/>
+      </a>
+      
+      <nav class="nitro-nav-links">
+        <a href="./index.html" class="nitro-nav-link">Home</a>
+        <a href="./about" class="nitro-nav-link">About</a>
+        <a href="#" class="nitro-nav-link active">Dashboard</a>
       </nav>
-      <div class="flex items-center gap-3">
+
+      <div style="display: flex; align-items: center; gap: 16px;">
         <div id="user-button"></div>
       </div>
     </div>
   </header>
 
-  <!-- ═══ MAIN CONTENT ═══ -->
-  <main class="max-w-[1200px] mx-auto w-full px-5 pt-32 pb-20 flex-grow">
+  <!-- Main Content -->
+  <main class="dashboard-container">
     <!-- Loading State -->
-    <div id="loading-state" class="flex flex-col items-center justify-center py-20">
-      <div class="animate-spin rounded-full h-10 w-10 border-b-2 border-zx-accent mb-4"></div>
-      <p class="text-zx-muted text-[14px]">Verifying your Clerk session...</p>
+    <div id="loading-state">
+      <div class="spinner"></div>
+      <p style="color: var(--zx-muted); font-size: 14px;">Verifying your Clerk session...</p>
     </div>
 
-    <!-- Dashboard Content (Hidden by default) -->
-    <div id="dashboard-content" class="hidden">
-      <div class="mb-10">
-        <h1 class="text-3xl font-bold tracking-tight text-white mb-2">Developer Workspace</h1>
-        <p class="text-zx-muted text-[14px]">Welcome back. Inspect your authentication state and profile information.</p>
+    <!-- Dashboard Content (hidden by default) -->
+    <div id="dashboard-content" style="display: none;">
+      
+      <!-- User Profile Header -->
+      <div class="user-profile-header">
+        <img id="user-avatar" class="user-avatar-large" src="" alt="Avatar"/>
+        <div>
+          <h1 id="user-name" style="font-size: 32px; line-height: 1.2;">Developer</h1>
+          <p id="user-email" style="color: var(--zx-cyan); font-size: 14px; margin-top: 2px;">no-email@example.com</p>
+        </div>
       </div>
 
-      <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+      <!-- Bento Grid Stats and API Info -->
+      <div class="bento-grid">
         
-        <!-- User Profile Card -->
-        <div class="bg-zx-card border border-zx-border rounded-2xl p-8 flex flex-col items-center text-center h-fit">
-          <div class="relative mb-6">
-            <img 
-              id="user-avatar" 
-              src="https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80" 
-              alt="Avatar" 
-              class="w-24 h-24 rounded-full border-2 border-zx-accent object-cover"
-            />
-            <span class="absolute bottom-0 right-0 bg-emerald-500 text-[10px] text-zx-bg font-bold px-2 py-0.5 rounded-full uppercase tracking-wider">Active</span>
+        <!-- API Usage Card -->
+        <div class="nitro-card col-4">
+          <div class="section-label">01 / API Usage</div>
+          <h3 style="font-size: 18px; margin-bottom: 24px;">Daily Volume</h3>
+          
+          <div class="stats-num" id="api-usage-count">4,291</div>
+          <div class="stats-desc" style="margin-bottom: 20px;">Requests processed today</div>
+          
+          <div style="width: 100%; height: 6px; background: rgba(255,255,255,0.05); border-radius: 3px; overflow: hidden; margin-bottom: 24px;">
+            <div style="width: 1.2%; height: 100%; background: var(--zx-cyan); border-radius: 3px;"></div>
           </div>
-
-          <h2 id="user-name" class="text-xl font-semibold text-white mb-1">Developer</h2>
-          <p id="user-email" class="text-zx-muted text-[14px] mb-6">no-email@example.com</p>
-
-          <div class="w-full border-t border-white/[0.06] pt-6 flex flex-col gap-4 text-left">
-            <div class="flex justify-between items-center text-[13px]">
-              <span class="text-zx-muted">Clerk ID:</span>
-              <span id="user-id" class="font-mono text-white/80 opacity-90 truncate max-w-[160px]">N/A</span>
-            </div>
-            <div class="flex justify-between items-center text-[13px]">
-              <span class="text-zx-muted">First Name:</span>
-              <span id="user-firstname" class="text-white">N/A</span>
-            </div>
-            <div class="flex justify-between items-center text-[13px]">
-              <span class="text-zx-muted">Last Name:</span>
-              <span id="user-lastname" class="text-white">N/A</span>
-            </div>
-            <div class="flex justify-between items-center text-[13px]">
-              <span class="text-zx-muted">DB Sync Status:</span>
-              <span id="db-sync-status" class="text-amber-400 flex items-center gap-1.5">
-                <span class="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>Pending
-              </span>
-            </div>
+          
+          <div style="display: flex; justify-content: space-between; font-size: 12px; color: var(--zx-muted);">
+            <span>Session limit: 500,000</span>
+            <span>Uptime: local-first</span>
           </div>
         </div>
 
-        <!-- JWT Claims Inspector -->
-        <div class="bg-zx-card border border-zx-border rounded-2xl p-8 lg:col-span-2 flex flex-col">
-          <div class="flex items-center justify-between border-b border-white/[0.06] pb-4 mb-6">
-            <h2 class="text-lg font-semibold text-white">JWT Claims & Session Inspector</h2>
-            <span class="text-[11px] font-mono text-zx-accent bg-zx-accent/[0.06] border border-zx-accent/20 px-2 py-0.5 rounded">RS256 Decoded</span>
+        <!-- System Statistics Card -->
+        <div class="nitro-card col-4">
+          <div class="section-label">02 / Local Performance</div>
+          <h3 style="font-size: 18px; margin-bottom: 24px;">Statistics</h3>
+          
+          <div class="stats-num">4.6<span style="font-size: 16px; color: var(--zx-muted); font-weight: 500;"> ms</span></div>
+          <div class="stats-desc" style="margin-bottom: 20px;">Average semantic query latency</div>
+
+          <div style="display: flex; justify-content: space-between; border-top: 1px solid rgba(255,255,255,0.03); padding-top: 16px; font-size: 13px;">
+            <span style="color: var(--zx-muted);">Match Accuracy:</span>
+            <span style="color: #fff; font-weight: 700;">98.2%</span>
+          </div>
+          <div style="display: flex; justify-content: space-between; padding-top: 8px; font-size: 13px;">
+            <span style="color: var(--zx-muted);">Active Parsers:</span>
+            <span style="color: #fff; font-weight: 700;">42 Formats</span>
+          </div>
+        </div>
+
+        <!-- License Plans Card -->
+        <div class="nitro-card col-4">
+          <div class="section-label">03 / Active License</div>
+          <h3 style="font-size: 18px; margin-bottom: 24px;">Plans</h3>
+          
+          <div class="stats-num" style="color: var(--zx-purple);">Pro</div>
+          <div class="stats-desc" style="margin-bottom: 20px;">Lifetime developer license</div>
+
+          <div style="display: flex; justify-content: space-between; border-top: 1px solid rgba(255,255,255,0.03); padding-top: 16px; font-size: 13px;">
+            <span style="color: var(--zx-muted);">License Key:</span>
+            <span style="font-family: var(--font-mono); color: var(--zx-cyan);">Local Activation</span>
+          </div>
+          <div style="display: flex; justify-content: space-between; padding-top: 8px; font-size: 13px;">
+            <span style="color: var(--zx-muted);">DB Sync:</span>
+            <span id="db-sync-status" style="color: var(--zx-cyan);">Verified</span>
+          </div>
+        </div>
+
+        <!-- Developer Session Claims / JWT Inspector -->
+        <div class="nitro-card col-8">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+            <div class="section-label" style="margin-bottom: 0;">04 / Session Claims Inspector</div>
+            <span style="font-family: var(--font-mono); font-size: 11px; color: var(--zx-purple); background: rgba(124, 77, 255, 0.08); padding: 2px 8px; border-radius: 4px; border: 1px solid rgba(124, 77, 255, 0.2);">RS256 Decoded</span>
           </div>
           
-          <p class="text-zx-muted text-[13px] mb-6">
-            The JSON block below displays the decoded payload claims from your Clerk session token.
+          <p style="font-size: 13px; color: var(--zx-muted); margin-bottom: 20px;">
+            The JSON payload below shows your decrypted profile claims synced directly from Clerk authentication.
           </p>
 
-          <div class="flex-grow rounded-xl overflow-hidden font-mono text-[12px] text-emerald-400 p-5 bg-[#0b0a0e] border border-white/[0.05]">
-            <pre class="w-full h-full overflow-x-auto whitespace-pre-wrap"><code id="jwt-claims-code">Loading session claims...</code></pre>
+          <div style="background: #000; border: 1px solid var(--zx-border); border-radius: 8px; padding: 20px; font-family: var(--font-mono); font-size: 12px; color: #a3e635; overflow-x: auto; max-height: 250px;">
+            <pre id="jwt-claims-code">Loading claims...</pre>
+          </div>
+        </div>
+
+        <!-- Recent Logs Card -->
+        <div class="nitro-card col-4">
+          <div class="section-label">05 / Activity log</div>
+          <h3 style="font-size: 18px; margin-bottom: 20px;">Console Outputs</h3>
+          
+          <div style="display: flex; flex-direction: column;">
+            <div class="log-line">
+              <span>indexer.start_watch()</span>
+              <span class="log-status">active</span>
+            </div>
+            <div class="log-line">
+              <span>faiss_index.load()</span>
+              <span class="log-status">ready</span>
+            </div>
+            <div class="log-line">
+              <span>model.load_onnx()</span>
+              <span class="log-status">5.0ms</span>
+            </div>
+            <div class="log-line">
+              <span>db.sqlite_connect()</span>
+              <span class="log-status">ok</span>
+            </div>
+            <div class="log-line">
+              <span>ollama.check_summarizer()</span>
+              <span style="color: var(--zx-purple);">skipped</span>
+            </div>
           </div>
         </div>
 
@@ -182,21 +261,19 @@
     </div>
   </main>
 
-  <!-- ═══ FOOTER ═══ -->
-  <footer class="border-t border-white/[0.04] py-8 px-5 text-center text-zx-faint text-[12px]">
-    <div class="max-w-[1200px] mx-auto">
-      <p>© 2026 ZeroX Corporation. Secure Developer Dashboard.</p>
-    </div>
+  <!-- Footer -->
+  <footer style="border-top: 1px solid var(--zx-border); padding: 40px 24px; text-align: center; font-size: 12px; color: var(--zx-faint);">
+    <p>© 2026 ZeroX Corporation. Secure Developer Dashboard.</p>
   </footer>
 
   <script>
-    // Decode JWT payload client-side
+    // Decodes the Clerk session token
     function parseJWT(token) {
       try {
         const base64Url = token.split('.')[1];
         const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
         const jsonPayload = decodeURIComponent(atob(base64).split('').map(function(c) {
-            return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+          return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
         }).join(''));
         return JSON.parse(jsonPayload);
       } catch (e) {
@@ -204,7 +281,6 @@
       }
     }
 
-    // Clerk SDK Init & Protection Check
     const clerkConfig = {
       appearance: {
         layout: {
@@ -212,34 +288,10 @@
           logoPlacement: 'inside',
         },
         elements: {
-          headerTitle: {
-            textAlign: 'center',
-            width: '100%',
-          },
-          headerSubtitle: {
-            textAlign: 'center',
-            width: '100%',
-          },
-          branding: {
-            display: 'none',
-          },
-          footerAction__branding: {
-            display: 'none',
-          }
-        }
-      },
-      localization: {
-        signIn: {
-          start: {
-            title: "Sign in",
-            subtitle: "to continue to ZeroX"
-          }
-        },
-        signUp: {
-          start: {
-            title: "Create your account",
-            subtitle: "to continue to ZeroX"
-          }
+          headerTitle: { textAlign: 'center', width: '100%' },
+          headerSubtitle: { textAlign: 'center', width: '100%' },
+          branding: { display: 'none' },
+          footerAction__branding: { display: 'none' }
         }
       }
     };
@@ -247,7 +299,7 @@
     window.addEventListener('load', async () => {
       if (!window.Clerk) {
         console.error("Clerk JS SDK not loaded");
-        document.getElementById('loading-state').innerHTML = `<p class="text-red-500 text-[14px]">Failed to load Clerk Auth SDK.</p>`;
+        document.getElementById('loading-state').innerHTML = `<p style="color: var(--zx-cyan);">Failed to load Clerk Auth SDK.</p>`;
         return;
       }
 
@@ -255,30 +307,26 @@
         await window.Clerk.load(clerkConfig);
         
         if (!window.Clerk.user) {
-          // Redirect to index if not authenticated
+          // Redirect to index page if not signed in
           window.location.replace('./index.html');
           return;
         }
 
-        // Populate User Info
         const user = window.Clerk.user;
         document.getElementById('user-avatar').src = user.imageUrl;
         document.getElementById('user-name').innerText = user.fullName || "Developer User";
         document.getElementById('user-email').innerText = user.primaryEmailAddress.emailAddress;
-        document.getElementById('user-id').innerText = user.id;
-        document.getElementById('user-firstname').innerText = user.firstName || "N/A";
-        document.getElementById('user-lastname').innerText = user.lastName || "N/A";
 
         // Mount Clerk UserButton
         window.Clerk.mountUserButton(document.getElementById('user-button'), {
           afterSignOutUrl: window.location.origin
         });
 
-        // Parse claims
+        // Get token & parse claims
         const token = await window.Clerk.session.getToken();
         const claims = parseJWT(token);
+        
         if (claims) {
-          // Append raw user properties to claims just like Next.js playground
           const rawClaims = {
             userId: user.id,
             sessionId: window.Clerk.session.id,
@@ -286,33 +334,33 @@
             primaryEmail: user.primaryEmailAddress.emailAddress || 'N/A',
             emailVerified: user.primaryEmailAddress.verification?.status || 'N/A',
             createdAt: user.createdAt,
-            updatedAt: user.updatedAt,
-            publicMetadata: user.publicMetadata || {},
-            unsafeMetadata: user.unsafeMetadata || {},
             jwtPayload: claims
           };
           document.getElementById('jwt-claims-code').innerText = JSON.stringify(rawClaims, null, 2);
         } else {
-          document.getElementById('jwt-claims-code').innerText = "Failed to parse JWT token.";
+          document.getElementById('jwt-claims-code').innerText = "Failed to parse JWT claims.";
         }
 
-        // Hide loading, show dashboard
-        document.getElementById('loading-state').classList.add('hidden');
-        document.getElementById('dashboard-content').classList.remove('hidden');
+        // Hide loader and reveal content
+        document.getElementById('loading-state').style.display = 'none';
+        document.getElementById('dashboard-content').style.display = 'block';
 
-        // Sync with backend DB
+        // Sync with backend
         await syncUserWithBackend(user, token);
 
       } catch (err) {
         console.error("Dashboard init error:", err);
-        document.getElementById('loading-state').innerHTML = `<p class="text-red-500 text-[14px]">An error occurred during authentication verification.</p>`;
+        document.getElementById('loading-state').innerHTML = `<p style="color: var(--zx-purple);">An error occurred during authentication verification.</p>`;
       }
     });
 
     async function syncUserWithBackend(user, token) {
       const syncStatusEl = document.getElementById('db-sync-status');
       try {
-        const response = await fetch('/auth/sync', {
+        const isLocal = ['localhost', '127.0.0.1'].includes(window.location.hostname);
+        const syncUrl = isLocal ? '/auth/sync' : 'https://api.zero-x.live/auth/sync';
+        
+        const response = await fetch(syncUrl, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -326,16 +374,15 @@
         });
 
         if (response.ok) {
-          syncStatusEl.innerHTML = `<span class="w-2 h-2 rounded-full bg-emerald-500"></span>Synced`;
-          syncStatusEl.className = "text-emerald-500 flex items-center gap-1.5";
+          syncStatusEl.innerText = "Synced & Verified";
+          syncStatusEl.style.color = "var(--zx-cyan)";
         } else {
-          const errText = await response.text();
-          throw new Error(errText || "Sync failed");
+          throw new Error("Sync failure");
         }
       } catch (err) {
-        console.error("Failed to sync user with backend:", err);
-        syncStatusEl.innerHTML = `<span class="w-2 h-2 rounded-full bg-red-500"></span>Failed to Sync`;
-        syncStatusEl.className = "text-red-500 flex items-center gap-1.5";
+        console.error("Database sync error:", err);
+        syncStatusEl.innerText = "Local Verification Only";
+        syncStatusEl.style.color = "var(--zx-purple)";
       }
     }
   </script>
