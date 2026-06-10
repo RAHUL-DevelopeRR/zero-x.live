@@ -513,33 +513,59 @@
       }
     };
 
+    /* ═══ Wait for Clerk SDK to be available ═══ */
+    function waitForClerk(timeoutMs) {
+      return new Promise(function(resolve, reject) {
+        if (window.Clerk) { resolve(window.Clerk); return; }
+        var elapsed = 0;
+        var interval = setInterval(function() {
+          elapsed += 100;
+          if (window.Clerk) { clearInterval(interval); resolve(window.Clerk); }
+          else if (elapsed >= timeoutMs) { clearInterval(interval); reject(new Error('Clerk SDK did not load within ' + timeoutMs + 'ms')); }
+        }, 100);
+      });
+    }
+
+    var clerkReady = false;
+
     window.addEventListener('load', async () => {
-      if (!window.Clerk) {
-        console.warn("Clerk JS SDK not loaded yet.");
-        return;
-      }
-      
       const signinBtn = document.getElementById('signin-btn');
       const promptSigninBtn = document.getElementById('prompt-signin-btn');
       
-      const handleSignInClick = (e) => {
+      const handleSignInClick = async (e) => {
         e.preventDefault();
-        if (window.Clerk && window.Clerk.isReady && window.Clerk.isReady()) {
+        if (clerkReady && window.Clerk && window.Clerk.openSignIn) {
           window.Clerk.openSignIn(clerkConfig);
-        } else {
-          alert("Authentication is still initializing or blocked. If you are on zero-x.live, please ensure your Clerk Production Key (pk_live_...) is configured in the code and ad-blockers are disabled.");
+          return;
+        }
+        // Show loading state
+        if (signinBtn) { signinBtn.textContent = 'Loading…'; signinBtn.style.pointerEvents = 'none'; }
+        try {
+          await waitForClerk(8000);
+          if (!window.Clerk.__loaded) await window.Clerk.load(clerkConfig);
+          clerkReady = true;
+          window.Clerk.openSignIn(clerkConfig);
+        } catch (err) {
+          console.error('Clerk sign-in error:', err);
+          alert('Authentication service could not load. Please disable any ad-blockers and refresh the page.');
+        } finally {
+          if (signinBtn) { signinBtn.textContent = 'Sign In'; signinBtn.style.pointerEvents = ''; }
         }
       };
       
       if (signinBtn) signinBtn.addEventListener('click', handleSignInClick);
       if (promptSigninBtn) promptSigninBtn.addEventListener('click', handleSignInClick);
 
+      // Load Clerk in background
       try {
+        await waitForClerk(10000);
         await window.Clerk.load(clerkConfig);
+        window.Clerk.__loaded = true;
+        clerkReady = true;
+
         const userButtonDiv = document.getElementById('user-button');
         const navLinks = document.querySelector('header nav');
         const loggedOutPrompt = document.getElementById('logged-out-prompt');
-        const loggedInArea = document.getElementById('loggedInArea'); // Or keeping standard bindings
         const loggedInAreaDiv = document.getElementById('logged-in-area');
         
         // Setup dynamic links depending on environment

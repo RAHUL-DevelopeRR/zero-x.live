@@ -552,26 +552,58 @@ const clerkConfig = {
   }
 };
 
+/* ═══ Wait for Clerk SDK to be available (handles async loading) ═══ */
+function waitForClerk(timeoutMs) {
+  return new Promise(function(resolve, reject) {
+    if (window.Clerk) { resolve(window.Clerk); return; }
+    var elapsed = 0;
+    var interval = setInterval(function() {
+      elapsed += 100;
+      if (window.Clerk) { clearInterval(interval); resolve(window.Clerk); }
+      else if (elapsed >= timeoutMs) { clearInterval(interval); reject(new Error('Clerk SDK did not load within ' + timeoutMs + 'ms')); }
+    }, 100);
+  });
+}
+
+var clerkReady = false;
+
 window.addEventListener('load', async () => {
-  if (!window.Clerk) {
-    console.warn("Clerk JS SDK not loaded yet.");
-    return;
-  }
-  
   const signinBtn = document.getElementById('signin-btn');
+
+  // Attach sign-in handler immediately (doesn't depend on Clerk being loaded)
   if (signinBtn) {
-    signinBtn.addEventListener('click', (e) => {
+    signinBtn.addEventListener('click', async (e) => {
       e.preventDefault();
-      if (window.Clerk && window.Clerk.isReady && window.Clerk.isReady()) {
+      // If Clerk is ready, open sign-in immediately
+      if (clerkReady && window.Clerk && window.Clerk.openSignIn) {
         window.Clerk.openSignIn(clerkConfig);
-      } else {
-        alert("Authentication is still initializing or blocked. If you are on zero-x.live, please ensure your Clerk Production Key (pk_live_...) is configured in the code and ad-blockers are disabled.");
+        return;
+      }
+      // Otherwise show loading state and wait
+      signinBtn.textContent = 'Loading…';
+      signinBtn.style.pointerEvents = 'none';
+      try {
+        await waitForClerk(8000);
+        if (!window.Clerk.__loaded) await window.Clerk.load(clerkConfig);
+        clerkReady = true;
+        window.Clerk.openSignIn(clerkConfig);
+      } catch (err) {
+        console.error('Clerk sign-in error:', err);
+        alert('Authentication service could not load. Please disable any ad-blockers and refresh the page.');
+      } finally {
+        signinBtn.textContent = 'Sign In';
+        signinBtn.style.pointerEvents = '';
       }
     });
   }
 
+  // Load Clerk in background
   try {
+    await waitForClerk(10000);
     await window.Clerk.load(clerkConfig);
+    window.Clerk.__loaded = true;
+    clerkReady = true;
+
     const userButtonDiv = document.getElementById('user-button');
     const navLinks = document.querySelector('header nav');
     
