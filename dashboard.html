@@ -3,15 +3,20 @@
 <head>
   <meta charset="utf-8"/>
   <meta content="width=device-width,initial-scale=1" name="viewport"/>
-  
-  <title>ZeroX — Developer Dashboard</title>
-  
+  <title>Dashboard — ZeroX</title>
+  <meta name="description" content="ZeroX Developer Dashboard — manage your subscription, usage, and API keys."/>
+  <meta name="theme-color" content="#0A0A0C"/>
+
   <!-- Favicons -->
   <link rel="icon" type="image/svg+xml" href="./Assets/round.svg"/>
   <link rel="apple-touch-icon" sizes="180x180" href="./Assets/zerox-favicon.png"/>
-  
-  <!-- Brand stylesheet -->
-  <link href="./nitro.css" rel="stylesheet"/>
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+  <link href="https://api.fontshare.com/v2/css?f[]=cabinet-grotesk@800,700,500,400&f[]=satoshi@700,500,400&display=swap" rel="stylesheet"/>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
 
   <!-- Clerk Authentication -->
   <script
@@ -23,368 +28,682 @@
   </script>
 
   <style>
-    body {
-      min-height: 100vh;
-      display: flex;
-      flex-direction: column;
-      justify-content: space-between;
-    }
-    
-    .dashboard-container {
-      max-width: 1200px;
-      margin: 0 auto;
-      padding: 120px 24px 80px 24px;
-      width: 100%;
-      flex-grow: 1;
-    }
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{background:#0A0A0C;color:#E8E8EC;font-family:'Satoshi',sans-serif;-webkit-font-smoothing:antialiased;min-height:100vh}
+    h1,h2,h3,h4,h5,h6{font-family:'Cabinet Grotesk',sans-serif;font-weight:700}
+    ::selection{background:rgba(0,229,255,.15);color:#00E5FF}
+    ::-webkit-scrollbar{width:6px}
+    ::-webkit-scrollbar-track{background:#0A0A0C}
+    ::-webkit-scrollbar-thumb{background:#2A2A32;border-radius:3px}
 
-    .user-profile-header {
-      display: flex;
-      align-items: center;
-      gap: 24px;
-      margin-bottom: 48px;
-    }
+    /* ═══ Layout ═══ */
+    .dash-layout{display:flex;min-height:100vh}
 
-    .user-avatar-large {
-      width: 80px;
-      height: 80px;
-      border-radius: 50%;
-      border: 2px solid var(--zx-cyan);
-      object-cover: cover;
+    /* ═══ Sidebar ═══ */
+    .dash-sidebar{
+      width:260px;min-height:100vh;background:#09090B;border-right:1px solid rgba(255,255,255,0.06);
+      display:flex;flex-direction:column;position:fixed;left:0;top:0;z-index:50;
+      transition:transform .3s ease;
     }
+    .dash-sidebar-header{padding:20px 20px 16px;border-bottom:1px solid rgba(255,255,255,0.04)}
+    .dash-sidebar-logo{height:28px;mix-blend-mode:lighten}
+    .dash-sidebar-nav{flex:1;padding:12px;display:flex;flex-direction:column;gap:2px}
+    .dash-nav-item{
+      display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:8px;
+      font-size:13px;color:#8A8A96;cursor:pointer;transition:all .15s ease;border:none;background:none;width:100%;text-align:left;
+    }
+    .dash-nav-item:hover{color:#E8E8EC;background:rgba(255,255,255,0.04)}
+    .dash-nav-item.active{color:#fff;background:rgba(0,229,255,0.08);font-weight:500}
+    .dash-nav-item .material-symbols-outlined{font-size:18px}
+    .dash-nav-section{font-size:10px;color:#4E4E5A;text-transform:uppercase;letter-spacing:1.2px;padding:16px 12px 6px;font-weight:600}
+    .dash-sidebar-footer{padding:16px;border-top:1px solid rgba(255,255,255,0.04)}
 
-    .stats-num {
-      font-size: 36px;
-      font-weight: 700;
-      color: #fff;
-      margin-bottom: 4px;
-      font-family: var(--font-display);
+    /* ═══ Main Content ═══ */
+    .dash-main{margin-left:260px;flex:1;min-height:100vh}
+    .dash-topbar{
+      height:56px;border-bottom:1px solid rgba(255,255,255,0.06);display:flex;align-items:center;
+      justify-content:space-between;padding:0 28px;background:rgba(10,10,12,0.8);
+      backdrop-filter:blur(16px);position:sticky;top:0;z-index:40;
     }
+    .dash-topbar-title{font-size:14px;color:#8A8A96;font-weight:500}
+    .dash-content{padding:28px;max-width:1100px}
 
-    .stats-desc {
-      font-size: 13px;
-      color: var(--zx-muted);
+    /* ═══ Cards ═══ */
+    .dash-card{
+      background:#111114;border:1px solid rgba(255,255,255,0.06);border-radius:12px;
+      padding:24px;transition:border-color .2s ease;
     }
+    .dash-card:hover{border-color:rgba(255,255,255,0.1)}
+    .dash-card-label{font-size:11px;color:#4E4E5A;text-transform:uppercase;letter-spacing:1px;margin-bottom:12px;font-weight:600}
+    .dash-card-title{font-size:16px;color:#fff;font-weight:600;margin-bottom:4px}
+    .dash-card-subtitle{font-size:13px;color:#8A8A96}
 
-    .log-line {
-      font-family: var(--font-mono);
-      font-size: 12px;
-      padding: 10px 0;
-      border-bottom: 1px solid rgba(255,255,255,0.03);
-      color: var(--zx-muted);
-      display: flex;
-      justify-content: space-between;
-    }
+    /* ═══ Grid ═══ */
+    .dash-grid{display:grid;gap:16px}
+    .dash-grid-3{grid-template-columns:repeat(3,1fr)}
+    .dash-grid-2{grid-template-columns:repeat(2,1fr)}
+    .dash-grid-12{grid-template-columns:repeat(12,1fr)}
 
-    .log-line:last-child {
-      border-bottom: none;
-    }
+    /* ═══ Stat Numbers ═══ */
+    .dash-stat{font-size:32px;font-weight:700;color:#fff;font-family:'Cabinet Grotesk',sans-serif;line-height:1}
+    .dash-stat-sm{font-size:13px;color:#8A8A96;margin-top:4px}
+    .dash-stat-unit{font-size:14px;font-weight:500;color:#8A8A96}
 
-    .log-status {
-      color: var(--zx-cyan);
-    }
+    /* ═══ Progress Bar ═══ */
+    .dash-progress{height:6px;background:rgba(255,255,255,0.04);border-radius:3px;overflow:hidden;margin:12px 0}
+    .dash-progress-fill{height:100%;border-radius:3px;transition:width .6s ease}
+    .dash-progress-cyan{background:linear-gradient(90deg,#00B8D4,#00E5FF)}
+    .dash-progress-purple{background:linear-gradient(90deg,#6C3FE8,#7C4DFF)}
 
-    #loading-state {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      min-height: 50vh;
+    /* ═══ Badge ═══ */
+    .dash-badge{
+      display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:600;
+      padding:3px 8px;border-radius:4px;text-transform:uppercase;letter-spacing:.5px;
     }
+    .dash-badge-free{background:rgba(255,255,255,0.06);color:#8A8A96}
+    .dash-badge-pro{background:rgba(0,229,255,0.1);color:#00E5FF;border:1px solid rgba(0,229,255,0.2)}
+    .dash-badge-ultra{background:rgba(124,77,255,0.1);color:#7C4DFF;border:1px solid rgba(124,77,255,0.2)}
 
-    .spinner {
-      border: 3px solid rgba(255,255,255,0.03);
-      border-top: 3px solid var(--zx-cyan);
-      border-radius: 50%;
-      width: 40px;
-      height: 40px;
-      animation: spin 1s linear infinite;
-      margin-bottom: 20px;
-    }
+    /* ═══ Table ═══ */
+    .dash-table{width:100%;border-collapse:collapse}
+    .dash-table th{text-align:left;font-size:11px;color:#4E4E5A;text-transform:uppercase;letter-spacing:.8px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.04);font-weight:600}
+    .dash-table td{font-size:13px;color:#E8E8EC;padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.03)}
+    .dash-table tr:last-child td{border-bottom:none}
+    .dash-table .mono{font-family:'JetBrains Mono',monospace;font-size:12px}
 
-    @keyframes spin {
-      0% { transform: rotate(0deg); }
-      100% { transform: rotate(360deg); }
+    /* ═══ Model Chip ═══ */
+    .model-chip{
+      display:inline-flex;align-items:center;gap:6px;padding:6px 10px;
+      background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);
+      border-radius:6px;font-size:12px;color:#E8E8EC;font-family:'JetBrains Mono',monospace;
     }
+    .model-chip-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
+    .model-chip-dot.green{background:#34d399}
+    .model-chip-dot.amber{background:#fbbf24}
+
+    /* ═══ API Key ═══ */
+    .api-key-box{
+      display:flex;align-items:center;gap:8px;padding:10px 14px;
+      background:#09090B;border:1px solid rgba(255,255,255,0.06);border-radius:8px;
+      font-family:'JetBrains Mono',monospace;font-size:12px;color:#8A8A96;
+    }
+    .api-key-box button{
+      background:none;border:1px solid rgba(255,255,255,0.1);color:#8A8A96;
+      padding:4px 10px;border-radius:4px;font-size:11px;cursor:pointer;transition:all .15s;
+    }
+    .api-key-box button:hover{color:#fff;border-color:rgba(255,255,255,0.2)}
+
+    /* ═══ User Profile ═══ */
+    .dash-avatar{width:48px;height:48px;border-radius:50%;border:2px solid rgba(0,229,255,0.3);object-fit:cover}
+    .dash-user-card{display:flex;align-items:center;gap:14px;padding:12px;border-radius:8px;cursor:pointer;transition:background .15s}
+    .dash-user-card:hover{background:rgba(255,255,255,0.04)}
+
+    /* ═══ Sign-in Gate ═══ */
+    .dash-gate{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:80vh;text-align:center}
+    .dash-gate-btn{
+      background:#fff;color:#0A0A0C;border:none;padding:12px 28px;border-radius:8px;
+      font-size:14px;font-weight:600;cursor:pointer;transition:all .2s;margin-top:24px;
+    }
+    .dash-gate-btn:hover{background:#E8E8EC;transform:translateY(-1px)}
+
+    /* ═══ Loading ═══ */
+    .dash-spinner{width:32px;height:32px;border:3px solid rgba(255,255,255,0.04);border-top-color:#00E5FF;border-radius:50%;animation:dspin 1s linear infinite}
+    @keyframes dspin{to{transform:rotate(360deg)}}
+
+    /* ═══ Activity dot ═══ */
+    .activity-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+    .activity-dot.success{background:#34d399}
+    .activity-dot.pending{background:#fbbf24}
+    .activity-dot.error{background:#f87171}
+
+    /* ═══ Section Spacing ═══ */
+    .dash-section{margin-bottom:28px}
+    .dash-section-title{font-size:15px;font-weight:600;color:#fff;margin-bottom:14px;display:flex;align-items:center;gap:8px}
+    .dash-section-title .material-symbols-outlined{font-size:18px;color:#00E5FF}
+
+    /* ═══ Responsive ═══ */
+    @media(max-width:900px){
+      .dash-sidebar{transform:translateX(-100%)}
+      .dash-sidebar.open{transform:translateX(0)}
+      .dash-main{margin-left:0}
+      .dash-grid-3{grid-template-columns:1fr}
+      .dash-grid-2{grid-template-columns:1fr}
+      .mob-menu-btn{display:flex!important}
+    }
+    .mob-menu-btn{display:none;background:none;border:none;color:#fff;cursor:pointer}
   </style>
 </head>
 <body>
 
-  <!-- Background glows -->
-  <div class="glow-container">
-    <div class="glow-orb glow-orb-primary"></div>
-    <div class="glow-orb glow-orb-secondary"></div>
+<!-- ═══ SIDEBAR ═══ -->
+<aside class="dash-sidebar" id="sidebar">
+  <div class="dash-sidebar-header">
+    <a href="./index.html" id="logo-link"><img src="./Assets/Zero-xBnW.png" alt="ZeroX" class="dash-sidebar-logo"/></a>
+  </div>
+  <div class="dash-sidebar-nav">
+    <div class="dash-nav-section">Overview</div>
+    <button class="dash-nav-item active" data-tab="overview">
+      <span class="material-symbols-outlined">dashboard</span>Overview
+    </button>
+    <button class="dash-nav-item" data-tab="usage">
+      <span class="material-symbols-outlined">bar_chart</span>Usage
+    </button>
+
+    <div class="dash-nav-section">Account</div>
+    <button class="dash-nav-item" data-tab="subscription">
+      <span class="material-symbols-outlined">credit_card</span>Subscription
+    </button>
+    <button class="dash-nav-item" data-tab="models">
+      <span class="material-symbols-outlined">model_training</span>Models
+    </button>
+    <button class="dash-nav-item" data-tab="api-keys">
+      <span class="material-symbols-outlined">key</span>API Keys
+    </button>
+
+    <div class="dash-nav-section">Settings</div>
+    <button class="dash-nav-item" data-tab="profile">
+      <span class="material-symbols-outlined">person</span>Profile
+    </button>
+    <button class="dash-nav-item" data-tab="activity">
+      <span class="material-symbols-outlined">history</span>Activity Log
+    </button>
+  </div>
+  <div class="dash-sidebar-footer">
+    <div class="dash-user-card" id="sidebar-user">
+      <img class="dash-avatar" id="sidebar-avatar" src="" alt=""/>
+      <div>
+        <div style="font-size:13px;font-weight:600;color:#fff" id="sidebar-name">Loading…</div>
+        <div style="font-size:11px;color:#8A8A96" id="sidebar-email">—</div>
+      </div>
+    </div>
+  </div>
+</aside>
+
+<!-- ═══ MAIN ═══ -->
+<div class="dash-main">
+  <!-- Topbar -->
+  <div class="dash-topbar">
+    <div style="display:flex;align-items:center;gap:12px">
+      <button class="mob-menu-btn" id="mobMenuBtn"><span class="material-symbols-outlined">menu</span></button>
+      <span class="dash-topbar-title" id="topbar-title">Overview</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:12px">
+      <div id="user-button"></div>
+      <a href="./neuron.html" id="topbar-neuron-link" style="font-size:12px;color:#00E5FF;border:1px solid rgba(0,229,255,0.2);padding:5px 12px;border-radius:6px;transition:all .15s">Neuron ↗</a>
+    </div>
   </div>
 
-  <!-- Navigation Bar -->
-  <header class="nitro-nav">
-    <div class="nitro-nav-inner">
-      <a href="./index.html" class="nitro-logo">
-        <img src="./Assets/Zero-xBnW.png" alt="ZeroX"/>
-      </a>
-      
-      <nav class="nitro-nav-links">
-        <a href="./index.html" class="nitro-nav-link">Home</a>
-        <a href="./about" class="nitro-nav-link">About</a>
-        <a href="#" class="nitro-nav-link active">Dashboard</a>
-      </nav>
+  <!-- Loading State -->
+  <div class="dash-content" id="loading-state" style="display:flex;align-items:center;justify-content:center;min-height:60vh">
+    <div style="text-align:center">
+      <div class="dash-spinner" style="margin:0 auto 16px"></div>
+      <p style="font-size:13px;color:#8A8A96">Initializing secure session…</p>
+    </div>
+  </div>
 
-      <div style="display: flex; align-items: center; gap: 16px;">
-        <div id="user-button"></div>
+  <!-- Sign-in Gate -->
+  <div class="dash-content" id="signin-gate" style="display:none">
+    <div class="dash-gate">
+      <span class="material-symbols-outlined" style="font-size:48px;color:#4E4E5A;margin-bottom:16px">lock</span>
+      <h2 style="font-size:24px;margin-bottom:8px">Sign in to access your dashboard</h2>
+      <p style="font-size:14px;color:#8A8A96;max-width:400px">View your usage statistics, manage subscriptions, and configure API access.</p>
+      <button class="dash-gate-btn" id="gate-signin-btn">Sign In with ZeroX</button>
+    </div>
+  </div>
+
+  <!-- ═══ TAB: Overview ═══ -->
+  <div class="dash-content dash-tab" id="tab-overview" style="display:none">
+    <div class="dash-section">
+      <h1 style="font-size:24px;margin-bottom:4px">Welcome back, <span id="greeting-name">Developer</span></h1>
+      <p style="font-size:14px;color:#8A8A96">Here's your account overview for today.</p>
+    </div>
+
+    <!-- Stats Row -->
+    <div class="dash-section dash-grid dash-grid-3">
+      <div class="dash-card">
+        <div class="dash-card-label">Tokens Used Today</div>
+        <div class="dash-stat" id="stat-tokens">0</div>
+        <div class="dash-progress"><div class="dash-progress-fill dash-progress-cyan" id="tokens-bar" style="width:0%"></div></div>
+        <div style="display:flex;justify-content:space-between;font-size:11px;color:#4E4E5A">
+          <span id="tokens-used-label">0 / 44,000</span>
+          <span id="tokens-pct">0%</span>
+        </div>
+      </div>
+      <div class="dash-card">
+        <div class="dash-card-label">API Requests Today</div>
+        <div class="dash-stat" id="stat-requests">0</div>
+        <div class="dash-progress"><div class="dash-progress-fill dash-progress-purple" id="requests-bar" style="width:0%"></div></div>
+        <div style="display:flex;justify-content:space-between;font-size:11px;color:#4E4E5A">
+          <span id="requests-label">0 / 1,000</span>
+          <span id="requests-pct">0%</span>
+        </div>
+      </div>
+      <div class="dash-card">
+        <div class="dash-card-label">Current Plan</div>
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+          <div class="dash-stat" id="stat-plan">Free</div>
+          <span class="dash-badge dash-badge-free" id="plan-badge">FREE</span>
+        </div>
+        <div class="dash-stat-sm" id="plan-desc">44K tokens/day • 3 models</div>
+        <a href="./neuron.html#pricing" id="upgrade-link" style="display:inline-block;margin-top:12px;font-size:12px;color:#00E5FF;border:1px solid rgba(0,229,255,0.2);padding:5px 14px;border-radius:6px;transition:all .15s">Upgrade Plan ↗</a>
       </div>
     </div>
-  </header>
 
-  <!-- Main Content -->
-  <main class="dashboard-container">
-    <!-- Loading State -->
-    <div id="loading-state">
-      <div class="spinner"></div>
-      <p style="color: var(--zx-muted); font-size: 14px;">Verifying your Clerk session...</p>
+    <!-- Model Access + Recent Activity -->
+    <div class="dash-section dash-grid dash-grid-2">
+      <div class="dash-card">
+        <div class="dash-card-label">Available Models</div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px" id="models-chips">
+          <!-- Populated by JS -->
+        </div>
+      </div>
+      <div class="dash-card">
+        <div class="dash-card-label">Recent Activity</div>
+        <div id="recent-activity" style="margin-top:4px">
+          <!-- Populated by JS -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ TAB: Usage ═══ -->
+  <div class="dash-content dash-tab" id="tab-usage" style="display:none">
+    <div class="dash-section">
+      <h2 style="font-size:20px;margin-bottom:4px">Usage Analytics</h2>
+      <p style="font-size:13px;color:#8A8A96">Token consumption and request volume over the past 7 days.</p>
     </div>
 
-    <!-- Dashboard Content (hidden by default) -->
-    <div id="dashboard-content" style="display: none;">
-      
-      <!-- User Profile Header -->
-      <div class="user-profile-header">
-        <img id="user-avatar" class="user-avatar-large" src="" alt="Avatar"/>
+    <!-- Usage Chart (ASCII-style bar chart) -->
+    <div class="dash-section dash-card">
+      <div class="dash-card-label">Daily Token Usage — Last 7 Days</div>
+      <div id="usage-chart" style="display:flex;align-items:flex-end;gap:8px;height:160px;margin-top:16px;padding-top:8px">
+        <!-- Populated by JS -->
+      </div>
+      <div style="display:flex;justify-content:space-between;margin-top:8px;font-size:11px;color:#4E4E5A" id="chart-labels"></div>
+    </div>
+
+    <div class="dash-section dash-grid dash-grid-3">
+      <div class="dash-card">
+        <div class="dash-card-label">Total This Month</div>
+        <div class="dash-stat">127K</div>
+        <div class="dash-stat-sm">tokens consumed</div>
+      </div>
+      <div class="dash-card">
+        <div class="dash-card-label">Avg / Day</div>
+        <div class="dash-stat">18.1K</div>
+        <div class="dash-stat-sm">tokens average</div>
+      </div>
+      <div class="dash-card">
+        <div class="dash-card-label">Peak Usage</div>
+        <div class="dash-stat">38.2K</div>
+        <div class="dash-stat-sm">Jun 7, 2026</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ TAB: Subscription ═══ -->
+  <div class="dash-content dash-tab" id="tab-subscription" style="display:none">
+    <div class="dash-section">
+      <h2 style="font-size:20px;margin-bottom:4px">Subscription & Billing</h2>
+      <p style="font-size:13px;color:#8A8A96">Manage your plan, view invoices, and update payment methods.</p>
+    </div>
+
+    <div class="dash-section dash-card" style="border-color:rgba(0,229,255,0.15)">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:16px">
         <div>
-          <h1 id="user-name" style="font-size: 32px; line-height: 1.2;">Developer</h1>
-          <p id="user-email" style="color: var(--zx-cyan); font-size: 14px; margin-top: 2px;">no-email@example.com</p>
+          <div class="dash-card-label">Current Plan</div>
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">
+            <span style="font-size:28px;font-weight:700;color:#fff" id="sub-plan-name">Free</span>
+            <span class="dash-badge dash-badge-free" id="sub-badge">ACTIVE</span>
+          </div>
+          <div style="font-size:13px;color:#8A8A96" id="sub-details">44K tokens/day • Tool calling • 3 base models</div>
         </div>
-      </div>
-
-      <!-- Bento Grid Stats and API Info -->
-      <div class="bento-grid">
-        
-        <!-- API Usage Card -->
-        <div class="nitro-card col-4">
-          <div class="section-label">01 / API Usage</div>
-          <h3 style="font-size: 18px; margin-bottom: 24px;">Daily Volume</h3>
-          
-          <div class="stats-num" id="api-usage-count">4,291</div>
-          <div class="stats-desc" style="margin-bottom: 20px;">Requests processed today</div>
-          
-          <div style="width: 100%; height: 6px; background: rgba(255,255,255,0.05); border-radius: 3px; overflow: hidden; margin-bottom: 24px;">
-            <div style="width: 1.2%; height: 100%; background: var(--zx-cyan); border-radius: 3px;"></div>
-          </div>
-          
-          <div style="display: flex; justify-content: space-between; font-size: 12px; color: var(--zx-muted);">
-            <span>Session limit: 500,000</span>
-            <span>Uptime: local-first</span>
-          </div>
+        <div>
+          <a href="./neuron.html#pricing" id="sub-upgrade-btn" style="display:inline-block;background:#fff;color:#0A0A0C;padding:10px 20px;border-radius:8px;font-size:13px;font-weight:600;transition:all .15s">Upgrade Plan</a>
         </div>
-
-        <!-- System Statistics Card -->
-        <div class="nitro-card col-4">
-          <div class="section-label">02 / Local Performance</div>
-          <h3 style="font-size: 18px; margin-bottom: 24px;">Statistics</h3>
-          
-          <div class="stats-num">4.6<span style="font-size: 16px; color: var(--zx-muted); font-weight: 500;"> ms</span></div>
-          <div class="stats-desc" style="margin-bottom: 20px;">Average semantic query latency</div>
-
-          <div style="display: flex; justify-content: space-between; border-top: 1px solid rgba(255,255,255,0.03); padding-top: 16px; font-size: 13px;">
-            <span style="color: var(--zx-muted);">Match Accuracy:</span>
-            <span style="color: #fff; font-weight: 700;">98.2%</span>
-          </div>
-          <div style="display: flex; justify-content: space-between; padding-top: 8px; font-size: 13px;">
-            <span style="color: var(--zx-muted);">Active Parsers:</span>
-            <span style="color: #fff; font-weight: 700;">42 Formats</span>
-          </div>
-        </div>
-
-        <!-- License Plans Card -->
-        <div class="nitro-card col-4">
-          <div class="section-label">03 / Active License</div>
-          <h3 style="font-size: 18px; margin-bottom: 24px;">Plans</h3>
-          
-          <div class="stats-num" style="color: var(--zx-purple);">Pro</div>
-          <div class="stats-desc" style="margin-bottom: 20px;">Lifetime developer license</div>
-
-          <div style="display: flex; justify-content: space-between; border-top: 1px solid rgba(255,255,255,0.03); padding-top: 16px; font-size: 13px;">
-            <span style="color: var(--zx-muted);">License Key:</span>
-            <span style="font-family: var(--font-mono); color: var(--zx-cyan);">Local Activation</span>
-          </div>
-          <div style="display: flex; justify-content: space-between; padding-top: 8px; font-size: 13px;">
-            <span style="color: var(--zx-muted);">DB Sync:</span>
-            <span id="db-sync-status" style="color: var(--zx-cyan);">Verified</span>
-          </div>
-        </div>
-
-        <!-- Developer Session Claims / JWT Inspector -->
-        <div class="nitro-card col-8">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-            <div class="section-label" style="margin-bottom: 0;">04 / Session Claims Inspector</div>
-            <span style="font-family: var(--font-mono); font-size: 11px; color: var(--zx-purple); background: rgba(124, 77, 255, 0.08); padding: 2px 8px; border-radius: 4px; border: 1px solid rgba(124, 77, 255, 0.2);">RS256 Decoded</span>
-          </div>
-          
-          <p style="font-size: 13px; color: var(--zx-muted); margin-bottom: 20px;">
-            The JSON payload below shows your decrypted profile claims synced directly from Clerk authentication.
-          </p>
-
-          <div style="background: #000; border: 1px solid var(--zx-border); border-radius: 8px; padding: 20px; font-family: var(--font-mono); font-size: 12px; color: #a3e635; overflow-x: auto; max-height: 250px;">
-            <pre id="jwt-claims-code">Loading claims...</pre>
-          </div>
-        </div>
-
-        <!-- Recent Logs Card -->
-        <div class="nitro-card col-4">
-          <div class="section-label">05 / Activity log</div>
-          <h3 style="font-size: 18px; margin-bottom: 20px;">Console Outputs</h3>
-          
-          <div style="display: flex; flex-direction: column;">
-            <div class="log-line">
-              <span>indexer.start_watch()</span>
-              <span class="log-status">active</span>
-            </div>
-            <div class="log-line">
-              <span>faiss_index.load()</span>
-              <span class="log-status">ready</span>
-            </div>
-            <div class="log-line">
-              <span>model.load_onnx()</span>
-              <span class="log-status">5.0ms</span>
-            </div>
-            <div class="log-line">
-              <span>db.sqlite_connect()</span>
-              <span class="log-status">ok</span>
-            </div>
-            <div class="log-line">
-              <span>ollama.check_summarizer()</span>
-              <span style="color: var(--zx-purple);">skipped</span>
-            </div>
-          </div>
-        </div>
-
       </div>
     </div>
-  </main>
 
-  <!-- Footer -->
-  <footer style="border-top: 1px solid var(--zx-border); padding: 40px 24px; text-align: center; font-size: 12px; color: var(--zx-faint);">
-    <p>© 2026 ZeroX Corporation. Secure Developer Dashboard.</p>
-  </footer>
+    <!-- Plan Comparison -->
+    <div class="dash-section">
+      <div class="dash-card-label" style="margin-bottom:12px">Plan Comparison</div>
+      <table class="dash-table">
+        <thead>
+          <tr><th>Feature</th><th>Free</th><th>Pro — $15/mo</th><th>Ultrawork — $80/mo</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Daily Tokens</td><td class="mono">44K</td><td class="mono">1M</td><td class="mono">Unlimited</td></tr>
+          <tr><td>Models</td><td>3 base</td><td>10+ incl. GPT-5.5</td><td>All models</td></tr>
+          <tr><td>MCP Connectors</td><td>—</td><td>Google Drive, Notion, GitHub</td><td>Custom + Built-in</td></tr>
+          <tr><td>Memory</td><td>Limited</td><td>Extended</td><td>Persistent (high limits)</td></tr>
+          <tr><td>Subagents</td><td>—</td><td>—</td><td>✓ Advanced</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
 
-  <script>
-    // Decodes the Clerk session token
-    function parseJWT(token) {
-      try {
-        const base64Url = token.split('.')[1];
-        const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-        const jsonPayload = decodeURIComponent(atob(base64).split('').map(function(c) {
-          return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
-        }).join(''));
-        return JSON.parse(jsonPayload);
-      } catch (e) {
-        return null;
-      }
+  <!-- ═══ TAB: Models ═══ -->
+  <div class="dash-content dash-tab" id="tab-models" style="display:none">
+    <div class="dash-section">
+      <h2 style="font-size:20px;margin-bottom:4px">Model Access</h2>
+      <p style="font-size:13px;color:#8A8A96">Models available on your current plan. Upgrade to unlock more.</p>
+    </div>
+
+    <div class="dash-section" id="models-table-section">
+      <table class="dash-table">
+        <thead>
+          <tr><th>Model</th><th>Type</th><th>Daily Limit</th><th>Status</th></tr>
+        </thead>
+        <tbody id="models-tbody">
+          <!-- Populated by JS -->
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ═══ TAB: API Keys ═══ -->
+  <div class="dash-content dash-tab" id="tab-api-keys" style="display:none">
+    <div class="dash-section">
+      <h2 style="font-size:20px;margin-bottom:4px">API Keys</h2>
+      <p style="font-size:13px;color:#8A8A96">Manage keys for programmatic access to Neuron APIs.</p>
+    </div>
+
+    <div class="dash-section dash-card">
+      <div class="dash-card-label">Session Token</div>
+      <p style="font-size:13px;color:#8A8A96;margin-bottom:12px">Your active Clerk session token. Auto-rotates on sign-in.</p>
+      <div class="api-key-box">
+        <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" id="session-token-display">••••••••••••••••••••••••</span>
+        <button onclick="copyToken()" id="copy-token-btn">Copy</button>
+      </div>
+    </div>
+
+    <div class="dash-section dash-card">
+      <div class="dash-card-label">API Endpoint</div>
+      <p style="font-size:13px;color:#8A8A96;margin-bottom:12px">Base URL for all Neuron API requests.</p>
+      <div class="api-key-box">
+        <span style="flex:1;color:#00E5FF">https://zero-x.live/v1/chat/completions</span>
+        <button onclick="navigator.clipboard.writeText('https://zero-x.live/v1/chat/completions');this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',1500)">Copy</button>
+      </div>
+    </div>
+
+    <div class="dash-section dash-card">
+      <div class="dash-card-label">Quick Start</div>
+      <pre style="background:#09090B;border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:16px;font-family:'JetBrains Mono',monospace;font-size:12px;color:#a3e635;overflow-x:auto;margin-top:8px">curl https://zero-x.live/v1/chat/completions \
+  -H "Authorization: Bearer YOUR_SESSION_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "DeepSeek-V4-Flash",
+    "messages": [{"role": "user", "content": "Hello!"}]
+  }'</pre>
+    </div>
+  </div>
+
+  <!-- ═══ TAB: Profile ═══ -->
+  <div class="dash-content dash-tab" id="tab-profile" style="display:none">
+    <div class="dash-section">
+      <h2 style="font-size:20px;margin-bottom:4px">Profile Settings</h2>
+      <p style="font-size:13px;color:#8A8A96">Your account information synced from authentication.</p>
+    </div>
+
+    <div class="dash-section dash-card">
+      <div style="display:flex;align-items:center;gap:20px;margin-bottom:24px">
+        <img class="dash-avatar" id="profile-avatar" src="" alt="" style="width:72px;height:72px"/>
+        <div>
+          <div style="font-size:20px;font-weight:700;color:#fff" id="profile-name">—</div>
+          <div style="font-size:13px;color:#00E5FF" id="profile-email">—</div>
+        </div>
+      </div>
+
+      <table class="dash-table">
+        <tbody>
+          <tr><td style="color:#8A8A96;width:180px">User ID</td><td class="mono" id="profile-uid">—</td></tr>
+          <tr><td style="color:#8A8A96">Username</td><td id="profile-username">—</td></tr>
+          <tr><td style="color:#8A8A96">Member Since</td><td id="profile-created">—</td></tr>
+          <tr><td style="color:#8A8A96">Connected Accounts</td><td id="profile-providers">—</td></tr>
+          <tr><td style="color:#8A8A96">Plan</td><td id="profile-plan">Free</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="dash-section">
+      <button onclick="if(window.Clerk)window.Clerk.signOut({redirectUrl:window.location.origin})" style="background:none;border:1px solid rgba(248,113,113,0.3);color:#f87171;padding:10px 20px;border-radius:8px;font-size:13px;cursor:pointer;transition:all .15s">Sign Out</button>
+    </div>
+  </div>
+
+  <!-- ═══ TAB: Activity ═══ -->
+  <div class="dash-content dash-tab" id="tab-activity" style="display:none">
+    <div class="dash-section">
+      <h2 style="font-size:20px;margin-bottom:4px">Activity Log</h2>
+      <p style="font-size:13px;color:#8A8A96">Recent API requests and system events.</p>
+    </div>
+
+    <div class="dash-section dash-card">
+      <table class="dash-table">
+        <thead><tr><th>Status</th><th>Endpoint</th><th>Model</th><th>Tokens</th><th>Time</th></tr></thead>
+        <tbody id="activity-tbody">
+          <!-- Populated by JS -->
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ═══ Tab Navigation ═══ */
+const tabNames = {overview:'Overview',usage:'Usage Analytics',subscription:'Subscription',models:'Models',
+  'api-keys':'API Keys',profile:'Profile',activity:'Activity Log'};
+
+document.querySelectorAll('.dash-nav-item[data-tab]').forEach(btn=>{
+  btn.addEventListener('click',()=>{
+    document.querySelectorAll('.dash-nav-item').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+    document.querySelectorAll('.dash-tab').forEach(t=>t.style.display='none');
+    const tab=document.getElementById('tab-'+btn.dataset.tab);
+    if(tab)tab.style.display='block';
+    document.getElementById('topbar-title').textContent=tabNames[btn.dataset.tab]||'Dashboard';
+  });
+});
+
+/* ═══ Mobile Menu ═══ */
+document.getElementById('mobMenuBtn').addEventListener('click',()=>{
+  document.getElementById('sidebar').classList.toggle('open');
+});
+
+/* ═══ Simulated Data ═══ */
+const userPlan = 'free'; // 'free' | 'pro' | 'ultrawork'
+const planLimits = {free:{tokens:44000,requests:1000},pro:{tokens:1000000,requests:10000},ultrawork:{tokens:5000000,requests:50000}};
+const simUsage = {tokens:12847,requests:156};
+
+const freeModels = [
+  {name:'DeepSeek V4 Pro',limit:'44K/day',status:'active'},
+  {name:'Kimi K2.5',limit:'44K/day',status:'active'},
+  {name:'DeepSeek V4 Flash',limit:'44K/day',status:'active'},
+];
+const proModels = [
+  ...freeModels,
+  {name:'GPT-5.5',limit:'44K/day',status:'active'},
+  {name:'GPT 5.4 Mini',limit:'1M/day',status:'active'},
+  {name:'GPT-5.3 Codex',limit:'1M/day',status:'active'},
+  {name:'Kimi K2.6',limit:'1M/day',status:'active'},
+  {name:'Grok 4.3',limit:'1M/day',status:'active'},
+];
+const ultraModels = [
+  {name:'GPT-5.5',limit:'256K/day',status:'active'},
+  {name:'GPT 5.4',limit:'Unlimited',status:'active'},
+  {name:'GPT-5.4 Pro',limit:'Unlimited',status:'active'},
+  {name:'GPT 5.4 Mini',limit:'Unlimited',status:'active'},
+  {name:'GPT-5.3 Codex',limit:'Unlimited',status:'active'},
+  {name:'Kimi K2.6',limit:'Unlimited',status:'active'},
+  {name:'Kimi K2.5',limit:'Unlimited',status:'active'},
+  {name:'DeepSeek V4 Pro',limit:'Unlimited',status:'active'},
+  {name:'DeepSeek V4 Flash',limit:'Unlimited',status:'active'},
+  {name:'Grok 4.3',limit:'Unlimited',status:'active'},
+];
+
+const activityLog = [
+  {status:'success',endpoint:'/v1/chat/completions',model:'DeepSeek-V4-Flash',tokens:1243,time:'2 min ago'},
+  {status:'success',endpoint:'/v1/chat/completions',model:'Kimi-K2.5',tokens:892,time:'8 min ago'},
+  {status:'success',endpoint:'/v1/chat/completions',model:'DeepSeek-V4-Flash',tokens:2104,time:'15 min ago'},
+  {status:'error',endpoint:'/v1/chat/completions',model:'GPT-5.5',tokens:0,time:'22 min ago'},
+  {status:'success',endpoint:'/v1/chat/completions',model:'Kimi-K2.5',tokens:567,time:'31 min ago'},
+  {status:'success',endpoint:'/auth/session',model:'—',tokens:0,time:'45 min ago'},
+  {status:'success',endpoint:'/v1/chat/completions',model:'DeepSeek-V4-Flash',tokens:1876,time:'1h ago'},
+  {status:'pending',endpoint:'/v1/chat/completions',model:'Kimi-K2.6',tokens:0,time:'1h ago'},
+];
+
+const weeklyUsage = [
+  {day:'Mon',tokens:22400},{day:'Tue',tokens:18700},{day:'Wed',tokens:31200},
+  {day:'Thu',tokens:14500},{day:'Fri',tokens:38200},{day:'Sat',tokens:9800},{day:'Sun',tokens:12847}
+];
+
+function populateDashboard(user) {
+  const limits = planLimits[userPlan];
+  const pct_t = Math.min(100,Math.round(simUsage.tokens/limits.tokens*100));
+  const pct_r = Math.min(100,Math.round(simUsage.requests/limits.requests*100));
+
+  // Overview stats
+  document.getElementById('stat-tokens').textContent=simUsage.tokens.toLocaleString();
+  document.getElementById('tokens-bar').style.width=pct_t+'%';
+  document.getElementById('tokens-used-label').textContent=simUsage.tokens.toLocaleString()+' / '+limits.tokens.toLocaleString();
+  document.getElementById('tokens-pct').textContent=pct_t+'%';
+
+  document.getElementById('stat-requests').textContent=simUsage.requests.toLocaleString();
+  document.getElementById('requests-bar').style.width=pct_r+'%';
+  document.getElementById('requests-label').textContent=simUsage.requests.toLocaleString()+' / '+limits.requests.toLocaleString();
+  document.getElementById('requests-pct').textContent=pct_r+'%';
+
+  // Plan
+  const planNames={free:'Free',pro:'Pro',ultrawork:'Ultrawork'};
+  const planDescs={free:'44K tokens/day • 3 models',pro:'1M tokens/day • 10+ models • MCP connectors',ultrawork:'Unlimited • All models • Subagents • Custom MCP'};
+  document.getElementById('stat-plan').textContent=planNames[userPlan];
+  document.getElementById('plan-desc').textContent=planDescs[userPlan];
+  const badge=document.getElementById('plan-badge');
+  badge.textContent=planNames[userPlan].toUpperCase();
+  badge.className='dash-badge dash-badge-'+userPlan;
+  document.getElementById('sub-plan-name').textContent=planNames[userPlan];
+  document.getElementById('sub-badge').textContent='ACTIVE';
+  document.getElementById('sub-badge').className='dash-badge dash-badge-'+userPlan;
+  document.getElementById('sub-details').textContent=planDescs[userPlan];
+  if(userPlan!=='free'){document.getElementById('upgrade-link').textContent='Manage Plan ↗';document.getElementById('sub-upgrade-btn').textContent='Manage Plan'}
+
+  // Models chips (overview)
+  const models = userPlan==='ultrawork'?ultraModels:userPlan==='pro'?proModels:freeModels;
+  document.getElementById('models-chips').innerHTML=models.slice(0,6).map(m=>`<div class="model-chip"><span class="model-chip-dot green"></span>${m.name}</div>`).join('')+(models.length>6?`<div class="model-chip" style="color:#8A8A96">+${models.length-6} more</div>`:'');
+
+  // Models table
+  document.getElementById('models-tbody').innerHTML=models.map(m=>`<tr><td style="font-weight:600">${m.name}</td><td class="mono" style="color:#8A8A96">Chat</td><td class="mono">${m.limit}</td><td><span style="color:#34d399;font-size:12px">● Active</span></td></tr>`).join('');
+
+  // Recent activity (overview)
+  document.getElementById('recent-activity').innerHTML=activityLog.slice(0,4).map(a=>`<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.03);font-size:12px"><span class="activity-dot ${a.status}"></span><span style="flex:1;color:#E8E8EC;font-family:'JetBrains Mono',monospace">${a.endpoint}</span><span style="color:#8A8A96">${a.time}</span></div>`).join('');
+
+  // Activity log table
+  document.getElementById('activity-tbody').innerHTML=activityLog.map(a=>`<tr><td><span class="activity-dot ${a.status}" style="display:inline-block;margin-right:6px"></span>${a.status}</td><td class="mono">${a.endpoint}</td><td style="color:#8A8A96">${a.model}</td><td class="mono">${a.tokens||'—'}</td><td style="color:#8A8A96">${a.time}</td></tr>`).join('');
+
+  // Usage chart
+  const maxT=Math.max(...weeklyUsage.map(d=>d.tokens));
+  document.getElementById('usage-chart').innerHTML=weeklyUsage.map(d=>{
+    const h=Math.max(8,Math.round(d.tokens/maxT*140));
+    return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px"><div style="font-size:10px;color:#8A8A96;font-family:'JetBrains Mono',monospace">${(d.tokens/1000).toFixed(1)}K</div><div style="width:100%;height:${h}px;background:linear-gradient(180deg,#00E5FF,rgba(0,229,255,0.3));border-radius:4px 4px 0 0;transition:height .4s"></div></div>`;
+  }).join('');
+  document.getElementById('chart-labels').innerHTML=weeklyUsage.map(d=>`<span style="flex:1;text-align:center">${d.day}</span>`).join('');
+
+  // Profile
+  if(user){
+    document.getElementById('profile-avatar').src=user.imageUrl;
+    document.getElementById('profile-name').textContent=user.fullName||'Developer';
+    document.getElementById('profile-email').textContent=user.primaryEmailAddress?.emailAddress||'—';
+    document.getElementById('profile-uid').textContent=user.id;
+    document.getElementById('profile-username').textContent=user.username||'—';
+    document.getElementById('profile-created').textContent=new Date(user.createdAt).toLocaleDateString('en-US',{year:'numeric',month:'long',day:'numeric'});
+    const providers=user.externalAccounts?.map(a=>a.provider).join(', ')||'None';
+    document.getElementById('profile-providers').textContent=providers.charAt(0).toUpperCase()+providers.slice(1);
+    document.getElementById('profile-plan').textContent=planNames[userPlan];
+  }
+}
+
+/* ═══ Copy Token ═══ */
+let sessionToken='';
+function copyToken(){
+  if(!sessionToken)return;
+  navigator.clipboard.writeText(sessionToken);
+  document.getElementById('copy-token-btn').textContent='Copied!';
+  setTimeout(()=>document.getElementById('copy-token-btn').textContent='Copy',1500);
+}
+
+/* ═══ Clerk Integration ═══ */
+function waitForClerk(ms){
+  return new Promise((resolve,reject)=>{
+    if(window.Clerk){resolve(window.Clerk);return}
+    let elapsed=0;const iv=setInterval(()=>{elapsed+=100;if(window.Clerk){clearInterval(iv);resolve(window.Clerk)}else if(elapsed>=ms){clearInterval(iv);reject(new Error('Clerk timeout'))}},100);
+  });
+}
+
+const clerkConfig={
+  appearance:{
+    layout:{logoImageUrl:window.location.origin+'/Assets/Zero-xBnW.png',logoPlacement:'inside',shimmer:true},
+    elements:{
+      headerTitle:{textAlign:'center',width:'100%'},headerSubtitle:{textAlign:'center',width:'100%'},
+      logoBox:{height:'36px'},logoImage:{height:'36px',mixBlendMode:'lighten'},
+      branding:{display:'none'},footerAction__branding:{display:'none'},
+      footer:{'& > *:last-child':{display:'none'}},poweredBy:{display:'none'}
+    }
+  },
+  localization:{signIn:{start:{title:'Sign in',subtitle:'to continue to ZeroX Dashboard'}},signUp:{start:{title:'Create your account',subtitle:'to continue to ZeroX Dashboard'}}}
+};
+
+window.addEventListener('load',async()=>{
+  const loadEl=document.getElementById('loading-state');
+  const gateEl=document.getElementById('signin-gate');
+
+  // Dynamic links
+  const isLocal=['localhost','127.0.0.1'].includes(window.location.hostname);
+  document.getElementById('logo-link').href=isLocal?'./index.html':'https://zero-x.live';
+  document.getElementById('topbar-neuron-link').href=isLocal?'./neuron.html':'https://neuron.zero-x.live';
+  document.getElementById('upgrade-link').href=isLocal?'./neuron.html#pricing':'https://neuron.zero-x.live#pricing';
+  document.getElementById('sub-upgrade-btn').href=isLocal?'./neuron.html#pricing':'https://neuron.zero-x.live#pricing';
+
+  try{
+    await waitForClerk(10000);
+    await window.Clerk.load(clerkConfig);
+
+    if(!window.Clerk.user){
+      // Show sign-in gate instead of redirecting
+      loadEl.style.display='none';
+      gateEl.style.display='block';
+      document.getElementById('gate-signin-btn').addEventListener('click',()=>window.Clerk.openSignIn(clerkConfig));
+      return;
     }
 
-    const clerkConfig = {
-      appearance: {
-        layout: {
-          logoImageUrl: window.location.origin + '/Assets/neuron_circular.png',
-          logoPlacement: 'inside',
-        },
-        elements: {
-          headerTitle: { textAlign: 'center', width: '100%' },
-          headerSubtitle: { textAlign: 'center', width: '100%' },
-          branding: { display: 'none' },
-          footerAction__branding: { display: 'none' }
-        }
-      }
-    };
+    const user=window.Clerk.user;
 
-    window.addEventListener('load', async () => {
-      if (!window.Clerk) {
-        console.error("Clerk JS SDK not loaded");
-        document.getElementById('loading-state').innerHTML = `<p style="color: var(--zx-cyan);">Failed to load Clerk Auth SDK.</p>`;
-        return;
-      }
+    // Sidebar user info
+    document.getElementById('sidebar-avatar').src=user.imageUrl;
+    document.getElementById('sidebar-name').textContent=user.fullName||'Developer';
+    document.getElementById('sidebar-email').textContent=user.primaryEmailAddress?.emailAddress||'';
+    document.getElementById('greeting-name').textContent=(user.firstName||'Developer');
 
-      try {
-        await window.Clerk.load(clerkConfig);
-        
-        if (!window.Clerk.user) {
-          // Redirect to index page if not signed in
-          window.location.replace('./index.html');
-          return;
-        }
+    // Mount minimal UserButton
+    window.Clerk.mountUserButton(document.getElementById('user-button'),{afterSignOutUrl:window.location.href});
 
-        const user = window.Clerk.user;
-        document.getElementById('user-avatar').src = user.imageUrl;
-        document.getElementById('user-name').innerText = user.fullName || "Developer User";
-        document.getElementById('user-email').innerText = user.primaryEmailAddress.emailAddress;
-
-        // Mount Clerk UserButton
-        window.Clerk.mountUserButton(document.getElementById('user-button'), {
-          afterSignOutUrl: window.location.origin
-        });
-
-        // Get token & parse claims
-        const token = await window.Clerk.session.getToken();
-        const claims = parseJWT(token);
-        
-        if (claims) {
-          const rawClaims = {
-            userId: user.id,
-            sessionId: window.Clerk.session.id,
-            fullName: user.fullName || 'N/A',
-            primaryEmail: user.primaryEmailAddress.emailAddress || 'N/A',
-            emailVerified: user.primaryEmailAddress.verification?.status || 'N/A',
-            createdAt: user.createdAt,
-            jwtPayload: claims
-          };
-          document.getElementById('jwt-claims-code').innerText = JSON.stringify(rawClaims, null, 2);
-        } else {
-          document.getElementById('jwt-claims-code').innerText = "Failed to parse JWT claims.";
-        }
-
-        // Hide loader and reveal content
-        document.getElementById('loading-state').style.display = 'none';
-        document.getElementById('dashboard-content').style.display = 'block';
-
-        // Sync with backend
-        await syncUserWithBackend(user, token);
-
-      } catch (err) {
-        console.error("Dashboard init error:", err);
-        document.getElementById('loading-state').innerHTML = `<p style="color: var(--zx-purple);">An error occurred during authentication verification.</p>`;
-      }
-    });
-
-    async function syncUserWithBackend(user, token) {
-      const syncStatusEl = document.getElementById('db-sync-status');
-      try {
-        const isLocal = ['localhost', '127.0.0.1'].includes(window.location.hostname);
-        const syncUrl = isLocal ? '/auth/sync' : 'https://api.zero-x.live/auth/sync';
-        
-        const response = await fetch(syncUrl, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`
-          },
-          body: JSON.stringify({
-            email: user.primaryEmailAddress.emailAddress,
-            firstName: user.firstName,
-            lastName: user.lastName
-          })
-        });
-
-        if (response.ok) {
-          syncStatusEl.innerText = "Synced & Verified";
-          syncStatusEl.style.color = "var(--zx-cyan)";
-        } else {
-          throw new Error("Sync failure");
-        }
-      } catch (err) {
-        console.error("Database sync error:", err);
-        syncStatusEl.innerText = "Local Verification Only";
-        syncStatusEl.style.color = "var(--zx-purple)";
-      }
+    // Get session token
+    sessionToken=await window.Clerk.session.getToken();
+    if(sessionToken){
+      const masked=sessionToken.slice(0,20)+'••••••••'+sessionToken.slice(-8);
+      document.getElementById('session-token-display').textContent=masked;
     }
-  </script>
+
+    // Populate all dashboard data
+    populateDashboard(user);
+
+    // Show overview tab
+    loadEl.style.display='none';
+    document.getElementById('tab-overview').style.display='block';
+
+  }catch(err){
+    console.error('Dashboard init error:',err);
+    loadEl.innerHTML='<div style="text-align:center"><p style="color:#f87171;font-size:14px;margin-bottom:12px">Failed to initialize authentication.</p><a href="./index.html" style="color:#00E5FF;font-size:13px">Return to homepage</a></div>';
+  }
+});
+</script>
 </body>
 </html>
