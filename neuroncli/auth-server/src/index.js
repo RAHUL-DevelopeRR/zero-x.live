@@ -37,6 +37,14 @@ app.use('*', async (c, next) => {
         return c.env.ASSETS.fetch(newReq);
       }
     }
+  } else if (hostname === 'neuron.zero-x.live') {
+    if (path === '/' || path === '/index.html') {
+      if (c.env && c.env.ASSETS) {
+        const newUrl = new URL('/neuron.html', c.req.url);
+        const newReq = new Request(newUrl.toString(), c.req.raw);
+        return c.env.ASSETS.fetch(newReq);
+      }
+    }
   } else if (hostname === 'zero-x.live' || hostname === 'www.zero-x.live') {
     if (path === '/' || path === '/index.html') {
       if (c.env && c.env.ASSETS) {
