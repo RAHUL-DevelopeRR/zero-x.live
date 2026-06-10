@@ -445,15 +445,33 @@
     const clerkConfig = {
       appearance: {
         layout: {
-          logoPlacement: 'none',
+          logoImageUrl: window.location.origin + '/Assets/Zero-xBnW.png',
+          logoPlacement: 'inside',
+          shimmer: true,
         },
         elements: {
           headerTitle: { textAlign: 'center', width: '100%' },
           headerSubtitle: { textAlign: 'center', width: '100%' },
+          logoBox: { height: '36px' },
+          logoImage: { height: '36px', mixBlendMode: 'lighten' },
           branding: { display: 'none' },
           footerAction__branding: { display: 'none' },
-          footer: { display: 'none' },
+          footer: { '& > *:last-child': { display: 'none' } },
           poweredBy: { display: 'none' }
+        }
+      },
+      localization: {
+        signIn: {
+          start: {
+            title: "Sign in",
+            subtitle: "to continue to Neuron"
+          }
+        },
+        signUp: {
+          start: {
+            title: "Create your account",
+            subtitle: "to continue to Neuron"
+          }
         }
       }
     };

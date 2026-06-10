@@ -504,7 +504,9 @@ function buyNeuron(tier,amt,desc){
 const clerkConfig = {
   appearance: {
     layout: {
-      logoPlacement: 'none',
+      logoImageUrl: window.location.origin + '/Assets/Zero-xBnW.png',
+      logoPlacement: 'inside',
+      shimmer: true,
     },
     elements: {
       headerTitle: {
@@ -515,6 +517,13 @@ const clerkConfig = {
         textAlign: 'center',
         width: '100%',
       },
+      logoBox: {
+        height: '36px',
+      },
+      logoImage: {
+        height: '36px',
+        mixBlendMode: 'lighten',
+      },
       branding: {
         display: 'none',
       },
@@ -522,7 +531,7 @@ const clerkConfig = {
         display: 'none',
       },
       footer: {
-        display: 'none',
+        '& > *:last-child': { display: 'none' },
       },
       poweredBy: {
         display: 'none',
