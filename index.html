@@ -557,9 +557,21 @@ window.addEventListener('load', async () => {
     console.warn("Clerk JS SDK not loaded yet.");
     return;
   }
+  
+  const signinBtn = document.getElementById('signin-btn');
+  if (signinBtn) {
+    signinBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      if (window.Clerk && window.Clerk.isReady && window.Clerk.isReady()) {
+        window.Clerk.openSignIn(clerkConfig);
+      } else {
+        alert("Authentication is still initializing or blocked. If you are on zero-x.live, please ensure your Clerk Production Key (pk_live_...) is configured in the code and ad-blockers are disabled.");
+      }
+    });
+  }
+
   try {
     await window.Clerk.load(clerkConfig);
-    const signinBtn = document.getElementById('signin-btn');
     const userButtonDiv = document.getElementById('user-button');
     const navLinks = document.querySelector('header nav');
     
@@ -597,14 +609,6 @@ window.addEventListener('load', async () => {
       
       // Sync user with PostgreSQL database via Hono backend
       syncUserWithBackend(window.Clerk.user);
-    } else {
-      // User is signed out
-      if (signinBtn) {
-        signinBtn.addEventListener('click', (e) => {
-          e.preventDefault();
-          window.Clerk.openSignIn(clerkConfig);
-        });
-      }
     }
   } catch (err) {
     console.error("Clerk load error:", err);

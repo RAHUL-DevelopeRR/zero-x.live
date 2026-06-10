@@ -518,15 +518,29 @@
         console.warn("Clerk JS SDK not loaded yet.");
         return;
       }
+      
+      const signinBtn = document.getElementById('signin-btn');
+      const promptSigninBtn = document.getElementById('prompt-signin-btn');
+      
+      const handleSignInClick = (e) => {
+        e.preventDefault();
+        if (window.Clerk && window.Clerk.isReady && window.Clerk.isReady()) {
+          window.Clerk.openSignIn(clerkConfig);
+        } else {
+          alert("Authentication is still initializing or blocked. If you are on zero-x.live, please ensure your Clerk Production Key (pk_live_...) is configured in the code and ad-blockers are disabled.");
+        }
+      };
+      
+      if (signinBtn) signinBtn.addEventListener('click', handleSignInClick);
+      if (promptSigninBtn) promptSigninBtn.addEventListener('click', handleSignInClick);
+
       try {
         await window.Clerk.load(clerkConfig);
-        
-        const signinBtn = document.getElementById('signin-btn');
-        const promptSigninBtn = document.getElementById('prompt-signin-btn');
         const userButtonDiv = document.getElementById('user-button');
         const navLinks = document.querySelector('header nav');
         const loggedOutPrompt = document.getElementById('logged-out-prompt');
-        const loggedInArea = document.getElementById('logged-in-area');
+        const loggedInArea = document.getElementById('loggedInArea'); // Or keeping standard bindings
+        const loggedInAreaDiv = document.getElementById('logged-in-area');
         
         // Setup dynamic links depending on environment
         const isLocal = ['localhost', '127.0.0.1'].includes(window.location.hostname);
@@ -541,7 +555,7 @@
           // User is logged in
           if (signinBtn) signinBtn.style.display = 'none';
           if (loggedOutPrompt) loggedOutPrompt.style.display = 'none';
-          if (loggedInArea) loggedInArea.style.display = 'block';
+          if (loggedInAreaDiv) loggedInAreaDiv.style.display = 'block';
           
           // Setup dashboard URL depending on environment
           const dashboardUrl = isLocal ? './dashboard.html' : 'https://dashboard.zero-x.live';
@@ -560,20 +574,6 @@
           if (userButtonDiv) {
             window.Clerk.mountUserButton(userButtonDiv, {
               afterSignOutUrl: window.location.origin
-            });
-          }
-        } else {
-          // User is signed out
-          if (signinBtn) {
-            signinBtn.addEventListener('click', (e) => {
-              e.preventDefault();
-              window.Clerk.openSignIn(clerkConfig);
-            });
-          }
-          if (promptSigninBtn) {
-            promptSigninBtn.addEventListener('click', (e) => {
-              e.preventDefault();
-              window.Clerk.openSignIn(clerkConfig);
             });
           }
         }
