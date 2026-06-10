@@ -130,17 +130,6 @@
       align-items: center !important;
       text-align: center !important;
     }
-    .cl-header::before {
-      content: "";
-      display: block;
-      width: 44px;
-      height: 44px;
-      margin: 0 auto 12px auto;
-      background-image: url('./Assets/neuron_circular.png');
-      background-size: contain;
-      background-repeat: no-repeat;
-      background-position: center;
-    }
     .cl-internal-b38t62,
     .cl-internal-1dauvto,
     .cl-internal-18y98x0,
@@ -161,7 +150,7 @@
     <a href="#" class="shrink-0"><img src="./Assets/Zero-xBnW.png" alt="zero-x.live" class="h-14" style="mix-blend-mode:lighten"/></a>
     <nav class="hidden md:flex items-center gap-7" aria-label="Main navigation">
       <a href="#neuron" class="text-[14px] text-zx-muted hover:text-white transition-colors">Products</a>
-      <a href="https://neuron.zero-x.live" id="nav-neuron-link" class="text-[14px] text-zx-muted hover:text-white transition-colors">Neuron (SaaS)</a>
+      <a href="https://neuron.zero-x.live" id="nav-neuron-link" class="text-[14px] text-zx-muted hover:text-white transition-colors">Neuron</a>
       <a href="#pipeline" class="text-[14px] text-zx-muted hover:text-white transition-colors">Pipeline</a>
       <a href="#about" class="text-[14px] text-zx-muted hover:text-white transition-colors">About</a>
       <a href="#contact" class="text-[14px] text-zx-muted hover:text-white transition-colors">Contact</a>
@@ -515,8 +504,7 @@ function buyNeuron(tier,amt,desc){
 const clerkConfig = {
   appearance: {
     layout: {
-      logoImageUrl: window.location.origin + '/Assets/neuron_circular.png',
-      logoPlacement: 'inside',
+      logoPlacement: 'none',
     },
     elements: {
       headerTitle: {
@@ -531,6 +519,12 @@ const clerkConfig = {
         display: 'none',
       },
       footerAction__branding: {
+        display: 'none',
+      },
+      footer: {
+        display: 'none',
+      },
+      poweredBy: {
         display: 'none',
       }
     }

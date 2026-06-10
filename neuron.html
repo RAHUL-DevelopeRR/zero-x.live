@@ -69,7 +69,7 @@
         <a href="https://zero-x.live" id="nav-company-link" class="text-[14px] text-zx-muted hover:text-white transition-colors">Company</a>
         <a href="#" class="text-[14px] text-white font-medium">Neuron</a>
         <a href="#features" class="text-[14px] text-zx-muted hover:text-white transition-colors">Features</a>
-        <a href="#architecture" class="text-[14px] text-zx-muted hover:text-white transition-colors">Architecture</a>
+
         <a href="#pricing" class="text-[14px] text-zx-muted hover:text-white transition-colors">Pricing</a>
       </nav>
       <div class="flex items-center gap-3">
@@ -167,66 +167,6 @@
     </div>
   </section>
 
-  <!-- ARCHITECTURE — Linear-style full showcase -->
-  <section class="py-32 md:py-40 px-5 border-t border-white/[0.04]" id="architecture">
-    <div class="max-w-[900px] mx-auto reveal">
-      <a class="inline-flex items-center gap-2 text-zx-accent text-[13px] font-medium tracking-wide mb-6">3.0&ensp;Under the Hood&ensp;→</a>
-      <h2 class="text-[clamp(28px,4vw,40px)] font-medium tracking-[-0.02em] leading-[1.15] text-white mb-5">Layered architecture</h2>
-      <p class="text-[16px] text-zx-muted max-w-lg leading-relaxed mb-12">Enterprise-grade design. Each layer is independent, testable, and replaceable.</p>
-      <div class="flex flex-col gap-3">
-        <div class="flex items-center gap-4 bg-zx-card border border-white/[0.06] rounded-xl p-5 hover:border-white/[0.12] transition-colors">
-          <div class="flex-1">
-            <div class="text-[14px] font-medium text-white">UI Layer</div>
-            <div class="text-[13px] text-zx-muted">PyQt6 Fluent Design with DWM glass</div>
-          </div>
-          <div class="hidden sm:flex gap-1.5">
-            <span class="px-2 py-0.5 bg-white/[0.04] text-zx-muted text-[11px] font-mono rounded">PyQt6</span>
-            <span class="px-2 py-0.5 bg-white/[0.04] text-zx-muted text-[11px] font-mono rounded">DWM</span>
-          </div>
-        </div>
-        <div class="flex items-center gap-4 bg-zx-card border border-white/[0.06] rounded-xl p-5 hover:border-white/[0.12] transition-colors">
-          <div class="flex-1">
-            <div class="text-[14px] font-medium text-white">Service Layer</div>
-            <div class="text-[13px] text-zx-muted">Desktop, Ollama AI, Startup Indexer</div>
-          </div>
-          <div class="hidden sm:flex gap-1.5">
-            <span class="px-2 py-0.5 bg-white/[0.04] text-zx-muted text-[11px] font-mono rounded">Ollama</span>
-            <span class="px-2 py-0.5 bg-white/[0.04] text-zx-muted text-[11px] font-mono rounded">REST</span>
-          </div>
-        </div>
-        <div class="flex items-center gap-4 bg-zx-card border border-white/[0.06] rounded-xl p-5 hover:border-white/[0.12] transition-colors">
-          <div class="flex-1">
-            <div class="text-[14px] font-medium text-white">Core Engine</div>
-            <div class="text-[13px] text-zx-muted">Embeddings, hybrid search, query parser</div>
-          </div>
-          <div class="hidden sm:flex gap-1.5">
-            <span class="px-2 py-0.5 bg-white/[0.04] text-zx-muted text-[11px] font-mono rounded">MiniLM</span>
-            <span class="px-2 py-0.5 bg-white/[0.04] text-zx-muted text-[11px] font-mono rounded">FAISS</span>
-          </div>
-        </div>
-        <div class="flex items-center gap-4 bg-zx-card border border-white/[0.06] rounded-xl p-5 hover:border-white/[0.12] transition-colors">
-          <div class="flex-1">
-            <div class="text-[14px] font-medium text-white">Storage</div>
-            <div class="text-[13px] text-zx-muted">SQLite metadata + FAISS vector index</div>
-          </div>
-          <div class="hidden sm:flex gap-1.5">
-            <span class="px-2 py-0.5 bg-white/[0.04] text-zx-muted text-[11px] font-mono rounded">SQLite</span>
-            <span class="px-2 py-0.5 bg-white/[0.04] text-zx-muted text-[11px] font-mono rounded">NumPy</span>
-          </div>
-        </div>
-        <div class="flex items-center gap-4 bg-zx-card border border-white/[0.06] rounded-xl p-5 hover:border-white/[0.12] transition-colors">
-          <div class="flex-1">
-            <div class="text-[14px] font-medium text-white">Ingestion</div>
-            <div class="text-[13px] text-zx-muted">40+ parsers with PyMuPDF, python-docx</div>
-          </div>
-          <div class="hidden sm:flex gap-1.5">
-            <span class="px-2 py-0.5 bg-white/[0.04] text-zx-muted text-[11px] font-mono rounded">PyMuPDF</span>
-            <span class="px-2 py-0.5 bg-white/[0.04] text-zx-muted text-[11px] font-mono rounded">pptx</span>
-          </div>
-        </div>
-      </div>
-    </div>
-  </section>
 
   <!-- GATED PRICING & DOWNLOADS -->
   <section class="py-32 md:py-40 px-5 border-t border-white/[0.04]" id="pricing">
@@ -462,6 +402,10 @@
     searchBox.addEventListener("input", (e) => renderResults(e.target.value));
     renderResults("database schema");
 
+    /* ═══ Reveal Animations ═══ */
+    const obs=new IntersectionObserver(e=>{e.forEach(el=>{if(el.isIntersecting){el.target.classList.add('visible');obs.unobserve(el.target)}})},{threshold:.08,rootMargin:'0px 0px -60px 0px'});
+    document.querySelectorAll('.reveal').forEach(el=>obs.observe(el));
+
     /* ═══ Smooth Scroll ═══ */
     document.querySelectorAll('a[href^="#"]').forEach(a=>{a.addEventListener('click',e=>{const id=a.getAttribute('href');if(id==='#')return;const t=document.querySelector(id);if(t){e.preventDefault();t.scrollIntoView({behavior:'smooth'})}})});
 
@@ -501,14 +445,15 @@
     const clerkConfig = {
       appearance: {
         layout: {
-          logoImageUrl: window.location.origin + '/Assets/neuron_circular.png',
-          logoPlacement: 'inside',
+          logoPlacement: 'none',
         },
         elements: {
           headerTitle: { textAlign: 'center', width: '100%' },
           headerSubtitle: { textAlign: 'center', width: '100%' },
           branding: { display: 'none' },
-          footerAction__branding: { display: 'none' }
+          footerAction__branding: { display: 'none' },
+          footer: { display: 'none' },
+          poweredBy: { display: 'none' }
         }
       }
     };
