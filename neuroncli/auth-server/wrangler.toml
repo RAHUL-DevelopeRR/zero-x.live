@@ -5,6 +5,8 @@ compatibility_date = "2024-05-02"
 [assets]
 directory = "../../"
 binding = "ASSETS"
+html_handling = "none"
+not_found_handling = "none"
 
 
 [vars]
