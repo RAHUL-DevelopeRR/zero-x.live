@@ -209,10 +209,10 @@
     </button>
   </div>
   <div class="dash-sidebar-footer">
-    <div class="dash-user-card" id="sidebar-user">
+    <div class="dash-user-card" id="sidebar-user" style="display:none">
       <img class="dash-avatar" id="sidebar-avatar" src="" alt=""/>
       <div>
-        <div style="font-size:13px;font-weight:600;color:#fff" id="sidebar-name">Loading…</div>
+        <div style="font-size:13px;font-weight:600;color:#fff" id="sidebar-name">—</div>
         <div style="font-size:11px;color:#8A8A96" id="sidebar-email">—</div>
       </div>
     </div>
@@ -670,13 +670,22 @@ window.addEventListener('load',async()=>{
       // Show sign-in gate instead of redirecting
       loadEl.style.display='none';
       gateEl.style.display='block';
-      document.getElementById('gate-signin-btn').addEventListener('click',()=>window.Clerk.openSignIn(clerkConfig));
+      document.getElementById('gate-signin-btn').addEventListener('click',()=>{
+        window.Clerk.openSignIn({
+          ...clerkConfig,
+          redirectUrl: window.location.href,
+          afterSignInUrl: window.location.href,
+          afterSignUpUrl: window.location.href,
+        });
+      });
       return;
     }
 
     const user=window.Clerk.user;
 
-    // Sidebar user info
+    // Sidebar user info — show card now that user is authenticated
+    const sidebarUser=document.getElementById('sidebar-user');
+    sidebarUser.style.display='flex';
     document.getElementById('sidebar-avatar').src=user.imageUrl;
     document.getElementById('sidebar-name').textContent=user.fullName||'Developer';
     document.getElementById('sidebar-email').textContent=user.primaryEmailAddress?.emailAddress||'';
