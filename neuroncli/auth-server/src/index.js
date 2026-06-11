@@ -515,9 +515,22 @@ app.route('/', api);
 // Unmatched routes fall back to static assets (supporting clean URLs like /about -> /about.html)
 app.notFound(async (c) => {
   const url = new URL(c.req.url);
+  const hostname = url.hostname;
   const path = url.pathname;
 
   if (c.env && c.env.ASSETS) {
+    // With html_handling=none, we must manually resolve / to the correct HTML file
+    if (path === '/' || path === '') {
+      let targetHtml = '/index.html';
+      if (hostname === 'dashboard.zero-x.live') targetHtml = '/dashboard.html';
+      else if (hostname === 'neuron.zero-x.live') targetHtml = '/neuron.html';
+      
+      const htmlUrl = new URL(targetHtml, c.req.url);
+      const htmlReq = new Request(htmlUrl.toString(), c.req.raw);
+      return c.env.ASSETS.fetch(htmlReq);
+    }
+
+    // Clean URL support: /about -> /about.html
     if (!path.includes('.')) {
       const cleanPath = path.endsWith('/') ? path.slice(0, -1) : path;
       const htmlUrl = new URL(`${cleanPath}.html`, c.req.url);
@@ -527,6 +540,8 @@ app.notFound(async (c) => {
         return res;
       }
     }
+
+    // Direct asset fetch
     return c.env.ASSETS.fetch(c.req.raw);
   }
   
