@@ -391,9 +391,9 @@
           Unified File Intelligence. Semantic search across 30K+ files. AI-powered summaries. 100% offline.
         </p>
         <div class="flex flex-wrap gap-1.5 mb-5">
-          <span class="px-2 py-0.5 bg-white/[0.04] text-zx-faint text-[10px] font-mono rounded">MiniLM</span>
+          <span class="px-2 py-0.5 bg-white/[0.04] text-zx-faint text-[10px] font-mono rounded">BGE</span>
           <span class="px-2 py-0.5 bg-white/[0.04] text-zx-faint text-[10px] font-mono rounded">FAISS</span>
-          <span class="px-2 py-0.5 bg-white/[0.04] text-zx-faint text-[10px] font-mono rounded">Ollama</span>
+          <span class="px-2 py-0.5 bg-white/[0.04] text-zx-faint text-[10px] font-mono rounded">Qwen</span>
           <span class="px-2 py-0.5 bg-white/[0.04] text-zx-faint text-[10px] font-mono rounded">PyQt6</span>
         </div>
         <div class="flex items-center gap-2 text-zx-accent text-[13px] font-medium group-hover:gap-3 transition-all">
@@ -478,54 +478,42 @@
       </p>
     </div>
 
-    <!-- Ad Poster Grid -->
+    <!-- Feature Cards (content extracted from ad campaign posters) -->
     <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-14 reveal">
-      <!-- Poster 1 -->
-      <div class="poster-card group rounded-2xl overflow-hidden border border-white/[0.06] bg-zx-card hover:border-zx-accent/20">
-        <div class="aspect-[4/5] overflow-hidden">
-          <img
-            src="./Assets/ad_unified_file_intel.png"
-            alt="Unified File Intelligence — NeuCockpit Ad"
-            class="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
-            loading="lazy"
-          />
+      <!-- Card 1 — Unified File Intelligence -->
+      <div class="group rounded-2xl overflow-hidden border border-white/[0.06] bg-zx-card hover:border-zx-accent/20 transition-all duration-300 p-8 flex flex-col">
+        <div class="w-12 h-12 rounded-xl bg-zx-accent/[0.08] flex items-center justify-center mb-6 group-hover:bg-zx-accent/[0.14] transition-colors">
+          <span class="material-symbols-outlined text-zx-accent text-[24px]">neurology</span>
         </div>
-        <div class="p-5 border-t border-white/[0.04]">
-          <h3 class="text-[14px] font-display font-bold text-white mb-1">Unified File Intelligence</h3>
-          <p class="text-[12px] text-zx-muted">Search 30K+ files by meaning — powered by neural embeddings</p>
+        <h3 class="text-[20px] font-display font-bold text-white mb-3 tracking-tight">Unified File Intelligence</h3>
+        <p class="text-[14px] text-zx-muted leading-relaxed mb-6 flex-1">Search content and summarize files. Summarize, Create, Edit, Update, Search. 100% offline. Zero subscriptions, zero telemetry.</p>
+        <a href="./neuron.html" class="inline-flex items-center gap-1.5 text-zx-accent text-[13px] font-medium group-hover:gap-2.5 transition-all">
+          Learn more <span class="material-symbols-outlined text-[16px]">arrow_forward</span>
+        </a>
+      </div>
+
+      <!-- Card 2 — Local-First Search for Windows -->
+      <div class="group rounded-2xl overflow-hidden border border-white/[0.06] bg-gradient-to-b from-[#0d1b2a]/80 to-zx-card hover:border-zx-accent/20 transition-all duration-300 p-8 flex flex-col">
+        <div class="w-12 h-12 rounded-xl bg-emerald-500/[0.08] flex items-center justify-center mb-6 group-hover:bg-emerald-500/[0.14] transition-colors">
+          <span class="material-symbols-outlined text-emerald-400 text-[24px]">desktop_windows</span>
+        </div>
+        <h3 class="text-[20px] font-display font-bold text-white mb-3 tracking-tight">Local-First Search for Windows</h3>
+        <p class="text-[14px] text-zx-muted leading-relaxed mb-4 flex-1">Currently available for Windows 10/11. macOS, Linux builds coming soon.</p>
+        <div class="flex items-center gap-2 text-[12px] text-zx-faint">
+          <span class="w-[6px] h-[6px] bg-emerald-400 rounded-full"></span>Available now
         </div>
       </div>
 
-      <!-- Poster 2 -->
-      <div class="poster-card group rounded-2xl overflow-hidden border border-white/[0.06] bg-zx-card hover:border-zx-accent/20">
-        <div class="aspect-[4/5] overflow-hidden">
-          <img
-            src="./Assets/ad_local_first_windows.png"
-            alt="Local-First Search for Windows — NeuCockpit Ad"
-            class="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
-            loading="lazy"
-          />
+      <!-- Card 3 — NeuCockpit: Now Operational -->
+      <div class="group rounded-2xl overflow-hidden border border-white/[0.06] bg-gradient-to-b from-[#0a1628]/80 to-zx-card hover:border-zx-purple/20 transition-all duration-300 p-8 flex flex-col">
+        <div class="w-12 h-12 rounded-xl bg-zx-purple/[0.08] flex items-center justify-center mb-6 group-hover:bg-zx-purple/[0.14] transition-colors">
+          <img src="./Assets/neuron_circular.png" class="w-8 h-8 rounded-full" alt="NeuCockpit"/>
         </div>
-        <div class="p-5 border-t border-white/[0.04]">
-          <h3 class="text-[14px] font-display font-bold text-white mb-1">Local-First Search for Windows</h3>
-          <p class="text-[12px] text-zx-muted">100% offline. Zero telemetry. Your data never leaves your machine.</p>
-        </div>
-      </div>
-
-      <!-- Poster 3 -->
-      <div class="poster-card group rounded-2xl overflow-hidden border border-white/[0.06] bg-zx-card hover:border-zx-accent/20">
-        <div class="aspect-[4/5] overflow-hidden">
-          <img
-            src="./Assets/ad_neucockpit_operational.png"
-            alt="NeuCockpit: Now Operational — NeuCockpit Ad"
-            class="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
-            loading="lazy"
-          />
-        </div>
-        <div class="p-5 border-t border-white/[0.04]">
-          <h3 class="text-[14px] font-display font-bold text-white mb-1">NeuCockpit: Now Operational</h3>
-          <p class="text-[12px] text-zx-muted">Version 1.0 is live. Built by engineers, for the real world.</p>
-        </div>
+        <h3 class="text-[20px] font-display font-bold text-white mb-3 tracking-tight">NeuCockpit: Now Operational</h3>
+        <p class="text-[14px] text-zx-muted leading-relaxed mb-4 flex-1">Query 'fibonacci code' or 'the resume' with local AI analysis. Zero cloud dependency. Built by engineers, for the real world.</p>
+        <span class="inline-flex items-center gap-1.5 text-[12px] text-zx-purple font-medium">
+          <span class="material-symbols-outlined text-[14px]">verified</span>v1.0 is live
+        </span>
       </div>
     </div>
 
@@ -536,7 +524,7 @@
         Try NeuCockpit — Free for 15 Days
         <span class="material-symbols-outlined text-[18px] transition-transform group-hover:translate-x-1">arrow_forward</span>
       </a>
-      <p class="text-[12px] text-zx-faint mt-4">Windows 10/11 (64-bit) · ~253 MB · No credit card required</p>
+      <p class="text-[12px] text-zx-faint mt-4">Windows 10/11 (64-bit) · ~2.4 GB · No credit card required</p>
     </div>
   </div>
 </section>

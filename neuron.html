@@ -293,11 +293,11 @@
           <div class="flex flex-col gap-3.5">
             <div class="flex items-start gap-3 text-[14px] text-zx-muted">
               <span class="text-emerald-400 text-[16px] mt-0.5 font-semibold">✓</span>
-              <span>Neural embeddings powered by <span class="text-white font-medium">all-MiniLM-L6-v2</span></span>
+              <span>Neural embeddings powered by <span class="text-white font-medium">BAAI/bge-small-en-v1.5</span></span>
             </div>
-            <div class="flex items-start gap-3 text-[14px] text-zx-muted">
-              <span class="text-emerald-400 text-[16px] mt-0.5 font-semibold">✓</span>
-              <span>FAISS vector index for <span class="text-white font-medium">&lt;5ms</span> results</span>
+            <div class="flex items-center gap-2.5 text-[14px] text-zx-muted">
+              <span class="material-symbols-outlined text-emerald-400 text-[18px]">check_circle</span>
+              <span>FAISS/HNSW vector index for <span class="text-white font-medium">&lt;5ms</span> results</span>
             </div>
             <div class="flex items-start gap-3 text-[14px] text-zx-muted">
               <span class="text-emerald-400 text-[16px] mt-0.5 font-semibold">✓</span>
@@ -426,15 +426,15 @@
             <span class="material-symbols-outlined text-zx-accent text-[20px]">neurology</span>
           </div>
           <h3 class="text-[15px] font-medium text-white mb-2">Semantic Search</h3>
-          <p class="text-[14px] text-zx-muted leading-relaxed">Powered by all-MiniLM-L6-v2 neural embeddings. Search by meaning, not keywords.</p>
+          <p class="text-[14px] text-zx-muted leading-relaxed">Powered by BAAI/bge-small-en-v1.5 neural embeddings. Search by meaning, not keywords.</p>
         </div>
         <!-- Card 2 -->
         <div class="bg-zx-card border border-white/[0.06] rounded-xl p-7 hover:border-white/[0.12] transition-all duration-300 group">
           <div class="w-10 h-10 rounded-lg bg-zx-purple/[0.1] flex items-center justify-center mb-5 group-hover:bg-zx-purple/[0.18] transition-colors">
             <span class="material-symbols-outlined text-zx-purple text-[20px]">auto_awesome</span>
           </div>
-          <h3 class="text-[15px] font-medium text-white mb-2">Encyl AI Summarizer</h3>
-          <p class="text-[14px] text-zx-muted leading-relaxed">Press Tab for an instant AI summary. Uses llama3.2:1b via Ollama — 100% local.</p>
+          <h3 class="text-[15px] font-medium text-white mb-2">Qwen AI Engine</h3>
+          <p class="text-[14px] text-zx-muted leading-relaxed">Local Qwen 2.5 Coder 3B GGUF model via llama.cpp. Summarize, chat, and answer — 100% offline.</p>
         </div>
         <!-- Card 3 -->
         <div class="bg-zx-card border border-white/[0.06] rounded-xl p-7 hover:border-white/[0.12] transition-all duration-300 group">
@@ -490,13 +490,12 @@
 
         <!-- macOS -->
         <div class="glass-card rounded-2xl p-8 flex flex-col items-center text-center">
-          <!-- Icon -->
+          <!-- Platform Label -->
           <div class="w-16 h-16 rounded-2xl bg-white/[0.04] flex items-center justify-center mb-6">
-            <svg class="w-8 h-8 text-zx-muted" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/>
-            </svg>
+            <span class="text-[28px] font-display font-bold text-zx-muted/60"></span>
           </div>
-          <h3 class="text-[18px] font-semibold text-white mb-6 font-display">macOS</h3>
+          <h3 class="text-[18px] font-semibold text-white mb-1 font-display">macOS</h3>
+          <p class="text-[12px] text-zx-faint mb-6">Apple Silicon · Intel</p>
 
           <div class="flex flex-col gap-3 w-full mb-6">
             <button class="dl-btn dl-btn-disabled" disabled>
@@ -507,8 +506,7 @@
             </button>
           </div>
 
-          <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-semibold tracking-wide uppercase bg-amber-500/[0.12] text-amber-400 border border-amber-500/20 mb-4">Coming Soon</span>
-          <p class="text-[12px] text-zx-faint">Coming Soon</p>
+          <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-semibold tracking-wide uppercase bg-amber-500/[0.12] text-amber-400 border border-amber-500/20">Coming Soon</span>
         </div>
 
         <!-- Windows (FEATURED) -->
@@ -516,11 +514,12 @@
           <!-- Recommended badge -->
           <div class="absolute -top-3 left-1/2 -translate-x-1/2 bg-zx-accent text-black text-[10px] font-bold px-3 py-1 rounded-full uppercase tracking-wider whitespace-nowrap">Available Now</div>
 
-          <!-- Icon -->
+          <!-- Platform Label -->
           <div class="w-16 h-16 rounded-2xl bg-zx-accent/[0.08] flex items-center justify-center mb-6">
-            <span class="material-symbols-outlined text-zx-accent text-[32px]">desktop_windows</span>
+            <span class="text-[28px] font-display font-bold text-zx-accent"></span>
           </div>
-          <h3 class="text-[18px] font-semibold text-white mb-6 font-display">Windows</h3>
+          <h3 class="text-[18px] font-semibold text-white mb-1 font-display">Windows</h3>
+          <p class="text-[12px] text-zx-accent/60 mb-5">x64 · ARM64</p>
 
           <div class="flex flex-col gap-3 w-full mb-6">
             <a
@@ -544,11 +543,12 @@
 
         <!-- Linux -->
         <div class="glass-card rounded-2xl p-8 flex flex-col items-center text-center">
-          <!-- Icon -->
+          <!-- Platform Label -->
           <div class="w-16 h-16 rounded-2xl bg-white/[0.04] flex items-center justify-center mb-6">
-            <span class="material-symbols-outlined text-zx-muted text-[32px]">terminal</span>
+            <span class="text-[28px] font-display font-bold text-zx-muted/60"></span>
           </div>
-          <h3 class="text-[18px] font-semibold text-white mb-6 font-display">Linux</h3>
+          <h3 class="text-[18px] font-semibold text-white mb-1 font-display">Linux</h3>
+          <p class="text-[12px] text-zx-faint mb-6">x64 · ARM64</p>
 
           <div class="flex flex-col gap-3 w-full mb-6">
             <button class="dl-btn dl-btn-disabled" disabled>
@@ -559,15 +559,14 @@
             </button>
           </div>
 
-          <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-semibold tracking-wide uppercase bg-amber-500/[0.12] text-amber-400 border border-amber-500/20 mb-4">Coming Soon</span>
-          <p class="text-[12px] text-zx-faint">Coming Soon</p>
+          <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-semibold tracking-wide uppercase bg-amber-500/[0.12] text-amber-400 border border-amber-500/20">Coming Soon</span>
         </div>
 
       </div>
 
       <!-- Below-cards note -->
       <p class="text-center text-[13px] text-zx-faint mt-10 reveal">
-        NeuCockpit v1.0 includes built-in ONNX engine, all-MiniLM-L6-v2 model, and Ollama integration.
+        NeuCockpit v1.0 includes bundled BGE ONNX engine, BAAI/bge-small-en-v1.5 model, and Qwen 2.5 Coder 3B GGUF via llama.cpp.
       </p>
     </div>
   </section>
@@ -586,35 +585,50 @@
           <div class="w-2 h-10 rounded-full bg-zx-accent/40 group-hover:bg-zx-accent transition-colors"></div>
           <div class="flex-1">
             <div class="text-[14px] font-medium text-white">UI Layer</div>
-            <div class="text-[13px] text-zx-muted">PyQt6 Fluent Design with DWM glass</div>
+            <div class="text-[13px] text-zx-muted">PyQt6 Spotlight panel, MemoryOS chat, global hotkeys, DWM Mica/Acrylic glass</div>
           </div>
           <div class="hidden sm:flex gap-1.5">
             <span class="tech-tag">PyQt6</span>
             <span class="tech-tag">DWM</span>
+            <span class="tech-tag">Spotlight</span>
+          </div>
+        </div>
+        <!-- CLI Layer -->
+        <div class="flex items-center gap-4 bg-zx-card border border-white/[0.06] rounded-xl p-5 hover:border-white/[0.12] transition-colors group">
+          <div class="w-2 h-10 rounded-full bg-zx-purple/40 group-hover:bg-zx-purple transition-colors"></div>
+          <div class="flex-1">
+            <div class="text-[14px] font-medium text-white">CLI Surface</div>
+            <div class="text-[13px] text-zx-muted">neufs headless commands — search, chat, index, summarize, status</div>
+          </div>
+          <div class="hidden sm:flex gap-1.5">
+            <span class="tech-tag">neufs</span>
+            <span class="tech-tag">Typer</span>
           </div>
         </div>
         <!-- Service Layer -->
         <div class="flex items-center gap-4 bg-zx-card border border-white/[0.06] rounded-xl p-5 hover:border-white/[0.12] transition-colors group">
-          <div class="w-2 h-10 rounded-full bg-zx-purple/40 group-hover:bg-zx-purple transition-colors"></div>
+          <div class="w-2 h-10 rounded-full bg-cyan-500/40 group-hover:bg-cyan-500 transition-colors"></div>
           <div class="flex-1">
-            <div class="text-[14px] font-medium text-white">Service Layer</div>
-            <div class="text-[13px] text-zx-muted">Desktop, Ollama AI, Startup Indexer</div>
+            <div class="text-[14px] font-medium text-white">Desktop Services</div>
+            <div class="text-[13px] text-zx-muted">Intent routing, MemoryOS, model management, startup indexer, internet mode</div>
           </div>
           <div class="hidden sm:flex gap-1.5">
-            <span class="tech-tag">Ollama</span>
-            <span class="tech-tag">REST</span>
+            <span class="tech-tag">MemoryOS</span>
+            <span class="tech-tag">Intent</span>
+            <span class="tech-tag">Watchdog</span>
           </div>
         </div>
         <!-- Core Engine -->
         <div class="flex items-center gap-4 bg-zx-card border border-white/[0.06] rounded-xl p-5 hover:border-white/[0.12] transition-colors group">
           <div class="w-2 h-10 rounded-full bg-emerald-500/40 group-hover:bg-emerald-500 transition-colors"></div>
           <div class="flex-1">
-            <div class="text-[14px] font-medium text-white">Core Engine</div>
-            <div class="text-[13px] text-zx-muted">Embeddings, hybrid search, query parser</div>
+            <div class="text-[14px] font-medium text-white">Local Engines</div>
+            <div class="text-[13px] text-zx-muted">BGE Small ONNX embeddings, FAISS/HNSW index, llama.cpp Qwen 2.5 Coder 3B GGUF</div>
           </div>
           <div class="hidden sm:flex gap-1.5">
-            <span class="tech-tag">MiniLM</span>
+            <span class="tech-tag">BGE</span>
             <span class="tech-tag">FAISS</span>
+            <span class="tech-tag">Qwen</span>
           </div>
         </div>
         <!-- Storage -->
@@ -622,7 +636,7 @@
           <div class="w-2 h-10 rounded-full bg-amber-500/40 group-hover:bg-amber-500 transition-colors"></div>
           <div class="flex-1">
             <div class="text-[14px] font-medium text-white">Storage</div>
-            <div class="text-[13px] text-zx-muted">SQLite metadata + FAISS vector index</div>
+            <div class="text-[13px] text-zx-muted">SQLite metadata DB, FAISS vector index, model cache at %LOCALAPPDATA%\Neuron</div>
           </div>
           <div class="hidden sm:flex gap-1.5">
             <span class="tech-tag">SQLite</span>
@@ -634,11 +648,12 @@
           <div class="w-2 h-10 rounded-full bg-rose-500/40 group-hover:bg-rose-500 transition-colors"></div>
           <div class="flex-1">
             <div class="text-[14px] font-medium text-white">Ingestion</div>
-            <div class="text-[13px] text-zx-muted">40+ parsers with PyMuPDF, python-docx</div>
+            <div class="text-[13px] text-zx-muted">40+ parsers — PyMuPDF, python-docx, python-pptx, openpyxl, pdfminer, lxml</div>
           </div>
           <div class="hidden sm:flex gap-1.5">
             <span class="tech-tag">PyMuPDF</span>
             <span class="tech-tag">pptx</span>
+            <span class="tech-tag">docx</span>
           </div>
         </div>
       </div>
