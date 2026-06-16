@@ -5,13 +5,36 @@
   <meta charset="utf-8"/>
   <meta content="width=device-width,initial-scale=1" name="viewport"/>
 
-  <title>Neuron — Semantic File Search | ZeroX</title>
-  <meta name="description" content="Neuron brings local semantic search to your desktop. Search 100K+ files by meaning in under 5ms, 100% offline, zero telemetry."/>
-  <meta name="theme-color" content="#08070b"/>
+  <title>NeuCockpit — Unified File Intelligence | ZeroX</title>
+  <meta name="description" content="Download NeuCockpit v1.0 — semantic file search for Windows. Search 30K+ files by meaning in under 5ms. Free for 15 days. 100% offline."/>
+  <meta name="keywords" content="NeuCockpit, semantic search, file intelligence, AI desktop software, local AI, offline file search, neural embeddings, FAISS, privacy-first, Windows 11 app"/>
+  <meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large"/>
+  <meta name="author" content="ZeroX Corporation"/>
+  <meta name="theme-color" content="#0A0A0C"/>
+
+  <!-- Canonical -->
+  <link rel="canonical" href="https://neuron.zero-x.live/"/>
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="website"/>
+  <meta property="og:site_name" content="ZeroX"/>
+  <meta property="og:title" content="NeuCockpit — Unified File Intelligence | ZeroX"/>
+  <meta property="og:description" content="Download NeuCockpit v1.0 — semantic file search for Windows. Search 30K+ files by meaning in under 5ms. Free for 15 days."/>
+  <meta property="og:url" content="https://neuron.zero-x.live/"/>
+  <meta property="og:image" content="https://www.zero-x.live/Assets/neucockpit_screenshot.jpg"/>
+  <meta property="og:image:alt" content="NeuCockpit Screenshot"/>
+  <meta property="og:locale" content="en_US"/>
+
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary_large_image"/>
+  <meta name="twitter:title" content="NeuCockpit — Unified File Intelligence"/>
+  <meta name="twitter:description" content="Semantic file search for Windows. 30K+ files. Under 5ms. Free for 15 days. 100% offline."/>
+  <meta name="twitter:image" content="https://www.zero-x.live/Assets/neucockpit_screenshot.jpg"/>
 
   <!-- Favicons -->
   <link rel="icon" type="image/svg+xml" href="./Assets/round.svg"/>
   <link rel="apple-touch-icon" sizes="180x180" href="./Assets/zerox-favicon.png"/>
+  <link rel="icon" type="image/png" sizes="32x32" href="./Assets/zerox-favicon.png"/>
 
   <!-- Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com"/>
@@ -35,308 +58,636 @@
     tailwind.config={darkMode:"class",theme:{extend:{colors:{"zx-bg":"#0A0A0C","zx-surface":"#111114","zx-card":"#18181C","zx-border":"rgba(255,255,255,0.08)","zx-text":"#E8E8EC","zx-muted":"#8A8A96","zx-faint":"#4E4E5A","zx-accent":"#00E5FF","zx-accent-h":"#00B8D4","zx-purple":"#7C4DFF"},fontFamily:{display:["'Cabinet Grotesk'","sans-serif"],body:["'Satoshi'","sans-serif"],mono:["'JetBrains Mono'","monospace"]}}}}
   </script>
 
-  <!-- Razorpay SDK -->
-  <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+  <!-- JSON-LD Structured Data -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "NeuCockpit",
+    "applicationCategory": "UtilitiesApplication",
+    "operatingSystem": "Windows 10, Windows 11",
+    "description": "NeuCockpit brings semantic search to your desktop. Index 30K+ files and find anything in under 5ms. 100% offline, zero cloud dependency.",
+    "url": "https://neuron.zero-x.live",
+    "softwareVersion": "1.0",
+    "offers": {
+      "@type": "Offer",
+      "price": "0",
+      "priceCurrency": "USD",
+      "description": "Free for 15 days"
+    },
+    "author": {
+      "@type": "Organization",
+      "name": "ZeroX Corporation",
+      "url": "https://www.zero-x.live"
+    },
+    "fileSize": "2.4 GB",
+    "downloadUrl": "https://neuron.zero-x.live/#downloads"
+  }
+  </script>
 
   <style>
     *{box-sizing:border-box;margin:0;padding:0}
     body{background:#0A0A0C;color:#E8E8EC;font-family:'Satoshi',sans-serif;-webkit-font-smoothing:antialiased}
     h1,h2,h3,h4,h5,h6{font-family:'Cabinet Grotesk',sans-serif;font-weight:700}
     ::selection{background:rgba(0,229,255,.15);color:#00E5FF}
-    @keyframes orb-drift{0%,100%{transform:translate(0,0)}50%{transform:translate(30px,-20px)}}
+
+    /* Animations */
+    @keyframes orb-drift{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(30px,-20px) scale(1.05)}}
+    @keyframes orb-drift-2{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(-25px,15px) scale(1.08)}}
     @keyframes fade-in-up{from{opacity:0;transform:translateY(24px)}to{opacity:1;transform:translateY(0)}}
+    @keyframes shimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}
+    @keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}
+
     .anim-orb{animation:orb-drift 20s ease-in-out infinite}
-    .anim-orb2{animation:orb-drift 28s ease-in-out infinite reverse}
-    .reveal{opacity:0;transform:translateY(20px);transition:opacity .7s ease,transform .7s ease}
+    .anim-orb2{animation:orb-drift-2 28s ease-in-out infinite}
+    .anim-float{animation:float 6s ease-in-out infinite}
+
+    .reveal{opacity:0;transform:translateY(20px);transition:opacity .7s cubic-bezier(.16,1,.3,1),transform .7s cubic-bezier(.16,1,.3,1)}
     .reveal.visible{opacity:1;transform:translateY(0)}
-    .nav-blur{background:rgba(8,7,11,.8);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px)}
-    @keyframes pulse-live{0%,100%{opacity:1;box-shadow:0 0 0 0 rgba(52,211,153,.5)}50%{opacity:.7;box-shadow:0 0 0 5px rgba(52,211,153,0)}}
-    .live-dot{width:7px;height:7px;border-radius:50%;background:#34d399;animation:pulse-live 2s ease-in-out infinite}
+
+    .nav-blur{background:rgba(10,10,12,.82);backdrop-filter:blur(20px) saturate(1.8);-webkit-backdrop-filter:blur(20px) saturate(1.8)}
+
+    /* Glassmorphism card */
+    .glass-card{background:rgba(24,24,28,.6);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,0.06)}
+
+    /* Featured card glow */
+    .featured-glow{box-shadow:0 0 0 1px rgba(0,229,255,0.2), 0 0 40px -12px rgba(0,229,255,0.15)}
+
+    /* Screenshot frame */
+    .screenshot-frame{
+      border-radius:12px;
+      border:1px solid rgba(255,255,255,0.08);
+      box-shadow: 0 25px 50px -12px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.04);
+      overflow:hidden;
+      position:relative;
+    }
+    .screenshot-frame::before{
+      content:'';
+      position:absolute;
+      inset:0;
+      background:linear-gradient(180deg,rgba(255,255,255,0.02) 0%,transparent 20%);
+      pointer-events:none;
+      z-index:1;
+    }
+
+    /* Tag badge */
+    .tech-tag{
+      padding:3px 10px;
+      background:rgba(255,255,255,0.04);
+      border:1px solid rgba(255,255,255,0.06);
+      border-radius:6px;
+      font-family:'JetBrains Mono',monospace;
+      font-size:11px;
+      color:#8A8A96;
+    }
+
+    /* Category tab mock */
+    .cat-tab{
+      padding:6px 14px;
+      border-radius:8px;
+      font-size:13px;
+      font-family:'Satoshi',sans-serif;
+      color:#8A8A96;
+      background:rgba(255,255,255,0.03);
+      border:1px solid rgba(255,255,255,0.06);
+      transition:all .2s;
+    }
+    .cat-tab.active{
+      color:#0A0A0C;
+      background:#00E5FF;
+      border-color:#00E5FF;
+      font-weight:600;
+    }
+
+    /* Download button styles */
+    .dl-btn{
+      display:flex;align-items:center;justify-content:center;gap:8px;
+      width:100%;padding:12px 20px;border-radius:10px;
+      font-size:14px;font-weight:600;
+      transition:all .2s cubic-bezier(.16,1,.3,1);
+    }
+    .dl-btn-active{background:#fff;color:#0A0A0C}
+    .dl-btn-active:hover{background:#e0e0e0;transform:translateY(-1px);box-shadow:0 4px 12px rgba(255,255,255,0.1)}
+    .dl-btn-disabled{background:rgba(255,255,255,0.04);color:#4E4E5A;cursor:not-allowed;border:1px solid rgba(255,255,255,0.06)}
 
     /* Clerk Overrides */
     .cl-branding, .cl-footerAction__branding { display: none !important; }
+    .cl-headerTitle, .cl-headerSubtitle { text-align: center !important; width: 100% !important; }
+    .cl-header { align-items: center !important; text-align: center !important; }
   </style>
 </head>
-<body class="font-inter antialiased overflow-x-hidden">
+<body class="font-body antialiased overflow-x-hidden">
 
-  <!-- NAV -->
+  <!-- ═══════════════════════════════ NAV ═══════════════════════════════ -->
   <header class="fixed top-0 w-full h-20 z-50 nav-blur border-b border-white/[0.06]">
     <div class="max-w-[1200px] mx-auto h-full flex items-center justify-between px-5">
       <a href="./index.html" id="nav-logo-link" class="shrink-0">
         <img src="./Assets/Zero-xBnW.png" alt="ZeroX" class="h-14" style="mix-blend-mode:lighten"/>
       </a>
-      <nav class="hidden md:flex items-center gap-7" aria-label="Main navigation">
-        <a href="https://zero-x.live" id="nav-company-link" class="text-[14px] text-zx-muted hover:text-white transition-colors">Company</a>
-        <a href="#" class="text-[14px] text-white font-medium">Neuron</a>
-        <a href="#features" class="text-[14px] text-zx-muted hover:text-white transition-colors">Features</a>
 
-        <a href="#pricing" class="text-[14px] text-zx-muted hover:text-white transition-colors">Pricing</a>
+      <nav class="hidden md:flex items-center gap-7" aria-label="Main navigation">
+        <a href="./index.html" id="nav-company-link" class="text-[14px] text-zx-muted hover:text-white transition-colors">Company</a>
+        <a href="#" class="text-[14px] text-white font-medium">NeuCockpit</a>
+        <a href="#features" class="text-[14px] text-zx-muted hover:text-white transition-colors">Features</a>
+        <a href="#downloads" class="text-[14px] text-zx-muted hover:text-white transition-colors">Downloads</a>
       </nav>
+
       <div class="flex items-center gap-3">
         <a href="#" id="signin-btn" class="hidden md:block text-[14px] text-zx-muted hover:text-white transition-colors mr-2">Sign In</a>
         <div id="user-button"></div>
-        <a href="#pricing" class="hidden md:block bg-zx-accent text-black font-semibold text-[13px] px-4 py-[6px] rounded-full hover:bg-zx-accent-h transition-colors">Get Neuron</a>
+        <a href="#downloads" class="hidden md:block bg-zx-accent text-black font-semibold text-[13px] px-4 py-[6px] rounded-full hover:bg-zx-accent-h transition-colors">Download</a>
+        <button id="mobBtn" class="md:hidden text-white"><span class="material-symbols-outlined">menu</span></button>
       </div>
     </div>
   </header>
 
-  <!-- HERO -->
+  <!-- ═══════════════════════════ MOBILE NAV ═══════════════════════════ -->
+  <div id="mobileNav" class="fixed inset-0 z-[60] bg-zx-bg/95 backdrop-blur-xl hidden flex-col items-center justify-center gap-6">
+    <button id="mobClose" class="absolute top-4 right-5 text-white"><span class="material-symbols-outlined text-3xl">close</span></button>
+    <a href="./index.html" onclick="closeMob()" class="text-xl text-white">Company</a>
+    <a href="#demo" onclick="closeMob()" class="text-xl text-white">Demo</a>
+    <a href="#features" onclick="closeMob()" class="text-xl text-white">Features</a>
+    <a href="#downloads" onclick="closeMob()" class="text-xl text-white">Downloads</a>
+    <a href="#downloads" onclick="closeMob()" class="mt-4 bg-zx-accent text-black px-8 py-3 rounded-full font-medium">Download</a>
+  </div>
+
+
+  <!-- ═══════════════════════════════ HERO ═══════════════════════════════ -->
   <section class="relative min-h-screen flex flex-col items-center justify-center text-center px-5 pt-20 overflow-hidden">
-    <div class="absolute top-[20%] left-1/2 -translate-x-1/2 w-[700px] h-[700px] bg-zx-accent/[0.07] rounded-full blur-[140px] pointer-events-none anim-orb"></div>
-    <div class="absolute top-[40%] left-[30%] w-[400px] h-[400px] bg-purple-700/[0.05] rounded-full blur-[120px] pointer-events-none anim-orb2"></div>
+    <!-- Animated gradient orbs -->
+    <div class="absolute top-[15%] left-1/2 -translate-x-1/2 w-[700px] h-[700px] bg-zx-accent/[0.07] rounded-full blur-[140px] pointer-events-none anim-orb"></div>
+    <div class="absolute top-[35%] left-[25%] w-[500px] h-[500px] bg-zx-purple/[0.06] rounded-full blur-[120px] pointer-events-none anim-orb2"></div>
+    <div class="absolute bottom-[10%] right-[20%] w-[300px] h-[300px] bg-zx-accent/[0.04] rounded-full blur-[100px] pointer-events-none anim-orb"></div>
 
     <div class="relative z-10 max-w-[860px] mx-auto" style="animation:fade-in-up .8s ease both">
+      <!-- Badge -->
       <div class="inline-flex items-center gap-2 px-4 py-1.5 border border-zx-accent/20 bg-zx-accent/[0.06] rounded-full text-[12px] text-zx-accent font-medium tracking-wide mb-10">
-        <span class="w-[6px] h-[6px] bg-emerald-400 rounded-full"></span>Now shipping v5.1.0
+        <span class="w-[6px] h-[6px] bg-emerald-400 rounded-full"></span>NeuCockpit v1.0 — Free for 15 days
       </div>
-      <h1 class="text-[clamp(36px,6vw,64px)] font-medium leading-[1.08] tracking-[-0.025em] text-white mb-6">
-        Purpose-built for<br>semantic search.<br><span class="text-zx-muted">Designed for local-first AI.</span>
+
+      <!-- Heading -->
+      <h1 class="text-[clamp(36px,6vw,68px)] font-medium leading-[1.06] tracking-[-0.03em] text-white mb-6 font-display">
+        Unified File Intelligence<br><span class="text-zx-muted">Search, summarize, and navigate<br>your files by meaning.</span>
       </h1>
-      <p class="text-[17px] text-zx-muted leading-relaxed max-w-[540px] mx-auto mb-10">
-        We build engineering-grade tools that run entirely on your machine. No cloud. No telemetry. Just intelligent software that respects your privacy.
+
+      <!-- Description -->
+      <p class="text-[17px] text-zx-muted leading-relaxed max-w-[580px] mx-auto mb-10">
+        NeuCockpit brings semantic search to your desktop. Index 30K+ files and find anything in under 5ms. 100% offline, zero cloud dependency.
       </p>
-      <div class="flex flex-wrap justify-center gap-4 mb-16">
-        <a href="#pricing" class="bg-zx-accent text-black px-6 py-3 rounded-full text-[15px] font-semibold hover:bg-zx-accent-h transition-colors">Explore Pricing</a>
-        <a href="https://github.com/RAHUL-DevelopeRR/neuron-app" target="_blank" class="border border-white/10 text-white px-6 py-3 rounded-full text-[15px] hover:bg-white/5 transition-colors">View on GitHub</a>
+
+      <!-- CTA -->
+      <div class="flex flex-wrap justify-center gap-4 mb-6">
+        <a href="#downloads" class="bg-zx-accent text-black px-7 py-3.5 rounded-full text-[15px] font-semibold hover:bg-zx-accent-h transition-all hover:shadow-lg hover:shadow-zx-accent/20 flex items-center gap-2">
+          <span class="material-symbols-outlined text-[18px]">download</span>Download for Windows
+        </a>
       </div>
+
+      <!-- Free trial notice -->
+      <p class="text-[13px] text-zx-faint">Try free for 15 days. No credit card required.</p>
     </div>
 
-    <!-- Hero Product Visual (Interactive Demo) -->
-    <div class="relative z-10 w-full max-w-[900px] mx-auto reveal">
-      <div class="bg-zx-surface border border-white/[0.06] rounded-xl overflow-hidden shadow-2xl shadow-black/40">
-        <div class="h-10 border-b border-white/[0.06] flex items-center px-4 gap-2 bg-zx-bg/60">
-          <div class="flex gap-1.5">
-            <span class="w-[10px] h-[10px] rounded-full bg-white/10"></span>
-            <span class="w-[10px] h-[10px] rounded-full bg-white/10"></span>
-            <span class="w-[10px] h-[10px] rounded-full bg-white/10"></span>
-          </div>
-          <div class="ml-auto flex items-center gap-2">
-            <img src="./Assets/neuron_circular.png" class="w-4 h-4 rounded-full"/>
-            <span class="text-[11px] text-zx-muted font-mono">neuron — semantic-search</span>
-          </div>
-        </div>
-        <div class="flex min-h-[380px] md:min-h-[440px] text-left">
-          <div class="hidden md:flex w-52 border-r border-white/[0.06] p-4 flex-col gap-3 bg-zx-bg/30">
-            <div class="text-[11px] text-zx-muted font-medium tracking-widest uppercase mb-1">Sources</div>
-            <div class="flex items-center gap-2 text-white text-[13px] p-2 bg-white/[0.04] rounded-lg">
-              <span class="material-symbols-outlined text-[15px]">folder</span>Local Vault
-            </div>
-            <div class="flex items-center gap-2 text-zx-muted text-[13px] p-2 hover:bg-white/[0.04] rounded-lg cursor-not-allowed">
-              <span class="material-symbols-outlined text-[15px]">cloud</span>Cloud Sync
-            </div>
-          </div>
-          
-          <div class="flex-grow flex flex-col bg-zx-bg/40">
-            <div class="p-4 border-b border-white/[0.06]">
-              <div class="relative">
-                <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-zx-muted text-[17px]">search</span>
-                <input 
-                  type="text" 
-                  id="demo-search-input" 
-                  class="w-full bg-zx-bg border border-white/[0.06] rounded-lg py-2.5 pl-10 pr-4 text-[12px] text-white focus:outline-none focus:border-zx-accent font-mono" 
-                  value="database schema"
-                  placeholder="Type to search... (e.g. database schema, quarterly financials, branding guidelines)"
-                />
-              </div>
-            </div>
-            <div id="demo-results" class="flex-grow p-4 flex flex-col gap-2.5 overflow-hidden">
-              <!-- Dynamically populated -->
-            </div>
-          </div>
-        </div>
-      </div>
+    <!-- Subtle scroll indicator -->
+    <div class="absolute bottom-8 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2 anim-float opacity-40">
+      <span class="material-symbols-outlined text-white text-[20px]">expand_more</span>
     </div>
   </section>
 
-  <!-- FEATURES -->
+
+  <!-- ═══════════════════════════ PRODUCT DEMO ═══════════════════════════ -->
+  <section class="py-32 md:py-40 px-5 border-t border-white/[0.04]" id="demo">
+    <div class="max-w-[1200px] mx-auto">
+
+      <!-- Demo 1 — Search Interface (Image Left, Description Right) -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-12 lg:gap-20 items-center mb-32 reveal">
+        <!-- Screenshot -->
+        <div class="screenshot-frame">
+          <!-- Window chrome -->
+          <div class="h-9 bg-[#1a1a1e] border-b border-white/[0.06] flex items-center px-3.5 gap-2">
+            <div class="flex gap-1.5">
+              <span class="w-[10px] h-[10px] rounded-full bg-white/10"></span>
+              <span class="w-[10px] h-[10px] rounded-full bg-white/10"></span>
+              <span class="w-[10px] h-[10px] rounded-full bg-white/10"></span>
+            </div>
+            <div class="ml-auto flex items-center gap-2">
+              <img src="./Assets/neuron_circular.png" class="w-3.5 h-3.5 rounded-full" alt=""/>
+              <span class="text-[10px] text-zx-faint font-mono">NeuCockpit v1.0</span>
+            </div>
+          </div>
+          <img
+            src="./Assets/neucockpit_screenshot.jpg"
+            alt="NeuCockpit Search Interface — Semantic search results across 30K+ files"
+            class="w-full block"
+            loading="lazy"
+          />
+        </div>
+
+        <!-- Description -->
+        <div>
+          <a class="inline-flex items-center gap-2 text-zx-accent-h text-[13px] font-medium tracking-wide mb-6">Product Demo&ensp;→</a>
+          <h2 class="text-[clamp(24px,3.5vw,36px)] font-medium tracking-[-0.02em] leading-[1.15] text-white mb-5 font-display">
+            Semantic Search Across<br>30K+ Files
+          </h2>
+          <p class="text-[16px] text-zx-muted leading-relaxed mb-8 max-w-md">
+            Type "resume" and find every resume file — across DOCX, PDF, HTML, Python, Markdown, Excel, and 40+ file types. NeuCockpit understands meaning, not just filenames.
+          </p>
+          <div class="flex flex-col gap-3.5">
+            <div class="flex items-start gap-3 text-[14px] text-zx-muted">
+              <span class="text-emerald-400 text-[16px] mt-0.5 font-semibold">✓</span>
+              <span>Neural embeddings powered by <span class="text-white font-medium">all-MiniLM-L6-v2</span></span>
+            </div>
+            <div class="flex items-start gap-3 text-[14px] text-zx-muted">
+              <span class="text-emerald-400 text-[16px] mt-0.5 font-semibold">✓</span>
+              <span>FAISS vector index for <span class="text-white font-medium">&lt;5ms</span> results</span>
+            </div>
+            <div class="flex items-start gap-3 text-[14px] text-zx-muted">
+              <span class="text-emerald-400 text-[16px] mt-0.5 font-semibold">✓</span>
+              <span>Filter by: Files, Folders, Code, Docs, Media</span>
+            </div>
+            <div class="flex items-start gap-3 text-[14px] text-zx-muted">
+              <span class="text-emerald-400 text-[16px] mt-0.5 font-semibold">✓</span>
+              <span>30,244 files indexed with 1-day streak tracking</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Demo 2 — File Categories (Description Left, Mock Right) -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-12 lg:gap-20 items-center reveal">
+        <!-- Description -->
+        <div class="order-2 lg:order-1">
+          <h2 class="text-[clamp(24px,3.5vw,36px)] font-medium tracking-[-0.02em] leading-[1.15] text-white mb-5 font-display">
+            Intelligent File<br>Categorization
+          </h2>
+          <p class="text-[16px] text-zx-muted leading-relaxed mb-8 max-w-md">
+            Automatically categorize search results by type — Files, Folders, Code, Docs, Media, MemoryOS, Activity. Navigate your filesystem like never before.
+          </p>
+          <div class="flex flex-col gap-3.5">
+            <div class="flex items-start gap-3 text-[14px] text-zx-muted">
+              <span class="text-emerald-400 text-[16px] mt-0.5 font-semibold">✓</span>
+              <span>Smart type detection for <span class="text-white font-medium">40+ formats</span></span>
+            </div>
+            <div class="flex items-start gap-3 text-[14px] text-zx-muted">
+              <span class="text-emerald-400 text-[16px] mt-0.5 font-semibold">✓</span>
+              <span>Category tabs: All, Files, Folders, Code, Docs, Media</span>
+            </div>
+            <div class="flex items-start gap-3 text-[14px] text-zx-muted">
+              <span class="text-emerald-400 text-[16px] mt-0.5 font-semibold">✓</span>
+              <span>Date-modified sorting and file size display</span>
+            </div>
+            <div class="flex items-start gap-3 text-[14px] text-zx-muted">
+              <span class="text-emerald-400 text-[16px] mt-0.5 font-semibold">✓</span>
+              <span>One-click file open and navigation</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Category Tab Mock -->
+        <div class="order-1 lg:order-2">
+          <div class="glass-card rounded-2xl p-6 md:p-8">
+            <!-- Tabs row -->
+            <div class="flex flex-wrap gap-2 mb-6">
+              <span class="cat-tab active">All</span>
+              <span class="cat-tab">Files</span>
+              <span class="cat-tab">Folders</span>
+              <span class="cat-tab">Code</span>
+              <span class="cat-tab">Docs</span>
+              <span class="cat-tab">Media</span>
+              <span class="cat-tab">MemoryOS</span>
+              <span class="cat-tab">Activity</span>
+            </div>
+
+            <!-- Mock results -->
+            <div class="flex flex-col gap-2.5">
+              <div class="flex items-center gap-3 p-3 rounded-lg bg-white/[0.03] border border-white/[0.04]">
+                <span class="material-symbols-outlined text-zx-accent text-[18px]">description</span>
+                <div class="flex-1 min-w-0">
+                  <div class="text-[13px] text-white font-medium truncate">Project_Proposal_Q2.pdf</div>
+                  <div class="text-[11px] text-zx-faint font-mono truncate">/docs/proposals · 2.4 MB · Modified 3d ago</div>
+                </div>
+                <div class="flex items-center gap-1.5">
+                  <div class="w-12 h-1 bg-zx-bg rounded-full overflow-hidden"><div class="h-full bg-zx-accent" style="width:94%"></div></div>
+                  <span class="text-[10px] text-zx-accent-h font-mono">.94</span>
+                </div>
+              </div>
+              <div class="flex items-center gap-3 p-3 rounded-lg bg-white/[0.03] border border-white/[0.04]">
+                <span class="material-symbols-outlined text-zx-purple text-[18px]">code</span>
+                <div class="flex-1 min-w-0">
+                  <div class="text-[13px] text-white font-medium truncate">search_engine.py</div>
+                  <div class="text-[11px] text-zx-faint font-mono truncate">/src/core · 18 KB · Modified 1d ago</div>
+                </div>
+                <div class="flex items-center gap-1.5">
+                  <div class="w-12 h-1 bg-zx-bg rounded-full overflow-hidden"><div class="h-full bg-zx-accent" style="width:87%"></div></div>
+                  <span class="text-[10px] text-zx-accent-h font-mono">.87</span>
+                </div>
+              </div>
+              <div class="flex items-center gap-3 p-3 rounded-lg bg-white/[0.03] border border-white/[0.04]">
+                <span class="material-symbols-outlined text-amber-400 text-[18px]">folder</span>
+                <div class="flex-1 min-w-0">
+                  <div class="text-[13px] text-white font-medium truncate">assets/brand-kit/</div>
+                  <div class="text-[11px] text-zx-faint font-mono truncate">/projects/zerox · 142 items · Modified 5d ago</div>
+                </div>
+                <div class="flex items-center gap-1.5">
+                  <div class="w-12 h-1 bg-zx-bg rounded-full overflow-hidden"><div class="h-full bg-zx-accent opacity-70" style="width:72%"></div></div>
+                  <span class="text-[10px] text-zx-muted font-mono">.72</span>
+                </div>
+              </div>
+              <div class="flex items-center gap-3 p-3 rounded-lg bg-white/[0.03] border border-white/[0.04]">
+                <span class="material-symbols-outlined text-emerald-400 text-[18px]">image</span>
+                <div class="flex-1 min-w-0">
+                  <div class="text-[13px] text-white font-medium truncate">dashboard_mockup.png</div>
+                  <div class="text-[11px] text-zx-faint font-mono truncate">/design/screens · 4.1 MB · Modified 2d ago</div>
+                </div>
+                <div class="flex items-center gap-1.5">
+                  <div class="w-12 h-1 bg-zx-bg rounded-full overflow-hidden"><div class="h-full bg-zx-accent opacity-60" style="width:65%"></div></div>
+                  <span class="text-[10px] text-zx-muted font-mono">.65</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+
+  <!-- ═══════════════════════════ FEATURES ═══════════════════════════ -->
   <section class="py-32 md:py-40 px-5 border-t border-white/[0.04]" id="features">
     <div class="max-w-[1100px] mx-auto">
       <div class="text-center mb-20 reveal">
         <a class="inline-flex items-center gap-2 text-zx-accent-h text-[13px] font-medium tracking-wide mb-6">1.0&ensp;Capabilities&ensp;→</a>
-        <h2 class="text-[clamp(28px,4vw,40px)] font-medium tracking-[-0.02em] leading-[1.15] text-white mb-5">Built different.<br><span class="text-zx-muted">Engineered with precision.</span></h2>
-        <p class="text-[16px] text-zx-muted max-w-lg mx-auto leading-relaxed">Local search utilities, optimized for speed and security.</p>
+        <h2 class="text-[clamp(28px,4vw,40px)] font-medium tracking-[-0.02em] leading-[1.15] text-white mb-5 font-display">Built different.<br><span class="text-zx-muted">Engineered with precision.</span></h2>
+        <p class="text-[16px] text-zx-muted max-w-lg mx-auto leading-relaxed">Every component earns its place. No bloat, no decoration for its own sake.</p>
       </div>
       <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 reveal">
-        <div class="bg-zx-card border border-white/[0.06] rounded-xl p-7 hover:border-white/[0.12] transition-colors"><h3 class="text-[15px] font-medium text-white mb-2">Semantic Search</h3><p class="text-[14px] text-zx-muted leading-relaxed">Powered by all-MiniLM-L6-v2 neural embeddings. Search by meaning, not keywords.</p></div>
-        <div class="bg-zx-card border border-white/[0.06] rounded-xl p-7 hover:border-white/[0.12] transition-colors"><h3 class="text-[15px] font-medium text-white mb-2">Encyl AI Summarizer</h3><p class="text-[14px] text-zx-muted leading-relaxed">Press Tab for an instant AI summary. Uses llama3.2:1b via Ollama — 100% local.</p></div>
-        <div class="bg-zx-card border border-white/[0.06] rounded-xl p-7 hover:border-white/[0.12] transition-colors"><h3 class="text-[15px] font-medium text-white mb-2">Windows 11 Native</h3><p class="text-[14px] text-zx-muted leading-relaxed">DWM Mica/Acrylic frosted glass, Segoe Fluent icons, native context menus.</p></div>
-        <div class="bg-zx-card border border-white/[0.06] rounded-xl p-7 hover:border-white/[0.12] transition-colors"><h3 class="text-[15px] font-medium text-white mb-2">Lightning Fast</h3><p class="text-[14px] text-zx-muted leading-relaxed">FAISS vector index with HNSW graph search. Results in &lt;5ms across 100K+ files.</p></div>
-        <div class="bg-zx-card border border-white/[0.06] rounded-xl p-7 hover:border-white/[0.12] transition-colors"><h3 class="text-[15px] font-medium text-white mb-2">100% Offline</h3><p class="text-[14px] text-zx-muted leading-relaxed">Everything runs on your machine. No cloud, no telemetry, no data ever leaves.</p></div>
-        <div class="bg-zx-card border border-white/[0.06] rounded-xl p-7 hover:border-white/[0.12] transition-colors"><h3 class="text-[15px] font-medium text-white mb-2">40+ File Types</h3><p class="text-[14px] text-zx-muted leading-relaxed">PDF, DOCX, PPTX, XLSX, Python, JavaScript, JSON, YAML, and dozens more.</p></div>
+        <!-- Card 1 -->
+        <div class="bg-zx-card border border-white/[0.06] rounded-xl p-7 hover:border-white/[0.12] transition-all duration-300 group">
+          <div class="w-10 h-10 rounded-lg bg-zx-accent/[0.08] flex items-center justify-center mb-5 group-hover:bg-zx-accent/[0.14] transition-colors">
+            <span class="material-symbols-outlined text-zx-accent text-[20px]">neurology</span>
+          </div>
+          <h3 class="text-[15px] font-medium text-white mb-2">Semantic Search</h3>
+          <p class="text-[14px] text-zx-muted leading-relaxed">Powered by all-MiniLM-L6-v2 neural embeddings. Search by meaning, not keywords.</p>
+        </div>
+        <!-- Card 2 -->
+        <div class="bg-zx-card border border-white/[0.06] rounded-xl p-7 hover:border-white/[0.12] transition-all duration-300 group">
+          <div class="w-10 h-10 rounded-lg bg-zx-purple/[0.1] flex items-center justify-center mb-5 group-hover:bg-zx-purple/[0.18] transition-colors">
+            <span class="material-symbols-outlined text-zx-purple text-[20px]">auto_awesome</span>
+          </div>
+          <h3 class="text-[15px] font-medium text-white mb-2">Encyl AI Summarizer</h3>
+          <p class="text-[14px] text-zx-muted leading-relaxed">Press Tab for an instant AI summary. Uses llama3.2:1b via Ollama — 100% local.</p>
+        </div>
+        <!-- Card 3 -->
+        <div class="bg-zx-card border border-white/[0.06] rounded-xl p-7 hover:border-white/[0.12] transition-all duration-300 group">
+          <div class="w-10 h-10 rounded-lg bg-blue-500/[0.08] flex items-center justify-center mb-5 group-hover:bg-blue-500/[0.14] transition-colors">
+            <span class="material-symbols-outlined text-blue-400 text-[20px]">desktop_windows</span>
+          </div>
+          <h3 class="text-[15px] font-medium text-white mb-2">Windows 11 Native</h3>
+          <p class="text-[14px] text-zx-muted leading-relaxed">DWM Mica/Acrylic frosted glass, Segoe Fluent icons, native context menus.</p>
+        </div>
+        <!-- Card 4 -->
+        <div class="bg-zx-card border border-white/[0.06] rounded-xl p-7 hover:border-white/[0.12] transition-all duration-300 group">
+          <div class="w-10 h-10 rounded-lg bg-amber-500/[0.08] flex items-center justify-center mb-5 group-hover:bg-amber-500/[0.14] transition-colors">
+            <span class="material-symbols-outlined text-amber-400 text-[20px]">bolt</span>
+          </div>
+          <h3 class="text-[15px] font-medium text-white mb-2">Lightning Fast</h3>
+          <p class="text-[14px] text-zx-muted leading-relaxed">FAISS vector index with HNSW graph search. Results in &lt;5ms across 30K+ files.</p>
+        </div>
+        <!-- Card 5 -->
+        <div class="bg-zx-card border border-white/[0.06] rounded-xl p-7 hover:border-white/[0.12] transition-all duration-300 group">
+          <div class="w-10 h-10 rounded-lg bg-emerald-500/[0.08] flex items-center justify-center mb-5 group-hover:bg-emerald-500/[0.14] transition-colors">
+            <span class="material-symbols-outlined text-emerald-400 text-[20px]">shield</span>
+          </div>
+          <h3 class="text-[15px] font-medium text-white mb-2">100% Offline</h3>
+          <p class="text-[14px] text-zx-muted leading-relaxed">Everything runs on your machine. No cloud, no telemetry, no data ever leaves.</p>
+        </div>
+        <!-- Card 6 -->
+        <div class="bg-zx-card border border-white/[0.06] rounded-xl p-7 hover:border-white/[0.12] transition-all duration-300 group">
+          <div class="w-10 h-10 rounded-lg bg-rose-500/[0.08] flex items-center justify-center mb-5 group-hover:bg-rose-500/[0.14] transition-colors">
+            <span class="material-symbols-outlined text-rose-400 text-[20px]">file_copy</span>
+          </div>
+          <h3 class="text-[15px] font-medium text-white mb-2">40+ File Types</h3>
+          <p class="text-[14px] text-zx-muted leading-relaxed">PDF, DOCX, PPTX, XLSX, Python, JavaScript, JSON, YAML, and dozens more.</p>
+        </div>
       </div>
     </div>
   </section>
 
 
-  <!-- GATED PRICING & DOWNLOADS -->
-  <section class="py-32 md:py-40 px-5 border-t border-white/[0.04]" id="pricing">
-    <div class="max-w-[1100px] mx-auto">
+  <!-- ═══════════════════════════ DOWNLOADS ═══════════════════════════ -->
+  <section class="py-32 md:py-40 px-5 border-t border-white/[0.04] relative overflow-hidden" id="downloads">
+    <!-- Background glow -->
+    <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[600px] bg-zx-accent/[0.03] rounded-full blur-[150px] pointer-events-none"></div>
+
+    <div class="max-w-[1100px] mx-auto relative z-10">
       <div class="text-center mb-16 reveal">
-        <a class="inline-flex items-center gap-2 text-zx-accent-h text-[13px] font-medium tracking-wide mb-6">2.0&ensp;Pricing&ensp;→</a>
-        <h2 class="text-[clamp(28px,4vw,40px)] font-medium tracking-[-0.02em] leading-[1.15] text-white mb-5">Choose your licensing plan</h2>
-        <p class="text-[16px] text-zx-muted max-w-lg mx-auto leading-relaxed">Find a plan that fits your developer requirements.</p>
+        <a class="inline-flex items-center gap-2 text-zx-accent-h text-[13px] font-medium tracking-wide mb-6">2.0&ensp;Downloads&ensp;→</a>
+        <h2 class="text-[clamp(28px,4vw,40px)] font-medium tracking-[-0.02em] leading-[1.15] text-white mb-5 font-display">Download NeuCockpit v1.0</h2>
+        <p class="text-[16px] text-zx-muted max-w-lg mx-auto leading-relaxed">Free for 15 days. No credit card required.</p>
       </div>
 
-      <!-- Logged-out gating block -->
-      <div id="logged-out-prompt" class="bg-zx-card border border-white/[0.06] rounded-2xl p-10 text-center max-w-xl mx-auto reveal">
-        <h3 class="text-xl font-semibold text-white mb-3">Sign in to access licensing & downloads</h3>
-        <p class="text-zx-muted text-sm mb-6">Downloads, pricing, and license keys are secure and require verification.</p>
-        <button id="prompt-signin-btn" class="bg-white text-[#08070b] px-6 py-3 rounded-full font-medium hover:bg-gray-200 transition-colors">Sign In to Continue</button>
+      <!-- 3-column OS grid -->
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-6 reveal">
+
+        <!-- macOS -->
+        <div class="glass-card rounded-2xl p-8 flex flex-col items-center text-center">
+          <!-- Icon -->
+          <div class="w-16 h-16 rounded-2xl bg-white/[0.04] flex items-center justify-center mb-6">
+            <svg class="w-8 h-8 text-zx-muted" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/>
+            </svg>
+          </div>
+          <h3 class="text-[18px] font-semibold text-white mb-6 font-display">macOS</h3>
+
+          <div class="flex flex-col gap-3 w-full mb-6">
+            <button class="dl-btn dl-btn-disabled" disabled>
+              <span class="material-symbols-outlined text-[16px]">download</span>Apple Silicon
+            </button>
+            <button class="dl-btn dl-btn-disabled" disabled>
+              <span class="material-symbols-outlined text-[16px]">download</span>Intel
+            </button>
+          </div>
+
+          <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-semibold tracking-wide uppercase bg-amber-500/[0.12] text-amber-400 border border-amber-500/20 mb-4">Coming Soon</span>
+          <p class="text-[12px] text-zx-faint">Coming Soon</p>
+        </div>
+
+        <!-- Windows (FEATURED) -->
+        <div class="glass-card rounded-2xl p-8 flex flex-col items-center text-center featured-glow relative">
+          <!-- Recommended badge -->
+          <div class="absolute -top-3 left-1/2 -translate-x-1/2 bg-zx-accent text-black text-[10px] font-bold px-3 py-1 rounded-full uppercase tracking-wider whitespace-nowrap">Available Now</div>
+
+          <!-- Icon -->
+          <div class="w-16 h-16 rounded-2xl bg-zx-accent/[0.08] flex items-center justify-center mb-6">
+            <span class="material-symbols-outlined text-zx-accent text-[32px]">desktop_windows</span>
+          </div>
+          <h3 class="text-[18px] font-semibold text-white mb-6 font-display">Windows</h3>
+
+          <div class="flex flex-col gap-3 w-full mb-6">
+            <a
+              href="javascript:alert('Download link will be available shortly. Contact rahultech72216@gmail.com for early access.')"
+              id="download-windows-x64-btn"
+              class="dl-btn dl-btn-active"
+            >
+              <span class="material-symbols-outlined text-[16px]">download</span>Download for x64
+            </a>
+            <button class="dl-btn dl-btn-disabled" disabled>
+              <span class="material-symbols-outlined text-[16px]">download</span>ARM64
+              <span class="text-[10px] opacity-60 ml-1">Coming Soon</span>
+            </button>
+          </div>
+
+          <div class="flex flex-col gap-1.5">
+            <p class="text-[12px] text-zx-muted">Windows 10 (64-bit) or later</p>
+            <p class="text-[12px] text-zx-faint">~2.4 GB download</p>
+          </div>
+        </div>
+
+        <!-- Linux -->
+        <div class="glass-card rounded-2xl p-8 flex flex-col items-center text-center">
+          <!-- Icon -->
+          <div class="w-16 h-16 rounded-2xl bg-white/[0.04] flex items-center justify-center mb-6">
+            <span class="material-symbols-outlined text-zx-muted text-[32px]">terminal</span>
+          </div>
+          <h3 class="text-[18px] font-semibold text-white mb-6 font-display">Linux</h3>
+
+          <div class="flex flex-col gap-3 w-full mb-6">
+            <button class="dl-btn dl-btn-disabled" disabled>
+              <span class="material-symbols-outlined text-[16px]">download</span>x64
+            </button>
+            <button class="dl-btn dl-btn-disabled" disabled>
+              <span class="material-symbols-outlined text-[16px]">download</span>ARM64
+            </button>
+          </div>
+
+          <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-semibold tracking-wide uppercase bg-amber-500/[0.12] text-amber-400 border border-amber-500/20 mb-4">Coming Soon</span>
+          <p class="text-[12px] text-zx-faint">Coming Soon</p>
+        </div>
+
       </div>
 
-      <!-- Logged-in area (Hidden by default) -->
-      <div id="logged-in-area" style="display: none;" class="reveal">
-        
-        <!-- Binaries download buttons -->
-        <div class="flex flex-wrap justify-center gap-4 mb-16">
-          <a href="https://github.com/RAHUL-DevelopeRR/neuron-app/releases/download/v5.1.0/NeuronSetup_v5.1.exe" class="bg-white text-black px-6 py-3 rounded-full text-[14px] font-medium hover:bg-gray-200 transition flex items-center gap-2">
-            <span class="material-symbols-outlined text-[18px]">download</span>Download Neuron Setup v5.1.0 (Windows)
-          </a>
+      <!-- Below-cards note -->
+      <p class="text-center text-[13px] text-zx-faint mt-10 reveal">
+        NeuCockpit v1.0 includes built-in ONNX engine, all-MiniLM-L6-v2 model, and Ollama integration.
+      </p>
+    </div>
+  </section>
+
+
+  <!-- ═══════════════════════════ ARCHITECTURE ═══════════════════════════ -->
+  <section class="py-32 md:py-40 px-5 border-t border-white/[0.04]" id="architecture">
+    <div class="max-w-[900px] mx-auto reveal">
+      <a class="inline-flex items-center gap-2 text-zx-accent-h text-[13px] font-medium tracking-wide mb-6">3.0&ensp;Under the Hood&ensp;→</a>
+      <h2 class="text-[clamp(28px,4vw,40px)] font-medium tracking-[-0.02em] leading-[1.15] text-white mb-5 font-display">Layered architecture</h2>
+      <p class="text-[16px] text-zx-muted max-w-lg leading-relaxed mb-12">Enterprise-grade design. Each layer is independent, testable, and replaceable.</p>
+
+      <div class="flex flex-col gap-3">
+        <!-- UI Layer -->
+        <div class="flex items-center gap-4 bg-zx-card border border-white/[0.06] rounded-xl p-5 hover:border-white/[0.12] transition-colors group">
+          <div class="w-2 h-10 rounded-full bg-zx-accent/40 group-hover:bg-zx-accent transition-colors"></div>
+          <div class="flex-1">
+            <div class="text-[14px] font-medium text-white">UI Layer</div>
+            <div class="text-[13px] text-zx-muted">PyQt6 Fluent Design with DWM glass</div>
+          </div>
+          <div class="hidden sm:flex gap-1.5">
+            <span class="tech-tag">PyQt6</span>
+            <span class="tech-tag">DWM</span>
+          </div>
         </div>
-
-        <!-- SaaS Pricing Card Grid (OpenAI layout style) -->
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-          
-          <!-- Free Tier -->
-          <div class="bg-zx-surface border border-white/[0.08] rounded-xl p-8 flex flex-col justify-between min-h-[500px]">
-            <div>
-              <h3 class="text-xl font-semibold text-white mb-2">Free</h3>
-              <p class="text-xs text-zx-muted mb-6">Intelligence for everyday tasks</p>
-              <div class="h-[0.5px] bg-white/[0.08] mb-6"></div>
-              
-              <ul class="flex flex-col gap-4 text-sm text-[#e8e8ec] mb-8">
-                <li class="flex items-start gap-2.5">
-                  <span class="text-zx-accent font-semibold">✓</span>
-                  <span>44K Tokens/day quota limit</span>
-                </li>
-                <li class="flex items-start gap-2.5">
-                  <span class="text-zx-accent font-semibold">✓</span>
-                  <span>Tool calling and Agentic Operations</span>
-                </li>
-                <li class="flex items-start gap-2.5">
-                  <span class="text-zx-accent font-semibold">✓</span>
-                  <span>Models: Deepseek v4 Pro, Kimi K 2.5, Deepseek V4 Flash</span>
-                </li>
-                <li class="flex items-start gap-2.5 text-zx-faint">
-                  <span>✗</span>
-                  <span>Limited access to memory and context</span>
-                </li>
-              </ul>
-            </div>
-            
-            <div>
-              <div class="mb-6">
-                <span class="text-3xl font-bold text-white">$0</span>
-                <span class="text-xs text-zx-muted">/ month</span>
-              </div>
-              <button class="w-full border border-white/10 text-zx-muted py-3 rounded-lg text-sm font-medium cursor-not-allowed" disabled>Active Plan</button>
-            </div>
+        <!-- Service Layer -->
+        <div class="flex items-center gap-4 bg-zx-card border border-white/[0.06] rounded-xl p-5 hover:border-white/[0.12] transition-colors group">
+          <div class="w-2 h-10 rounded-full bg-zx-purple/40 group-hover:bg-zx-purple transition-colors"></div>
+          <div class="flex-1">
+            <div class="text-[14px] font-medium text-white">Service Layer</div>
+            <div class="text-[13px] text-zx-muted">Desktop, Ollama AI, Startup Indexer</div>
           </div>
-
-          <!-- Pro Tier -->
-          <div class="bg-zx-surface border border-zx-accent/40 rounded-xl p-8 flex flex-col justify-between min-h-[500px] relative">
-            <div class="absolute -top-3 left-6 bg-zx-accent text-black text-[10px] font-bold px-2.5 py-0.5 rounded-full uppercase tracking-wider">Recommended</div>
-            <div>
-              <h3 class="text-xl font-semibold text-white mb-2">Pro</h3>
-              <p class="text-xs text-zx-muted mb-6">Advanced access with expanded capability</p>
-              <div class="h-[0.5px] bg-white/[0.08] mb-6"></div>
-              
-              <ul class="flex flex-col gap-4 text-sm text-[#e8e8ec] mb-8">
-                <li class="flex items-start gap-2.5">
-                  <span class="text-zx-accent font-semibold">✓</span>
-                  <span>Extended limits (1M tokens/day)</span>
-                </li>
-                <li class="flex items-start gap-2.5">
-                  <span class="text-zx-accent font-semibold">✓</span>
-                  <span>Tool calling and Agentic Operations</span>
-                </li>
-                <li class="flex items-start gap-2.5">
-                  <span class="text-zx-accent font-semibold">✓</span>
-                  <span>Google Drive, Notion, Github MCP Connectors</span>
-                </li>
-                <li class="flex items-start gap-2.5">
-                  <span class="text-zx-accent font-semibold">✓</span>
-                  <span>Models: GPT-5.5 (44K/Day), GPT 5.4 Mini, GPT-5.3 Codex, Kimi K2.6/K2.5, Deepseek Pro/Flash, Grok 4.3</span>
-                </li>
-                <li class="flex items-start gap-2.5">
-                  <span class="text-zx-accent font-semibold">✓</span>
-                  <span>Extended local memory cache</span>
-                </li>
-              </ul>
-            </div>
-            
-            <div>
-              <div class="mb-6">
-                <span class="text-3xl font-bold text-white">$15</span>
-                <span class="text-xs text-zx-muted">/ month</span>
-              </div>
-              <button onclick="buyNeuron('Pro',1500,'Neuron Pro Plan')" id="rzp-pro-btn" class="w-full bg-zx-accent text-black py-3 rounded-lg text-sm font-semibold hover:bg-zx-accent-h transition-colors">Get Pro</button>
-            </div>
+          <div class="hidden sm:flex gap-1.5">
+            <span class="tech-tag">Ollama</span>
+            <span class="tech-tag">REST</span>
           </div>
-
-          <!-- Ultrawork Tier -->
-          <div class="bg-zx-surface border border-white/[0.08] rounded-xl p-8 flex flex-col justify-between min-h-[500px]">
-            <div>
-              <h3 class="text-xl font-semibold text-white mb-2">Ultrawork</h3>
-              <p class="text-xs text-zx-muted mb-6">Maximum developer intelligence</p>
-              <div class="h-[0.5px] bg-white/[0.08] mb-6"></div>
-              
-              <ul class="flex flex-col gap-4 text-sm text-[#e8e8ec] mb-8">
-                <li class="flex items-start gap-2.5">
-                  <span class="text-zx-accent font-semibold">✓</span>
-                  <span>Highest token limits / day</span>
-                </li>
-                <li class="flex items-start gap-2.5">
-                  <span class="text-zx-accent font-semibold">✓</span>
-                  <span>Advanced Agentic Operations with Subagents</span>
-                </li>
-                <li class="flex items-start gap-2.5">
-                  <span class="text-zx-accent font-semibold">✓</span>
-                  <span>Custom MCP connectors config</span>
-                </li>
-                <li class="flex items-start gap-2.5">
-                  <span class="text-zx-accent font-semibold">✓</span>
-                  <span>Models: GPT-5.5 (256K/Day), GPT 5.4, GPT-5.4 Pro, GPT 5.4 Mini, GPT-5.3 Codex, Kimi K2.6/K2.5, Deepseek Pro/Flash, Grok 4.3</span>
-                </li>
-                <li class="flex items-start gap-2.5">
-                  <span class="text-zx-accent font-semibold">✓</span>
-                  <span>Persistent Memory with higher limits</span>
-                </li>
-              </ul>
-            </div>
-            
-            <div>
-              <div class="mb-6">
-                <span class="text-3xl font-bold text-white">$80</span>
-                <span class="text-xs text-zx-muted">/ month</span>
-              </div>
-              <button onclick="buyNeuron('Ultrawork',8000,'Neuron Ultrawork Plan')" id="rzp-ultrawork-btn" class="w-full bg-zx-accent text-black py-3 rounded-lg text-sm font-semibold hover:bg-zx-accent-h transition-colors">Get Ultrawork</button>
-            </div>
-          </div>
-
         </div>
-
+        <!-- Core Engine -->
+        <div class="flex items-center gap-4 bg-zx-card border border-white/[0.06] rounded-xl p-5 hover:border-white/[0.12] transition-colors group">
+          <div class="w-2 h-10 rounded-full bg-emerald-500/40 group-hover:bg-emerald-500 transition-colors"></div>
+          <div class="flex-1">
+            <div class="text-[14px] font-medium text-white">Core Engine</div>
+            <div class="text-[13px] text-zx-muted">Embeddings, hybrid search, query parser</div>
+          </div>
+          <div class="hidden sm:flex gap-1.5">
+            <span class="tech-tag">MiniLM</span>
+            <span class="tech-tag">FAISS</span>
+          </div>
+        </div>
+        <!-- Storage -->
+        <div class="flex items-center gap-4 bg-zx-card border border-white/[0.06] rounded-xl p-5 hover:border-white/[0.12] transition-colors group">
+          <div class="w-2 h-10 rounded-full bg-amber-500/40 group-hover:bg-amber-500 transition-colors"></div>
+          <div class="flex-1">
+            <div class="text-[14px] font-medium text-white">Storage</div>
+            <div class="text-[13px] text-zx-muted">SQLite metadata + FAISS vector index</div>
+          </div>
+          <div class="hidden sm:flex gap-1.5">
+            <span class="tech-tag">SQLite</span>
+            <span class="tech-tag">NumPy</span>
+          </div>
+        </div>
+        <!-- Ingestion -->
+        <div class="flex items-center gap-4 bg-zx-card border border-white/[0.06] rounded-xl p-5 hover:border-white/[0.12] transition-colors group">
+          <div class="w-2 h-10 rounded-full bg-rose-500/40 group-hover:bg-rose-500 transition-colors"></div>
+          <div class="flex-1">
+            <div class="text-[14px] font-medium text-white">Ingestion</div>
+            <div class="text-[13px] text-zx-muted">40+ parsers with PyMuPDF, python-docx</div>
+          </div>
+          <div class="hidden sm:flex gap-1.5">
+            <span class="tech-tag">PyMuPDF</span>
+            <span class="tech-tag">pptx</span>
+          </div>
+        </div>
       </div>
     </div>
   </section>
 
-  <!-- FOOTER -->
+
+  <!-- ═══════════════════════════ CTA ═══════════════════════════ -->
+  <section class="relative py-40 md:py-48 px-5 border-t border-white/[0.04] text-center overflow-hidden">
+    <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[700px] h-[700px] bg-zx-accent/[0.05] rounded-full blur-[140px] pointer-events-none"></div>
+    <div class="absolute top-[30%] right-[20%] w-[400px] h-[400px] bg-zx-purple/[0.04] rounded-full blur-[120px] pointer-events-none"></div>
+
+    <div class="relative z-10 reveal">
+      <h2 class="text-[clamp(28px,5vw,52px)] font-medium tracking-[-0.03em] leading-[1.1] text-white mb-3 font-display">Intelligence at your fingertips.</h2>
+      <h2 class="text-[clamp(28px,5vw,52px)] font-medium tracking-[-0.03em] leading-[1.1] text-zx-muted mb-10 font-display">Download today.</h2>
+
+      <a href="#downloads" class="inline-flex items-center gap-2 bg-zx-accent text-black px-8 py-4 rounded-full text-[16px] font-semibold hover:bg-zx-accent-h transition-all hover:shadow-lg hover:shadow-zx-accent/20">
+        <span class="material-symbols-outlined text-[20px]">download</span>Get NeuCockpit
+      </a>
+
+      <p class="text-[13px] text-zx-faint mt-6">Free for 15 days. Windows 10/11 (64-bit). ~2.4 GB.</p>
+    </div>
+  </section>
+
+
+  <!-- ═══════════════════════════ FOOTER ═══════════════════════════ -->
   <footer class="border-t border-white/[0.04] bg-zx-bg pt-16 pb-10 px-5">
-    <div class="max-w-[1100px] mx-auto grid grid-cols-2 md:grid-cols-4 gap-10">
+    <div class="max-w-[1100px] mx-auto grid grid-cols-2 md:grid-cols-5 gap-10">
       <div class="col-span-2">
-        <a href="#" class="block mb-4"><img src="./Assets/Zero-xBnW.png" alt="zero-x.live" class="h-5" style="mix-blend-mode:lighten"/></a>
+        <a href="./index.html" class="block mb-4"><img src="./Assets/Zero-xBnW.png" alt="ZeroX" class="h-5" style="mix-blend-mode:lighten"/></a>
         <p class="text-[13px] text-zx-faint leading-relaxed max-w-[260px]">Engineering products from zero to extraordinary.</p>
       </div>
       <div class="flex flex-col gap-2.5">
-        <span class="text-[13px] font-medium text-white mb-1">Navigation</span>
-        <a href="./index.html" class="text-[13px] text-zx-muted hover:text-white transition-colors">Company Homepage</a>
-        <a href="#features" class="text-[13px] text-zx-muted hover:text-white transition-colors">Capabilities</a>
-        <a href="#pricing" class="text-[13px] text-zx-muted hover:text-white transition-colors">Pricing</a>
+        <span class="text-[13px] font-medium text-white mb-1">Product</span>
+        <a href="#demo" class="text-[13px] text-zx-muted hover:text-white transition-colors">Demo</a>
+        <a href="#features" class="text-[13px] text-zx-muted hover:text-white transition-colors">Features</a>
+        <a href="#downloads" class="text-[13px] text-zx-muted hover:text-white transition-colors">Downloads</a>
+        <a href="#architecture" class="text-[13px] text-zx-muted hover:text-white transition-colors">Architecture</a>
+      </div>
+      <div class="flex flex-col gap-2.5">
+        <span class="text-[13px] font-medium text-white mb-1">Company</span>
+        <a href="./index.html" class="text-[13px] text-zx-muted hover:text-white transition-colors">Homepage</a>
+        <a href="./index.html#about" class="text-[13px] text-zx-muted hover:text-white transition-colors">About</a>
+        <a href="./index.html#contact" class="text-[13px] text-zx-muted hover:text-white transition-colors">Contact</a>
       </div>
       <div class="flex flex-col gap-2.5">
         <span class="text-[13px] font-medium text-white mb-1">Connect</span>
-        <a href="https://github.com/RAHUL-DevelopeRR" target="_blank" class="text-[13px] text-zx-muted hover:text-white transition-colors">GitHub</a>
         <a href="mailto:rahultech72216@gmail.com" class="text-[13px] text-zx-muted hover:text-white transition-colors">Email</a>
+        <a href="https://x.com/zerox_corp" target="_blank" class="text-[13px] text-zx-muted hover:text-white transition-colors">Twitter / X</a>
       </div>
     </div>
     <div class="max-w-[1100px] mx-auto mt-14 pt-6 border-t border-white/[0.04]">
@@ -344,102 +695,48 @@
     </div>
   </footer>
 
+
+  <!-- ═══════════════════════════ JAVASCRIPT ═══════════════════════════ -->
   <script>
-    /* ═══ Simulated Semantic Search Demo ═══ */
-    const searchData = {
-      "database schema": [
-        { name: "schema.sql", path: "/src/database/schema.sql", score: 0.98, width: "98%" },
-        { name: "db_migration_v2.go", path: "/src/migrations/db_migration_v2.go", score: 0.89, width: "89%" },
-        { name: "redis_config.yaml", path: "/src/config/redis_config.yaml", score: 0.71, width: "71%" }
-      ],
-      "quarterly financials": [
-        { name: "ZeroX_Q1_Financials.xlsx", path: "/docs/finance/ZeroX_Q1_Financials.xlsx", score: 0.97, width: "97%" },
-        { name: "investor_deck_2026.pptx", path: "/docs/investor_deck_2026.pptx", score: 0.85, width: "85%" },
-        { name: "growth_metrics.csv", path: "/analytics/growth_metrics.csv", score: 0.68, width: "68%" }
-      ],
-      "branding guidelines": [
-        { name: "ZeroX_Brand_Identity_Kit.pdf", path: "/docs/design/ZeroX_Brand_Identity_Kit.pdf", score: 0.99, width: "99%" },
-        { name: "brand_assets.zip", path: "/assets/design/brand_assets.zip", score: 0.81, width: "81%" },
-        { name: "slogan_drafts.txt", path: "/notes/marketing/slogan_drafts.txt", score: 0.64, width: "64%" }
-      ]
-    };
+    /* ═══ Mobile Navigation ═══ */
+    const mobBtn=document.getElementById('mobBtn'),mobClose=document.getElementById('mobClose'),mobileNav=document.getElementById('mobileNav');
+    if(mobBtn){mobBtn.addEventListener('click',()=>{mobileNav.classList.remove('hidden');mobileNav.classList.add('flex');document.body.style.overflow='hidden'})}
+    function closeMob(){mobileNav.classList.add('hidden');mobileNav.classList.remove('flex');document.body.style.overflow=''}
+    if(mobClose){mobClose.addEventListener('click',closeMob)}
 
-    const searchBox = document.getElementById("demo-search-input");
-    const resultsList = document.getElementById("demo-results");
-
-    function renderResults(query) {
-      const q = query.toLowerCase().trim();
-      let results = [];
-      
-      if (searchData[q]) {
-        results = searchData[q];
-      } else if (q.length > 0) {
-        results = [
-          { name: `local_file_${q.replace(/\s+/g, '_')}.txt`, path: `/search/results/${q.replace(/\s+/g, '_')}.txt`, score: 0.82, width: "82%" },
-          { name: "config_backup.json", path: "/backup/config_backup.json", score: 0.61, width: "61%" }
-        ];
-      } else {
-        resultsList.innerHTML = `<div style="text-align: center; color: var(--zx-muted); padding: 40px 0; font-size: 13px;">Type a query to see Neuron semantic search in action.</div>`;
-        return;
-      }
-
-      resultsList.innerHTML = results.map(r => `
-        <div class="p-3.5 border border-white/[0.06] rounded-lg bg-zx-surface flex justify-between items-start hover:border-zx-accent/40 transition-colors">
-          <div>
-            <div class="text-[13px] text-white font-medium">${r.name}</div>
-            <div class="text-[11px] text-zx-muted font-mono mt-0.5">${r.path}</div>
-          </div>
-          <div class="flex items-center gap-2">
-            <div class="w-16 h-1 bg-zx-bg rounded-full overflow-hidden">
-              <div class="h-full bg-zx-accent" style="width: ${r.width}"></div>
-            </div>
-            <span class="text-[11px] text-zx-accent-h font-mono">${r.score.toFixed(2)}</span>
-          </div>
-        </div>
-      `).join('');
-    }
-
-    searchBox.addEventListener("input", (e) => renderResults(e.target.value));
-    renderResults("database schema");
-
-    /* ═══ Reveal Animations ═══ */
-    const obs=new IntersectionObserver(e=>{e.forEach(el=>{if(el.isIntersecting){el.target.classList.add('visible');obs.unobserve(el.target)}})},{threshold:.08,rootMargin:'0px 0px -60px 0px'});
+    /* ═══ Reveal Animations (IntersectionObserver) ═══ */
+    const obs=new IntersectionObserver(entries=>{
+      entries.forEach(el=>{
+        if(el.isIntersecting){
+          el.target.classList.add('visible');
+          obs.unobserve(el.target);
+        }
+      });
+    },{threshold:.08,rootMargin:'0px 0px -60px 0px'});
     document.querySelectorAll('.reveal').forEach(el=>obs.observe(el));
 
-    /* ═══ Smooth Scroll ═══ */
-    document.querySelectorAll('a[href^="#"]').forEach(a=>{a.addEventListener('click',e=>{const id=a.getAttribute('href');if(id==='#')return;const t=document.querySelector(id);if(t){e.preventDefault();t.scrollIntoView({behavior:'smooth'})}})});
-
-    /* ═══ Razorpay Payments (USD integration) ═══ */
-    function buyNeuron(tier, amt, desc) {
-      const bid = 'rzp-' + tier.toLowerCase() + '-btn';
-      const opts = {
-        key: 'rzp_live_SZsvcPuBbSv5TA',
-        amount: amt,
-        currency: 'USD',
-        name: 'ZeroX',
-        description: desc + ' — Monthly Plan',
-        image: './Assets/neuron_circular.png',
-        handler: function(r) {
-          const b = document.getElementById('rzp-' + tier.toLowerCase() + '-btn');
-          if (b) {
-            b.textContent = '✓ Activated';
-            b.disabled = true;
-          }
-          const ml = 'mailto:rahultech72216@gmail.com?subject=' + encodeURIComponent(desc + ' — Payment ' + r.razorpay_payment_id) + '&body=' + encodeURIComponent('Hi,\n\nI purchased ' + desc + '.\nPayment ID: ' + r.razorpay_payment_id+'\nTier: '+tier+'\nPlease send my activation credentials.\n\nThanks!');
-          setTimeout(() => {
-            if (confirm('Subscription complete! 🎉\n\nPayment ID: ' + r.razorpay_payment_id + '\nTier: ' + tier + '\n\nClick OK to email us for your API keys.')) {
-              window.location.href = ml;
-            }
-          }, 500);
-        },
-        theme: { color: '#5e5bff' }
-      };
-      const rzp = new Razorpay(opts);
-      rzp.on('payment.failed', function(r) {
-        alert('Payment failed: ' + r.error.description + '\n\nPlease try again or contact rahultech72216@gmail.com');
+    /* ═══ Smooth Scroll for Anchor Links ═══ */
+    document.querySelectorAll('a[href^="#"]').forEach(a=>{
+      a.addEventListener('click',e=>{
+        const id=a.getAttribute('href');
+        if(id==='#')return;
+        const t=document.querySelector(id);
+        if(t){
+          e.preventDefault();
+          t.scrollIntoView({behavior:'smooth'});
+        }
       });
-      rzp.open();
-    }
+    });
+
+    /* ═══ Nav background opacity on scroll ═══ */
+    const header=document.querySelector('header');
+    window.addEventListener('scroll',()=>{
+      if(window.scrollY>80){
+        header.style.borderBottomColor='rgba(255,255,255,0.08)';
+      }else{
+        header.style.borderBottomColor='rgba(255,255,255,0.06)';
+      }
+    },{passive:true});
 
     /* ═══ Clerk Authentication ═══ */
     const clerkConfig = {
@@ -464,19 +761,19 @@
         signIn: {
           start: {
             title: "Sign in",
-            subtitle: "to continue to Neuron"
+            subtitle: "to continue to NeuCockpit"
           }
         },
         signUp: {
           start: {
             title: "Create your account",
-            subtitle: "to continue to Neuron"
+            subtitle: "to continue to NeuCockpit"
           }
         }
       }
     };
 
-    /* ═══ Wait for Clerk SDK to be available ═══ */
+    /* ═══ Wait for Clerk SDK ═══ */
     function waitForClerk(timeoutMs) {
       return new Promise(function(resolve, reject) {
         if (window.Clerk) { resolve(window.Clerk); return; }
@@ -493,15 +790,13 @@
 
     window.addEventListener('load', async () => {
       const signinBtn = document.getElementById('signin-btn');
-      const promptSigninBtn = document.getElementById('prompt-signin-btn');
-      
+
       const handleSignInClick = async (e) => {
         e.preventDefault();
         if (clerkReady && window.Clerk && window.Clerk.openSignIn) {
           window.Clerk.openSignIn(clerkConfig);
           return;
         }
-        // Show loading state
         if (signinBtn) { signinBtn.textContent = 'Loading…'; signinBtn.style.pointerEvents = 'none'; }
         try {
           await waitForClerk(8000);
@@ -515,9 +810,8 @@
           if (signinBtn) { signinBtn.textContent = 'Sign In'; signinBtn.style.pointerEvents = ''; }
         }
       };
-      
+
       if (signinBtn) signinBtn.addEventListener('click', handleSignInClick);
-      if (promptSigninBtn) promptSigninBtn.addEventListener('click', handleSignInClick);
 
       // Load Clerk in background
       try {
@@ -528,25 +822,20 @@
 
         const userButtonDiv = document.getElementById('user-button');
         const navLinks = document.querySelector('header nav');
-        const loggedOutPrompt = document.getElementById('logged-out-prompt');
-        const loggedInAreaDiv = document.getElementById('logged-in-area');
-        
+
         // Setup dynamic links depending on environment
         const isLocal = ['localhost', '127.0.0.1'].includes(window.location.hostname);
         const companyUrl = isLocal ? './index.html' : 'https://zero-x.live';
-        
+
         const navCompanyLink = document.getElementById('nav-company-link');
         if (navCompanyLink) navCompanyLink.href = companyUrl;
         const navLogoLink = document.getElementById('nav-logo-link');
         if (navLogoLink) navLogoLink.href = companyUrl;
-        
+
         if (window.Clerk.user) {
           // User is logged in
           if (signinBtn) signinBtn.style.display = 'none';
-          if (loggedOutPrompt) loggedOutPrompt.style.display = 'none';
-          if (loggedInAreaDiv) loggedInAreaDiv.style.display = 'block';
-          
-          // Setup dashboard URL depending on environment
+
           const dashboardUrl = isLocal ? './dashboard.html' : 'https://dashboard.zero-x.live';
 
           // Add Dashboard link to Desktop Nav
@@ -558,7 +847,7 @@
             dashboardLink.innerText = 'Dashboard';
             navLinks.appendChild(dashboardLink);
           }
-          
+
           // Mount Clerk UserButton
           if (userButtonDiv) {
             window.Clerk.mountUserButton(userButtonDiv, {
@@ -571,5 +860,6 @@
       }
     });
   </script>
+
 </body>
 </html>
