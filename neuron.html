@@ -482,7 +482,7 @@
       <div class="text-center mb-16 reveal">
         <a class="inline-flex items-center gap-2 text-zx-accent-h text-[13px] font-medium tracking-wide mb-6">2.0&ensp;Downloads&ensp;→</a>
         <h2 class="text-[clamp(28px,4vw,40px)] font-medium tracking-[-0.02em] leading-[1.15] text-white mb-5 font-display">Download NeuCockpit v1.0</h2>
-        <p class="text-[16px] text-zx-muted max-w-lg mx-auto leading-relaxed">Free for 15 days. No credit card required.</p>
+        <p class="text-[16px] text-zx-muted max-w-lg mx-auto leading-relaxed">Free for 15 days. Latest fixed build: v1.0.0-build-202606171420.</p>
       </div>
 
       <!-- 3-column OS grid -->
@@ -505,18 +505,20 @@
 
           <div class="flex flex-col gap-3 w-full mb-6">
             <a
-              href="https://github.com/RAHUL-DevelopeRR/deepseekfs/releases/latest/download/NeuCockpit-v1.0-macos-arm64.dmg"
+              href="https://github.com/RAHUL-DevelopeRR/deepseekfs/releases/tag/v1.0.0-build-202606171420"
               id="download-macos-arm64-btn"
               class="dl-btn dl-btn-active"
-              download
+              target="_blank"
+              rel="noopener"
             >
               <span class="material-symbols-outlined text-[16px]">download</span>Apple Silicon
             </a>
             <a
-              href="https://github.com/RAHUL-DevelopeRR/deepseekfs/releases/latest/download/NeuCockpit-v1.0-macos-intel.dmg"
+              href="https://github.com/RAHUL-DevelopeRR/deepseekfs/releases/tag/v1.0.0-build-202606171420"
               id="download-macos-x64-btn"
               class="dl-btn dl-btn-active"
-              download
+              target="_blank"
+              rel="noopener"
             >
               <span class="material-symbols-outlined text-[16px]">download</span>Intel
             </a>
@@ -524,7 +526,7 @@
 
           <div class="flex flex-col gap-1.5">
             <p class="text-[12px] text-zx-muted">macOS 12 Monterey or later</p>
-            <p class="text-[12px] text-zx-faint">.dmg installer</p>
+            <p class="text-[12px] text-zx-faint">.dmg installer parts on GitHub Release</p>
           </div>
         </div>
 
@@ -542,22 +544,28 @@
 
           <div class="flex flex-col gap-3 w-full mb-6">
             <a
-              href="https://downloads.zero-x.live/NeuCockpitSetup_v1.0_windows_x64.exe"
+              href="https://github.com/RAHUL-DevelopeRR/deepseekfs/releases/tag/v1.0.0-build-202606171420"
               id="download-windows-x64-btn"
               class="dl-btn dl-btn-active"
-              download="NeuCockpitSetup_v1.0_windows_x64.exe"
+              target="_blank"
+              rel="noopener"
             >
               <span class="material-symbols-outlined text-[16px]">download</span>Download for x64
             </a>
-            <button class="dl-btn dl-btn-disabled" disabled>
+            <a
+              href="https://github.com/RAHUL-DevelopeRR/deepseekfs/releases/tag/v1.0.0-build-202606171420"
+              id="download-windows-arm64-btn"
+              class="dl-btn dl-btn-active"
+              target="_blank"
+              rel="noopener"
+            >
               <span class="material-symbols-outlined text-[16px]">download</span>ARM64
-              <span class="text-[10px] opacity-60 ml-1">Coming Soon</span>
-            </button>
+            </a>
           </div>
 
           <div class="flex flex-col gap-1.5">
             <p class="text-[12px] text-zx-muted">Windows 10 (64-bit) or later</p>
-            <p class="text-[12px] text-zx-faint">~2.4 GB download</p>
+            <p class="text-[12px] text-zx-faint">~2.4 GB installer parts</p>
           </div>
         </div>
 
@@ -576,18 +584,20 @@
 
           <div class="flex flex-col gap-3 w-full mb-6">
             <a
-              href="https://github.com/RAHUL-DevelopeRR/deepseekfs/releases/latest/download/NeuCockpit-v1.0-linux-x64.tar.gz"
+              href="https://github.com/RAHUL-DevelopeRR/deepseekfs/releases/tag/v1.0.0-build-202606171420"
               id="download-linux-x64-btn"
               class="dl-btn dl-btn-active"
-              download
+              target="_blank"
+              rel="noopener"
             >
               <span class="material-symbols-outlined text-[16px]">download</span>x64
             </a>
             <a
-              href="https://github.com/RAHUL-DevelopeRR/deepseekfs/releases/latest/download/NeuCockpit-v1.0-linux-arm64.tar.gz"
+              href="https://github.com/RAHUL-DevelopeRR/deepseekfs/releases/tag/v1.0.0-build-202606171420"
               id="download-linux-arm64-btn"
               class="dl-btn dl-btn-active"
-              download
+              target="_blank"
+              rel="noopener"
             >
               <span class="material-symbols-outlined text-[16px]">download</span>ARM64
             </a>
@@ -595,7 +605,7 @@
 
           <div class="flex flex-col gap-1.5">
             <p class="text-[12px] text-zx-muted">Ubuntu 20.04+ / Debian 11+</p>
-            <p class="text-[12px] text-zx-faint">.tar.gz archive</p>
+            <p class="text-[12px] text-zx-faint">.tar.gz archive parts on GitHub Release</p>
           </div>
         </div>
 
@@ -603,7 +613,7 @@
 
       <!-- Below-cards note -->
       <p class="text-center text-[13px] text-zx-faint mt-10 reveal">
-        NeuCockpit v1.0 includes bundled BGE ONNX engine, BAAI/bge-small-en-v1.5 model, and Qwen 2.5 Coder 3B GGUF via llama.cpp.
+        NeuCockpit v1.0 includes bundled BGE ONNX engine, BAAI/bge-small-en-v1.5 model, and Qwen 2.5 Coder 3B GGUF via llama.cpp. Download every .part-* file plus the .sha256 and .REASSEMBLE.txt note for your platform.
       </p>
     </div>
   </section>
