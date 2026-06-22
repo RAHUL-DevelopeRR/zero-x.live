@@ -62,6 +62,203 @@ app.use('*', async (c, next) => {
 // Global sessions in-memory fallback (useful for dev/zero-config, ephemerally persists per isolate)
 const sessions = new Map();
 
+const PLAN_LIMITS = {
+  free: { name: "Free", daily_tokens: 44000, daily_requests: 1000 },
+  pro: { name: "Pro", daily_tokens: 1000000, daily_requests: 10000 },
+  ultrawork: { name: "Ultrawork", daily_tokens: 5000000, daily_requests: 50000 },
+};
+
+const MODELS_BY_PLAN = {
+  free: ["DeepSeek-V4-Flash", "Kimi-K2.5", "DeepSeek-V4-Pro"],
+  pro: [
+    "DeepSeek-V4-Flash",
+    "Kimi-K2.5",
+    "Kimi-K2.6",
+    "DeepSeek-V4-Pro",
+    "FW-DeepSeek-V3.2",
+    "FW-MiniMax-M2.5",
+    "model-router",
+    "gpt-5.4-mini",
+    "gpt-5.5-2",
+  ],
+  ultrawork: [
+    "Kimi-K2.5",
+    "Kimi-K2.6",
+    "DeepSeek-V4-Flash",
+    "DeepSeek-V4-Pro",
+    "FW-DeepSeek-V3.2",
+    "FW-MiniMax-M2.5",
+    "model-router",
+    "gpt-5.4-pro",
+    "gpt-5.4-mini",
+    "gpt-5.5-2",
+    "gpt-5.1-codex-max",
+  ],
+};
+
+function normalizePlan(plan) {
+  const key = String(plan || "free").toLowerCase().replace(/[^a-z0-9_-]/g, "");
+  return PLAN_LIMITS[key] ? key : "free";
+}
+
+function planQuota(plan, used = 0, requests = 0) {
+  const key = normalizePlan(plan);
+  const limits = PLAN_LIMITS[key];
+  return {
+    plan: key,
+    plan_name: limits.name,
+    quota: {
+      daily_limit: limits.daily_tokens,
+      used,
+      remaining: Math.max(0, limits.daily_tokens - used),
+    },
+    usage: {
+      requests,
+      tokens_used: used,
+    },
+    limits: {
+      tokens: limits.daily_tokens,
+      requests: limits.daily_requests,
+    },
+  };
+}
+
+function authClaimsPlan(auth) {
+  const claims = auth?.sessionClaims || {};
+  return normalizePlan(
+    claims?.public_metadata?.plan ||
+    claims?.private_metadata?.plan ||
+    claims?.metadata?.plan ||
+    claims?.plan
+  );
+}
+
+function clerkProfileFromBody(body = {}) {
+  const firstName = body.firstName || body.first_name || "";
+  const lastName = body.lastName || body.last_name || "";
+  const name = body.name || body.fullName || [firstName, lastName].filter(Boolean).join(" ");
+  return {
+    email: body.email || body.emailAddress || "",
+    firstName,
+    lastName,
+    name,
+    imageUrl: body.imageUrl || body.image_url || "",
+    username: body.username || "",
+  };
+}
+
+async function ensureUserSchema(c) {
+  if (!c.env.DATABASE_URL) return null;
+  const sql = neon(c.env.DATABASE_URL);
+  await sql`
+    CREATE TABLE IF NOT EXISTS users (
+      id SERIAL PRIMARY KEY,
+      clerk_id VARCHAR(255) UNIQUE NOT NULL,
+      email VARCHAR(255) NOT NULL DEFAULT '',
+      first_name VARCHAR(255),
+      last_name VARCHAR(255),
+      name VARCHAR(255),
+      username VARCHAR(255),
+      image_url TEXT,
+      plan VARCHAR(64) NOT NULL DEFAULT 'free',
+      daily_tokens_used BIGINT NOT NULL DEFAULT 0,
+      daily_requests BIGINT NOT NULL DEFAULT 0,
+      last_usage_reset DATE NOT NULL DEFAULT CURRENT_DATE,
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+      last_seen_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+  `;
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS name VARCHAR(255);`;
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS username VARCHAR(255);`;
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS image_url TEXT;`;
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS plan VARCHAR(64) NOT NULL DEFAULT 'free';`;
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS daily_tokens_used BIGINT NOT NULL DEFAULT 0;`;
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS daily_requests BIGINT NOT NULL DEFAULT 0;`;
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_usage_reset DATE NOT NULL DEFAULT CURRENT_DATE;`;
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;`;
+  return sql;
+}
+
+async function loadUserRecord(c, clerkId) {
+  const sql = await ensureUserSchema(c);
+  if (!sql) return null;
+  const rows = await sql`SELECT * FROM users WHERE clerk_id = ${clerkId} LIMIT 1`;
+  return rows[0] || null;
+}
+
+async function syncUserRecord(c, auth, profile = {}) {
+  const sql = await ensureUserSchema(c);
+  if (!sql) return null;
+
+  const existing = await loadUserRecord(c, auth.userId);
+  const claimedPlan = authClaimsPlan(auth);
+  const clientPlan = c.env.ALLOW_CLIENT_PLAN_OVERRIDE === "true" ? profile.plan : "";
+  const plan = normalizePlan(existing?.plan || claimedPlan || clientPlan || "free");
+  const email = profile.email || existing?.email || "";
+  const firstName = profile.firstName || existing?.first_name || "";
+  const lastName = profile.lastName || existing?.last_name || "";
+  const name = profile.name || existing?.name || [firstName, lastName].filter(Boolean).join(" ") || email;
+  const username = profile.username || existing?.username || "";
+  const imageUrl = profile.imageUrl || existing?.image_url || "";
+
+  const rows = await sql`
+    INSERT INTO users (clerk_id, email, first_name, last_name, name, username, image_url, plan)
+    VALUES (${auth.userId}, ${email}, ${firstName}, ${lastName}, ${name}, ${username}, ${imageUrl}, ${plan})
+    ON CONFLICT (clerk_id)
+    DO UPDATE SET
+      email = ${email},
+      first_name = ${firstName},
+      last_name = ${lastName},
+      name = ${name},
+      username = ${username},
+      image_url = ${imageUrl},
+      plan = COALESCE(NULLIF(users.plan, ''), ${plan}),
+      updated_at = CURRENT_TIMESTAMP,
+      last_seen_at = CURRENT_TIMESTAMP
+    RETURNING *;
+  `;
+  return rows[0] || null;
+}
+
+function userResponse(user, fallbackUserId = "") {
+  const plan = normalizePlan(user?.plan || "free");
+  const tokensUsed = Number(user?.daily_tokens_used || 0);
+  const requests = Number(user?.daily_requests || 0);
+  const quota = planQuota(plan, tokensUsed, requests);
+  return {
+    user_id: user?.clerk_id || fallbackUserId,
+    email: user?.email || "",
+    name: user?.name || [user?.first_name, user?.last_name].filter(Boolean).join(" "),
+    first_name: user?.first_name || "",
+    last_name: user?.last_name || "",
+    username: user?.username || "",
+    image_url: user?.image_url || "",
+    plan,
+    models: MODELS_BY_PLAN[plan] || MODELS_BY_PLAN.free,
+    ...quota,
+  };
+}
+
+async function recordUserUsage(c, userId, requests, tokens) {
+  if (!userId || !c.env.DATABASE_URL) return;
+  try {
+    const sql = await ensureUserSchema(c);
+    await sql`
+      UPDATE users
+      SET
+        daily_requests = CASE WHEN last_usage_reset < CURRENT_DATE THEN ${requests} ELSE daily_requests + ${requests} END,
+        daily_tokens_used = CASE WHEN last_usage_reset < CURRENT_DATE THEN ${tokens} ELSE daily_tokens_used + ${tokens} END,
+        last_usage_reset = CURRENT_DATE,
+        updated_at = CURRENT_TIMESTAMP,
+        last_seen_at = CURRENT_TIMESTAMP
+      WHERE clerk_id = ${userId};
+    `;
+  } catch (err) {
+    console.warn("Usage update failed:", err.message);
+  }
+}
+
 // ── Session persistence helpers (Support Cloudflare KV with in-memory fallback) ──
 async function getSession(c, token) {
   if (c.env && c.env.SESSIONS_KV) {
@@ -157,11 +354,18 @@ const createSessionHandler = async (c) => {
     return c.json({ error: "Missing machine_fingerprint" }, 400);
   }
 
+  const plan = normalizePlan(body.plan || "free");
+  const quota = planQuota(plan);
   const sessionToken = "ses_" + generateRandomString(24);
   const sessionData = {
     created: Date.now(),
     fingerprint: fp,
     version: version,
+    user_id: body.user_id || null,
+    email: body.email || "",
+    name: body.name || "",
+    image_url: body.image_url || "",
+    plan,
     requests: 0,
     tokens_used: 0,
     provider_used: null,
@@ -171,28 +375,66 @@ const createSessionHandler = async (c) => {
 
   return c.json({
     session_token: sessionToken,
-    models: [
-      "Kimi-K2.5",
-      "Kimi-K2.6",
-      "DeepSeek-V4-Flash",
-      "FW-DeepSeek-V3.2",
-      "FW-MiniMax-M2.5",
-      "model-router",
-      "gpt-5.4-pro",
-      "gpt-5.4-mini",
-      "gpt-5.5-2",
-      "gpt-5.1-codex-max"
-    ],
-    quota: {
-      daily_limit: 500000,
-      remaining: 500000,
-    },
+    user_id: sessionData.user_id,
+    email: sessionData.email,
+    name: sessionData.name,
+    image_url: sessionData.image_url,
+    plan,
+    provider: "gateway",
+    models: MODELS_BY_PLAN[plan] || MODELS_BY_PLAN.free,
+    quota: quota.quota,
+    usage: quota.usage,
+    limits: quota.limits,
     ttl_seconds: (parseInt(c.env.SESSION_TTL_HOURS) || 24) * 3600,
   });
 };
 
 api.post('/auth/session', createSessionHandler);
 api.post('/auth/azure/exchange', createSessionHandler);
+
+const createClerkCliSessionHandler = async (c) => {
+  const auth = getAuth(c);
+  if (!auth || !auth.userId) {
+    return c.json({ error: "Unauthorized", message: "Invalid Clerk session" }, 401);
+  }
+
+  const body = await c.req.json().catch(() => ({}));
+  const fp = body.machine_fingerprint || body.fingerprint || "clerk-user";
+  const profile = clerkProfileFromBody(body);
+  let user = null;
+  try {
+    user = await syncUserRecord(c, auth, profile);
+  } catch (err) {
+    console.warn("Clerk CLI session sync failed:", err.message);
+  }
+
+  const account = userResponse(user, auth.userId);
+  const sessionToken = "ses_" + generateRandomString(24);
+  const sessionData = {
+    created: Date.now(),
+    fingerprint: fp,
+    version: body.version || "unknown",
+    user_id: account.user_id,
+    email: account.email,
+    name: account.name,
+    image_url: account.image_url,
+    plan: account.plan,
+    requests: 0,
+    tokens_used: 0,
+    provider_used: "azure",
+  };
+
+  await setSession(c, sessionToken, sessionData);
+
+  return c.json({
+    session_token: sessionToken,
+    provider: "gateway",
+    ttl_seconds: (parseInt(c.env.SESSION_TTL_HOURS) || 24) * 3600,
+    ...account,
+  });
+};
+
+api.post('/auth/cli/session', clerkMiddleware(), createClerkCliSessionHandler);
 
 // 3. Verify session (main & legacy verify)
 const verifySessionHandler = async (c) => {
@@ -208,8 +450,17 @@ const verifySessionHandler = async (c) => {
   return c.json({
     created: new Date(session.created).toISOString(),
     fingerprint: session.fingerprint,
+    user_id: session.user_id,
+    email: session.email,
+    name: session.name,
+    image_url: session.image_url,
+    plan: normalizePlan(session.plan),
+    models: MODELS_BY_PLAN[normalizePlan(session.plan)] || MODELS_BY_PLAN.free,
     requests: session.requests,
     tokens_used: session.tokens_used,
+    quota: planQuota(normalizePlan(session.plan), Number(session.tokens_used || 0), Number(session.requests || 0)).quota,
+    usage: planQuota(normalizePlan(session.plan), Number(session.tokens_used || 0), Number(session.requests || 0)).usage,
+    limits: planQuota(normalizePlan(session.plan), Number(session.tokens_used || 0), Number(session.requests || 0)).limits,
     provider_used: session.provider_used,
     ttl_remaining_seconds: Math.max(
       0,
@@ -221,6 +472,28 @@ const verifySessionHandler = async (c) => {
 api.get('/auth/session', verifySessionHandler);
 api.get('/auth/azure/session', verifySessionHandler);
 
+api.get('/auth/usage', async (c) => {
+  const valid = await validateSession(c);
+  if (!valid) return c.json({ error: "Invalid or expired session" }, 401);
+  const session = valid.session;
+  const quota = planQuota(normalizePlan(session.plan), Number(session.tokens_used || 0), Number(session.requests || 0));
+  return c.json({ user_id: session.user_id, ...quota });
+});
+
+api.get('/auth/plan', async (c) => {
+  const valid = await validateSession(c);
+  if (!valid) return c.json({ error: "Invalid or expired session" }, 401);
+  const session = valid.session;
+  const plan = normalizePlan(session.plan);
+  return c.json({
+    user_id: session.user_id,
+    plan,
+    plan_name: PLAN_LIMITS[plan].name,
+    models: MODELS_BY_PLAN[plan] || MODELS_BY_PLAN.free,
+    limits: PLAN_LIMITS[plan],
+  });
+});
+
 // 3.5 Clerk user profile DB sync
 api.post('/auth/sync', clerkMiddleware(), async (c) => {
   const auth = getAuth(c);
@@ -228,50 +501,29 @@ api.post('/auth/sync', clerkMiddleware(), async (c) => {
     return c.json({ error: "Unauthorized", message: "Invalid session" }, 401);
   }
 
-  const dbUrl = c.env.DATABASE_URL;
-  if (!dbUrl) {
-    console.warn("DATABASE_URL not configured. Sync skipped.");
-    return c.json({ status: "skipped", message: "Database URL not configured on worker" });
-  }
-
   try {
     const body = await c.req.json().catch(() => ({}));
-    const { email, firstName, lastName } = body;
-
-    if (!email) {
-      return c.json({ error: "Bad Request", message: "Email is required" }, 400);
+    const user = await syncUserRecord(c, auth, clerkProfileFromBody(body));
+    if (!user) {
+      return c.json({ status: "skipped", message: "DATABASE_URL is not configured on the Worker" });
     }
-
-    const sql = neon(dbUrl);
-
-    // Auto-create table if not exists
-    await sql`
-      CREATE TABLE IF NOT EXISTS users (
-        id SERIAL PRIMARY KEY,
-        clerk_id VARCHAR(255) UNIQUE NOT NULL,
-        email VARCHAR(255) NOT NULL,
-        first_name VARCHAR(255),
-        last_name VARCHAR(255),
-        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-      );
-    `;
-
-    // Upsert user details
-    await sql`
-      INSERT INTO users (clerk_id, email, first_name, last_name)
-      VALUES (${auth.userId}, ${email}, ${firstName || ''}, ${lastName || ''})
-      ON CONFLICT (clerk_id)
-      DO UPDATE SET
-        email = ${email},
-        first_name = ${firstName || ''},
-        last_name = ${lastName || ''},
-        updated_at = CURRENT_TIMESTAMP
-    `;
-
-    return c.json({ status: "success", clerk_id: auth.userId });
+    return c.json({ status: "success", ...userResponse(user, auth.userId) });
   } catch (err) {
     console.error("Database sync error:", err);
+    return c.json({ error: "Internal Server Error", message: err.message }, 500);
+  }
+});
+
+api.get('/auth/me', clerkMiddleware(), async (c) => {
+  const auth = getAuth(c);
+  if (!auth || !auth.userId) {
+    return c.json({ error: "Unauthorized", message: "Invalid Clerk session" }, 401);
+  }
+  try {
+    const user = await loadUserRecord(c, auth.userId);
+    return c.json({ status: user ? "success" : "missing", ...userResponse(user, auth.userId) });
+  } catch (err) {
+    console.error("Account lookup error:", err);
     return c.json({ error: "Internal Server Error", message: err.message }, 500);
   }
 });
@@ -302,7 +554,8 @@ const chatCompletionsHandler = async (c) => {
 
   // Rate limiting
   session.requests++;
-  const maxRequests = parseInt(c.env.MAX_REQUESTS_PER_SESSION) || 1000;
+  const plan = normalizePlan(session.plan);
+  const maxRequests = Number(PLAN_LIMITS[plan]?.daily_requests || parseInt(c.env.MAX_REQUESTS_PER_SESSION) || 1000);
   if (session.requests > maxRequests) {
     return c.json({ error: "Daily request limit exceeded" }, 429);
   }
@@ -336,6 +589,29 @@ const chatCompletionsHandler = async (c) => {
       return new Response(errorText, {
         status: azureRes.status,
         headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    await recordUserUsage(c, session.user_id, 1, 0);
+
+    if (!stream) {
+      const responseText = await azureRes.text();
+      let usageTokens = 0;
+      try {
+        const parsed = JSON.parse(responseText);
+        usageTokens = Number(parsed?.usage?.total_tokens || 0);
+      } catch { /* pass through non-JSON providers */ }
+      if (usageTokens > 0) {
+        session.tokens_used = Number(session.tokens_used || 0) + usageTokens;
+        await setSession(c, token, session);
+        await recordUserUsage(c, session.user_id, 0, usageTokens);
+      }
+      return new Response(responseText, {
+        status: azureRes.status,
+        headers: {
+          "Content-Type": azureRes.headers.get("content-type") || "application/json",
+          "Cache-Control": "no-cache",
+        },
       });
     }
 

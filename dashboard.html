@@ -410,7 +410,7 @@
 
     <div class="dash-section dash-card">
       <div class="dash-card-label">Session Token</div>
-      <p style="font-size:13px;color:#8A8A96;margin-bottom:12px">Your active Clerk session token. Auto-rotates on sign-in.</p>
+      <p style="font-size:13px;color:#8A8A96;margin-bottom:12px">Your active NeuronCLI gateway session token, minted from your Clerk sign-in.</p>
       <div class="api-key-box">
         <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" id="session-token-display">••••••••••••••••••••••••</span>
         <button onclick="copyToken()" id="copy-token-btn">Copy</button>
@@ -510,9 +510,14 @@ document.getElementById('mobMenuBtn').addEventListener('click',()=>{
 });
 
 /* ═══ Simulated Data ═══ */
-const userPlan = 'free'; // 'free' | 'pro' | 'ultrawork'
 const planLimits = {free:{tokens:44000,requests:1000},pro:{tokens:1000000,requests:10000},ultrawork:{tokens:5000000,requests:50000}};
-const simUsage = {tokens:12847,requests:156};
+let dashboardState = {
+  plan: 'free',
+  usage: {tokens: 0, requests: 0},
+  limits: planLimits.free,
+  models: null,
+  activity: [],
+};
 
 const freeModels = [
   {name:'DeepSeek V4 Pro',limit:'44K/day',status:'active'},
@@ -557,19 +562,21 @@ const weeklyUsage = [
 ];
 
 function populateDashboard(user) {
-  const limits = planLimits[userPlan];
-  const pct_t = Math.min(100,Math.round(simUsage.tokens/limits.tokens*100));
-  const pct_r = Math.min(100,Math.round(simUsage.requests/limits.requests*100));
+  const userPlan = dashboardState.plan || 'free';
+  const limits = dashboardState.limits || planLimits[userPlan] || planLimits.free;
+  const usage = dashboardState.usage || {tokens:0,requests:0};
+  const pct_t = Math.min(100,Math.round((usage.tokens||0)/limits.tokens*100));
+  const pct_r = Math.min(100,Math.round((usage.requests||0)/limits.requests*100));
 
   // Overview stats
-  document.getElementById('stat-tokens').textContent=simUsage.tokens.toLocaleString();
+  document.getElementById('stat-tokens').textContent=(usage.tokens||0).toLocaleString();
   document.getElementById('tokens-bar').style.width=pct_t+'%';
-  document.getElementById('tokens-used-label').textContent=simUsage.tokens.toLocaleString()+' / '+limits.tokens.toLocaleString();
+  document.getElementById('tokens-used-label').textContent=(usage.tokens||0).toLocaleString()+' / '+limits.tokens.toLocaleString();
   document.getElementById('tokens-pct').textContent=pct_t+'%';
 
-  document.getElementById('stat-requests').textContent=simUsage.requests.toLocaleString();
+  document.getElementById('stat-requests').textContent=(usage.requests||0).toLocaleString();
   document.getElementById('requests-bar').style.width=pct_r+'%';
-  document.getElementById('requests-label').textContent=simUsage.requests.toLocaleString()+' / '+limits.requests.toLocaleString();
+  document.getElementById('requests-label').textContent=(usage.requests||0).toLocaleString()+' / '+limits.requests.toLocaleString();
   document.getElementById('requests-pct').textContent=pct_r+'%';
 
   // Plan
@@ -587,25 +594,30 @@ function populateDashboard(user) {
   if(userPlan!=='free'){document.getElementById('upgrade-link').textContent='Manage Plan ↗';document.getElementById('sub-upgrade-btn').textContent='Manage Plan'}
 
   // Models chips (overview)
-  const models = userPlan==='ultrawork'?ultraModels:userPlan==='pro'?proModels:freeModels;
+  const models = dashboardState.models?.length
+    ? dashboardState.models.map(name=>({name,limit:userPlan==='ultrawork'?'Unlimited':(limits.tokens/1000)+'K/day',status:'active'}))
+    : userPlan==='ultrawork'?ultraModels:userPlan==='pro'?proModels:freeModels;
   document.getElementById('models-chips').innerHTML=models.slice(0,6).map(m=>`<div class="model-chip"><span class="model-chip-dot green"></span>${m.name}</div>`).join('')+(models.length>6?`<div class="model-chip" style="color:#8A8A96">+${models.length-6} more</div>`:'');
 
   // Models table
   document.getElementById('models-tbody').innerHTML=models.map(m=>`<tr><td style="font-weight:600">${m.name}</td><td class="mono" style="color:#8A8A96">Chat</td><td class="mono">${m.limit}</td><td><span style="color:#34d399;font-size:12px">● Active</span></td></tr>`).join('');
 
+  const activity = dashboardState.activity?.length ? dashboardState.activity : activityLog;
+
   // Recent activity (overview)
-  document.getElementById('recent-activity').innerHTML=activityLog.slice(0,4).map(a=>`<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.03);font-size:12px"><span class="activity-dot ${a.status}"></span><span style="flex:1;color:#E8E8EC;font-family:'JetBrains Mono',monospace">${a.endpoint}</span><span style="color:#8A8A96">${a.time}</span></div>`).join('');
+  document.getElementById('recent-activity').innerHTML=activity.slice(0,4).map(a=>`<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.03);font-size:12px"><span class="activity-dot ${a.status}"></span><span style="flex:1;color:#E8E8EC;font-family:'JetBrains Mono',monospace">${a.endpoint}</span><span style="color:#8A8A96">${a.time}</span></div>`).join('');
 
   // Activity log table
-  document.getElementById('activity-tbody').innerHTML=activityLog.map(a=>`<tr><td><span class="activity-dot ${a.status}" style="display:inline-block;margin-right:6px"></span>${a.status}</td><td class="mono">${a.endpoint}</td><td style="color:#8A8A96">${a.model}</td><td class="mono">${a.tokens||'—'}</td><td style="color:#8A8A96">${a.time}</td></tr>`).join('');
+  document.getElementById('activity-tbody').innerHTML=activity.map(a=>`<tr><td><span class="activity-dot ${a.status}" style="display:inline-block;margin-right:6px"></span>${a.status}</td><td class="mono">${a.endpoint}</td><td style="color:#8A8A96">${a.model}</td><td class="mono">${a.tokens||'—'}</td><td style="color:#8A8A96">${a.time}</td></tr>`).join('');
 
   // Usage chart
-  const maxT=Math.max(...weeklyUsage.map(d=>d.tokens));
-  document.getElementById('usage-chart').innerHTML=weeklyUsage.map(d=>{
+  const chartUsage=[...weeklyUsage.slice(0,6),{day:'Today',tokens:usage.tokens||0}];
+  const maxT=Math.max(1,...chartUsage.map(d=>d.tokens));
+  document.getElementById('usage-chart').innerHTML=chartUsage.map(d=>{
     const h=Math.max(8,Math.round(d.tokens/maxT*140));
     return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px"><div style="font-size:10px;color:#8A8A96;font-family:'JetBrains Mono',monospace">${(d.tokens/1000).toFixed(1)}K</div><div style="width:100%;height:${h}px;background:linear-gradient(180deg,#00E5FF,rgba(0,229,255,0.3));border-radius:4px 4px 0 0;transition:height .4s"></div></div>`;
   }).join('');
-  document.getElementById('chart-labels').innerHTML=weeklyUsage.map(d=>`<span style="flex:1;text-align:center">${d.day}</span>`).join('');
+  document.getElementById('chart-labels').innerHTML=chartUsage.map(d=>`<span style="flex:1;text-align:center">${d.day}</span>`).join('');
 
   // Profile
   if(user){
@@ -619,6 +631,72 @@ function populateDashboard(user) {
     document.getElementById('profile-providers').textContent=providers.charAt(0).toUpperCase()+providers.slice(1);
     document.getElementById('profile-plan').textContent=planNames[userPlan];
   }
+}
+
+async function dashboardAuthFetch(path, token, options = {}) {
+  const res = await fetch(path, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: 'Bearer '+token,
+      ...(options.headers || {}),
+    },
+  });
+  const data = await res.json().catch(()=>({}));
+  if(!res.ok) throw new Error(data.message || data.error || res.statusText);
+  return data;
+}
+
+function applyAccountState(account) {
+  if(!account) return;
+  const plan = account.plan || 'free';
+  dashboardState = {
+    plan,
+    usage: {
+      tokens: account.usage?.tokens_used || account.tokens_used || account.quota?.used || 0,
+      requests: account.usage?.requests || account.requests || 0,
+    },
+    limits: account.limits || planLimits[plan] || planLimits.free,
+    models: account.models || null,
+    activity: account.usage ? [
+      {status:'success',endpoint:'/auth/cli/session',model:'gateway',tokens:0,time:'now'},
+      {status:'success',endpoint:'/auth/me',model:'Clerk + Neon',tokens:0,time:'now'},
+    ] : [],
+  };
+}
+
+async function syncDashboardAccount(user, clerkToken) {
+  const profile = {
+    email: user.primaryEmailAddress?.emailAddress || '',
+    firstName: user.firstName || '',
+    lastName: user.lastName || '',
+    name: user.fullName || '',
+    username: user.username || '',
+    imageUrl: user.imageUrl || '',
+  };
+
+  const synced = await dashboardAuthFetch('/auth/sync', clerkToken, {
+    method:'POST',
+    body: JSON.stringify(profile),
+  }).catch(err=>{
+    console.warn('Dashboard user sync failed:', err.message);
+    return null;
+  });
+  if(synced) applyAccountState(synced);
+
+  const cliSession = await dashboardAuthFetch('/auth/cli/session', clerkToken, {
+    method:'POST',
+    body: JSON.stringify({
+      ...profile,
+      machine_fingerprint: 'dashboard-'+user.id,
+      version: 'dashboard',
+    }),
+  }).catch(err=>{
+    console.warn('CLI session mint failed:', err.message);
+    return null;
+  });
+  if(cliSession) applyAccountState(cliSession);
+  return cliSession;
 }
 
 /* ═══ Copy Token ═══ */
@@ -694,8 +772,10 @@ window.addEventListener('load',async()=>{
     // Mount minimal UserButton
     window.Clerk.mountUserButton(document.getElementById('user-button'),{afterSignOutUrl:window.location.href});
 
-    // Get session token
-    sessionToken=await window.Clerk.session.getToken();
+    // Sync Clerk identity to Neon and mint a CLI gateway session
+    const clerkSessionToken=await window.Clerk.session.getToken();
+    const cliSession=await syncDashboardAccount(user, clerkSessionToken);
+    sessionToken=cliSession?.session_token || clerkSessionToken;
     if(sessionToken){
       const masked=sessionToken.slice(0,20)+'••••••••'+sessionToken.slice(-8);
       document.getElementById('session-token-display').textContent=masked;
