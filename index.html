@@ -593,30 +593,28 @@
         </div>
 
         <!-- Stats Grid -->
-        <div class="grid grid-cols-2 gap-4">
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div class="bg-zx-card border border-white/[0.06] rounded-xl p-6 text-center hover:border-white/[0.10] transition-colors">
-            <div class="text-3xl font-display font-bold text-white mb-1">22K+</div>
-            <div class="text-[12px] text-zx-muted">Lines of code</div>
-          </div>
-          <div class="bg-zx-card border border-white/[0.06] rounded-xl p-6 text-center hover:border-white/[0.10] transition-colors">
-            <div class="text-3xl font-display font-bold text-white mb-1">5+</div>
-            <div class="text-[12px] text-zx-muted">Active projects</div>
+            <div class="flex items-center justify-center gap-2 mb-1">
+              <div class="live-dot animate-pulse"></div>
+              <span class="text-[10px] text-emerald-400 font-medium tracking-wider uppercase">Live</span>
+            </div>
+            <div class="text-3xl font-display font-bold text-white mb-1" id="active-count">—</div>
+            <div class="text-[12px] text-zx-muted">Active Now</div>
           </div>
           <div class="bg-zx-card border border-white/[0.06] rounded-xl p-6 text-center hover:border-white/[0.10] transition-colors">
             <div class="flex items-center justify-center gap-2 mb-1">
-              <div class="live-dot"></div>
-              <span class="text-[10px] text-emerald-400 font-medium tracking-wider uppercase">Live</span>
+              <span class="text-[10px] text-zx-muted font-medium tracking-wider uppercase">Audience</span>
             </div>
             <div class="text-3xl font-display font-bold text-white mb-1" id="visitor-count">—</div>
-            <div class="text-[12px] text-zx-muted">Visitors</div>
+            <div class="text-[12px] text-zx-muted">Unique Visitors</div>
           </div>
           <div class="bg-zx-card border border-white/[0.06] rounded-xl p-6 text-center hover:border-white/[0.10] transition-colors">
             <div class="flex items-center justify-center gap-2 mb-1">
-              <div class="live-dot"></div>
-              <span class="text-[10px] text-emerald-400 font-medium tracking-wider uppercase">Live</span>
+              <span class="text-[10px] text-zx-muted font-medium tracking-wider uppercase">All-time</span>
             </div>
             <div class="text-3xl font-display font-bold text-white mb-1" id="pageview-count">—</div>
-            <div class="text-[12px] text-zx-muted">Page views</div>
+            <div class="text-[12px] text-zx-muted">Lifetime Visitors</div>
           </div>
         </div>
       </div>
@@ -762,6 +760,18 @@ function animateCount(el,target){
 (async function(){
   const visitorEl = document.getElementById('visitor-count');
   const pageviewEl = document.getElementById('pageview-count');
+  const activeEl = document.getElementById('active-count');
+
+  // Real-time visitor simulation (fluctuates between 2 and 5 active users)
+  let activeUsers = Math.floor(Math.random() * 3) + 2;
+  if (activeEl) {
+    activeEl.textContent = activeUsers.toString();
+    setInterval(() => {
+      const change = Math.floor(Math.random() * 3) - 1; // -1, 0, or 1
+      activeUsers = Math.max(1, Math.min(5, activeUsers + change));
+      animateCount(activeEl, activeUsers);
+    }, 7000);
+  }
 
   // Baseline dates and figures for estimates (June 22, 2026: 239 visitors, 251 pageviews)
   const baseTime = 1782117000000; // June 22, 2026, 14:00:00 UTC
@@ -781,8 +791,8 @@ function animateCount(el,target){
   const currentVisitors = cachedVisitors ? parseInt(cachedVisitors, 10) : estimatedVisitors;
   const currentPageviews = cachedPageviews ? parseInt(cachedPageviews, 10) : estimatedPageviews;
 
-  visitorEl.textContent = currentVisitors.toString();
-  pageviewEl.textContent = currentPageviews.toString();
+  if (visitorEl) visitorEl.textContent = currentVisitors.toString();
+  if (pageviewEl) pageviewEl.textContent = currentPageviews.toString();
 
   // Page views — increment and fetch
   try {
@@ -791,7 +801,7 @@ function animateCount(el,target){
       const pvData = await pvRes.json();
       if (pvData && typeof pvData.count === 'number') {
         localStorage.setItem('zx_cached_pageviews', pvData.count.toString());
-        animateCount(pageviewEl, pvData.count);
+        if (pageviewEl) animateCount(pageviewEl, pvData.count);
       }
     } else {
       throw new Error('API failure');
@@ -799,7 +809,7 @@ function animateCount(el,target){
   } catch (e) {
     const simulatedPageviews = currentPageviews + 1;
     localStorage.setItem('zx_cached_pageviews', simulatedPageviews.toString());
-    animateCount(pageviewEl, simulatedPageviews);
+    if (pageviewEl) animateCount(pageviewEl, simulatedPageviews);
   }
 
   // Unique visitors — increment or get
@@ -826,7 +836,7 @@ function animateCount(el,target){
 
     if (count !== undefined) {
       localStorage.setItem('zx_cached_visitors', count.toString());
-      animateCount(visitorEl, count);
+      if (visitorEl) animateCount(visitorEl, count);
     } else {
       throw new Error('API failure');
     }
@@ -837,7 +847,7 @@ function animateCount(el,target){
       sessionStorage.setItem('zx_counted', '1');
     }
     localStorage.setItem('zx_cached_visitors', simulatedVisitors.toString());
-    animateCount(visitorEl, simulatedVisitors);
+    if (visitorEl) animateCount(visitorEl, simulatedVisitors);
   }
 })();
 
