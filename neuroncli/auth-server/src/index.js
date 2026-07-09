@@ -1,6 +1,5 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import { clerkMiddleware, getAuth } from '@clerk/hono';
 import { neon } from '@neondatabase/serverless';
 
 const app = new Hono();
@@ -123,9 +122,25 @@ function planQuota(plan, used = 0, requests = 0) {
   };
 }
 
+function readIdentityConfig(c) {
+  return {
+    supabaseUrl: String(c.env.SUPABASE_URL || "").trim(),
+    supabaseKey: String(c.env.SUPABASE_PUBLISHABLE_KEY || c.env.SUPABASE_ANON_KEY || "").trim(),
+    providers: String(c.env.SUPABASE_AUTH_PROVIDERS || "google,github,email")
+      .split(",")
+      .map((value) => value.trim().toLowerCase())
+      .filter(Boolean),
+    storageKey: String(c.env.SUPABASE_STORAGE_KEY || "zerox-supabase-auth").trim(),
+  };
+}
+
 function authClaimsPlan(auth) {
   const claims = auth?.sessionClaims || {};
+  const appMeta = claims?.app_metadata || auth?.user?.app_metadata || {};
+  const userMeta = claims?.user_metadata || auth?.user?.user_metadata || {};
   return normalizePlan(
+    appMeta?.plan ||
+    userMeta?.plan ||
     claims?.public_metadata?.plan ||
     claims?.private_metadata?.plan ||
     claims?.metadata?.plan ||
@@ -133,7 +148,7 @@ function authClaimsPlan(auth) {
   );
 }
 
-function clerkProfileFromBody(body = {}) {
+function identityProfileFromBody(body = {}) {
   const firstName = body.firstName || body.first_name || "";
   const lastName = body.lastName || body.last_name || "";
   const name = body.name || body.fullName || [firstName, lastName].filter(Boolean).join(" ");
@@ -145,6 +160,104 @@ function clerkProfileFromBody(body = {}) {
     imageUrl: body.imageUrl || body.image_url || "",
     username: body.username || "",
   };
+}
+
+function identityProfileFromUser(user = {}) {
+  const metadata = user.user_metadata || {};
+  const appMetadata = user.app_metadata || {};
+  const firstName = metadata.first_name || metadata.given_name || "";
+  const lastName = metadata.last_name || metadata.family_name || "";
+  const providerList = Array.isArray(appMetadata.providers)
+    ? appMetadata.providers
+    : appMetadata.provider
+      ? [appMetadata.provider]
+      : [];
+  return {
+    email: user.email || metadata.email || "",
+    firstName,
+    lastName,
+    name:
+      metadata.full_name ||
+      metadata.name ||
+      [firstName, lastName].filter(Boolean).join(" "),
+    imageUrl: metadata.avatar_url || metadata.picture || "",
+    username:
+      metadata.user_name ||
+      metadata.username ||
+      metadata.preferred_username ||
+      "",
+    providers: providerList,
+  };
+}
+
+function mergeIdentityProfiles(base = {}, override = {}) {
+  const merged = { ...base };
+  for (const [key, value] of Object.entries(override)) {
+    if (value === null || value === undefined) continue;
+    if (typeof value === "string" && !value.trim()) continue;
+    if (Array.isArray(value) && value.length === 0) continue;
+    merged[key] = value;
+  }
+  return merged;
+}
+
+async function getIdentityAuth(c) {
+  const authHeader = c.req.header("Authorization");
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return {
+      ok: false,
+      status: 401,
+      error: "Unauthorized",
+      message: "Missing access token",
+    };
+  }
+
+  const { supabaseUrl, supabaseKey } = readIdentityConfig(c);
+  if (!supabaseUrl || !supabaseKey) {
+    return {
+      ok: false,
+      status: 503,
+      error: "Identity provider not configured",
+      message: "Set SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY (or SUPABASE_ANON_KEY).",
+    };
+  }
+
+  try {
+    const response = await fetch(`${supabaseUrl}/auth/v1/user`, {
+      headers: {
+        Authorization: authHeader,
+        apikey: supabaseKey,
+      },
+    });
+
+    if (!response.ok) {
+      return {
+        ok: false,
+        status: 401,
+        error: "Unauthorized",
+        message: "Invalid Supabase session",
+      };
+    }
+
+    const user = await response.json();
+    return {
+      ok: true,
+      userId: user.id,
+      user,
+      sessionClaims: {
+        app_metadata: user.app_metadata || {},
+        user_metadata: user.user_metadata || {},
+        email: user.email || "",
+      },
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      status: 502,
+      error: "Identity lookup failed",
+      message: err.message,
+    };
+  }
 }
 
 async function ensureUserSchema(c) {
@@ -335,12 +448,26 @@ app.use('*', cors({
 
 // 1. Health check
 api.get('/health', (c) => {
+  const { supabaseUrl, supabaseKey } = readIdentityConfig(c);
   return c.json({
     status: "ok",
     service: "neuroncli-gateway-worker",
     version: "2.0.0",
     azure_configured: !!c.env.AZURE_OPENAI_API_KEY,
+    supabase_configured: !!(supabaseUrl && supabaseKey),
     kv_bound: !!c.env.SESSIONS_KV,
+  });
+});
+
+api.get('/auth/config', (c) => {
+  const { supabaseUrl, supabaseKey, providers, storageKey } = readIdentityConfig(c);
+  return c.json({
+    provider: "supabase",
+    configured: !!(supabaseUrl && supabaseKey),
+    supabase_url: supabaseUrl,
+    supabase_key: supabaseKey,
+    providers,
+    storage_key: storageKey,
   });
 });
 
@@ -392,20 +519,23 @@ const createSessionHandler = async (c) => {
 api.post('/auth/session', createSessionHandler);
 api.post('/auth/azure/exchange', createSessionHandler);
 
-const createClerkCliSessionHandler = async (c) => {
-  const auth = getAuth(c);
-  if (!auth || !auth.userId) {
-    return c.json({ error: "Unauthorized", message: "Invalid Clerk session" }, 401);
+const createIdentityCliSessionHandler = async (c) => {
+  const auth = await getIdentityAuth(c);
+  if (!auth.ok || !auth.userId) {
+    return c.json({ error: auth.error, message: auth.message }, auth.status);
   }
 
   const body = await c.req.json().catch(() => ({}));
-  const fp = body.machine_fingerprint || body.fingerprint || "clerk-user";
-  const profile = clerkProfileFromBody(body);
+  const fp = body.machine_fingerprint || body.fingerprint || "supabase-user";
+  const profile = mergeIdentityProfiles(
+    identityProfileFromUser(auth.user),
+    identityProfileFromBody(body),
+  );
   let user = null;
   try {
     user = await syncUserRecord(c, auth, profile);
   } catch (err) {
-    console.warn("Clerk CLI session sync failed:", err.message);
+    console.warn("Supabase CLI session sync failed:", err.message);
   }
 
   const account = userResponse(user, auth.userId);
@@ -434,7 +564,7 @@ const createClerkCliSessionHandler = async (c) => {
   });
 };
 
-api.post('/auth/cli/session', clerkMiddleware(), createClerkCliSessionHandler);
+api.post('/auth/cli/session', createIdentityCliSessionHandler);
 
 // 3. Verify session (main & legacy verify)
 const verifySessionHandler = async (c) => {
@@ -494,16 +624,20 @@ api.get('/auth/plan', async (c) => {
   });
 });
 
-// 3.5 Clerk user profile DB sync
-api.post('/auth/sync', clerkMiddleware(), async (c) => {
-  const auth = getAuth(c);
-  if (!auth || !auth.userId) {
-    return c.json({ error: "Unauthorized", message: "Invalid session" }, 401);
+// 3.5 Identity profile DB sync
+api.post('/auth/sync', async (c) => {
+  const auth = await getIdentityAuth(c);
+  if (!auth.ok || !auth.userId) {
+    return c.json({ error: auth.error, message: auth.message }, auth.status);
   }
 
   try {
     const body = await c.req.json().catch(() => ({}));
-    const user = await syncUserRecord(c, auth, clerkProfileFromBody(body));
+    const profile = mergeIdentityProfiles(
+      identityProfileFromUser(auth.user),
+      identityProfileFromBody(body),
+    );
+    const user = await syncUserRecord(c, auth, profile);
     if (!user) {
       return c.json({ status: "skipped", message: "DATABASE_URL is not configured on the Worker" });
     }
@@ -514,10 +648,10 @@ api.post('/auth/sync', clerkMiddleware(), async (c) => {
   }
 });
 
-api.get('/auth/me', clerkMiddleware(), async (c) => {
-  const auth = getAuth(c);
-  if (!auth || !auth.userId) {
-    return c.json({ error: "Unauthorized", message: "Invalid Clerk session" }, 401);
+api.get('/auth/me', async (c) => {
+  const auth = await getIdentityAuth(c);
+  if (!auth.ok || !auth.userId) {
+    return c.json({ error: auth.error, message: auth.message }, auth.status);
   }
   try {
     const user = await loadUserRecord(c, auth.userId);

@@ -18,14 +18,9 @@
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"/>
   <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
 
-  <!-- Clerk Authentication -->
-  <script
-    async
-    crossorigin="anonymous"
-    data-clerk-publishable-key="pk_test_bW9kZWwtYmVhci0yOS5jbGVyay5hY2NvdW50cy5kZXYk"
-    src="https://model-bear-29.clerk.accounts.dev/npm/@clerk/clerk-js@latest/dist/clerk.browser.js"
-    type="text/javascript">
-  </script>
+  <!-- Supabase Authentication -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="./zerox-auth.js"></script>
 
   <style>
     *{box-sizing:border-box;margin:0;padding:0}
@@ -410,7 +405,7 @@
 
     <div class="dash-section dash-card">
       <div class="dash-card-label">Session Token</div>
-      <p style="font-size:13px;color:#8A8A96;margin-bottom:12px">Your active NeuronCLI gateway session token, minted from your Clerk sign-in.</p>
+      <p style="font-size:13px;color:#8A8A96;margin-bottom:12px">Your active NeuronCLI gateway session token, minted from your authenticated ZeroX session.</p>
       <div class="api-key-box">
         <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" id="session-token-display">••••••••••••••••••••••••</span>
         <button onclick="copyToken()" id="copy-token-btn">Copy</button>
@@ -466,7 +461,7 @@
     </div>
 
     <div class="dash-section">
-      <button onclick="if(window.Clerk)window.Clerk.signOut({redirectUrl:window.location.origin})" style="background:none;border:1px solid rgba(248,113,113,0.3);color:#f87171;padding:10px 20px;border-radius:8px;font-size:13px;cursor:pointer;transition:all .15s">Sign Out</button>
+      <button onclick="if(window.ZeroXAuth)window.ZeroXAuth.signOut({redirectUrl:window.location.origin})" style="background:none;border:1px solid rgba(248,113,113,0.3);color:#f87171;padding:10px 20px;border-radius:8px;font-size:13px;cursor:pointer;transition:all .15s">Sign Out</button>
     </div>
   </div>
 
@@ -623,12 +618,11 @@ function populateDashboard(user) {
   if(user){
     document.getElementById('profile-avatar').src=user.imageUrl;
     document.getElementById('profile-name').textContent=user.fullName||'Developer';
-    document.getElementById('profile-email').textContent=user.primaryEmailAddress?.emailAddress||'—';
+    document.getElementById('profile-email').textContent=user.email||'—';
     document.getElementById('profile-uid').textContent=user.id;
     document.getElementById('profile-username').textContent=user.username||'—';
-    document.getElementById('profile-created').textContent=new Date(user.createdAt).toLocaleDateString('en-US',{year:'numeric',month:'long',day:'numeric'});
-    const providers=user.externalAccounts?.map(a=>a.provider).join(', ')||'None';
-    document.getElementById('profile-providers').textContent=providers.charAt(0).toUpperCase()+providers.slice(1);
+    document.getElementById('profile-created').textContent=user.createdAt ? new Date(user.createdAt).toLocaleDateString('en-US',{year:'numeric',month:'long',day:'numeric'}) : '—';
+    document.getElementById('profile-providers').textContent=user.providersDisplay||'Email';
     document.getElementById('profile-plan').textContent=planNames[userPlan];
   }
 }
@@ -660,14 +654,14 @@ function applyAccountState(account) {
     models: account.models || null,
     activity: account.usage ? [
       {status:'success',endpoint:'/auth/cli/session',model:'gateway',tokens:0,time:'now'},
-      {status:'success',endpoint:'/auth/me',model:'Clerk + Neon',tokens:0,time:'now'},
+      {status:'success',endpoint:'/auth/me',model:'Supabase + Neon',tokens:0,time:'now'},
     ] : [],
   };
 }
 
-async function syncDashboardAccount(user, clerkToken) {
+async function syncDashboardAccount(user, accessToken) {
   const profile = {
-    email: user.primaryEmailAddress?.emailAddress || '',
+    email: user.email || '',
     firstName: user.firstName || '',
     lastName: user.lastName || '',
     name: user.fullName || '',
@@ -675,7 +669,7 @@ async function syncDashboardAccount(user, clerkToken) {
     imageUrl: user.imageUrl || '',
   };
 
-  const synced = await dashboardAuthFetch('/auth/sync', clerkToken, {
+  const synced = await dashboardAuthFetch('/auth/sync', accessToken, {
     method:'POST',
     body: JSON.stringify(profile),
   }).catch(err=>{
@@ -684,7 +678,7 @@ async function syncDashboardAccount(user, clerkToken) {
   });
   if(synced) applyAccountState(synced);
 
-  const cliSession = await dashboardAuthFetch('/auth/cli/session', clerkToken, {
+  const cliSession = await dashboardAuthFetch('/auth/cli/session', accessToken, {
     method:'POST',
     body: JSON.stringify({
       ...profile,
@@ -709,26 +703,6 @@ function copyToken(){
 }
 
 /* ═══ Clerk Integration ═══ */
-function waitForClerk(ms){
-  return new Promise((resolve,reject)=>{
-    if(window.Clerk){resolve(window.Clerk);return}
-    let elapsed=0;const iv=setInterval(()=>{elapsed+=100;if(window.Clerk){clearInterval(iv);resolve(window.Clerk)}else if(elapsed>=ms){clearInterval(iv);reject(new Error('Clerk timeout'))}},100);
-  });
-}
-
-const clerkConfig={
-  appearance:{
-    layout:{logoImageUrl:window.location.origin+'/Assets/Zero-xBnW.png',logoPlacement:'inside',shimmer:true},
-    elements:{
-      headerTitle:{textAlign:'center',width:'100%'},headerSubtitle:{textAlign:'center',width:'100%'},
-      logoBox:{height:'36px'},logoImage:{height:'36px',mixBlendMode:'lighten'},
-      branding:{display:'none'},footerAction__branding:{display:'none'},
-      footer:{'& > *:last-child':{display:'none'}},poweredBy:{display:'none'}
-    }
-  },
-  localization:{signIn:{start:{title:'Sign in',subtitle:'to continue to ZeroX Dashboard'}},signUp:{start:{title:'Create your account',subtitle:'to continue to ZeroX Dashboard'}}}
-};
-
 window.addEventListener('load',async()=>{
   const loadEl=document.getElementById('loading-state');
   const gateEl=document.getElementById('signin-gate');
@@ -741,48 +715,51 @@ window.addEventListener('load',async()=>{
   document.getElementById('sub-upgrade-btn').href=isLocal?'./neuron.html#pricing':'https://neuron.zero-x.live#pricing';
 
   try{
-    await waitForClerk(10000);
-    await window.Clerk.load(clerkConfig);
+    await window.ZeroXAuth.init();
+    const user=await window.ZeroXAuth.getUser();
+    const profile=await window.ZeroXAuth.getProfile(user);
 
-    if(!window.Clerk.user){
-      // Show sign-in gate instead of redirecting
+    if(!profile){
       loadEl.style.display='none';
       gateEl.style.display='block';
-      document.getElementById('gate-signin-btn').addEventListener('click',()=>{
-        window.Clerk.openSignIn({
-          ...clerkConfig,
-          redirectUrl: window.location.href,
-          afterSignInUrl: window.location.href,
-          afterSignUpUrl: window.location.href,
-        });
-      });
+      document.getElementById('gate-signin-btn').addEventListener('click',async()=>{
+        try{
+          await window.ZeroXAuth.openAuthModal({
+            title:'Sign in',
+            subtitle:'to continue to ZeroX Dashboard',
+          });
+        }catch(err){
+          console.error('Supabase sign-in error:',err);
+          alert(err.message || 'Authentication service could not load. Please refresh and try again.');
+        }
+      },{once:true});
       return;
     }
-
-    const user=window.Clerk.user;
 
     // Sidebar user info — show card now that user is authenticated
     const sidebarUser=document.getElementById('sidebar-user');
     sidebarUser.style.display='flex';
-    document.getElementById('sidebar-avatar').src=user.imageUrl;
-    document.getElementById('sidebar-name').textContent=user.fullName||'Developer';
-    document.getElementById('sidebar-email').textContent=user.primaryEmailAddress?.emailAddress||'';
-    document.getElementById('greeting-name').textContent=(user.firstName||'Developer');
+    document.getElementById('sidebar-avatar').src=profile.imageUrl;
+    document.getElementById('sidebar-name').textContent=profile.fullName||'Developer';
+    document.getElementById('sidebar-email').textContent=profile.email||'';
+    document.getElementById('greeting-name').textContent=(profile.firstName||'Developer');
 
-    // Mount minimal UserButton
-    window.Clerk.mountUserButton(document.getElementById('user-button'),{afterSignOutUrl:window.location.href});
+    // Mount minimal user button
+    window.ZeroXAuth.mountUserButton(document.getElementById('user-button'),{afterSignOutUrl:window.location.href});
 
-    // Sync Clerk identity to Neon and mint a CLI gateway session
-    const clerkSessionToken=await window.Clerk.session.getToken();
-    const cliSession=await syncDashboardAccount(user, clerkSessionToken);
-    sessionToken=cliSession?.session_token || clerkSessionToken;
+    // Sync identity to Neon and mint a CLI gateway session
+    const accessToken=await window.ZeroXAuth.getAccessToken();
+    const cliSession=await syncDashboardAccount(profile, accessToken);
+    sessionToken=cliSession?.session_token || '';
     if(sessionToken){
       const masked=sessionToken.slice(0,20)+'••••••••'+sessionToken.slice(-8);
       document.getElementById('session-token-display').textContent=masked;
+    }else{
+      document.getElementById('session-token-display').textContent='Session unavailable';
     }
 
     // Populate all dashboard data
-    populateDashboard(user);
+    populateDashboard(profile);
 
     // Show overview tab
     loadEl.style.display='none';

@@ -45,14 +45,9 @@
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"/>
   <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
 
-  <!-- ═══ Clerk Authentication ═══ -->
-  <script
-    async
-    crossorigin="anonymous"
-    data-clerk-publishable-key="pk_test_bW9kZWwtYmVhci0yOS5jbGVyay5hY2NvdW50cy5kZXYk"
-    src="https://model-bear-29.clerk.accounts.dev/npm/@clerk/clerk-js@latest/dist/clerk.browser.js"
-    type="text/javascript">
-  </script>
+  <!-- ═══ Supabase Authentication ═══ -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="./zerox-auth.js"></script>
 
   <!-- ═══ Tailwind ═══ -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -147,7 +142,7 @@
     /* ═══ Section Divider Line ═══ */
     .section-line{height:1px;background:linear-gradient(90deg,transparent,rgba(255,255,255,.06) 20%,rgba(255,255,255,.06) 80%,transparent)}
 
-    /* ═══ Clerk UI Custom Overrides ═══ */
+    /* ═══ Auth UI Custom Overrides ═══ */
     .cl-headerTitle, .cl-headerSubtitle {
       text-align: center !important;
       width: 100% !important;
@@ -851,96 +846,39 @@ function animateCount(el,target){
   }
 })();
 
-/* ═══ Clerk Authentication Integration ═══ */
-const clerkConfig = {
-  appearance: {
-    layout: {
-      logoImageUrl: window.location.origin + '/Assets/Zero-xBnW.png',
-      logoPlacement: 'inside',
-      shimmer: true,
-    },
-    elements: {
-      headerTitle: {
-        textAlign: 'center',
-        width: '100%',
-      },
-      headerSubtitle: {
-        textAlign: 'center',
-        width: '100%',
-      },
-      logoBox: {
-        height: '36px',
-      },
-      logoImage: {
-        height: '36px',
-        mixBlendMode: 'lighten',
-      },
-      branding: {
-        display: 'none',
-      },
-      footerAction__branding: {
-        display: 'none',
-      },
-      footer: {
-        '& > *:last-child': { display: 'none' },
-      },
-      poweredBy: {
-        display: 'none',
-      }
-    }
-  },
-  localization: {
-    signIn: {
-      start: {
-        title: "Sign in",
-        subtitle: "to continue to ZeroX"
-      }
-    },
-    signUp: {
-      start: {
-        title: "Create your account",
-        subtitle: "to continue to ZeroX"
-      }
-    }
-  }
-};
-
-/* ═══ Wait for Clerk SDK to be available (handles async loading) ═══ */
-function waitForClerk(timeoutMs) {
-  return new Promise(function(resolve, reject) {
-    if (window.Clerk) { resolve(window.Clerk); return; }
-    var elapsed = 0;
-    var interval = setInterval(function() {
-      elapsed += 100;
-      if (window.Clerk) { clearInterval(interval); resolve(window.Clerk); }
-      else if (elapsed >= timeoutMs) { clearInterval(interval); reject(new Error('Clerk SDK did not load within ' + timeoutMs + 'ms')); }
-    }, 100);
-  });
-}
-
-var clerkReady = false;
-
+/* ═══ Supabase Authentication Integration ═══ */
 window.addEventListener('load', async () => {
   const signinBtn = document.getElementById('signin-btn');
+  const userButtonDiv = document.getElementById('user-button');
+  const navLinks = document.querySelector('header nav');
+  const isLocal = ['localhost', '127.0.0.1'].includes(window.location.hostname);
+  const neuronUrl = isLocal ? './neuron.html' : 'https://neuron.zero-x.live';
+  const dashboardUrl = isLocal ? './dashboard.html' : 'https://dashboard.zero-x.live';
 
-  // Attach sign-in handler immediately
+  const navNeuronLink = document.getElementById('nav-neuron-link');
+  if (navNeuronLink) navNeuronLink.href = neuronUrl;
+  const navGetNeuronBtn = document.getElementById('nav-getneuron-btn');
+  if (navGetNeuronBtn) navGetNeuronBtn.href = neuronUrl;
+  const heroExploreBtn = document.getElementById('hero-explore-btn');
+  if (heroExploreBtn) heroExploreBtn.href = neuronUrl;
+  const productNeuCockpitLink = document.getElementById('product-neucockpit-link');
+  if (productNeuCockpitLink) productNeuCockpitLink.href = neuronUrl;
+  const showcaseCtaBtn = document.getElementById('showcase-cta-btn');
+  if (showcaseCtaBtn) showcaseCtaBtn.href = neuronUrl;
+
   if (signinBtn) {
     signinBtn.addEventListener('click', async (e) => {
       e.preventDefault();
-      if (clerkReady && window.Clerk && window.Clerk.openSignIn) {
-        window.Clerk.openSignIn(clerkConfig);
-        return;
-      }
-      signinBtn.textContent = 'Loading…';
+      signinBtn.textContent = 'Loading...';
       signinBtn.style.pointerEvents = 'none';
       try {
-        await waitForClerk(8000);
-        if (!window.Clerk.__loaded) await window.Clerk.load(clerkConfig);
-        clerkReady = true;
-        window.Clerk.openSignIn(clerkConfig);
+        await window.ZeroXAuth.openAuthModal({
+          title: 'Sign in',
+          subtitle: 'to continue to ZeroX',
+        });
       } catch (err) {
-        console.error('Clerk sign-in error:', err);
-        alert('Authentication service could not load. Please disable any ad-blockers and refresh the page.');
+        console.error('Supabase sign-in error:', err);
+        alert(err.message || 'Authentication service could not load. Please refresh and try again.');
       } finally {
         signinBtn.textContent = 'Sign In';
         signinBtn.style.pointerEvents = '';
@@ -948,63 +886,40 @@ window.addEventListener('load', async () => {
     });
   }
 
-  // Load Clerk in background
   try {
-    await waitForClerk(10000);
-    await window.Clerk.load(clerkConfig);
-    window.Clerk.__loaded = true;
-    clerkReady = true;
+    await window.ZeroXAuth.init();
+    const user = await window.ZeroXAuth.getUser();
+    const profile = await window.ZeroXAuth.getProfile(user);
 
-    const userButtonDiv = document.getElementById('user-button');
-    const navLinks = document.querySelector('header nav');
-
-    if (window.Clerk.user) {
-      // User is signed in — hide Sign In, show user button
+    if (profile) {
       if (signinBtn) signinBtn.style.display = 'none';
 
-      // Add Dashboard link to Desktop Nav
       if (navLinks && !document.getElementById('nav-dashboard')) {
         const dashboardLink = document.createElement('a');
         dashboardLink.id = 'nav-dashboard';
-        const isLocal = ['localhost', '127.0.0.1'].includes(window.location.hostname);
-        dashboardLink.href = isLocal ? './dashboard.html' : 'https://dashboard.zero-x.live';
+        dashboardLink.href = dashboardUrl;
         dashboardLink.className = 'text-[14px] text-zx-muted hover:text-white transition-colors';
         dashboardLink.innerText = 'Dashboard';
         navLinks.appendChild(dashboardLink);
       }
 
-      // Update dynamic NeuCockpit page links based on environment
-      const isLocal = ['localhost', '127.0.0.1'].includes(window.location.hostname);
-      const neuronUrl = isLocal ? './neuron.html' : 'https://neuron.zero-x.live';
-      const navNeuronLink = document.getElementById('nav-neuron-link');
-      if (navNeuronLink) navNeuronLink.href = neuronUrl;
-      const navGetNeuronBtn = document.getElementById('nav-getneuron-btn');
-      if (navGetNeuronBtn) navGetNeuronBtn.href = neuronUrl;
-      const heroExploreBtn = document.getElementById('hero-explore-btn');
-      if (heroExploreBtn) heroExploreBtn.href = neuronUrl;
-      const productNeuCockpitLink = document.getElementById('product-neucockpit-link');
-      if (productNeuCockpitLink) productNeuCockpitLink.href = neuronUrl;
-      const showcaseCtaBtn = document.getElementById('showcase-cta-btn');
-      if (showcaseCtaBtn) showcaseCtaBtn.href = neuronUrl;
-
-      // Mount Clerk UserButton
       if (userButtonDiv) {
-        window.Clerk.mountUserButton(userButtonDiv, {
-          afterSignOutUrl: window.location.origin
+        window.ZeroXAuth.mountUserButton(userButtonDiv, {
+          afterSignOutUrl: window.location.origin,
         });
       }
 
-      // Sync user with PostgreSQL database via Hono backend
-      syncUserWithBackend(window.Clerk.user);
+      await syncUserWithBackend(profile);
     }
   } catch (err) {
-    console.error("Clerk load error:", err);
+    console.error('Supabase auth load error:', err);
   }
 });
 
-async function syncUserWithBackend(user) {
+async function syncUserWithBackend(profile) {
   try {
-    const token = await window.Clerk.session.getToken();
+    const token = await window.ZeroXAuth.getAccessToken();
+    if (!token || !profile) return;
     await fetch('/auth/sync', {
       method: 'POST',
       headers: {
@@ -1012,9 +927,12 @@ async function syncUserWithBackend(user) {
         'Authorization': `Bearer ${token}`
       },
       body: JSON.stringify({
-        email: user.primaryEmailAddress.emailAddress,
-        firstName: user.firstName,
-        lastName: user.lastName
+        email: profile.email,
+        firstName: profile.firstName,
+        lastName: profile.lastName,
+        name: profile.fullName,
+        username: profile.username,
+        imageUrl: profile.imageUrl
       })
     });
   } catch (err) {

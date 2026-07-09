@@ -16,6 +16,10 @@ OPENROUTER_CLIENT_ID = "neuroncli"
 OPENROUTER_CALLBACK_URL = "https://zero-x.live/neuroncli/callback/"
 SESSION_TTL_HOURS = "24"
 MAX_REQUESTS_PER_SESSION = "1000"
+# Configure Supabase per environment before deploying:
+# SUPABASE_URL = "https://your-project.supabase.co"
+# SUPABASE_PUBLISHABLE_KEY = "sb_publishable_xxx"
+# SUPABASE_AUTH_PROVIDERS = "google,github,email"
 
 [[kv_namespaces]]
 binding = "SESSIONS_KV"

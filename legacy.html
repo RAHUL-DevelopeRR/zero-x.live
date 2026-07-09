@@ -44,14 +44,9 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet"/>
   <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
 
-  <!-- ═══ Clerk Authentication ═══ -->
-  <script
-    async
-    crossorigin="anonymous"
-    data-clerk-publishable-key="pk_test_bW9kZWwtYmVhci0yOS5jbGVyay5hY2NvdW50cy5kZXYk"
-    src="https://model-bear-29.clerk.accounts.dev/npm/@clerk/clerk-js@latest/dist/clerk.browser.js"
-    type="text/javascript">
-  </script>
+  <!-- ═══ Supabase Authentication ═══ -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="./zerox-auth.js"></script>
 
 
   <!-- ═══ Tailwind ═══ -->
@@ -119,7 +114,7 @@
     @keyframes pulse-live{0%,100%{opacity:1;box-shadow:0 0 0 0 rgba(52,211,153,.5)}50%{opacity:.7;box-shadow:0 0 0 5px rgba(52,211,153,0)}}
     .live-dot{width:7px;height:7px;border-radius:50%;background:#34d399;animation:pulse-live 2s ease-in-out infinite}
 
-    /* ═══ Clerk UI Custom Overrides ═══ */
+    /* ═══ Auth UI Custom Overrides ═══ */
     .cl-headerTitle, .cl-headerSubtitle {
       text-align: center !important;
       width: 100% !important;
@@ -605,62 +600,40 @@ function buyNeuron(tier,amt,desc){
   rzp.on('payment.failed',function(r){alert('Payment failed: '+r.error.description+'\n\nPlease try again or contact rahultech72216@gmail.com')});
   rzp.open()}
 
-/* ═══ Clerk Authentication Integration ═══ */
-const clerkConfig = {
-  appearance: {
-    layout: {
-      logoImageUrl: window.location.origin + '/Assets/neuron_circular.png',
-      logoPlacement: 'inside',
-    },
-    elements: {
-      headerTitle: {
-        textAlign: 'center',
-        width: '100%',
-      },
-      headerSubtitle: {
-        textAlign: 'center',
-        width: '100%',
-      },
-      branding: {
-        display: 'none',
-      },
-      footerAction__branding: {
-        display: 'none',
-      }
-    }
-  },
-  localization: {
-    signIn: {
-      start: {
-        title: "Sign in",
-        subtitle: "to continue to ZeroX"
-      }
-    },
-    signUp: {
-      start: {
-        title: "Create your account",
-        subtitle: "to continue to ZeroX"
-      }
-    }
-  }
-};
-
+/* ═══ Supabase Authentication Integration ═══ */
 window.addEventListener('load', async () => {
-  if (!window.Clerk) {
-    console.warn("Clerk JS SDK not loaded yet.");
-    return;
+  const signinBtn = document.getElementById('signin-btn');
+  const userButtonDiv = document.getElementById('user-button');
+  const navLinks = document.querySelector('header nav');
+
+  if (signinBtn) {
+    signinBtn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      signinBtn.textContent = 'Loading...';
+      signinBtn.style.pointerEvents = 'none';
+      try {
+        await window.ZeroXAuth.openAuthModal({
+          title: 'Sign in',
+          subtitle: 'to continue to ZeroX',
+        });
+      } catch (err) {
+        console.error('Supabase sign-in error:', err);
+        alert(err.message || 'Authentication service could not load. Please refresh and try again.');
+      } finally {
+        signinBtn.textContent = 'Sign In';
+        signinBtn.style.pointerEvents = '';
+      }
+    });
   }
+
   try {
-    await window.Clerk.load(clerkConfig);
-    const signinBtn = document.getElementById('signin-btn');
-    const userButtonDiv = document.getElementById('user-button');
-    const navLinks = document.querySelector('header nav');
-    
-    if (window.Clerk.user) {
-      // User is signed in
+    await window.ZeroXAuth.init();
+    const user = await window.ZeroXAuth.getUser();
+    const profile = await window.ZeroXAuth.getProfile(user);
+
+    if (profile) {
       if (signinBtn) signinBtn.style.display = 'none';
-      
-      // Add Dashboard link to Desktop Nav
+
       if (navLinks && !document.getElementById('nav-dashboard')) {
         const dashboardLink = document.createElement('a');
         dashboardLink.id = 'nav-dashboard';
@@ -669,33 +642,24 @@ window.addEventListener('load', async () => {
         dashboardLink.innerText = 'Dashboard';
         navLinks.appendChild(dashboardLink);
       }
-      
-      // Mount Clerk UserButton
+
       if (userButtonDiv) {
-        window.Clerk.mountUserButton(userButtonDiv, {
-          afterSignOutUrl: window.location.origin
+        window.ZeroXAuth.mountUserButton(userButtonDiv, {
+          afterSignOutUrl: window.location.origin,
         });
       }
-      
-      // Sync user with PostgreSQL database via Hono backend
-      syncUserWithBackend(window.Clerk.user);
-    } else {
-      // User is signed out
-      if (signinBtn) {
-        signinBtn.addEventListener('click', (e) => {
-          e.preventDefault();
-          window.Clerk.openSignIn(clerkConfig);
-        });
-      }
+
+      await syncUserWithBackend(profile);
     }
   } catch (err) {
-    console.error("Clerk load error:", err);
+    console.error('Supabase auth load error:', err);
   }
 });
 
-async function syncUserWithBackend(user) {
+async function syncUserWithBackend(profile) {
   try {
-    const token = await window.Clerk.session.getToken();
+    const token = await window.ZeroXAuth.getAccessToken();
+    if (!token || !profile) return;
     await fetch('/auth/sync', {
       method: 'POST',
       headers: {
@@ -703,9 +667,12 @@ async function syncUserWithBackend(user) {
         'Authorization': `Bearer ${token}`
       },
       body: JSON.stringify({
-        email: user.primaryEmailAddress.emailAddress,
-        firstName: user.firstName,
-        lastName: user.lastName
+        email: profile.email,
+        firstName: profile.firstName,
+        lastName: profile.lastName,
+        name: profile.fullName,
+        username: profile.username,
+        imageUrl: profile.imageUrl
       })
     });
   } catch (err) {
