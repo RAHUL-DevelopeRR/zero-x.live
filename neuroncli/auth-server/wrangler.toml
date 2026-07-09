@@ -8,6 +8,22 @@ binding = "ASSETS"
 html_handling = "none"
 not_found_handling = "none"
 
+[[routes]]
+pattern = "zero-x.live"
+custom_domain = true
+
+[[routes]]
+pattern = "www.zero-x.live"
+custom_domain = true
+
+[[routes]]
+pattern = "dashboard.zero-x.live"
+custom_domain = true
+
+[[routes]]
+pattern = "neuron.zero-x.live"
+custom_domain = true
+
 
 [vars]
 AZURE_OPENAI_ENDPOINT = "https://rahul-mok8ryyn-eastus2.services.ai.azure.com"
