@@ -40,3 +40,6 @@ MAX_REQUESTS_PER_SESSION = "1000"
 [[kv_namespaces]]
 binding = "SESSIONS_KV"
 id = "717e03bfc7cf4efa84648ccd82e4c9ed"
+
+[ai]
+binding = "AI"

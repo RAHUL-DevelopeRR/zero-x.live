@@ -68,7 +68,15 @@ const PLAN_LIMITS = {
 };
 
 const MODELS_BY_PLAN = {
-  free: ["DeepSeek-V4-Flash", "Kimi-K2.5", "DeepSeek-V4-Pro"],
+  free: [
+    "DeepSeek-V4-Flash",
+    "Kimi-K2.5",
+    "DeepSeek-V4-Pro",
+    "@cf/meta/llama-3.1-8b-instruct",
+    "@cf/deepseek-ai/deepseek-coder-7b-instruct-v1.5",
+    "@cf/qwen/qwen1.5-14b-chat",
+    "@cf/mistral/mistral-7b-instruct-v0.1"
+  ],
   pro: [
     "DeepSeek-V4-Flash",
     "Kimi-K2.5",
@@ -79,6 +87,10 @@ const MODELS_BY_PLAN = {
     "model-router",
     "gpt-5.4-mini",
     "gpt-5.5-2",
+    "@cf/meta/llama-3.1-8b-instruct",
+    "@cf/deepseek-ai/deepseek-coder-7b-instruct-v1.5",
+    "@cf/qwen/qwen1.5-14b-chat",
+    "@cf/mistral/mistral-7b-instruct-v0.1"
   ],
   ultrawork: [
     "Kimi-K2.5",
@@ -92,6 +104,10 @@ const MODELS_BY_PLAN = {
     "gpt-5.4-mini",
     "gpt-5.5-2",
     "gpt-5.1-codex-max",
+    "@cf/meta/llama-3.1-8b-instruct",
+    "@cf/deepseek-ai/deepseek-coder-7b-instruct-v1.5",
+    "@cf/qwen/qwen1.5-14b-chat",
+    "@cf/mistral/mistral-7b-instruct-v0.1"
   ],
 };
 
@@ -662,7 +678,6 @@ api.get('/auth/me', async (c) => {
   }
 });
 
-// 4. LLM Streaming Proxy
 const chatCompletionsHandler = async (c) => {
   const valid = await validateSession(c);
   if (!valid) {
@@ -672,18 +687,20 @@ const chatCompletionsHandler = async (c) => {
   const { token, session } = valid;
   const azureApiKey = c.env.AZURE_OPENAI_API_KEY;
 
-  if (!azureApiKey) {
-    return c.json({
-      error: "Provider not configured",
-      hint: "Azure credentials not set on worker variables",
-    }, 503);
-  }
-
   const body = await c.req.json().catch(() => ({}));
   const { model, messages, max_tokens, stream, tools, tool_choice, temperature, top_p } = body;
 
   if (!model || !messages) {
     return c.json({ error: "Missing model or messages" }, 400);
+  }
+
+  const isWorkersAI = model.startsWith('@cf/') || model.includes('/llama') || model.includes('/mistral') || model.includes('/qwen');
+
+  if (!isWorkersAI && !azureApiKey) {
+    return c.json({
+      error: "Provider not configured",
+      hint: "Azure credentials not set on worker variables",
+    }, 503);
   }
 
   // Rate limiting
@@ -694,10 +711,132 @@ const chatCompletionsHandler = async (c) => {
     return c.json({ error: "Daily request limit exceeded" }, 429);
   }
 
+  // 1. Handle Cloudflare Workers AI Free Tier Models
+  if (isWorkersAI) {
+    if (!c.env.AI) {
+      return c.json({
+        error: "Workers AI binding not configured",
+        hint: "Please add [ai] binding to wrangler.toml",
+      }, 500);
+    }
+
+    session.provider_used = "cloudflare-workers-ai";
+    await setSession(c, token, session);
+    await recordUserUsage(c, session.user_id, 1, 0);
+
+    try {
+      if (stream) {
+        const aiStream = await c.env.AI.run(model, {
+          messages: messages,
+          stream: true,
+          max_tokens: max_tokens || 2048,
+        });
+
+        // Translate Cloudflare's stream format to OpenAI-compatible Server-Sent Events (SSE)
+        const { readable, writable } = new TransformStream();
+        const writer = writable.getWriter();
+        const reader = aiStream.getReader();
+        const decoder = new TextDecoder();
+        const encoder = new TextEncoder();
+        let buffer = '';
+
+        (async () => {
+          try {
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) {
+                await writer.write(encoder.encode("data: [DONE]\n\n"));
+                break;
+              }
+              buffer += decoder.decode(value, { stream: true });
+              const lines = buffer.split('\n');
+              buffer = lines.pop();
+
+              for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                  const dataStr = line.slice(6).trim();
+                  if (dataStr === '[DONE]') continue;
+                  try {
+                    const parsed = JSON.parse(dataStr);
+                    const content = parsed.response || parsed.text || '';
+                    if (content) {
+                      const openaiChunk = {
+                        id: `chatcmpl-${generateRandomString(12)}`,
+                        object: "chat.completion.chunk",
+                        created: Math.floor(Date.now() / 1000),
+                        model: model,
+                        choices: [{
+                          delta: { content: content },
+                          index: 0,
+                          finish_reason: null
+                        }]
+                      };
+                      await writer.write(encoder.encode(`data: ${JSON.stringify(openaiChunk)}\n\n`));
+                    }
+                  } catch (e) {
+                    // Skip partial lines
+                  }
+                }
+              }
+            }
+          } catch (err) {
+            console.error("Stream translation error:", err);
+          } finally {
+            writer.close();
+          }
+        })();
+
+        return new Response(readable, {
+          headers: {
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+          },
+        });
+      } else {
+        const aiRes = await c.env.AI.run(model, {
+          messages: messages,
+          max_tokens: max_tokens || 2048,
+        });
+        
+        const responseText = aiRes.response || aiRes.text || '';
+        const estimatedTokens = Math.ceil(responseText.split(/\s+/).length * 1.3);
+
+        if (estimatedTokens > 0) {
+          session.tokens_used = Number(session.tokens_used || 0) + estimatedTokens;
+          await setSession(c, token, session);
+          await recordUserUsage(c, session.user_id, 0, estimatedTokens);
+        }
+
+        const openaiRes = {
+          id: `chatcmpl-${generateRandomString(12)}`,
+          object: "chat.completion",
+          created: Math.floor(Date.now() / 1000),
+          model: model,
+          choices: [{
+            message: {
+              role: "assistant",
+              content: responseText,
+            },
+            index: 0,
+            finish_reason: "stop"
+          }],
+          usage: {
+            prompt_tokens: 0,
+            completion_tokens: estimatedTokens,
+            total_tokens: estimatedTokens
+          }
+        };
+        return c.json(openaiRes);
+      }
+    } catch (err) {
+      return c.json({ error: "Workers AI execution error", message: err.message }, 502);
+    }
+  }
+
+  // 2. Handle Azure AI Foundry Models
   session.provider_used = "azure";
   await setSession(c, token, session);
 
-  // Build Azure request body
   const azureBody = { model, messages, max_tokens: max_tokens || 16384 };
   if (stream) azureBody.stream = true;
   if (tools) azureBody.tools = tools;
@@ -749,7 +888,6 @@ const chatCompletionsHandler = async (c) => {
       });
     }
 
-    // Cloudflare Workers natively stream the response body
     return new Response(azureRes.body, {
       status: azureRes.status,
       headers: {
@@ -780,6 +918,10 @@ api.get('/v1/models', (c) => {
     { id: "gpt-5.4-mini", aliases: ["gpt54m"], type: "Global Standard" },
     { id: "gpt-5.5-2", aliases: ["gpt5", "gpt55", "gpt-5.5"], type: "Global Standard" },
     { id: "gpt-5.1-codex-max", aliases: ["codex", "codex-max"], type: "Global Standard" },
+    { id: "@cf/meta/llama-3.1-8b-instruct", aliases: ["llama3", "llama"], type: "Workers AI Free Tier" },
+    { id: "@cf/deepseek-ai/deepseek-coder-7b-instruct-v1.5", aliases: ["deepseek-coder"], type: "Workers AI Free Tier" },
+    { id: "@cf/qwen/qwen1.5-14b-chat", aliases: ["qwen"], type: "Workers AI Free Tier" },
+    { id: "@cf/mistral/mistral-7b-instruct-v0.1", aliases: ["mistral"], type: "Workers AI Free Tier" },
   ];
 
   return c.json({
