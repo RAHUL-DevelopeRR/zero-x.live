@@ -75,7 +75,9 @@ const MODELS_BY_PLAN = {
     "@cf/meta/llama-3.1-8b-instruct",
     "@cf/deepseek-ai/deepseek-coder-7b-instruct-v1.5",
     "@cf/qwen/qwen1.5-14b-chat",
-    "@cf/mistral/mistral-7b-instruct-v0.1"
+    "@cf/mistral/mistral-7b-instruct-v0.1",
+    "@cf/zai-org/glm-5.2",
+    "@cf/deepseek-ai/deepseek-r1-distill-qwen-32b"
   ],
   pro: [
     "DeepSeek-V4-Flash",
@@ -90,7 +92,9 @@ const MODELS_BY_PLAN = {
     "@cf/meta/llama-3.1-8b-instruct",
     "@cf/deepseek-ai/deepseek-coder-7b-instruct-v1.5",
     "@cf/qwen/qwen1.5-14b-chat",
-    "@cf/mistral/mistral-7b-instruct-v0.1"
+    "@cf/mistral/mistral-7b-instruct-v0.1",
+    "@cf/zai-org/glm-5.2",
+    "@cf/deepseek-ai/deepseek-r1-distill-qwen-32b"
   ],
   ultrawork: [
     "Kimi-K2.5",
@@ -107,7 +111,9 @@ const MODELS_BY_PLAN = {
     "@cf/meta/llama-3.1-8b-instruct",
     "@cf/deepseek-ai/deepseek-coder-7b-instruct-v1.5",
     "@cf/qwen/qwen1.5-14b-chat",
-    "@cf/mistral/mistral-7b-instruct-v0.1"
+    "@cf/mistral/mistral-7b-instruct-v0.1",
+    "@cf/zai-org/glm-5.2",
+    "@cf/deepseek-ai/deepseek-r1-distill-qwen-32b"
   ],
 };
 
@@ -922,6 +928,8 @@ api.get('/v1/models', (c) => {
     { id: "@cf/deepseek-ai/deepseek-coder-7b-instruct-v1.5", aliases: ["deepseek-coder"], type: "Workers AI Free Tier" },
     { id: "@cf/qwen/qwen1.5-14b-chat", aliases: ["qwen"], type: "Workers AI Free Tier" },
     { id: "@cf/mistral/mistral-7b-instruct-v0.1", aliases: ["mistral"], type: "Workers AI Free Tier" },
+    { id: "@cf/zai-org/glm-5.2", aliases: ["glm", "glm5"], type: "Workers AI Free Tier" },
+    { id: "@cf/deepseek-ai/deepseek-r1-distill-qwen-32b", aliases: ["r1", "reasoner"], type: "Workers AI Free Tier" },
   ];
 
   return c.json({
