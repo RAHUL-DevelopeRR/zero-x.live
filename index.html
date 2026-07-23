@@ -167,6 +167,58 @@
     ::-webkit-scrollbar-track{background:#0A0A0C}
     ::-webkit-scrollbar-thumb{background:#2a2a32;border-radius:3px}
     ::-webkit-scrollbar-thumb:hover{background:#3a3a44}
+
+    /* ═══ 3D Scroll Video Showcase Styles ═══ */
+    .showcase-perspective-viewport {
+      perspective: 1200px;
+      transform-style: preserve-3d;
+    }
+    .showcase-3d-card {
+      transform: rotateX(20deg) scale(0.92) translateY(40px);
+      transform-origin: center top;
+      transition: transform 0.15s cubic-bezier(0.1, 0.9, 0.2, 1), box-shadow 0.3s ease, border-color 0.3s ease;
+      will-change: transform;
+    }
+    .glowing-border-gradient {
+      position: relative;
+      border-radius: 1.25rem;
+      background: linear-gradient(135deg, rgba(24, 24, 28, 0.95), rgba(15, 15, 18, 0.98));
+    }
+    .glowing-border-gradient::before {
+      content: '';
+      position: absolute;
+      inset: -1px;
+      border-radius: inherit;
+      padding: 1px;
+      background: linear-gradient(135deg, rgba(0, 229, 255, 0.5), rgba(124, 77, 255, 0.4), rgba(0, 229, 255, 0.1));
+      -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+      -webkit-mask-composite: xor;
+      mask-composite: exclude;
+      pointer-events: none;
+    }
+    .hud-pill-badge {
+      background: rgba(10, 10, 12, 0.75);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      box-shadow: 0 10px 30px -5px rgba(0, 0, 0, 0.6), 0 0 20px rgba(0, 229, 255, 0.1);
+    }
+    .hotspot-pin {
+      position: absolute;
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      background: rgba(0, 229, 255, 0.2);
+      border: 2px solid #00E5FF;
+      box-shadow: 0 0 15px #00E5FF;
+      cursor: pointer;
+      z-index: 25;
+      animation: pulse-pin 2s ease-in-out infinite;
+    }
+    @keyframes pulse-pin {
+      0%, 100% { transform: scale(1); box-shadow: 0 0 12px rgba(0, 229, 255, 0.6); }
+      50% { transform: scale(1.15); box-shadow: 0 0 24px rgba(0, 229, 255, 0.9); }
+    }
   </style>
 </head>
 <body class="font-body antialiased overflow-x-hidden noise-overlay">
@@ -250,100 +302,171 @@
     </div>
   </div>
 
-  <!-- Hero Product Visual — NeuCockpit Search Mockup -->
-  <div class="relative z-10 w-full max-w-[1020px] mx-auto reveal anim-float" style="animation-delay:0.3s">
-    <div class="bg-zx-surface/80 border border-white/[0.06] rounded-2xl overflow-hidden shadow-2xl shadow-black/50 backdrop-blur-sm">
-      <!-- Titlebar -->
-      <div class="h-11 border-b border-white/[0.06] flex items-center px-4 gap-2 bg-zx-bg/60">
-        <div class="flex gap-1.5">
-          <span class="w-[10px] h-[10px] rounded-full bg-white/10"></span>
-          <span class="w-[10px] h-[10px] rounded-full bg-white/10"></span>
-          <span class="w-[10px] h-[10px] rounded-full bg-white/10"></span>
-        </div>
-        <div class="ml-auto flex items-center gap-2">
-          <img src="./Assets/neuron_circular.png" class="w-4 h-4 rounded-full" alt=""/>
-          <span class="text-[11px] text-zx-muted font-mono">NeuCockpit — semantic-search</span>
-        </div>
-      </div>
-      <!-- App Content -->
-      <div class="flex min-h-[360px] md:min-h-[420px]">
-        <!-- Sidebar -->
-        <div class="hidden md:flex w-52 border-r border-white/[0.06] p-4 flex-col gap-3 bg-zx-bg/30">
-          <div class="text-[11px] text-zx-muted font-medium tracking-widest uppercase mb-1">Sources</div>
-          <div class="flex items-center gap-2 text-white text-[13px] p-2.5 bg-white/[0.04] rounded-lg border border-white/[0.04]">
-            <span class="material-symbols-outlined text-[15px] text-zx-accent">folder</span>Local Vault
+  <!-- ═══════════════════════════════════════════════════════════════════
+       HERO PRODUCT SHOWCASE — 3D Perspective Scroll & Interactive Video
+       ═══════════════════════════════════════════════════════════════════ -->
+  <div class="relative z-10 w-full max-w-[1120px] mx-auto reveal showcase-perspective-viewport py-4 px-2" id="hero-showcase-viewport">
+    <div id="showcase-card" class="showcase-3d-card glowing-border-gradient overflow-hidden shadow-2xl shadow-black/80 backdrop-blur-xl transition-all duration-300">
+      
+      <!-- Top Titlebar & Mode Switcher Bar -->
+      <div class="h-12 border-b border-white/[0.08] flex items-center justify-between px-4 bg-zx-bg/80 backdrop-blur-md z-30 relative">
+        <div class="flex items-center gap-3">
+          <div class="flex gap-1.5">
+            <span class="w-[10px] h-[10px] rounded-full bg-red-500/60 inline-block"></span>
+            <span class="w-[10px] h-[10px] rounded-full bg-yellow-500/60 inline-block"></span>
+            <span class="w-[10px] h-[10px] rounded-full bg-green-500/60 inline-block"></span>
           </div>
-          <div class="flex items-center gap-2 text-zx-muted text-[13px] p-2.5 hover:bg-white/[0.04] rounded-lg cursor-pointer transition">
-            <span class="material-symbols-outlined text-[15px]">description</span>Documents
-          </div>
-          <div class="flex items-center gap-2 text-zx-muted text-[13px] p-2.5 hover:bg-white/[0.04] rounded-lg cursor-pointer transition">
-            <span class="material-symbols-outlined text-[15px]">code</span>Source Code
-          </div>
-          <div class="flex items-center gap-2 text-zx-muted text-[13px] p-2.5 hover:bg-white/[0.04] rounded-lg cursor-pointer transition">
-            <span class="material-symbols-outlined text-[15px]">photo_library</span>Media
-          </div>
-          <div class="mt-auto pt-4 border-t border-white/[0.04]">
-            <div class="text-[10px] text-zx-faint font-mono">30,847 files indexed</div>
+          <!-- Mode Selector Tabs -->
+          <div class="flex items-center bg-white/[0.04] p-1 rounded-lg border border-white/[0.06] text-[11px] font-medium">
+            <button id="btn-mode-video" class="flex items-center gap-1.5 px-3 py-1 rounded-md bg-zx-accent/20 text-zx-accent border border-zx-accent/30 transition-all font-mono">
+              <span class="material-symbols-outlined text-[14px]">play_circle</span>
+              Motion Showcase (Video)
+            </button>
+            <button id="btn-mode-app" class="flex items-center gap-1.5 px-3 py-1 rounded-md text-zx-muted hover:text-white transition-all font-mono">
+              <span class="material-symbols-outlined text-[14px]">terminal</span>
+              Interactive NeuCockpit
+            </button>
           </div>
         </div>
-        <!-- Main Panel -->
-        <div class="flex-1 flex flex-col bg-zx-bg/40">
-          <!-- Search Bar -->
-          <div class="p-4 border-b border-white/[0.06]">
-            <div class="relative">
-              <span class="material-symbols-outlined absolute left-3.5 top-1/2 -translate-y-1/2 text-zx-accent text-[18px]">search</span>
-              <input class="w-full bg-zx-bg border border-white/[0.08] rounded-xl py-3 pl-11 pr-4 text-[13px] text-white focus:outline-none font-mono focus:border-zx-accent/30 transition-colors" readonly value="design system guidelines 2024"/>
-              <span class="absolute right-3.5 top-1/2 -translate-y-1/2 text-[10px] text-zx-faint font-mono bg-white/[0.04] px-2 py-0.5 rounded">⌘ K</span>
-            </div>
-          </div>
-          <!-- Results -->
-          <div class="flex-1 p-4 flex flex-col gap-2.5 overflow-hidden">
-            <div class="p-3.5 border border-white/[0.06] rounded-xl bg-zx-surface/60 flex justify-between items-start hover:border-zx-accent/30 transition-colors cursor-pointer">
-              <div>
-                <div class="text-[13px] text-white font-medium">ZeroX_Design_System_v2.pdf</div>
-                <div class="text-[11px] text-zx-muted font-mono mt-0.5">/docs/design/guidelines</div>
-              </div>
-              <div class="flex items-center gap-2">
-                <div class="w-16 h-1 bg-zx-bg rounded-full overflow-hidden"><div class="h-full bg-zx-accent rounded-full" style="width:97%"></div></div>
-                <span class="text-[11px] text-zx-accent font-mono font-medium">0.97</span>
-              </div>
-            </div>
-            <div class="p-3.5 border border-white/[0.06] rounded-xl bg-zx-surface/60 flex justify-between items-start hover:border-white/[0.10] transition-colors cursor-pointer">
-              <div>
-                <div class="text-[13px] text-white font-medium">Brand_Anchors_2024.json</div>
-                <div class="text-[11px] text-zx-muted font-mono mt-0.5">/src/config/theme</div>
-              </div>
-              <div class="flex items-center gap-2">
-                <div class="w-16 h-1 bg-zx-bg rounded-full overflow-hidden"><div class="h-full bg-zx-accent rounded-full opacity-80" style="width:82%"></div></div>
-                <span class="text-[11px] text-zx-muted font-mono">0.82</span>
-              </div>
-            </div>
-            <div class="p-3.5 border border-white/[0.06] rounded-xl bg-zx-surface/60 flex justify-between items-start hover:border-white/[0.10] transition-colors cursor-pointer">
-              <div>
-                <div class="text-[13px] text-white font-medium">style_guide_draft.md</div>
-                <div class="text-[11px] text-zx-muted font-mono mt-0.5">/notes/meetings/Q1</div>
-              </div>
-              <div class="flex items-center gap-2">
-                <div class="w-16 h-1 bg-zx-bg rounded-full overflow-hidden"><div class="h-full bg-zx-accent rounded-full opacity-60" style="width:65%"></div></div>
-                <span class="text-[11px] text-zx-muted font-mono">0.65</span>
-              </div>
-            </div>
-            <div class="p-3.5 border border-white/[0.06] rounded-xl bg-zx-surface/60 flex justify-between items-start hover:border-white/[0.10] transition-colors cursor-pointer">
-              <div>
-                <div class="text-[13px] text-white font-medium">component_library_notes.txt</div>
-                <div class="text-[11px] text-zx-muted font-mono mt-0.5">/projects/ui-kit/docs</div>
-              </div>
-              <div class="flex items-center gap-2">
-                <div class="w-16 h-1 bg-zx-bg rounded-full overflow-hidden"><div class="h-full bg-zx-accent rounded-full opacity-40" style="width:51%"></div></div>
-                <span class="text-[11px] text-zx-muted font-mono">0.51</span>
-              </div>
-            </div>
-          </div>
+
+        <div class="hidden sm:flex items-center gap-2">
+          <img src="./Assets/neuron_circular.png" class="w-4 h-4 rounded-full" alt="ZeroX Logo"/>
+          <span class="text-[11px] text-zx-muted font-mono">zero-x.live — NeuCockpit AI</span>
+        </div>
+
+        <!-- Video Player Controls -->
+        <div id="video-controls-bar" class="flex items-center gap-2">
+          <button id="btn-play-pause" class="p-1.5 text-zx-muted hover:text-white rounded-lg hover:bg-white/[0.06] transition" title="Play / Pause">
+            <span class="material-symbols-outlined text-[18px]">pause</span>
+          </button>
+          <button id="btn-mute" class="p-1.5 text-zx-muted hover:text-white rounded-lg hover:bg-white/[0.06] transition" title="Toggle Audio">
+            <span class="material-symbols-outlined text-[18px]">volume_off</span>
+          </button>
+          <button id="btn-fullscreen" class="p-1.5 text-zx-muted hover:text-white rounded-lg hover:bg-white/[0.06] transition" title="Fullscreen">
+            <span class="material-symbols-outlined text-[18px]">fullscreen</span>
+          </button>
         </div>
       </div>
+
+      <!-- 🎬 MODE A: 3D Scroll Video Player Showcase Container -->
+      <div id="video-showcase-container" class="relative group bg-black/90 aspect-video max-h-[580px] overflow-hidden flex items-center justify-center">
+        <!-- Video element containing ANimationWeb.mp4 -->
+        <video 
+          id="hero-scroll-video" 
+          src="./Assets/ANimationWeb.mp4" 
+          autoplay 
+          loop 
+          muted 
+          playsinline 
+          class="w-full h-full object-cover transition-opacity duration-500">
+        </video>
+
+        <!-- Dynamic Ambient Neon Background Glow behind video -->
+        <div class="absolute inset-0 bg-gradient-to-t from-zx-bg via-transparent to-transparent opacity-60 pointer-events-none"></div>
+
+        <!-- HUD Telemetry Badges Overlay (Live zero-x.live Information) -->
+        <div class="absolute top-4 left-4 z-20 hidden md:flex items-center gap-2 px-3 py-1.5 hud-pill-badge rounded-xl text-[11px] font-mono text-white pointer-events-none">
+          <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+          <span>ZeroX NeuCockpit v1.0</span>
+          <span class="text-zx-faint">|</span>
+          <span class="text-zx-accent">100% Offline AI</span>
+        </div>
+
+        <div class="absolute top-4 right-4 z-20 hidden md:flex items-center gap-3 px-3 py-1.5 hud-pill-badge rounded-xl text-[11px] font-mono text-zx-muted pointer-events-none">
+          <span class="text-white font-medium">30,847 Files</span>
+          <span class="text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">&lt; 5ms Latency</span>
+        </div>
+
+        <div class="absolute bottom-6 left-4 z-20 hidden sm:flex items-center gap-2 px-3.5 py-2 hud-pill-badge rounded-xl text-[11px] font-mono text-zx-text pointer-events-none">
+          <span class="material-symbols-outlined text-[16px] text-zx-purple">memory</span>
+          <span>FAISS Vector DB + BGE Embeddings</span>
+        </div>
+
+        <div class="absolute bottom-6 right-4 z-20 hidden sm:flex items-center gap-2 px-3.5 py-2 hud-pill-badge rounded-xl text-[11px] font-mono text-zx-text pointer-events-none">
+          <span class="material-symbols-outlined text-[16px] text-emerald-400">verified_user</span>
+          <span>Zero Cloud Telemetry</span>
+        </div>
+
+        <!-- Interactive Hotspot Feature Pins over Video -->
+        <div class="hotspot-pin top-[28%] left-[18%]" title="Click for details" onclick="showFeatureSpotlight('Semantic File Intelligence', 'NeuCockpit scans and indexes your entire local vault, source code, and documents using local BGE neural embeddings.')">
+          <span class="absolute -top-8 left-1/2 -translate-x-1/2 hidden group-hover:block bg-zx-bg/90 text-[10px] text-zx-accent font-mono px-2 py-1 rounded whitespace-nowrap border border-zx-accent/30">Semantic Search</span>
+        </div>
+
+        <div class="hotspot-pin top-[42%] right-[22%]" title="Click for details" onclick="showFeatureSpotlight('AI Agent Assistant', 'Run local AI models like Kimi K2.5 or DeepSeek offline to draft notes, summarize code, and answer queries.')">
+          <span class="absolute -top-8 left-1/2 -translate-x-1/2 hidden group-hover:block bg-zx-bg/90 text-[10px] text-zx-purple font-mono px-2 py-1 rounded whitespace-nowrap border border-zx-purple/30">Local AI Core</span>
+        </div>
+
+        <!-- Live Video Progress Bar at Bottom -->
+        <div class="absolute bottom-0 left-0 right-0 h-1 bg-white/10 z-20 cursor-pointer" id="video-progress-container">
+          <div id="video-progress-fill" class="h-full bg-gradient-to-r from-zx-accent to-zx-purple w-0 transition-all duration-100"></div>
+        </div>
+      </div>
+
+      <!-- ⚡ MODE B: Interactive NeuCockpit Web App Container -->
+      <div id="app-showcase-container" class="hidden flex flex-col min-h-[460px] md:min-h-[520px] bg-zx-bg/90 backdrop-blur-md">
+        <!-- Search Header -->
+        <div class="p-4 border-b border-white/[0.08] bg-zx-surface/50">
+          <div class="relative max-w-2xl mx-auto">
+            <span class="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-zx-accent text-[20px]">search</span>
+            <input 
+              id="interactive-search-input" 
+              type="text" 
+              class="w-full bg-zx-bg border border-zx-accent/30 focus:border-zx-accent rounded-xl py-3 pl-12 pr-28 text-[14px] text-white focus:outline-none font-mono transition-all shadow-inner" 
+              placeholder="Search 30,000+ files by meaning... (e.g. 'design guidelines', 'clerk auth')"
+              value="design system guidelines 2026"
+            />
+            <button id="btn-search-trigger" class="absolute right-2 top-1/2 -translate-y-1/2 bg-zx-accent text-[#0A0A0C] text-[11px] font-mono font-bold px-3 py-1.5 rounded-lg hover:bg-cyan-300 transition">
+              Vector Search
+            </button>
+          </div>
+          <!-- Quick Sample Queries -->
+          <div class="flex flex-wrap items-center justify-center gap-2 mt-3 text-[11px] font-mono text-zx-muted">
+            <span>Try searching:</span>
+            <button class="px-2.5 py-0.5 bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] rounded-full text-zx-accent cursor-pointer transition" onclick="setInteractiveQuery('design system guidelines 2026')">design system</button>
+            <button class="px-2.5 py-0.5 bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] rounded-full text-zx-accent cursor-pointer transition" onclick="setInteractiveQuery('clerk oauth postgres connection')">clerk oauth</button>
+            <button class="px-2.5 py-0.5 bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] rounded-full text-zx-accent cursor-pointer transition" onclick="setInteractiveQuery('faiss vector embedding python')">faiss embeddings</button>
+            <button class="px-2.5 py-0.5 bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] rounded-full text-zx-accent cursor-pointer transition" onclick="setInteractiveQuery('meeting notes Q2 roadmap')">meeting notes</button>
+          </div>
+        </div>
+
+        <!-- App Body (Sidebar + Results) -->
+        <div class="flex-1 flex flex-col md:flex-row">
+          <!-- Sidebar -->
+          <div class="w-full md:w-56 border-r border-white/[0.06] p-4 flex flex-col gap-2 bg-zx-surface/30">
+            <div class="text-[10px] text-zx-faint font-mono font-bold tracking-widest uppercase mb-1">Indexed Vaults</div>
+            <button class="w-full flex items-center justify-between text-left text-[13px] text-white p-2.5 bg-white/[0.06] rounded-xl border border-white/[0.08] font-medium">
+              <span class="flex items-center gap-2"><span class="material-symbols-outlined text-[16px] text-zx-accent">folder</span>Local Vault</span>
+              <span class="text-[10px] font-mono text-emerald-400">Active</span>
+            </button>
+            <button class="w-full flex items-center gap-2 text-left text-[13px] text-zx-muted hover:text-white p-2.5 hover:bg-white/[0.04] rounded-xl transition">
+              <span class="material-symbols-outlined text-[16px]">description</span>Documents (12K)
+            </button>
+            <button class="w-full flex items-center gap-2 text-left text-[13px] text-zx-muted hover:text-white p-2.5 hover:bg-white/[0.04] rounded-xl transition">
+              <span class="material-symbols-outlined text-[16px]">terminal</span>Code Projects (14K)
+            </button>
+            <button class="w-full flex items-center gap-2 text-left text-[13px] text-zx-muted hover:text-white p-2.5 hover:bg-white/[0.04] rounded-xl transition">
+              <span class="material-symbols-outlined text-[16px]">dataset</span>Vector Index (384d)
+            </button>
+
+            <div class="mt-auto pt-4 border-t border-white/[0.04]">
+              <div class="flex justify-between items-center text-[10px] font-mono text-zx-faint">
+                <span>Model: BGE-Small-EN</span>
+                <span class="text-emerald-400">Offline</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Dynamic Search Results -->
+          <div class="flex-1 p-5 flex flex-col gap-3 overflow-y-auto max-h-[380px]" id="interactive-results-list">
+            <!-- Results dynamically rendered via JS -->
+          </div>
+        </div>
+      </div>
+
     </div>
-    <!-- Reflection Glow -->
-    <div class="absolute -bottom-8 left-1/2 -translate-x-1/2 w-[80%] h-16 bg-zx-accent/[0.04] blur-[40px] rounded-full pointer-events-none"></div>
+
+    <!-- Ambient Radial Reflection Glow underneath -->
+    <div class="absolute -bottom-10 left-1/2 -translate-x-1/2 w-[85%] h-20 bg-gradient-to-r from-zx-accent/10 via-zx-purple/20 to-zx-accent/10 blur-[50px] rounded-full pointer-events-none"></div>
   </div>
 </section>
 
@@ -939,6 +1062,229 @@ async function syncUserWithBackend(profile) {
     console.error("Failed to sync user with backend:", err);
   }
 }
+
+/* ═══════════════════════════════════════════════════════════════════
+   3D SCROLL VIDEO & INTERACTIVE NEUCOCKPIT SHOWCASE CONTROLLER
+   ═══════════════════════════════════════════════════════════════════ */
+document.addEventListener('DOMContentLoaded', () => {
+  const showcaseCard = document.getElementById('showcase-card');
+  const showcaseViewport = document.getElementById('hero-showcase-viewport');
+  const videoEl = document.getElementById('hero-scroll-video');
+
+  // 1. Smooth 3D Perspective Scroll Animation
+  if (showcaseCard && showcaseViewport) {
+    function update3dScrollTransform() {
+      const rect = showcaseViewport.getBoundingClientRect();
+      const windowHeight = window.innerHeight || document.documentElement.clientHeight;
+      
+      // Calculate how far the showcase section is relative to viewport
+      const startPoint = windowHeight * 0.9;
+      const progress = Math.max(0, Math.min(1, (startPoint - rect.top) / (windowHeight * 0.8)));
+
+      // Interpolate 3D rotation, scale, and translation
+      const rotateX = 20 * (1 - progress);
+      const scale = 0.92 + (0.08 * progress);
+      const translateY = 40 * (1 - progress);
+      const glowOpacity = 0.3 + (0.5 * progress);
+
+      showcaseCard.style.transform = `rotateX(${rotateX.toFixed(2)}deg) scale(${scale.toFixed(3)}) translateY(${translateY.toFixed(1)}px)`;
+      showcaseCard.style.boxShadow = `0 ${20 + progress * 30}px ${40 + progress * 40}px -10px rgba(0, 229, 255, ${glowOpacity.toFixed(2)})`;
+    }
+
+    window.addEventListener('scroll', update3dScrollTransform, { passive: true });
+    update3dScrollTransform();
+  }
+
+  // 2. Video Player Controls & Progress Sync
+  const btnPlayPause = document.getElementById('btn-play-pause');
+  const btnMute = document.getElementById('btn-mute');
+  const btnFullscreen = document.getElementById('btn-fullscreen');
+  const videoProgressFill = document.getElementById('video-progress-fill');
+  const videoProgressContainer = document.getElementById('video-progress-container');
+
+  if (videoEl) {
+    // Ensure video plays smoothly
+    videoEl.play().catch(e => console.log('Autoplay prevented:', e));
+
+    if (btnPlayPause) {
+      btnPlayPause.addEventListener('click', () => {
+        if (videoEl.paused) {
+          videoEl.play();
+          btnPlayPause.innerHTML = '<span class="material-symbols-outlined text-[18px]">pause</span>';
+        } else {
+          videoEl.pause();
+          btnPlayPause.innerHTML = '<span class="material-symbols-outlined text-[18px]">play_arrow</span>';
+        }
+      });
+    }
+
+    if (btnMute) {
+      btnMute.addEventListener('click', () => {
+        videoEl.muted = !videoEl.muted;
+        btnMute.innerHTML = videoEl.muted 
+          ? '<span class="material-symbols-outlined text-[18px]">volume_off</span>' 
+          : '<span class="material-symbols-outlined text-[18px]">volume_up</span>';
+      });
+    }
+
+    if (btnFullscreen) {
+      btnFullscreen.addEventListener('click', () => {
+        if (videoEl.requestFullscreen) {
+          videoEl.requestFullscreen();
+        } else if (videoEl.webkitRequestFullscreen) {
+          videoEl.webkitRequestFullscreen();
+        }
+      });
+    }
+
+    videoEl.addEventListener('timeupdate', () => {
+      if (videoEl.duration && videoProgressFill) {
+        const pct = (videoEl.currentTime / videoEl.duration) * 100;
+        videoProgressFill.style.width = `${pct}%`;
+      }
+    });
+
+    if (videoProgressContainer) {
+      videoProgressContainer.addEventListener('click', (e) => {
+        const rect = videoProgressContainer.getBoundingClientRect();
+        const clickX = e.clientX - rect.left;
+        const pct = clickX / rect.width;
+        if (videoEl.duration) {
+          videoEl.currentTime = pct * videoEl.duration;
+        }
+      });
+    }
+  }
+
+  // 3. Tab Mode Switcher (Video Showcase vs Interactive App)
+  const btnModeVideo = document.getElementById('btn-mode-video');
+  const btnModeApp = document.getElementById('btn-mode-app');
+  const videoContainer = document.getElementById('video-showcase-container');
+  const appContainer = document.getElementById('app-showcase-container');
+  const videoControlsBar = document.getElementById('video-controls-bar');
+
+  if (btnModeVideo && btnModeApp) {
+    btnModeVideo.addEventListener('click', () => {
+      btnModeVideo.className = "flex items-center gap-1.5 px-3 py-1 rounded-md bg-zx-accent/20 text-zx-accent border border-zx-accent/30 transition-all font-mono";
+      btnModeApp.className = "flex items-center gap-1.5 px-3 py-1 rounded-md text-zx-muted hover:text-white transition-all font-mono";
+      if (videoContainer) videoContainer.classList.remove('hidden');
+      if (appContainer) appContainer.classList.add('hidden');
+      if (videoControlsBar) videoControlsBar.classList.remove('hidden');
+      if (videoEl && videoEl.paused) videoEl.play();
+    });
+
+    btnModeApp.addEventListener('click', () => {
+      btnModeApp.className = "flex items-center gap-1.5 px-3 py-1 rounded-md bg-zx-accent/20 text-zx-accent border border-zx-accent/30 transition-all font-mono";
+      btnModeVideo.className = "flex items-center gap-1.5 px-3 py-1 rounded-md text-zx-muted hover:text-white transition-all font-mono";
+      if (videoContainer) videoContainer.classList.add('hidden');
+      if (appContainer) appContainer.classList.remove('hidden');
+      if (videoControlsBar) videoControlsBar.classList.add('hidden');
+      renderInteractiveResults(document.getElementById('interactive-search-input')?.value || 'design system guidelines 2026');
+    });
+  }
+
+  // 4. Interactive NeuCockpit Search Simulation Logic
+  const mockDataset = [
+    {
+      keywords: ['design', 'system', 'guidelines', 'theme', 'ui'],
+      title: 'ZeroX_Design_System_v2.pdf',
+      path: '/docs/design/guidelines/ZeroX_Design_System_v2.pdf',
+      score: 0.97,
+      size: '2.4 MB',
+      time: '3.1ms',
+      desc: 'Complete brand tokens, HSL palette specs, Cabinet Grotesk typography, and dark-mode glassmorphic components.'
+    },
+    {
+      keywords: ['clerk', 'oauth', 'postgres', 'auth', 'database'],
+      title: 'server.js — Hono/Express OAuth Gateway',
+      path: '/neuroncli/auth-server/server.js',
+      score: 0.94,
+      size: '20.8 KB',
+      time: '2.8ms',
+      desc: 'Central authentication gateway routing Clerk JWT tokens, Azure OpenAI models, and Neon PostgreSQL user sync.'
+    },
+    {
+      keywords: ['faiss', 'vector', 'embedding', 'python', 'bge'],
+      title: 'neural_vector_indexer.py',
+      path: '/core/engine/embeddings/neural_vector_indexer.py',
+      score: 0.91,
+      size: '14.2 KB',
+      time: '4.5ms',
+      desc: 'BGE-Small-EN-v1.5 local neural embedding generator with FAISS vector quantization for <5ms similarity queries.'
+    },
+    {
+      keywords: ['meeting', 'notes', 'roadmap', 'q2', 'features'],
+      title: 'Product_Roadmap_Q2_2026.md',
+      path: '/notes/strategy/Product_Roadmap_Q2_2026.md',
+      score: 0.88,
+      size: '8.7 KB',
+      time: '2.1ms',
+      desc: 'ZeroX platform milestones: NeuCockpit v1.0 release, LuminaPlayer launch, and offline local LLM sidecars.'
+    }
+  ];
+
+  window.renderInteractiveResults = function(query) {
+    const listEl = document.getElementById('interactive-results-list');
+    if (!listEl) return;
+
+    const cleanQ = query.toLowerCase().trim();
+    let filtered = mockDataset.filter(item => 
+      cleanQ.split(' ').some(k => item.keywords.some(ik => ik.includes(k) || k.includes(ik)))
+    );
+
+    if (filtered.length === 0) filtered = mockDataset;
+
+    listEl.innerHTML = filtered.map(item => `
+      <div class="p-4 border border-white/[0.08] rounded-xl bg-zx-surface/70 hover:bg-zx-surface hover:border-zx-accent/40 transition-all duration-200 cursor-pointer group">
+        <div class="flex items-start justify-between gap-4 mb-2">
+          <div class="flex items-center gap-2.5">
+            <span class="material-symbols-outlined text-[18px] text-zx-accent">description</span>
+            <div>
+              <div class="text-[13.5px] text-white font-medium group-hover:text-zx-accent transition-colors">${item.title}</div>
+              <div class="text-[11px] text-zx-muted font-mono mt-0.5">${item.path}</div>
+            </div>
+          </div>
+          <div class="flex items-center gap-2.5 shrink-0">
+            <span class="text-[10px] font-mono text-zx-faint bg-white/[0.04] px-2 py-0.5 rounded">${item.size}</span>
+            <div class="flex items-center gap-1.5 px-2.5 py-1 bg-zx-accent/10 border border-zx-accent/30 rounded-full">
+              <span class="text-[11px] font-mono font-bold text-zx-accent">${(item.score * 100).toFixed(0)}%</span>
+            </div>
+          </div>
+        </div>
+        <p class="text-[12px] text-zx-muted leading-relaxed line-clamp-2 pl-7">${item.desc}</p>
+        <div class="mt-2.5 pl-7 flex items-center justify-between text-[10px] font-mono text-zx-faint border-t border-white/[0.04] pt-2">
+          <span>Latency: <strong class="text-emerald-400 font-normal">${item.time}</strong></span>
+          <span class="text-zx-accent hover:underline flex items-center gap-1">Copy local path <span class="material-symbols-outlined text-[12px]">content_copy</span></span>
+        </div>
+      </div>
+    `).join('');
+  };
+
+  const searchInput = document.getElementById('interactive-search-input');
+  const searchBtn = document.getElementById('btn-search-trigger');
+
+  if (searchInput) {
+    searchInput.addEventListener('input', (e) => {
+      renderInteractiveResults(e.target.value);
+    });
+  }
+  if (searchBtn) {
+    searchBtn.addEventListener('click', () => {
+      renderInteractiveResults(searchInput?.value || '');
+    });
+  }
+
+  window.setInteractiveQuery = function(q) {
+    if (searchInput) {
+      searchInput.value = q;
+      renderInteractiveResults(q);
+    }
+  };
+
+  window.showFeatureSpotlight = function(title, desc) {
+    alert(`📍 ZeroX Feature Spotlight: ${title}\n\n${desc}`);
+  };
+});
 </script>
 </body>
 </html>
