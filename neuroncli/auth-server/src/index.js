@@ -62,60 +62,52 @@ app.use('*', async (c, next) => {
 const sessions = new Map();
 
 const PLAN_LIMITS = {
-  free: { name: "Free", daily_tokens: 44000, daily_requests: 1000 },
-  pro: { name: "Pro", daily_tokens: 1000000, daily_requests: 10000 },
-  ultrawork: { name: "Ultrawork", daily_tokens: 5000000, daily_requests: 50000 },
+  free: { name: "Free", daily_tokens: 256000, daily_requests: 2000, price_usd: 0 },
+  pro: { name: "Pro", daily_tokens: 2000000, daily_requests: 20000, price_usd: 10 },
+  // Legacy Fallback mapping for existing DB accounts
+  ultrawork: { name: "Pro (Legacy Ultrawork)", daily_tokens: 2000000, daily_requests: 20000, price_usd: 10 },
 };
 
+// Active Working Free & Neuron Models (Expired Azure models moved to LEGACY_EXPIRED_MODELS)
 const MODELS_BY_PLAN = {
   free: [
-    "DeepSeek-V4-Flash",
-    "Kimi-K2.5",
-    "DeepSeek-V4-Pro",
+    "meta-llama/llama-3.3-70b-instruct:free",
+    "google/gemini-2.5-flash:free",
+    "qwen/qwen-2.5-coder-32b-instruct:free",
     "@cf/meta/llama-3.1-8b-instruct",
-    "@cf/deepseek-ai/deepseek-coder-7b-instruct-v1.5",
+    "@cf/deepseek-ai/deepseek-r1-distill-qwen-32b",
     "@cf/qwen/qwen1.5-14b-chat",
-    "@cf/mistral/mistral-7b-instruct-v0.1",
-    "@cf/zai-org/glm-5.2",
-    "@cf/deepseek-ai/deepseek-r1-distill-qwen-32b"
+    "@cf/mistral/mistral-7b-instruct-v0.1"
   ],
   pro: [
-    "DeepSeek-V4-Flash",
-    "Kimi-K2.5",
-    "Kimi-K2.6",
-    "DeepSeek-V4-Pro",
-    "FW-DeepSeek-V3.2",
-    "FW-MiniMax-M2.5",
+    "Neuron-Llama-70B-Fast",
+    "Neuron-DeepSeek-R1-Reasoning",
     "model-router",
-    "gpt-5.4-mini",
-    "gpt-5.5-2",
+    "meta-llama/llama-3.3-70b-instruct:free",
+    "google/gemini-2.5-flash:free",
+    "qwen/qwen-2.5-coder-32b-instruct:free",
     "@cf/meta/llama-3.1-8b-instruct",
-    "@cf/deepseek-ai/deepseek-coder-7b-instruct-v1.5",
+    "@cf/deepseek-ai/deepseek-r1-distill-qwen-32b",
     "@cf/qwen/qwen1.5-14b-chat",
-    "@cf/mistral/mistral-7b-instruct-v0.1",
-    "@cf/zai-org/glm-5.2",
-    "@cf/deepseek-ai/deepseek-r1-distill-qwen-32b"
+    "@cf/mistral/mistral-7b-instruct-v0.1"
   ],
   ultrawork: [
-    "Kimi-K2.5",
-    "Kimi-K2.6",
-    "DeepSeek-V4-Flash",
-    "DeepSeek-V4-Pro",
-    "FW-DeepSeek-V3.2",
-    "FW-MiniMax-M2.5",
+    "Neuron-Llama-70B-Fast",
+    "Neuron-DeepSeek-R1-Reasoning",
     "model-router",
-    "gpt-5.4-pro",
-    "gpt-5.4-mini",
-    "gpt-5.5-2",
-    "gpt-5.1-codex-max",
+    "meta-llama/llama-3.3-70b-instruct:free",
+    "google/gemini-2.5-flash:free",
+    "qwen/qwen-2.5-coder-32b-instruct:free",
     "@cf/meta/llama-3.1-8b-instruct",
-    "@cf/deepseek-ai/deepseek-coder-7b-instruct-v1.5",
-    "@cf/qwen/qwen1.5-14b-chat",
-    "@cf/mistral/mistral-7b-instruct-v0.1",
-    "@cf/zai-org/glm-5.2",
     "@cf/deepseek-ai/deepseek-r1-distill-qwen-32b"
   ],
 };
+
+// Archived / Expired Azure & Legacy Models (Read-only historical reference)
+const LEGACY_EXPIRED_MODELS = [
+  "gpt-5.4-pro", "gpt-5.4-mini", "gpt-5.5-2", "gpt-5.1-codex-max",
+  "FW-DeepSeek-V3.2", "FW-MiniMax-M2.5", "DeepSeek-V4-Flash", "DeepSeek-V4-Pro"
+];
 
 function normalizePlan(plan) {
   const key = String(plan || "free").toLowerCase().replace(/[^a-z0-9_-]/g, "");

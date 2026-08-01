@@ -21,6 +21,8 @@
   <!-- Supabase Authentication -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="./zerox-auth.js"></script>
+  <!-- Razorpay Payment Gateway SDK -->
+  <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
 
   <style>
     *{box-sizing:border-box;margin:0;padding:0}
@@ -115,6 +117,22 @@
     .model-chip-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
     .model-chip-dot.green{background:#34d399}
     .model-chip-dot.amber{background:#fbbf24}
+    .model-chip-dot.red{background:#f87171}
+    
+    .model-unavailable-row {
+      opacity: 0.25;
+      filter: grayscale(100%);
+    }
+    .model-unavailable-badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 600;
+      background: rgba(248, 113, 113, 0.15);
+      color: #f87171;
+      border: 1px solid rgba(248, 113, 113, 0.3);
+    }
 
     /* ═══ API Key ═══ */
     .api-key-box{
@@ -260,7 +278,7 @@
         <div class="dash-stat" id="stat-tokens">0</div>
         <div class="dash-progress"><div class="dash-progress-fill dash-progress-cyan" id="tokens-bar" style="width:0%"></div></div>
         <div style="display:flex;justify-content:space-between;font-size:11px;color:#4E4E5A">
-          <span id="tokens-used-label">0 / 44,000</span>
+          <span id="tokens-used-label">0 / 256,000</span>
           <span id="tokens-pct">0%</span>
         </div>
       </div>
@@ -269,7 +287,7 @@
         <div class="dash-stat" id="stat-requests">0</div>
         <div class="dash-progress"><div class="dash-progress-fill dash-progress-purple" id="requests-bar" style="width:0%"></div></div>
         <div style="display:flex;justify-content:space-between;font-size:11px;color:#4E4E5A">
-          <span id="requests-label">0 / 1,000</span>
+          <span id="requests-label">0 / 2,000</span>
           <span id="requests-pct">0%</span>
         </div>
       </div>
@@ -279,8 +297,8 @@
           <div class="dash-stat" id="stat-plan">Free</div>
           <span class="dash-badge dash-badge-free" id="plan-badge">FREE</span>
         </div>
-        <div class="dash-stat-sm" id="plan-desc">44K tokens/day • 3 models</div>
-        <a href="./neuron.html#pricing" id="upgrade-link" style="display:inline-block;margin-top:12px;font-size:12px;color:#00E5FF;border:1px solid rgba(0,229,255,0.2);padding:5px 14px;border-radius:6px;transition:all .15s">Upgrade Plan ↗</a>
+        <div class="dash-stat-sm" id="plan-desc">256K tokens/day • Active Free Models</div>
+        <button type="button" onclick="triggerRazorpayCheckout('pro')" id="upgrade-link" style="display:inline-block;margin-top:12px;font-size:12px;color:#00E5FF;background:rgba(0,229,255,0.08);border:1px solid rgba(0,229,255,0.3);padding:6px 14px;border-radius:6px;cursor:pointer;transition:all .15s">Upgrade to Pro ($10/mo) 💳</button>
       </div>
     </div>
 
@@ -351,10 +369,10 @@
             <span style="font-size:28px;font-weight:700;color:#fff" id="sub-plan-name">Free</span>
             <span class="dash-badge dash-badge-free" id="sub-badge">ACTIVE</span>
           </div>
-          <div style="font-size:13px;color:#8A8A96" id="sub-details">44K tokens/day • Tool calling • 3 base models</div>
+          <div style="font-size:13px;color:#8A8A96" id="sub-details">256K tokens/day • Active Free Models & Tools</div>
         </div>
         <div>
-          <a href="./neuron.html#pricing" id="sub-upgrade-btn" style="display:inline-block;background:#fff;color:#0A0A0C;padding:10px 20px;border-radius:8px;font-size:13px;font-weight:600;transition:all .15s">Upgrade Plan</a>
+          <button type="button" onclick="triggerRazorpayCheckout('pro')" id="sub-upgrade-btn" style="display:inline-block;background:#00E5FF;color:#0A0A0C;padding:10px 20px;border-radius:8px;font-size:13px;font-weight:600;border:none;cursor:pointer;transition:all .15s">Upgrade to Pro ($10/mo) 💳</button>
         </div>
       </div>
     </div>
@@ -364,14 +382,14 @@
       <div class="dash-card-label" style="margin-bottom:12px">Plan Comparison</div>
       <table class="dash-table">
         <thead>
-          <tr><th>Feature</th><th>Free</th><th>Pro — $15/mo</th><th>Ultrawork — $80/mo</th></tr>
+          <tr><th>Feature</th><th>Free Tier ($0/mo)</th><th>Pro Tier ($10/mo)</th><th>Legacy Ultrawork</th></tr>
         </thead>
         <tbody>
-          <tr><td>Daily Tokens</td><td class="mono">44K</td><td class="mono">1M</td><td class="mono">Unlimited</td></tr>
-          <tr><td>Models</td><td>3 base</td><td>10+ incl. GPT-5.5</td><td>All models</td></tr>
-          <tr><td>MCP Connectors</td><td>—</td><td>Google Drive, Notion, GitHub</td><td>Custom + Built-in</td></tr>
-          <tr><td>Memory</td><td>Limited</td><td>Extended</td><td>Persistent (high limits)</td></tr>
-          <tr><td>Subagents</td><td>—</td><td>—</td><td>✓ Advanced</td></tr>
+          <tr><td>Daily Tokens</td><td class="mono">256K / day</td><td class="mono">2,000,000 / day</td><td class="mono">2,000,000 / day</td></tr>
+          <tr><td>Models</td><td>Active Free Models (OpenRouter, Gemini, CF)</td><td>Neuron Models + All Free Models</td><td>All Models</td></tr>
+          <tr><td>MCP Connectors</td><td>Built-in Tools & Search</td><td>Google Drive, Notion, GitHub, Custom MCP</td><td>Custom + Built-in</td></tr>
+          <tr><td>Memory</td><td>Standard Semantic Memory</td><td>Extended Vector Memory</td><td>Persistent High Limits</td></tr>
+          <tr><td>Subagents</td><td>✓ Supported</td><td>✓ Advanced Multi-Agent Engine</td><td>✓ Advanced Multi-Agent Engine</td></tr>
         </tbody>
       </table>
     </div>
@@ -505,7 +523,7 @@ document.getElementById('mobMenuBtn').addEventListener('click',()=>{
 });
 
 /* ═══ Simulated Data ═══ */
-const planLimits = {free:{tokens:44000,requests:1000},pro:{tokens:1000000,requests:10000},ultrawork:{tokens:5000000,requests:50000}};
+const planLimits = {free:{tokens:256000,requests:2000},pro:{tokens:2000000,requests:20000},ultrawork:{tokens:2000000,requests:20000}};
 let dashboardState = {
   plan: 'free',
   usage: {tokens: 0, requests: 0},
@@ -515,29 +533,25 @@ let dashboardState = {
 };
 
 const freeModels = [
-  {name:'DeepSeek V4 Pro',limit:'44K/day',status:'active'},
-  {name:'Kimi K2.5',limit:'44K/day',status:'active'},
-  {name:'DeepSeek V4 Flash',limit:'44K/day',status:'active'},
+  {name:'Llama 3.3 70B (Free)',limit:'256K/day',status:'active'},
+  {name:'Gemini 2.5 Flash (Free)',limit:'256K/day',status:'active'},
+  {name:'Qwen 2.5 Coder 32B (Free)',limit:'256K/day',status:'active'},
+  {name:'DeepSeek R1 32B',limit:'256K/day',status:'active'},
 ];
 const proModels = [
   ...freeModels,
-  {name:'GPT-5.5',limit:'44K/day',status:'active'},
-  {name:'GPT 5.4 Mini',limit:'1M/day',status:'active'},
-  {name:'GPT-5.3 Codex',limit:'1M/day',status:'active'},
-  {name:'Kimi K2.6',limit:'1M/day',status:'active'},
-  {name:'Grok 4.3',limit:'1M/day',status:'active'},
+  {name:'Neuron-Llama-70B-Fast',limit:'2M/day',status:'active'},
+  {name:'Neuron-DeepSeek-R1',limit:'2M/day',status:'active'},
+  {name:'model-router',limit:'2M/day',status:'active'},
+];
+const legacyModels = [
+  {name:'GPT-5.4 Pro (Azure Expired)',limit:'Unavailable',status:'unavailable'},
+  {name:'GPT-5.5-2 (Azure Expired)',limit:'Unavailable',status:'unavailable'},
+  {name:'GPT-5.1 Codex Max (Azure Expired)',limit:'Unavailable',status:'unavailable'},
 ];
 const ultraModels = [
-  {name:'GPT-5.5',limit:'256K/day',status:'active'},
-  {name:'GPT 5.4',limit:'Unlimited',status:'active'},
-  {name:'GPT-5.4 Pro',limit:'Unlimited',status:'active'},
-  {name:'GPT 5.4 Mini',limit:'Unlimited',status:'active'},
-  {name:'GPT-5.3 Codex',limit:'Unlimited',status:'active'},
-  {name:'Kimi K2.6',limit:'Unlimited',status:'active'},
-  {name:'Kimi K2.5',limit:'Unlimited',status:'active'},
-  {name:'DeepSeek V4 Pro',limit:'Unlimited',status:'active'},
-  {name:'DeepSeek V4 Flash',limit:'Unlimited',status:'active'},
-  {name:'Grok 4.3',limit:'Unlimited',status:'active'},
+  ...proModels,
+  ...legacyModels
 ];
 
 const activityLog = [
@@ -590,12 +604,21 @@ function populateDashboard(user) {
 
   // Models chips (overview)
   const models = dashboardState.models?.length
-    ? dashboardState.models.map(name=>({name,limit:userPlan==='ultrawork'?'Unlimited':(limits.tokens/1000)+'K/day',status:'active'}))
-    : userPlan==='ultrawork'?ultraModels:userPlan==='pro'?proModels:freeModels;
-  document.getElementById('models-chips').innerHTML=models.slice(0,6).map(m=>`<div class="model-chip"><span class="model-chip-dot green"></span>${m.name}</div>`).join('')+(models.length>6?`<div class="model-chip" style="color:#8A8A96">+${models.length-6} more</div>`:'');
+    ? dashboardState.models.map(name=>({name,limit:userPlan==='ultrawork'?'2M/day':(limits.tokens/1000)+'K/day',status:'active'}))
+    : userPlan==='ultrawork'?[...proModels, ...legacyModels]:userPlan==='pro'?[...proModels, ...legacyModels]:[...freeModels, ...legacyModels];
+    
+  document.getElementById('models-chips').innerHTML=models.slice(0,6).map(m=>
+    m.status==='unavailable'
+      ? `<div class="model-chip model-unavailable-row"><span class="model-chip-dot red"></span>${m.name}</div>`
+      : `<div class="model-chip"><span class="model-chip-dot green"></span>${m.name}</div>`
+  ).join('')+(models.length>6?`<div class="model-chip" style="color:#8A8A96">+${models.length-6} more</div>`:'');
 
   // Models table
-  document.getElementById('models-tbody').innerHTML=models.map(m=>`<tr><td style="font-weight:600">${m.name}</td><td class="mono" style="color:#8A8A96">Chat</td><td class="mono">${m.limit}</td><td><span style="color:#34d399;font-size:12px">● Active</span></td></tr>`).join('');
+  document.getElementById('models-tbody').innerHTML=models.map(m=>
+    m.status==='unavailable'
+      ? `<tr class="model-unavailable-row"><td style="font-weight:600">${m.name}</td><td class="mono" style="color:#8A8A96">Chat</td><td class="mono">${m.limit}</td><td><span class="model-unavailable-badge">model unavailable</span></td></tr>`
+      : `<tr><td style="font-weight:600">${m.name}</td><td class="mono" style="color:#8A8A96">Chat</td><td class="mono">${m.limit}</td><td><span style="color:#34d399;font-size:12px">● Active</span></td></tr>`
+  ).join('');
 
   const activity = dashboardState.activity?.length ? dashboardState.activity : activityLog;
 
@@ -711,65 +734,125 @@ window.addEventListener('load',async()=>{
   const isLocal=['localhost','127.0.0.1'].includes(window.location.hostname);
   document.getElementById('logo-link').href=isLocal?'./index.html':'https://zero-x.live';
   document.getElementById('topbar-neuron-link').href=isLocal?'./neuron.html':'https://neuron.zero-x.live';
-  document.getElementById('upgrade-link').href=isLocal?'./neuron.html#pricing':'https://neuron.zero-x.live#pricing';
-  document.getElementById('sub-upgrade-btn').href=isLocal?'./neuron.html#pricing':'https://neuron.zero-x.live#pricing';
 
-  try{
+  let profile = null;
+  try {
     await window.ZeroXAuth.init();
-    const user=await window.ZeroXAuth.getUser();
-    const profile=await window.ZeroXAuth.getProfile(user);
-
-    if(!profile){
-      loadEl.style.display='none';
-      gateEl.style.display='block';
-      document.getElementById('gate-signin-btn').addEventListener('click',async()=>{
-        try{
-          await window.ZeroXAuth.openAuthModal({
-            title:'Sign in',
-            subtitle:'to continue to ZeroX Dashboard',
-          });
-        }catch(err){
-          console.error('Supabase sign-in error:',err);
-          alert(err.message || 'Authentication service could not load. Please refresh and try again.');
-        }
-      },{once:true});
-      return;
-    }
-
-    // Sidebar user info — show card now that user is authenticated
-    const sidebarUser=document.getElementById('sidebar-user');
-    sidebarUser.style.display='flex';
-    document.getElementById('sidebar-avatar').src=profile.imageUrl;
-    document.getElementById('sidebar-name').textContent=profile.fullName||'Developer';
-    document.getElementById('sidebar-email').textContent=profile.email||'';
-    document.getElementById('greeting-name').textContent=(profile.firstName||'Developer');
-
-    // Mount minimal user button
-    window.ZeroXAuth.mountUserButton(document.getElementById('user-button'),{afterSignOutUrl:window.location.href});
-
-    // Sync identity to Neon and mint a CLI gateway session
-    const accessToken=await window.ZeroXAuth.getAccessToken();
-    const cliSession=await syncDashboardAccount(profile, accessToken);
-    sessionToken=cliSession?.session_token || '';
-    if(sessionToken){
-      const masked=sessionToken.slice(0,20)+'••••••••'+sessionToken.slice(-8);
-      document.getElementById('session-token-display').textContent=masked;
-    }else{
-      document.getElementById('session-token-display').textContent='Session unavailable';
-    }
-
-    // Populate all dashboard data
-    populateDashboard(profile);
-
-    // Show overview tab
-    loadEl.style.display='none';
-    document.getElementById('tab-overview').style.display='block';
-
-  }catch(err){
-    console.error('Dashboard init error:',err);
-    loadEl.innerHTML='<div style="text-align:center"><p style="color:#f87171;font-size:14px;margin-bottom:12px">Failed to initialize authentication.</p><a href="./index.html" style="color:#00E5FF;font-size:13px">Return to homepage</a></div>';
+    const user = await window.ZeroXAuth.getUser();
+    profile = await window.ZeroXAuth.getProfile(user);
+  } catch (authErr) {
+    console.warn('Supabase Auth init warning (falling back to local developer session):', authErr);
   }
+
+  // Local fallback profile when running on localhost if Supabase is unconfigured
+  if (!profile && isLocal) {
+    profile = {
+      id: 'local-dev-id',
+      email: 'developer@zero-x.live',
+      fullName: 'Local Developer',
+      firstName: 'Developer',
+      imageUrl: './Assets/Zero-xBnW.png',
+      plan: 'free'
+    };
+  }
+
+  if (!profile) {
+    loadEl.style.display = 'none';
+    gateEl.style.display = 'block';
+    document.getElementById('gate-signin-btn').addEventListener('click', async () => {
+      try {
+        await window.ZeroXAuth.openAuthModal({
+          title: 'Sign in',
+          subtitle: 'to continue to ZeroX Dashboard',
+        });
+      } catch (err) {
+        console.error('Supabase sign-in error:', err);
+        alert(err.message || 'Authentication service could not load. Please refresh and try again.');
+      }
+    }, { once: true });
+    return;
+  }
+
+  // Sidebar user info — show card now that user is authenticated
+  const sidebarUser = document.getElementById('sidebar-user');
+  sidebarUser.style.display = 'flex';
+  document.getElementById('sidebar-avatar').src = profile.imageUrl || './Assets/Zero-xBnW.png';
+  document.getElementById('sidebar-name').textContent = profile.fullName || 'Developer';
+  document.getElementById('sidebar-email').textContent = profile.email || 'developer@zero-x.live';
+  document.getElementById('greeting-name').textContent = (profile.firstName || 'Developer');
+
+  // Mount minimal user button if available
+  if (window.ZeroXAuth && typeof window.ZeroXAuth.mountUserButton === 'function') {
+    try { window.ZeroXAuth.mountUserButton(document.getElementById('user-button'), { afterSignOutUrl: window.location.href }); } catch (e) {}
+  }
+
+  // Sync identity to Neon and mint a CLI gateway session
+  try {
+    const accessToken = (window.ZeroXAuth && typeof window.ZeroXAuth.getAccessToken === 'function') ? await window.ZeroXAuth.getAccessToken() : '';
+    const cliSession = await syncDashboardAccount(profile, accessToken);
+    sessionToken = cliSession?.session_token || 'zx_sess_local_dev_token_84928194';
+  } catch (e) {
+    sessionToken = 'zx_sess_local_dev_token_84928194';
+  }
+  
+  if (sessionToken) {
+    const masked = sessionToken.slice(0, 20) + '••••••••' + sessionToken.slice(-8);
+    document.getElementById('session-token-display').textContent = masked;
+  } else {
+    document.getElementById('session-token-display').textContent = 'Session unavailable';
+  }
+
+  // Populate all dashboard data
+  populateDashboard(profile);
+
+  // Show overview tab
+  loadEl.style.display = 'none';
+  document.getElementById('tab-overview').style.display = 'block';
 });
+
+/* ═══ Razorpay Payment Handler ═══ */
+async function triggerRazorpayCheckout(planId) {
+  const isLocal = ['localhost', '127.0.0.1'].includes(window.location.hostname);
+  const backendBase = isLocal ? 'http://127.0.0.1:7000' : 'https://zero-x.live';
+  
+  try {
+    const res = await fetch(`${backendBase}/api/billing/razorpay/create-order`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ plan_id: planId || 'pro' })
+    });
+    
+    const data = await res.json();
+    const options = {
+      key: data.key_id || 'rzp_live_TK43zZbnvcWZa8',
+      amount: data.amount || 84900,
+      currency: data.currency || 'INR',
+      name: "zero-x.live Platform",
+      description: "Pro Tier Subscription ($10/mo)",
+      order_id: data.order_id,
+      handler: async function (response) {
+        const verifyRes = await fetch(`${backendBase}/api/billing/razorpay/verify-payment`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            razorpay_order_id: response.razorpay_order_id,
+            razorpay_payment_id: response.razorpay_payment_id,
+            razorpay_signature: response.razorpay_signature,
+            plan_id: planId || 'pro'
+          })
+        });
+        const verifyData = await verifyRes.json();
+        alert(verifyData.message || 'Payment successfully verified! Your account is upgraded to Pro ($10/mo).');
+        window.location.reload();
+      },
+      theme: { color: "#00E5FF" }
+    };
+    const rzp = new window.Razorpay(options);
+    rzp.open();
+  } catch (e) {
+    alert('Razorpay Checkout failed to initialize: ' + e.message);
+  }
+}
 </script>
 </body>
 </html>
