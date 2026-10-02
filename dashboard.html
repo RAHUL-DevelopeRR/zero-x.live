@@ -484,20 +484,29 @@ document.querySelectorAll('.dash-nav-item[data-tab]').forEach(btn=>{
     const tab=document.getElementById('tab-'+btn.dataset.tab);
     if(tab)tab.style.display='block';
     document.getElementById('topbar-title').textContent=tabNames[btn.dataset.tab]||'Dashboard';
-    if(innerWidth<=900){document.getElementById('sidebar').classList.remove('open');document.getElementById('mobMenuBtn').setAttribute('aria-expanded','false');document.getElementById('mobMenuBtn').focus();}
+    if(innerWidth<=900){document.getElementById('sidebar').classList.remove('open');syncSidebar();document.getElementById('mobMenuBtn').focus();}
   });
 });
 
 /* ═══ Mobile Menu ═══ */
+const sidebarMedia=matchMedia('(max-width:900px)');
+function syncSidebar(){
+  const sidebar=document.getElementById('sidebar');
+  const open=sidebar.classList.contains('open');
+  sidebar.inert=sidebarMedia.matches&&!open;
+  document.getElementById('mobMenuBtn').setAttribute('aria-expanded',String(open));
+}
+sidebarMedia.addEventListener('change',syncSidebar);
+syncSidebar();
 document.getElementById('mobMenuBtn').addEventListener('click',()=>{
   const open = document.getElementById('sidebar').classList.toggle('open');
-  document.getElementById('mobMenuBtn').setAttribute('aria-expanded',String(open));
+  syncSidebar();
   if(open)document.querySelector('.dash-nav-item').focus();
 });
 document.addEventListener('keydown',event=>{
   if(event.key==='Escape' && document.getElementById('sidebar').classList.contains('open')){
     document.getElementById('sidebar').classList.remove('open');
-    document.getElementById('mobMenuBtn').setAttribute('aria-expanded','false');
+    syncSidebar();
     document.getElementById('mobMenuBtn').focus();
   }
 });
@@ -595,6 +604,7 @@ function populateDashboard(user) {
 
 async function dashboardAuthFetch(path, token, options = {}) {
   const res = await fetch(path, {
+    signal:AbortSignal.timeout(10000),
     ...options,
     headers: {
       'Content-Type': 'application/json',
@@ -726,6 +736,10 @@ window.addEventListener('load',async()=>{
   if (window.ZeroXAuth && typeof window.ZeroXAuth.mountUserButton === 'function') {
     try { window.ZeroXAuth.mountUserButton(document.getElementById('user-button'), { afterSignOutUrl: window.location.href }); } catch (e) {}
   }
+
+  populateDashboard(profile);
+  loadEl.style.display = 'none';
+  document.getElementById('tab-overview').style.display = 'block';
 
   // Sync identity to Neon and mint a CLI gateway session
   try {

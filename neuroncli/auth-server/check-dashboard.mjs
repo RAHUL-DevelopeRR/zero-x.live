@@ -6,13 +6,13 @@ const html = readFileSync(new URL('../../dashboard.html',import.meta.url),'utf8'
 const script = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].at(-1)[1];
 const elements = new Map();
 const element = id => {
-  if(!elements.has(id))elements.set(id,{textContent:'',innerHTML:'',style:{},classList:{toggle(){},remove(){}},addEventListener(){},focus(){}});
+  if(!elements.has(id))elements.set(id,{textContent:'',innerHTML:'',style:{},classList:{toggle(){},remove(){},contains:()=>false},setAttribute(){},addEventListener(){},focus(){}});
   return elements.get(id);
 };
 let boot;
 const profile={id:'test-user',email:'owner@example.com',fullName:'Test Owner'};
 const context = vm.createContext({
-  document:{getElementById:element,querySelectorAll:()=>[],addEventListener(){}},
+  document:{getElementById:element,querySelectorAll:()=>[],addEventListener(){}},matchMedia:()=>({matches:false,addEventListener(){}}),AbortSignal,
   window:{location:{hostname:'www.zero-x.live',origin:'https://www.zero-x.live',href:'https://www.zero-x.live/dashboard.html'},addEventListener(name,fn){if(name==='load')boot=fn;},ZeroXAuth:{async init(){},async getUser(){return {};},async getProfile(){return profile;},async getAccessToken(){return 'test';},mountUserButton(){}}},
   fetch:async()=>{throw new Error('Gateway unavailable');},
   console:{warn(){},error(){}},navigator:{clipboard:{async writeText(){}}},setTimeout,innerWidth:1200,
