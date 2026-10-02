@@ -12,6 +12,7 @@ neuroncli/auth-server/.wrangler/
 neuroncli/auth-server/src/
 neuroncli/auth-server/server.js
 neuroncli/auth-server/check-worker.mjs
+neuroncli/auth-server/check-dashboard.mjs
 neuroncli/auth-server/package*
 neuroncli/auth-server/.env
 .git/

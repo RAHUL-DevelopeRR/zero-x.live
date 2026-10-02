@@ -12,7 +12,7 @@ The supplied `Assets/zero-x/DESIGN.md` remains the original light/green directio
 
 | Finding | Change | Verification / remaining work |
 | --- | --- | --- |
-| 1: sign-in | Resumed the connected Supabase project; configured public key and exact return URLs; added enabled-provider discovery, native dialog, email magic-link form, Microsoft OAuth scope, SMS send/verify flow, and useful errors. | Project reports ACTIVE_HEALTHY. Worker checks cover enabled/disabled providers and outages. Actual OAuth, public email, and SMS sessions remain blocked on provider credentials/custom SMTP. |
+| 1: sign-in | Resumed the connected Supabase project; configured public key and exact return URLs; added enabled-provider discovery, native dialog, email magic-link form, Microsoft OAuth scope, SMS send/verify flow, and useful errors. | Project reports ACTIVE_HEALTHY. Owner/team email was delivered to Gmail; its callback created a real signed-in session, and the dashboard accepted it across subdomains. Worker checks cover disabled providers and outages. Public-user email still needs SMTP; Google/Microsoft/SMS credentials remain missing. |
 | 2: fake visitors | Removed random active users, growth estimates, counters, and their fallback scripts. | Source contains no visitor-counter implementation. No traffic is reported as real from this code. |
 | 3: contrast | Brightened muted/faint colors; made headline cyan; removed dimmed platform text. | Installed checker: faint #9999A5 on card #18181C = 6.28:1. Product DOM text-color inspection found no non-whitespace text below its AA threshold in the tested rendering; this does not validate pixels embedded in product screenshots. |
 | 4: mobile menu | Native dialog, named 44 px opener/closer, expanded state, Escape/focus management, visible focus. | Homepage tested at 390 x 844: opener 44 x 44; Escape closed dialog and restored focus. Product mobile width 375 within 390 px viewport. |
@@ -27,10 +27,21 @@ The supplied `Assets/zero-x/DESIGN.md` remains the original light/green directio
 
 - `node neuroncli/auth-server/check-worker.mjs`: PASS for host routes, provider availability, outage behavior, rejecting service-role keys from public config, and unauthenticated /auth/me returning 401.
 - `node --check zerox-auth.js`: PASS.
+- `node neuroncli/auth-server/check-dashboard.mjs`: PASS for server-derived quotas, empty/unavailable states, no fake history, and failed gateway sessions producing no dummy token.
 - Pinned Tailwind 3.4.17 CSS compilation: PASS. Marketing pages no longer depend on Tailwind's runtime CDN.
 - `npm audit --omit=dev` in the auth server: PASS, zero reported vulnerabilities after updating the existing lockfile.
 - `git diff --check`: PASS.
 - Static browser preview: product images loaded; no mobile overflow at 390 px; sample-result, empty-result, copy feedback, menu Escape, and temporary auth-unavailable states exercised. Static preview has no /auth/config endpoint, so its expected auth error is not evidence of a live backend failure.
+
+## Live verification and dashboard corrections
+
+Cloudflare and GitHub Pages deployments succeeded for `50d7ef0` and the routing correction `6599bbe`. Production initially ignored `run_worker_first` because the deployment action installed Wrangler 3.90.0. Pinning Wrangler 4.147.0 fixed the cause; `https://neuron.zero-x.live/index.html` now returns the NeuCockpit product title.
+
+On the live product page, empty email submission invoked native validation. A controlled test used the Supabase organization's confirmed owner email, received the confirmation email in Gmail, followed the Supabase callback, and displayed the authenticated account menu with no captured JavaScript errors. The same session opened the authenticated dashboard. This proves owner/team email login, not public-user SMTP readiness or an external customer acquisition.
+
+That authenticated test exposed existing dashboard fallbacks covered by the data/functional findings: fabricated weekly/monthly usage, outdated 44K/three-model plan copy, and a dummy session token on gateway failure. These are removed. Limits/model counts come from the gateway; activity records only successful account requests in the current browser session; unavailable data is labeled. Copy feedback waits for clipboard success. The API endpoint now matches the deployed Worker route. Billing buttons called routes that do not exist in this Worker, so the unsupported payment path and unverifiable comparison were removed and the page clearly states that paid plan changes are unavailable. Billing has not been implemented or charged.
+
+The owner-login proof is saved privately at `C:/Users/DELL/deepseekfs/growth-2026-10-02/auth-fixes/owner-signed-in.png`; credentials and temporary sign-in links are not published.
 
 ## Delivery gate
 

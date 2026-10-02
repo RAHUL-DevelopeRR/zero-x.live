@@ -70,6 +70,7 @@ Source: [Supabase phone setup](https://supabase.com/docs/guides/auth/phone-login
 ```powershell
 cd neuroncli/auth-server
 node check-worker.mjs
+node check-dashboard.mjs
 npm audit --omit=dev
 ```
 
@@ -79,4 +80,4 @@ Rebuild the checked-in marketing CSS from the repository root after changing Tai
 npx --yes tailwindcss@3.4.17 -c tailwind.config.cjs -i site.css -o site.min.css --minify
 ```
 
-Full sign-in verification remains pending until the owner completes provider credential setup and actual email/SMS/OAuth sessions succeed.
+Owner/team email delivery, callback, signed-in profile, and cross-subdomain dashboard access were verified. Full public sign-in verification remains pending until the owner completes SMTP and provider credential setup and real SMS/OAuth sessions succeed.
