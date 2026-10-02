@@ -43,6 +43,10 @@ That authenticated test exposed existing dashboard fallbacks covered by the data
 
 The owner-login proof is saved privately at `C:/Users/DELL/deepseekfs/growth-2026-10-02/auth-fixes/owner-signed-in.png`; credentials and temporary sign-in links are not published.
 
+Final live checks after `4ede808`: both deployment jobs passed; Overview, Usage, Subscription, Models, API Keys, Profile, and Activity tabs opened correctly. API URL copy acknowledged success. The account produced a real gateway session token, displayed masked; no dummy fallback remained. At an actual 390 px dashboard viewport, the closed sidebar was inert, the menu focused its first navigation button, Escape closed it and restored opener focus, and document width remained within the viewport. Viewport overrides were cleared. Sign Out returned to the sign-in gate, with no captured JavaScript errors. Dashboard proof: `C:/Users/DELL/deepseekfs/growth-2026-10-02/auth-fixes/dashboard-verified.png`. The sign-in test was for the owner, not a new external customer.
+
+Latest configuration check: email enabled; Google, Microsoft, and phone disabled; custom SMTP absent. Google Cloud reached its project limit, so choosing an existing project or increasing that limit is required. The Microsoft setup portal requires the owner's sign-in. Exact setup instructions are in `auth-setup.md`.
+
 ## Delivery gate
 
 The full anti-slop delivery gate remains open. This is a fix report, not a claim that every legacy page, authenticated dashboard state, payment flow, or provider has passed.
