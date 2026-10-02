@@ -1,0 +1,29 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Retain the restored dark identity; cyan identifies actions and focus. */
+:focus-visible { outline: 3px solid #00e5ff !important; outline-offset: 4px; }
+button, header a, #mobileNav a { min-height: 44px; }
+button { min-width: 44px; }
+header nav a, #mobileNav a { display: inline-flex; align-items: center; }
+header img { object-fit: contain; }
+#signin-btn { display: inline-flex; align-items: center; }
+section[id], div[id='hero-showcase-viewport'] { scroll-margin-top: 88px; }
+body .reveal, body .reveal.visible { opacity: 1; transform: none; transition: none; }
+body .anim-orb, body .anim-orb2, body .anim-float { animation: none; }
+body .cat-tab { cursor: default; }
+body .gradient-text { background: none; -webkit-text-fill-color: #00e5ff; color: #00e5ff; animation: none; }
+body .live-dot, body .noise-overlay::after { animation: none; }
+body .text-zx-accent\/60 { color: #00e5ff; }
+body .pointer-events-none[class*='blur-'] { opacity: .35; }
+body .nav-blur { backdrop-filter: none; background: #0a0a0c; }
+#mobileNav { margin: 0; border: 0; width: 100%; height: 100%; max-width: none; max-height: none; background: #0a0a0c; }
+#mobileNav:not([open]) { display: none; }
+#mobileNav[open] { display: flex; }
+dialog::backdrop { background: rgba(10,10,12,.85); }
+.sample-result { border: 1px solid #555563; }
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}

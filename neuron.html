@@ -5,8 +5,8 @@
   <meta charset="utf-8"/>
   <meta content="width=device-width,initial-scale=1" name="viewport"/>
 
-  <title>NeuCockpit — Unified File Intelligence | ZeroX</title>
-  <meta name="description" content="Download NeuCockpit for Windows, macOS, and Linux. Search files by meaning and work with local AI. Free for 15 days."/>
+  <title>NeuCockpit | Semantic file search and local AI by ZeroX</title>
+  <meta name="description" content="Download NeuCockpit for Windows, macOS, and Linux. Search files by meaning and summarize documents with local AI."/>
   <meta name="keywords" content="NeuCockpit, semantic search, file intelligence, AI desktop software, local AI, offline file search, neural embeddings, FAISS, privacy-first, Windows 11 app"/>
   <meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large"/>
   <meta name="author" content="ZeroX Corporation"/>
@@ -18,8 +18,8 @@
   <!-- Open Graph -->
   <meta property="og:type" content="website"/>
   <meta property="og:site_name" content="ZeroX"/>
-  <meta property="og:title" content="NeuCockpit — Unified File Intelligence | ZeroX"/>
-  <meta property="og:description" content="Download NeuCockpit for Windows, macOS, and Linux. Search files by meaning and work with local AI. Free for 15 days."/>
+  <meta property="og:title" content="NeuCockpit | Semantic file search by ZeroX"/>
+  <meta property="og:description" content="Download NeuCockpit for Windows, macOS, and Linux. Search files by meaning and work with local AI."/>
   <meta property="og:url" content="https://neuron.zero-x.live/"/>
   <meta property="og:image" content="https://www.zero-x.live/Assets/neucockpit_screenshot.jpg"/>
   <meta property="og:image:alt" content="NeuCockpit Screenshot"/>
@@ -27,8 +27,8 @@
 
   <!-- Twitter Card -->
   <meta name="twitter:card" content="summary_large_image"/>
-  <meta name="twitter:title" content="NeuCockpit — Unified File Intelligence"/>
-  <meta name="twitter:description" content="Semantic file search and local AI for Windows, macOS, and Linux. Free for 15 days."/>
+  <meta name="twitter:title" content="NeuCockpit | Semantic file search"/>
+  <meta name="twitter:description" content="Semantic file search and local AI for Windows, macOS, and Linux."/>
   <meta name="twitter:image" content="https://www.zero-x.live/Assets/neucockpit_screenshot.jpg"/>
 
   <!-- Favicons -->
@@ -48,10 +48,6 @@
   <script src="./zerox-auth.js"></script>
 
   <!-- Tailwind CDN -->
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>
-    tailwind.config={darkMode:"class",theme:{extend:{colors:{"zx-bg":"#0A0A0C","zx-surface":"#111114","zx-card":"#18181C","zx-border":"rgba(255,255,255,0.08)","zx-text":"#E8E8EC","zx-muted":"#8A8A96","zx-faint":"#4E4E5A","zx-accent":"#00E5FF","zx-accent-h":"#00B8D4","zx-purple":"#7C4DFF"},fontFamily:{display:["'Cabinet Grotesk'","sans-serif"],body:["'Satoshi'","sans-serif"],mono:["'JetBrains Mono'","monospace"]}}}}
-  </script>
 
   <!-- JSON-LD Structured Data -->
   <script type="application/ld+json">
@@ -64,18 +60,11 @@
     "description": "NeuCockpit brings semantic file search and local AI to your desktop.",
     "url": "https://neuron.zero-x.live",
     "softwareVersion": "1.0",
-    "offers": {
-      "@type": "Offer",
-      "price": "0",
-      "priceCurrency": "USD",
-      "description": "Free for 15 days"
-    },
     "author": {
       "@type": "Organization",
       "name": "ZeroX Corporation",
       "url": "https://www.zero-x.live"
     },
-    "fileSize": "2.4 GB",
     "downloadUrl": "https://neuron.zero-x.live/#downloads"
   }
   </script>
@@ -170,18 +159,20 @@
     .cl-headerTitle, .cl-headerSubtitle { text-align: center !important; width: 100% !important; }
     .cl-header { align-items: center !important; text-align: center !important; }
   </style>
+  <link rel="stylesheet" href="./site.min.css"/>
+  <script src="./site-ui.js" defer></script>
 </head>
 <body class="font-body antialiased overflow-x-hidden">
 
   <!-- ═══════════════════════════════ NAV ═══════════════════════════════ -->
   <header class="fixed top-0 w-full h-20 z-50 nav-blur border-b border-white/[0.06]">
     <div class="max-w-[1200px] mx-auto h-full flex items-center justify-between px-5">
-      <a href="./index.html" id="nav-logo-link" class="shrink-0">
+      <a href="https://www.zero-x.live/" id="nav-logo-link" class="shrink-0">
         <img src="./Assets/Zero-xBnW.png" alt="ZeroX" class="block h-14" style="mix-blend-mode:lighten"/>
       </a>
 
       <nav class="hidden md:flex items-center gap-7" aria-label="Main navigation">
-        <a href="./index.html" id="nav-company-link" class="text-[14px] text-zx-muted hover:text-white transition-colors">Company</a>
+        <a href="https://www.zero-x.live/" id="nav-company-link" class="text-[14px] text-zx-muted hover:text-white transition-colors">Company</a>
         <a href="#" class="text-[14px] text-white font-medium">NeuCockpit</a>
         <a href="#features" class="text-[14px] text-zx-muted hover:text-white transition-colors">Features</a>
         <a href="#downloads" class="text-[14px] text-zx-muted hover:text-white transition-colors">Downloads</a>
@@ -191,20 +182,20 @@
         <a href="#" id="signin-btn" class="hidden md:block text-[14px] text-zx-muted hover:text-white transition-colors mr-2">Sign In</a>
         <div id="user-button"></div>
         <a href="#downloads" class="hidden md:block bg-zx-accent text-black font-semibold text-[13px] px-4 py-[6px] rounded-full hover:bg-zx-accent-h transition-colors">Download</a>
-        <button id="mobBtn" class="md:hidden text-white"><span class="material-symbols-outlined">menu</span></button>
+        <button id="mobBtn" aria-label="Open menu" aria-controls="mobileNav" aria-expanded="false" class="md:hidden text-white"><span class="material-symbols-outlined" aria-hidden="true">menu</span></button>
       </div>
     </div>
   </header>
 
   <!-- ═══════════════════════════ MOBILE NAV ═══════════════════════════ -->
-  <div id="mobileNav" class="fixed inset-0 z-[60] bg-zx-bg/95 backdrop-blur-xl hidden flex-col items-center justify-center gap-6">
-    <button id="mobClose" class="absolute top-4 right-5 text-white"><span class="material-symbols-outlined text-3xl">close</span></button>
-    <a href="./index.html" onclick="closeMob()" class="text-xl text-white">Company</a>
+  <dialog id="mobileNav" aria-label="Navigation" class="fixed inset-0 z-[60] flex-col items-center justify-center gap-6">
+    <button id="mobClose" aria-label="Close menu" class="absolute top-4 right-5 text-white"><span class="material-symbols-outlined text-3xl" aria-hidden="true">close</span></button>
+    <a href="https://www.zero-x.live/" onclick="closeMob()" class="text-xl text-white">Company</a>
     <a href="#demo" onclick="closeMob()" class="text-xl text-white">Demo</a>
     <a href="#features" onclick="closeMob()" class="text-xl text-white">Features</a>
     <a href="#downloads" onclick="closeMob()" class="text-xl text-white">Downloads</a>
     <a href="#downloads" onclick="closeMob()" class="mt-4 bg-zx-accent text-black px-8 py-3 rounded-full font-medium">Download</a>
-  </div>
+  </dialog>
 
 
   <!-- ═══════════════════════════════ HERO ═══════════════════════════════ -->
@@ -217,7 +208,7 @@
     <div class="relative z-10 max-w-[860px] mx-auto" style="animation:fade-in-up .8s ease both">
       <!-- Badge -->
       <div class="inline-flex items-center gap-2 px-4 py-1.5 border border-zx-accent/20 bg-zx-accent/[0.06] rounded-full text-[12px] text-zx-accent font-medium tracking-wide mb-10">
-        <span class="w-[6px] h-[6px] bg-emerald-400 rounded-full"></span>NeuCockpit v1.0 — Free for 15 days
+        <span class="w-[6px] h-[6px] bg-emerald-400 rounded-full"></span>NeuCockpit v1.0 available
       </div>
 
       <!-- Heading -->
@@ -238,7 +229,7 @@
       </div>
 
       <!-- Free trial notice -->
-      <p class="text-[13px] text-zx-faint">Try free for 15 days. No credit card required.</p>
+      <p class="text-[13px] text-zx-faint">Choose a folder to index, then search your own files.</p>
     </div>
 
     <!-- Subtle scroll indicator -->
@@ -283,7 +274,7 @@
             Semantic Search Across<br>Your Files
           </h2>
           <p class="text-[16px] text-zx-muted leading-relaxed mb-8 max-w-md">
-            Type "resume" and find every resume file — across DOCX, PDF, HTML, Python, Markdown, Excel, and 40+ file types. NeuCockpit understands meaning, not just filenames.
+            Describe the document you remember. NeuCockpit searches indexed content across supported documents, code, and other files.
           </p>
           <div class="flex flex-col gap-3.5">
             <div class="flex items-start gap-3 text-[14px] text-zx-muted">
@@ -314,12 +305,12 @@
             Intelligent File<br>Categorization
           </h2>
           <p class="text-[16px] text-zx-muted leading-relaxed mb-8 max-w-md">
-            Automatically categorize search results by type — Files, Folders, Code, Docs, Media, MemoryOS, Activity. Navigate your filesystem like never before.
+            Browse search results by category: Files, Folders, Code, Docs, and Media. MemoryOS and Activity provide additional views.
           </p>
           <div class="flex flex-col gap-3.5">
             <div class="flex items-start gap-3 text-[14px] text-zx-muted">
               <span class="text-emerald-400 text-[16px] mt-0.5 font-semibold">✓</span>
-              <span>Smart type detection for <span class="text-white font-medium">40+ formats</span></span>
+              <span>File type filters for documents, code, and media</span>
             </div>
             <div class="flex items-start gap-3 text-[14px] text-zx-muted">
               <span class="text-emerald-400 text-[16px] mt-0.5 font-semibold">✓</span>
@@ -339,6 +330,7 @@
         <!-- Category Tab Mock -->
         <div class="order-1 lg:order-2">
           <div class="glass-card rounded-2xl p-6 md:p-8">
+            <p class="text-sm text-zx-muted mb-4">Illustrative sample results. Install NeuCockpit to search your own files.</p>
             <!-- Tabs row -->
             <div class="flex flex-wrap gap-2 mb-6">
               <span class="cat-tab active">All</span>
@@ -359,20 +351,12 @@
                   <div class="text-[13px] text-white font-medium truncate">Project_Proposal_Q2.pdf</div>
                   <div class="text-[11px] text-zx-faint font-mono truncate">/docs/proposals · 2.4 MB · Modified 3d ago</div>
                 </div>
-                <div class="flex items-center gap-1.5">
-                  <div class="w-12 h-1 bg-zx-bg rounded-full overflow-hidden"><div class="h-full bg-zx-accent" style="width:94%"></div></div>
-                  <span class="text-[10px] text-zx-accent-h font-mono">.94</span>
-                </div>
               </div>
               <div class="flex items-center gap-3 p-3 rounded-lg bg-white/[0.03] border border-white/[0.04]">
                 <span class="material-symbols-outlined text-zx-purple text-[18px]">code</span>
                 <div class="flex-1 min-w-0">
                   <div class="text-[13px] text-white font-medium truncate">search_engine.py</div>
                   <div class="text-[11px] text-zx-faint font-mono truncate">/src/core · 18 KB · Modified 1d ago</div>
-                </div>
-                <div class="flex items-center gap-1.5">
-                  <div class="w-12 h-1 bg-zx-bg rounded-full overflow-hidden"><div class="h-full bg-zx-accent" style="width:87%"></div></div>
-                  <span class="text-[10px] text-zx-accent-h font-mono">.87</span>
                 </div>
               </div>
               <div class="flex items-center gap-3 p-3 rounded-lg bg-white/[0.03] border border-white/[0.04]">
@@ -381,20 +365,12 @@
                   <div class="text-[13px] text-white font-medium truncate">assets/brand-kit/</div>
                   <div class="text-[11px] text-zx-faint font-mono truncate">/projects/zerox · 142 items · Modified 5d ago</div>
                 </div>
-                <div class="flex items-center gap-1.5">
-                  <div class="w-12 h-1 bg-zx-bg rounded-full overflow-hidden"><div class="h-full bg-zx-accent opacity-70" style="width:72%"></div></div>
-                  <span class="text-[10px] text-zx-muted font-mono">.72</span>
-                </div>
               </div>
               <div class="flex items-center gap-3 p-3 rounded-lg bg-white/[0.03] border border-white/[0.04]">
                 <span class="material-symbols-outlined text-emerald-400 text-[18px]">image</span>
                 <div class="flex-1 min-w-0">
                   <div class="text-[13px] text-white font-medium truncate">dashboard_mockup.png</div>
                   <div class="text-[11px] text-zx-faint font-mono truncate">/design/screens · 4.1 MB · Modified 2d ago</div>
-                </div>
-                <div class="flex items-center gap-1.5">
-                  <div class="w-12 h-1 bg-zx-bg rounded-full overflow-hidden"><div class="h-full bg-zx-accent opacity-60" style="width:65%"></div></div>
-                  <span class="text-[10px] text-zx-muted font-mono">.65</span>
                 </div>
               </div>
             </div>
@@ -429,7 +405,7 @@
             <span class="material-symbols-outlined text-zx-purple text-[20px]">auto_awesome</span>
           </div>
           <h3 class="text-[15px] font-medium text-white mb-2">Qwen AI Engine</h3>
-          <p class="text-[14px] text-zx-muted leading-relaxed">Local Qwen 2.5 Coder 3B GGUF model via llama.cpp. Summarize, chat, and answer — 100% offline.</p>
+          <p class="text-[14px] text-zx-muted leading-relaxed">Local Qwen 2.5 Coder 1.5B GGUF model via llama.cpp. Summarize documents and ask questions using local mode.</p>
         </div>
         <!-- Card 3 -->
         <div class="bg-zx-card border border-white/[0.06] rounded-xl p-7 hover:border-white/[0.12] transition-all duration-300 group">
@@ -444,7 +420,7 @@
           <div class="w-10 h-10 rounded-lg bg-amber-500/[0.08] flex items-center justify-center mb-5 group-hover:bg-amber-500/[0.14] transition-colors">
             <span class="material-symbols-outlined text-amber-400 text-[20px]">bolt</span>
           </div>
-          <h3 class="text-[15px] font-medium text-white mb-2">Lightning Fast</h3>
+          <h3 class="text-[15px] font-medium text-white mb-2">Vector Retrieval</h3>
           <p class="text-[14px] text-zx-muted leading-relaxed">FAISS vector index with HNSW graph search to find related files by meaning.</p>
         </div>
         <!-- Card 5 -->
@@ -452,16 +428,16 @@
           <div class="w-10 h-10 rounded-lg bg-emerald-500/[0.08] flex items-center justify-center mb-5 group-hover:bg-emerald-500/[0.14] transition-colors">
             <span class="material-symbols-outlined text-emerald-400 text-[20px]">shield</span>
           </div>
-          <h3 class="text-[15px] font-medium text-white mb-2">100% Offline</h3>
-          <p class="text-[14px] text-zx-muted leading-relaxed">Everything runs on your machine. No cloud, no telemetry, no data ever leaves.</p>
+          <h3 class="text-[15px] font-medium text-white mb-2">Local AI mode</h3>
+          <p class="text-[14px] text-zx-muted leading-relaxed">Local search and local AI run on your computer. Optional internet features and account sign-in connect to online services.</p>
         </div>
         <!-- Card 6 -->
         <div class="bg-zx-card border border-white/[0.06] rounded-xl p-7 hover:border-white/[0.12] transition-all duration-300 group">
           <div class="w-10 h-10 rounded-lg bg-rose-500/[0.08] flex items-center justify-center mb-5 group-hover:bg-rose-500/[0.14] transition-colors">
             <span class="material-symbols-outlined text-rose-400 text-[20px]">file_copy</span>
           </div>
-          <h3 class="text-[15px] font-medium text-white mb-2">40+ File Types</h3>
-          <p class="text-[14px] text-zx-muted leading-relaxed">PDF, DOCX, PPTX, XLSX, Python, JavaScript, JSON, YAML, and dozens more.</p>
+          <h3 class="text-[15px] font-medium text-white mb-2">Documents, Code, and Media</h3>
+          <p class="text-[14px] text-zx-muted leading-relaxed">Supported documents and source files include PDF, DOCX, PPTX, XLSX, Python, JavaScript, JSON, and YAML.</p>
         </div>
       </div>
     </div>
@@ -477,7 +453,7 @@
       <div class="text-center mb-16 reveal">
         <a class="inline-flex items-center gap-2 text-zx-accent-h text-[13px] font-medium tracking-wide mb-6">2.0&ensp;Downloads&ensp;→</a>
         <h2 class="text-[clamp(28px,4vw,40px)] font-medium tracking-[-0.02em] leading-[1.15] text-white mb-5 font-display">Download NeuCockpit v1.0</h2>
-        <p class="text-[16px] text-zx-muted max-w-lg mx-auto leading-relaxed">Free for 15 days. Choose your platform to download the installer.</p>
+        <p class="text-[16px] text-zx-muted max-w-lg mx-auto leading-relaxed">Choose your platform and CPU architecture to download the installer.</p>
       </div>
 
       <!-- 3-column OS grid -->
@@ -619,7 +595,7 @@
     <div class="max-w-[900px] mx-auto reveal">
       <a class="inline-flex items-center gap-2 text-zx-accent-h text-[13px] font-medium tracking-wide mb-6">3.0&ensp;Under the Hood&ensp;→</a>
       <h2 class="text-[clamp(28px,4vw,40px)] font-medium tracking-[-0.02em] leading-[1.15] text-white mb-5 font-display">Layered architecture</h2>
-      <p class="text-[16px] text-zx-muted max-w-lg leading-relaxed mb-12">Enterprise-grade design. Each layer is independent, testable, and replaceable.</p>
+      <p class="text-[16px] text-zx-muted max-w-lg leading-relaxed mb-12">The desktop interface connects to local indexing, retrieval, and model services.</p>
 
       <div class="flex flex-col gap-3">
         <!-- UI Layer -->
@@ -640,7 +616,7 @@
           <div class="w-2 h-10 rounded-full bg-zx-purple/40 group-hover:bg-zx-purple transition-colors"></div>
           <div class="flex-1">
             <div class="text-[14px] font-medium text-white">CLI Surface</div>
-            <div class="text-[13px] text-zx-muted">neufs headless commands — search, chat, index, summarize, status</div>
+            <div class="text-[13px] text-zx-muted">neufs headless commands: search, chat, index, summarize, status</div>
           </div>
           <div class="hidden sm:flex gap-1.5">
             <span class="tech-tag">neufs</span>
@@ -665,7 +641,7 @@
           <div class="w-2 h-10 rounded-full bg-emerald-500/40 group-hover:bg-emerald-500 transition-colors"></div>
           <div class="flex-1">
             <div class="text-[14px] font-medium text-white">Local Engines</div>
-            <div class="text-[13px] text-zx-muted">BGE Small ONNX embeddings, FAISS/HNSW index, llama.cpp Qwen 2.5 Coder 3B GGUF</div>
+            <div class="text-[13px] text-zx-muted">BGE Small ONNX embeddings, FAISS/HNSW index, llama.cpp Qwen 2.5 Coder 1.5B GGUF</div>
           </div>
           <div class="hidden sm:flex gap-1.5">
             <span class="tech-tag">BGE</span>
@@ -690,7 +666,7 @@
           <div class="w-2 h-10 rounded-full bg-rose-500/40 group-hover:bg-rose-500 transition-colors"></div>
           <div class="flex-1">
             <div class="text-[14px] font-medium text-white">Ingestion</div>
-            <div class="text-[13px] text-zx-muted">40+ parsers — PyMuPDF, python-docx, python-pptx, openpyxl, pdfminer, lxml</div>
+            <div class="text-[13px] text-zx-muted">Document parsers: PyMuPDF, python-docx, python-pptx, openpyxl, pdfminer, lxml</div>
           </div>
           <div class="hidden sm:flex gap-1.5">
             <span class="tech-tag">PyMuPDF</span>
@@ -716,7 +692,7 @@
         <span class="material-symbols-outlined text-[20px]">download</span>Get NeuCockpit
       </a>
 
-      <p class="text-[13px] text-zx-faint mt-6">Free for 15 days. Windows, macOS, and Linux builds.</p>
+      <p class="text-[13px] text-zx-faint mt-6">Installers for Windows, macOS, and Linux.</p>
     </div>
   </section>
 
@@ -725,7 +701,7 @@
   <footer class="border-t border-white/[0.04] bg-zx-bg pt-16 pb-10 px-5">
     <div class="max-w-[1100px] mx-auto grid grid-cols-2 md:grid-cols-5 gap-10">
       <div class="col-span-2">
-        <a href="./index.html" class="block mb-4"><img src="./Assets/Zero-xBnW.png" alt="ZeroX" class="h-5" style="mix-blend-mode:lighten"/></a>
+        <a href="https://www.zero-x.live/" class="block mb-4"><img src="./Assets/Zero-xBnW.png" alt="ZeroX" class="h-5" style="mix-blend-mode:lighten"/></a>
         <p class="text-[13px] text-zx-faint leading-relaxed max-w-[260px]">Engineering products from zero to extraordinary.</p>
       </div>
       <div class="flex flex-col gap-2.5">
@@ -737,9 +713,9 @@
       </div>
       <div class="flex flex-col gap-2.5">
         <span class="text-[13px] font-medium text-white mb-1">Company</span>
-        <a href="./index.html" class="text-[13px] text-zx-muted hover:text-white transition-colors">Homepage</a>
-        <a href="./index.html#about" class="text-[13px] text-zx-muted hover:text-white transition-colors">About</a>
-        <a href="./index.html#contact" class="text-[13px] text-zx-muted hover:text-white transition-colors">Contact</a>
+        <a href="https://www.zero-x.live/" class="text-[13px] text-zx-muted hover:text-white transition-colors">Homepage</a>
+        <a href="https://www.zero-x.live/#about" class="text-[13px] text-zx-muted hover:text-white transition-colors">About</a>
+        <a href="https://www.zero-x.live/#contact" class="text-[13px] text-zx-muted hover:text-white transition-colors">Contact</a>
       </div>
       <div class="flex flex-col gap-2.5">
         <span class="text-[13px] font-medium text-white mb-1">Connect</span>
@@ -755,11 +731,6 @@
 
   <!-- ═══════════════════════════ JAVASCRIPT ═══════════════════════════ -->
   <script>
-    /* ═══ Mobile Navigation ═══ */
-    const mobBtn=document.getElementById('mobBtn'),mobClose=document.getElementById('mobClose'),mobileNav=document.getElementById('mobileNav');
-    if(mobBtn){mobBtn.addEventListener('click',()=>{mobileNav.classList.remove('hidden');mobileNav.classList.add('flex');document.body.style.overflow='hidden'})}
-    function closeMob(){mobileNav.classList.add('hidden');mobileNav.classList.remove('flex');document.body.style.overflow=''}
-    if(mobClose){mobClose.addEventListener('click',closeMob)}
 
     /* ═══ Reveal Animations (IntersectionObserver) ═══ */
     const obs=new IntersectionObserver(entries=>{
@@ -780,7 +751,7 @@
         const t=document.querySelector(id);
         if(t){
           e.preventDefault();
-          t.scrollIntoView({behavior:'smooth'});
+          t.scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'});
         }
       });
     });

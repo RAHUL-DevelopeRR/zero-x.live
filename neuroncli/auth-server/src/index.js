@@ -16,18 +16,7 @@ app.use('*', async (c, next) => {
     return next();
   }
 
-  // 1. Static asset paths (images, fonts, stylesheets, JS files)
-  const isAsset = path.startsWith('/Assets/') || 
-                  path.startsWith('/assets/') || 
-                  (path.includes('.') && !path.endsWith('/'));
-  
-  if (isAsset) {
-    if (c.env && c.env.ASSETS) {
-      return c.env.ASSETS.fetch(c.req.raw);
-    }
-  }
-
-  // 2. Subdomain and clean HTML path routing
+  // Resolve host-specific index pages before generic static assets.
   if (hostname === 'dashboard.zero-x.live') {
     if (path === '/' || path === '/index.html') {
       if (c.env && c.env.ASSETS) {
@@ -54,7 +43,10 @@ app.use('*', async (c, next) => {
     }
   }
 
-  // 3. Continue Hono routing for API paths
+  const isAsset = path.startsWith('/Assets/') || path.startsWith('/assets/') ||
+    (path.includes('.') && !path.endsWith('/'));
+  if (isAsset && c.env?.ASSETS) return c.env.ASSETS.fetch(c.req.raw);
+
   return next();
 });
 
@@ -137,10 +129,17 @@ function planQuota(plan, used = 0, requests = 0) {
 }
 
 function readIdentityConfig(c) {
+  let publicKey = String(c.env.SUPABASE_PUBLISHABLE_KEY || c.env.SUPABASE_ANON_KEY || "").trim();
+  if (!publicKey.startsWith('sb_publishable_')) {
+    try {
+      const payload = publicKey.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+      if (JSON.parse(atob(payload)).role !== 'anon') publicKey = '';
+    } catch { publicKey = ''; }
+  }
   return {
     supabaseUrl: String(c.env.SUPABASE_URL || "").trim(),
-    supabaseKey: String(c.env.SUPABASE_PUBLISHABLE_KEY || c.env.SUPABASE_ANON_KEY || "").trim(),
-    providers: String(c.env.SUPABASE_AUTH_PROVIDERS || "google,github,email")
+    supabaseKey: publicKey,
+    providers: String(c.env.SUPABASE_AUTH_PROVIDERS || "google,email,phone,azure")
       .split(",")
       .map((value) => value.trim().toLowerCase())
       .filter(Boolean),
@@ -151,15 +150,7 @@ function readIdentityConfig(c) {
 function authClaimsPlan(auth) {
   const claims = auth?.sessionClaims || {};
   const appMeta = claims?.app_metadata || auth?.user?.app_metadata || {};
-  const userMeta = claims?.user_metadata || auth?.user?.user_metadata || {};
-  return normalizePlan(
-    appMeta?.plan ||
-    userMeta?.plan ||
-    claims?.public_metadata?.plan ||
-    claims?.private_metadata?.plan ||
-    claims?.metadata?.plan ||
-    claims?.plan
-  );
+  return normalizePlan(appMeta?.plan);
 }
 
 function identityProfileFromBody(body = {}) {
@@ -473,14 +464,28 @@ api.get('/health', (c) => {
   });
 });
 
-api.get('/auth/config', (c) => {
+api.get('/auth/config', async (c) => {
   const { supabaseUrl, supabaseKey, providers, storageKey } = readIdentityConfig(c);
+  let enabledProviders = [];
+  let available = false;
+  if (supabaseUrl && supabaseKey) {
+    try {
+      const response = await fetch(`${supabaseUrl}/auth/v1/settings`, {
+        headers: { apikey: supabaseKey }, signal: AbortSignal.timeout(5000),
+      });
+      if (response.ok) {
+        const settings = await response.json();
+        enabledProviders = providers.filter(provider => settings.external?.[provider] === true);
+        available = true;
+      }
+    } catch { /* Provider availability is checked again on the next request. */ }
+  }
   return c.json({
     provider: "supabase",
-    configured: !!(supabaseUrl && supabaseKey),
+    configured: !!(supabaseUrl && supabaseKey && available),
     supabase_url: supabaseUrl,
     supabase_key: supabaseKey,
-    providers,
+    providers: enabledProviders,
     storage_key: storageKey,
   });
 });

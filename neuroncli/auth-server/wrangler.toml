@@ -5,6 +5,7 @@ compatibility_date = "2024-05-02"
 [assets]
 directory = "../../"
 binding = "ASSETS"
+run_worker_first = true
 html_handling = "none"
 not_found_handling = "none"
 
@@ -26,16 +27,16 @@ custom_domain = true
 
 
 [vars]
+SUPABASE_URL = "https://norrtosjwcossxrhhtvd.supabase.co"
+# Public browser key. OAuth, SMTP, SMS and service-role secrets stay outside this repository.
+SUPABASE_PUBLISHABLE_KEY = "sb_publishable_Fgrm-Cfyj3w0xAfepK-CFg_SpUydF2T"
+SUPABASE_AUTH_PROVIDERS = "google,email,phone,azure"
 AZURE_OPENAI_ENDPOINT = "https://rahul-mok8ryyn-eastus2.services.ai.azure.com"
 AZURE_API_VERSION = "2024-05-01-preview"
 OPENROUTER_CLIENT_ID = "neuroncli"
 OPENROUTER_CALLBACK_URL = "https://zero-x.live/neuroncli/callback/"
 SESSION_TTL_HOURS = "24"
 MAX_REQUESTS_PER_SESSION = "1000"
-# Configure Supabase per environment before deploying:
-# SUPABASE_URL = "https://your-project.supabase.co"
-# SUPABASE_PUBLISHABLE_KEY = "sb_publishable_xxx"
-# SUPABASE_AUTH_PROVIDERS = "google,github,email"
 
 [[kv_namespaces]]
 binding = "SESSIONS_KV"
