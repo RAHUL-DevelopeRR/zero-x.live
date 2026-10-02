@@ -1,42 +1,11 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Set up NeuCockpit | First useful search with Zero-X</title>
-  <meta name="description" content="Install NeuCockpit, check indexing, search for a document you know, and give the founder feedback. Get personal setup help for Windows, macOS, or Linux.">
-  <link rel="canonical" href="https://www.zero-x.live/start.html"><meta name="robots" content="index,follow"><meta name="theme-color" content="#ffffff">
-  <meta property="og:type" content="website"><meta property="og:site_name" content="Zero-X"><meta property="og:title" content="Your first useful search with NeuCockpit"><meta property="og:description" content="Follow the setup guide or ask Rahul to help you try the desktop app."><meta property="og:url" content="https://www.zero-x.live/start.html"><meta property="og:image" content="https://www.zero-x.live/Assets/neucockpit-wheres-that-file.jpg">
-  <link rel="icon" type="image/png" sizes="32x32" href="./Assets/zerox-favicon-32.png"><link rel="icon" type="image/x-icon" href="./Assets/zerox-favicon-centered.ico"><link rel="apple-touch-icon" href="./Assets/zerox-apple-touch-icon.png">
-  <link rel="stylesheet" href="./marketing.css"><script src="./marketing.js" defer></script>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <meta http-equiv="refresh" content="0; url=./neuron.html#downloads">
+  <title>NeuCockpit setup</title>
 </head>
-<body>
-<a class="skip" href="#main">Skip to content</a>
-<header class="site-header"><div class="wrap header-inner"><a class="brand" href="./" aria-label="Zero-X home"><img src="./Assets/zerox-favicon-centered.png" alt="" width="38" height="38">Zero-X</a><button class="mobile-menu" data-menu aria-expanded="false" aria-controls="main-nav">Menu</button><nav id="main-nav" class="site-nav" aria-label="Main navigation"><a href="./neuron.html">NeuCockpit</a><a href="./start.html" aria-current="page">Setup guide</a><a href="#feedback">Send feedback</a><a href="https://dashboard.zero-x.live/">Sign in</a><a class="nav-action" href="./neuron.html#downloads">Download</a></nav></div></header>
-<main id="main">
-  <section class="hero wrap readable"><h1>Let’s find <span class="highlight">one useful file.</span></h1><p class="lead" style="margin-top:1.5rem">Pick a document you’ve had trouble finding before. Try NeuCockpit on your own computer and tell me whether it helped.</p><div class="actions"><a class="button" href="./neuron.html#downloads">Download your installer</a><a class="button secondary" href="#assisted-setup">Ask Rahul for setup help</a></div></section>
-  <section class="section rule wrap readable" id="guide">
-    <h2>From installation to a result.</h2>
-    <ol class="setup-list">
-      <li><div><h3>Install the right build</h3><p>Choose your operating system and CPU architecture on the <a href="./neuron.html#downloads">download page</a>. Read its requirements, run the installer, and launch NeuCockpit. If your operating system blocks the package, contact Rahul with the exact warning before deciding how to proceed.</p></div></li>
-      <li><div><h3>Check the index and add a folder</h3><p>The app can index common folders automatically. Check its indexing status, then use <strong>Add Folder</strong> to include a location you want to test. Start with a small folder of readable documents. Wait for indexing to finish; use <strong>Re-index</strong> when you need to refresh it.</p></div></li>
-      <li><div><h3>Describe the file you remember</h3><p>Type a phrase about the document’s contents in the search panel. Use a topic from your real work, then review the matching filenames and paths. On Windows, <kbd>Shift</kbd> + <kbd>Space</kbd> is the default panel shortcut. On macOS and Linux, use the tray or menu entry.</p></div></li>
-      <li><div><h3>Open it and check the answer</h3><p>Open the result in its usual application. If it is the right document, try a summary or question in MemoryOS. Check the output against the source. Leave internet mode off to test the local workflow.</p></div></li>
-    </ol>
-    <p class="fine" style="margin-top:1.5rem">No useful matches? Check that the folder finished indexing and the document contains extractable text. Try another description. AI not ready? Check the model status in the app and share the exact error with Rahul. See <a href="./neuron.html#before-you-install">document limitations</a>.</p>
-  </section>
-  <section class="section rule surface" id="assisted-setup"><div class="wrap readable"><h2>Try it with the person building it.</h2><p class="intro" style="margin-top:1.2rem">I’m Rahul. Email me your operating system, the kind of documents you work with, and a convenient time. I’ll reply to arrange setup help. You choose what to show, and your confidential files can stay on your computer.</p><div class="actions"><a class="button" href="mailto:rahul@zero-x.live?subject=NeuCockpit%20assisted%20setup&amp;body=Hi%20Rahul%2C%0A%0AMy%20operating%20system%3A%20%0AMy%20document%20workflow%3A%20%0AThe%20file-finding%20problem%20I%20want%20to%20test%3A%20%0AA%20convenient%20time%20and%20time%20zone%3A%20%0A">Email Rahul to arrange setup</a></div><p class="fine" style="margin-top:1rem">This opens your email app. You can also write directly to <a href="mailto:rahul@zero-x.live">rahul@zero-x.live</a>. Please do not attach private documents.</p></div></section>
-  <section class="section wrap readable" id="feedback">
-    <h2>What happened on your first try?</h2><p class="intro" style="margin-top:1.2rem">Installation failures and wrong results are useful feedback too. This form opens an email draft; it sends nothing until you send that email.</p>
-    <form class="feedback-form" id="feedback-form" action="mailto:rahul@zero-x.live" method="post" enctype="text/plain">
-      <div class="field"><label for="platform">Your operating system</label><select id="platform" name="platform" required><option value="">Select your platform</option><option>Windows x64</option><option>Windows ARM64</option><option>macOS Apple Silicon</option><option>macOS Intel</option><option>Linux x64</option><option>Linux ARM64</option></select></div>
-      <div class="field"><label for="stage">How far did you get?</label><select id="stage" name="stage" required><option value="">Select a result</option><option>Installer did not work</option><option>Installed, but could not finish indexing</option><option>Searched, but did not find a useful result</option><option>Found the document I needed</option><option>Used local AI with a document</option><option>Returned for another useful search</option></select></div>
-      <div class="field"><label for="message">What worked or got in your way?</label><textarea id="message" name="message" required maxlength="1800" placeholder="Describe your search or paste the error message. Remove private filenames and document contents."></textarea></div>
-      <div class="field"><label for="email">Reply email</label><input id="email" name="email" type="email" autocomplete="email" required placeholder="you@example.com"></div>
-      <button class="button" type="submit">Open feedback email</button><p class="form-message" id="feedback-status" role="status" aria-live="polite"></p>
-      <noscript><p class="fine">JavaScript is off. Submit opens your email client with the form fields, or <a href="mailto:rahul@zero-x.live?subject=NeuCockpit%20feedback">email feedback directly</a>.</p></noscript>
-    </form>
-  </section>
-</main>
-<footer class="site-footer"><div class="wrap"><div class="footer-inner"><a class="brand" href="./">Zero-X</a><nav class="footer-links" aria-label="Footer navigation"><a href="./neuron.html">Product details</a><a href="./neuron.html#downloads">Downloads</a><a href="mailto:rahul@zero-x.live">Email Rahul</a><a href="https://github.com/RAHUL-DevelopeRR/deepseekfs/issues">Report an issue</a></nav></div><p class="footer-note">NeuCockpit by Zero-X. A useful first search starts with a document you can check.</p></div></footer>
-</body>
+<body><p><a href="./neuron.html#downloads">Open NeuCockpit downloads and setup information</a></p></body>
 </html>
