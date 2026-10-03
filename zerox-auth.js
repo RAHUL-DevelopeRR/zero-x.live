@@ -75,10 +75,19 @@
 
   function splitValue(value) {
     const parts = [];
-    for (let i = 0; i < value.length; i += COOKIE_CHUNK_SIZE) {
-      parts.push(value.slice(i, i + COOKIE_CHUNK_SIZE));
+    let part = '', encodedSize = 0;
+    for (const character of value) {
+      const size = encodeURIComponent(character).length;
+      if (encodedSize + size > COOKIE_CHUNK_SIZE) {
+        parts.push(part);
+        part = '';
+        encodedSize = 0;
+      }
+      part += character;
+      encodedSize += size;
     }
-    return parts.length ? parts : [''];
+    parts.push(part);
+    return parts;
   }
 
   const sharedCookieStorage = {
@@ -417,7 +426,7 @@
       .forEach(function (provider) {
         const button = document.createElement('button');
         button.type = 'button';
-        button.textContent = 'Continue with ' + (provider === 'azure' ? 'Microsoft' : titleCase(provider));
+        button.textContent = 'Continue with ' + ({ azure: 'Microsoft', github: 'GitHub' }[provider] || titleCase(provider));
         button.style.cssText =
           'width:100%;background:#17171B;color:#fff;border:1px solid rgba(255,255,255,0.08);' +
           'border-radius:14px;padding:13px 16px;font-size:14px;font-weight:600;cursor:pointer;' +

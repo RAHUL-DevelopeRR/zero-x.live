@@ -17,13 +17,17 @@ for (const [host, page] of [
 assert.equal(await (await app.request('https://neuron.zero-x.live/site.min.css', {}, env)).text(), '/site.min.css');
 const originalFetch = globalThis.fetch;
 try {
-  globalThis.fetch = async () => Response.json({ external: { email: true, google: false, phone: false, azure: false } });
+  globalThis.fetch = async () => Response.json({ external: { email: true, google: false, phone: false, azure: false, github: false } });
   let config = await (await app.request('https://www.zero-x.live/auth/config', {}, env)).json();
   assert.equal(config.configured, true);
   assert.deepEqual(config.providers, ['email']);
-  globalThis.fetch = async () => Response.json({ external: { email: true, google: true, phone: true, azure: true } });
+  globalThis.fetch = async () => Response.json({ external: { email: true, google: true, phone: true, azure: true, github: true } });
   config = await (await app.request('https://www.zero-x.live/auth/config', {}, env)).json();
-  assert.deepEqual(config.providers, ['google', 'email', 'phone', 'azure']);
+  assert.deepEqual(config.providers, ['google', 'email', 'phone', 'azure', 'github']);
+  config = await (await app.request('https://www.zero-x.live/auth/config', {}, {
+    ...env, SUPABASE_AUTH_PROVIDERS: 'email,github',
+  })).json();
+  assert.deepEqual(config.providers, ['email', 'github']);
   globalThis.fetch = async () => { throw new Error('Unavailable'); };
   config = await (await app.request('https://www.zero-x.live/auth/config', {}, env)).json();
   assert.equal(config.configured, false);

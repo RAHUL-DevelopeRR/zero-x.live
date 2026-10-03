@@ -30,7 +30,7 @@ custom_domain = true
 SUPABASE_URL = "https://norrtosjwcossxrhhtvd.supabase.co"
 # Public browser key. OAuth, SMTP, SMS and service-role secrets stay outside this repository.
 SUPABASE_PUBLISHABLE_KEY = "sb_publishable_Fgrm-Cfyj3w0xAfepK-CFg_SpUydF2T"
-SUPABASE_AUTH_PROVIDERS = "google,email,phone,azure"
+SUPABASE_AUTH_PROVIDERS = "google,email,phone,azure,github"
 AZURE_OPENAI_ENDPOINT = "https://rahul-mok8ryyn-eastus2.services.ai.azure.com"
 AZURE_API_VERSION = "2024-05-01-preview"
 OPENROUTER_CLIENT_ID = "neuroncli"

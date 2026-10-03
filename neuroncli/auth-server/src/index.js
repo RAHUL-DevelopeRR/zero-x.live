@@ -139,7 +139,7 @@ function readIdentityConfig(c) {
   return {
     supabaseUrl: String(c.env.SUPABASE_URL || "").trim(),
     supabaseKey: publicKey,
-    providers: String(c.env.SUPABASE_AUTH_PROVIDERS || "google,email,phone,azure")
+    providers: String(c.env.SUPABASE_AUTH_PROVIDERS || "google,email,phone,azure,github")
       .split(",")
       .map((value) => value.trim().toLowerCase())
       .filter(Boolean),

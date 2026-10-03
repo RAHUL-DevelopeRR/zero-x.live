@@ -11,7 +11,7 @@ Project: `norrtosjwcossxrhhtvd` (zero-x.live). The project is running. The Worke
 
 ## Google
 
-Google Cloud currently refuses a new project because the account has reached its project limit. Choose an existing project dedicated to Zero-X, or request a limit increase. Do not change another application's OAuth configuration without checking its users.
+The owner selected existing project `phrasal-descent-465317-c2`. Google Auth branding and a web client were configured; Google is enabled in Supabase as of October 3, 2026. A completed website session must still be verified; provider enablement alone is insufficient.
 
 1. Open [Google Auth Platform](https://console.cloud.google.com/auth/overview) in the selected project. Configure branding as **ZeroX NeuCockpit**, using the owner's support/developer email. Use External audience for users outside your organization. During testing, add the actual testers' Google addresses.
 2. Use only `openid`, email, and profile scopes.
@@ -46,6 +46,17 @@ Source: [Supabase Google setup](https://supabase.com/docs/guides/auth/social-log
 
 Source: [Supabase Microsoft setup](https://supabase.com/docs/guides/auth/social-login/auth-azure).
 
+## GitHub
+
+1. Open [GitHub OAuth app registration](https://github.com/settings/applications/new) while signed in as the owner.
+2. Application name: **ZeroX NeuCockpit**. Homepage: `https://www.zero-x.live`.
+3. Redirect URI: `https://norrtosjwcossxrhhtvd.supabase.co/auth/v1/callback`. Keep wildcard matching and device flow off.
+4. The owner registers the application and generates a client secret. Copy the Client ID and secret directly into [Supabase GitHub settings](https://supabase.com/dashboard/project/norrtosjwcossxrhhtvd/auth/providers?provider=GitHub), enable GitHub, and save. Do not paste the secret into chat or this repository.
+5. The shared website dialog supports GitHub. `/auth/config` exposes it only when Supabase enables the provider.
+6. Verify sign-in from the live product page, callback, dashboard access, and sign-out before marking it working.
+
+Source: [Supabase GitHub setup](https://supabase.com/docs/guides/auth/social-login/auth-github).
+
 ## Email
 
 1. In Supabase Authentication email settings, configure a custom SMTP host, port, username, password, and approved From address. The owner enters the password directly.
@@ -70,6 +81,7 @@ Source: [Supabase phone setup](https://supabase.com/docs/guides/auth/phone-login
 ```powershell
 cd neuroncli/auth-server
 node check-worker.mjs
+node check-auth-storage.mjs
 node check-dashboard.mjs
 npm audit --omit=dev
 ```
