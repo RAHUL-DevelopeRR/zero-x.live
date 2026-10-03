@@ -291,6 +291,8 @@
     .anim-orb{animation:orb-drift 20s ease-in-out infinite}
     .anim-orb2{animation:orb-drift-2 28s ease-in-out infinite}
     .anim-float{animation:float 6s ease-in-out infinite}
+    @media(max-width:767px){.anim-orb,.anim-orb2{animation:none;filter:blur(60px)}}
+    @media(prefers-reduced-motion:reduce){.anim-orb,.anim-orb2,.anim-float{animation:none}}
 
     .reveal{opacity:0;transform:translateY(20px);transition:opacity .7s cubic-bezier(.16,1,.3,1),transform .7s cubic-bezier(.16,1,.3,1)}
     .reveal.visible{opacity:1;transform:translateY(0)}

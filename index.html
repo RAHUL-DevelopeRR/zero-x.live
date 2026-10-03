@@ -278,6 +278,8 @@
     .anim-orb{animation:orb-drift 22s ease-in-out infinite}
     .anim-orb2{animation:orb-drift-2 28s ease-in-out infinite}
     .anim-float{animation:float 6s ease-in-out infinite}
+    @media(max-width:767px){.noise-overlay::after{display:none}.anim-orb,.anim-orb2{animation:none;filter:blur(60px)}}
+    @media(prefers-reduced-motion:reduce){.anim-orb,.anim-orb2,.anim-float,.noise-overlay::after{animation:none}}
 
     /* ═══ Reveal on Scroll ═══ */
     .reveal{opacity:0;transform:translateY(24px);transition:opacity .7s cubic-bezier(.16,1,.3,1),transform .7s cubic-bezier(.16,1,.3,1)}
@@ -366,7 +368,7 @@
      ═══════════════════════════════════════════════════════════════════ -->
 <header class="fixed top-0 w-full h-[72px] z-50 nav-blur border-b border-white/[0.06]">
   <div class="max-w-[1200px] mx-auto h-full flex items-center justify-between px-5">
-    <a href="#" class="shrink-0"><img width="255" height="112" src="./Assets/zerox-wordmark.webp" alt="zero-x.live" class="block h-14" style="mix-blend-mode:lighten;width:auto"/></a>
+    <a href="#" class="shrink-0"><img width="255" height="112" src="./Assets/zerox-wordmark.webp" alt="Zero-X" class="block h-14" style="mix-blend-mode:lighten;width:auto"/></a>
 
     <nav class="hidden md:flex items-center gap-7" aria-label="Main navigation">
       <a href="#products" class="text-[14px] text-zx-muted hover:text-white transition-colors duration-200">Products</a>
@@ -837,7 +839,7 @@
   <div class="max-w-[1100px] mx-auto grid grid-cols-2 md:grid-cols-5 gap-10">
     <!-- Logo + Tagline -->
     <div class="col-span-2">
-      <a href="#" class="block mb-4"><img width="255" height="112" src="./Assets/zerox-wordmark.webp" alt="zero-x.live" class="h-5" style="mix-blend-mode:lighten;width:auto"/></a>
+      <a href="#" class="block mb-4"><img width="255" height="112" src="./Assets/zerox-wordmark.webp" alt="Zero-X" class="h-5" style="mix-blend-mode:lighten;width:auto"/></a>
       <p class="text-[13px] text-zx-faint leading-relaxed max-w-[280px]">Desktop tools for finding and working with files. Built in Tamil Nadu, India.</p>
     </div>
 
