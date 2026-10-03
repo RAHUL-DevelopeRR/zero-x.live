@@ -39,11 +39,11 @@
   <link rel="apple-touch-icon" sizes="180x180" href="./Assets/zerox-apple-touch-icon.png"/>
 
   <!-- ═══ Fonts ═══ -->
+  <link rel="preconnect" href="https://cdn.fontshare.com" crossorigin/>
+  <link rel="stylesheet" href="./site-fonts.css"/>
+  <link rel="preload" as="image" href="./Assets/neucockpit-film-poster.webp" fetchpriority="high"/>
   <link rel="preconnect" href="https://fonts.googleapis.com"/>
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
-  <link href="https://api.fontshare.com/v2/css?f[]=cabinet-grotesk@800,700,500,400&f[]=satoshi@700,500,400&display=swap" rel="stylesheet"/>
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"/>
-  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
 
   <!-- ═══ Supabase Authentication ═══ -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" defer></script>
@@ -213,7 +213,7 @@
      ═══════════════════════════════════════════════════════════════════ -->
 <header class="fixed top-0 w-full h-[72px] z-50 nav-blur border-b border-white/[0.06]">
   <div class="max-w-[1200px] mx-auto h-full flex items-center justify-between px-5">
-    <a href="#" class="shrink-0"><img src="./Assets/Zero-xBnW.png" alt="zero-x.live" class="block h-14" style="mix-blend-mode:lighten"/></a>
+    <a href="#" class="shrink-0"><img width="255" height="112" src="./Assets/zerox-wordmark.webp" alt="zero-x.live" class="block h-14" style="mix-blend-mode:lighten"/></a>
 
     <nav class="hidden md:flex items-center gap-7" aria-label="Main navigation">
       <a href="#products" class="text-[14px] text-zx-muted hover:text-white transition-colors duration-200">Products</a>
@@ -246,6 +246,7 @@
   <a href="#contact" onclick="closeMob()" class="text-xl text-white font-medium">Contact</a>
   <a href="https://neuron.zero-x.live/" onclick="closeMob()" class="mt-6 bg-white text-black px-8 py-3 rounded-full font-medium text-[15px]">Get NeuCockpit</a>
 </dialog>
+<main id="main-content">
 
 
 <!-- ═══════════════════════════════════════════════════════════════════
@@ -290,7 +291,7 @@
   <!-- ═══════════════════════════════════════════════════════════════════
        HERO PRODUCT SHOWCASE — Campaign Video & Interactive Demo
        ═══════════════════════════════════════════════════════════════════ -->
-  <div class="relative z-10 w-full max-w-[1120px] mx-auto reveal py-4 px-2" id="hero-showcase-viewport">
+  <div class="relative z-10 w-full max-w-[1120px] mx-auto py-4 px-2" id="hero-showcase-viewport">
     <div id="showcase-card" class="glowing-border-gradient overflow-hidden shadow-2xl shadow-black/80 backdrop-blur-xl">
       
       <!-- Top Titlebar & Mode Switcher Bar -->
@@ -315,7 +316,7 @@
         </div>
 
         <div class="hidden sm:flex items-center gap-2">
-          <img src="./Assets/neuron_circular.png" class="w-4 h-4 rounded-full" alt="ZeroX Logo"/>
+          <img width="64" height="64" src="./Assets/neucockpit-circle.webp" class="w-4 h-4 rounded-full" alt="ZeroX Logo"/>
           <span class="text-[11px] text-zx-muted font-mono">zero-x.live / NeuCockpit AI</span>
         </div>
 
@@ -329,8 +330,8 @@
           loop 
           muted 
           playsinline 
-          preload="metadata"
-          poster="./Assets/neucockpit-wheres-that-file.jpg"
+          preload="none"
+          poster="./Assets/neucockpit-film-poster.webp"
           aria-label="Where's that file? NeuCockpit campaign film"
           class="w-full h-full object-contain transition-opacity duration-500">
           <source src="./videos/neucockpit-wheres-that-file.mp4" type="video/mp4"/>
@@ -428,7 +429,7 @@
           </span>
         </div>
         <div class="flex items-center gap-4 mb-5">
-          <img src="./Assets/NeuronBnW.png" alt="NeuCockpit" class="w-14 h-14 rounded-xl" style="mix-blend-mode:lighten"/>
+          <img width="112" height="112" src="./Assets/neucockpit-mark.webp" alt="NeuCockpit" class="w-14 h-14 rounded-xl" style="mix-blend-mode:lighten"/>
           <div>
             <h3 class="text-[18px] font-display font-bold text-white group-hover:text-zx-accent transition-colors">NeuCockpit</h3>
             <p class="text-[11px] text-zx-faint font-mono mt-0.5">Windows · macOS · Linux</p>
@@ -554,7 +555,7 @@
       <!-- Card 3 — NeuCockpit: Now Operational -->
       <div class="group rounded-2xl overflow-hidden border border-white/[0.06] bg-gradient-to-b from-[#0a1628]/80 to-zx-card hover:border-zx-purple/20 transition-all duration-300 p-8 flex flex-col">
         <div class="w-12 h-12 rounded-xl bg-zx-purple/[0.08] flex items-center justify-center mb-6 group-hover:bg-zx-purple/[0.14] transition-colors">
-          <img src="./Assets/neuron_circular.png" class="w-8 h-8 rounded-full" alt="NeuCockpit"/>
+          <img width="64" height="64" src="./Assets/neucockpit-circle.webp" class="w-8 h-8 rounded-full" alt="NeuCockpit"/>
         </div>
         <h3 class="text-[20px] font-display font-bold text-white mb-3 tracking-tight">NeuCockpit: Now Operational</h3>
         <p class="text-[14px] text-zx-muted leading-relaxed mb-4 flex-1">Search for 'fibonacci code' or 'the resume' by meaning, then use local AI to work with the matching files.</p>
@@ -676,11 +677,12 @@
 <!-- ═══════════════════════════════════════════════════════════════════
      FOOTER
      ═══════════════════════════════════════════════════════════════════ -->
+</main>
 <footer class="border-t border-white/[0.04] bg-zx-bg pt-16 pb-10 px-5">
   <div class="max-w-[1100px] mx-auto grid grid-cols-2 md:grid-cols-5 gap-10">
     <!-- Logo + Tagline -->
     <div class="col-span-2">
-      <a href="#" class="block mb-4"><img src="./Assets/Zero-xBnW.png" alt="zero-x.live" class="h-5" style="mix-blend-mode:lighten"/></a>
+      <a href="#" class="block mb-4"><img width="255" height="112" src="./Assets/zerox-wordmark.webp" alt="zero-x.live" class="h-5" style="mix-blend-mode:lighten"/></a>
       <p class="text-[13px] text-zx-faint leading-relaxed max-w-[280px]">Desktop tools for finding and working with files. Built in Tamil Nadu, India.</p>
     </div>
 
@@ -709,9 +711,9 @@
   <!-- Bottom Bar -->
   <div class="max-w-[1100px] mx-auto mt-14 pt-6 border-t border-white/[0.04] flex flex-col sm:flex-row items-center justify-between gap-3">
     <p class="text-[12px] text-zx-faint">© 2026 ZeroX Corporation. Built by builders.</p>
-    <p class="text-[11px] text-zx-faint/60 font-mono">zero-x.live</p>
+    <p class="text-[11px] text-zx-faint font-mono">zero-x.live</p>
   </div>
-<p class="mt-6 text-[14px] text-zx-muted"><a href="https://www.zero-x.live/find-files-by-content" class="text-zx-accent hover:text-white underline">Guide: find a file when you forgot its name</a></p>
+<p class="max-w-[1100px] mx-auto mt-6 text-[14px] text-zx-muted"><a href="https://www.zero-x.live/find-files-by-content" class="text-zx-accent hover:text-white underline">Guide: find a file when you forgot its name</a></p>
 </footer>
 
 
