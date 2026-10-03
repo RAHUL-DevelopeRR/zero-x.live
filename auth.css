@@ -4,4 +4,6 @@
 .zerox-auth input { width: 100%; min-height: 44px; margin: 8px 0 12px; padding: 12px; border: 1px solid #777787; border-radius: 8px; background: #0a0a0c; color: white; font-size: 16px; }
 .zerox-auth button { min-height: 44px; padding: 10px 14px; border-radius: 8px; background: #00e5ff; color: #0a0a0c; font-size: 14px; font-weight: 600; cursor: pointer; }
 .zerox-auth button:disabled { opacity: .6; cursor: wait; }
+.zerox-auth .zerox-google-button { display: flex; align-items: center; justify-content: center; gap: 10px; background: #131314 !important; color: #e3e3e3 !important; border: 1px solid #8e918f !important; }
+.zerox-google-icon { width: 28px; height: 28px; padding: 5px; object-fit: contain; background: white; border-radius: 50%; flex: none; }
 .zerox-auth :focus-visible { outline: 3px solid #00e5ff; outline-offset: 4px; }

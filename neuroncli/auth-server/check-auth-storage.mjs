@@ -18,14 +18,19 @@ const document = {
   },
 };
 let storage;
+const oauthRequests = [];
 const window = {
-  location: { hostname: 'www.zero-x.live', protocol: 'https:' },
+  location: { hostname: 'www.zero-x.live', protocol: 'https:', origin: 'https://www.zero-x.live', pathname: '/neuron.html' },
   supabase: { createClient(_url, _key, options) {
     storage = options.auth.storage;
-    return { auth: { onAuthStateChange() {}, getSession: async () => ({ data: { session: null } }) } };
+    return { auth: {
+      onAuthStateChange() {}, getSession: async () => ({ data: { session: null } }),
+      signInWithOAuth: async request => { oauthRequests.push(request); return {}; },
+    } };
   } },
 };
-vm.runInNewContext(readFileSync(new URL('../../zerox-auth.js', import.meta.url), 'utf8'), {
+const source = readFileSync(new URL('../../zerox-auth.js', import.meta.url), 'utf8');
+vm.runInNewContext(source.replace('window.ZeroXAuth = {', 'window.ZeroXAuth = { signInWithOAuth, runAuthAction,'), {
   document, window, URL, console,
   fetch: async () => ({ ok: true, json: async () => ({ configured: true, providers: [] }) }),
 });
@@ -38,4 +43,23 @@ for (const value of ['a'.repeat(12000), JSON.stringify({ profile: '"% & 😀'.re
   assert.equal(storage.getItem('zerox-supabase-auth'), null);
   assert.equal(cookies.size, 0);
 }
-console.log('PASS: encoded session cookie limits, Unicode round-trip, replacement and sign-out cleanup');
+for (const provider of ['google', 'github', 'azure']) await window.ZeroXAuth.signInWithOAuth(provider);
+assert.equal(oauthRequests[0].options.queryParams.prompt, 'select_account');
+assert.equal(oauthRequests[0].options.redirectTo, 'https://www.zero-x.live/neuron.html');
+assert.equal(oauthRequests[1].options.queryParams, undefined);
+assert.equal(oauthRequests[2].options.scopes, 'email');
+const icon = {}, text = {};
+const button = {
+  childNodes: [icon, text], disabled: false,
+  set textContent(_value) { this.childNodes = []; },
+  replaceChildren(...nodes) { this.childNodes = nodes; },
+};
+for (const fail of [false, true]) {
+  await window.ZeroXAuth.runAuthAction(button, async () => {
+    assert.equal(button.disabled, true);
+    if (fail) throw new Error('Cancelled');
+  });
+  assert.deepEqual(button.childNodes, [icon, text]);
+  assert.equal(button.disabled, false);
+}
+console.log('PASS: session cookie limits and cleanup, Google chooser, provider options, and logo restoration after success/failure');

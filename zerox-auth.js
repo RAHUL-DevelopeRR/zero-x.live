@@ -431,6 +431,14 @@
           'width:100%;background:#17171B;color:#fff;border:1px solid rgba(255,255,255,0.08);' +
           'border-radius:14px;padding:13px 16px;font-size:14px;font-weight:600;cursor:pointer;' +
           'transition:background .15s ease,border-color .15s ease;';
+        if (provider === 'google') {
+          const icon = document.createElement('img');
+          icon.src = new URL('Assets/auth-google-g.png', stylesheet.href).href;
+          icon.alt = '';
+          icon.className = 'zerox-google-icon';
+          button.prepend(icon);
+          button.className = 'zerox-google-button';
+        }
         button.addEventListener('mouseenter', function () {
           button.style.background = '#1D1D22';
           button.style.borderColor = 'rgba(0,229,255,0.25)';
@@ -488,13 +496,13 @@
   }
 
   async function runAuthAction(button, action) {
-    const label = button.textContent;
+    const contents = Array.from(button.childNodes);
     button.disabled = true;
     button.textContent = 'Please wait...';
     setModalMessage('');
     try { await action(); }
     catch (error) { setModalMessage(error.message || 'Sign-in failed. Please try again.'); }
-    finally { button.disabled = false; button.textContent = label; }
+    finally { button.disabled = false; button.replaceChildren(...contents); }
   }
 
   function setModalMessage(message, tone) {
@@ -525,6 +533,7 @@
       provider: provider,
       options: {
         redirectTo: redirectTarget(),
+        ...(provider === 'google' ? { queryParams: { prompt: 'select_account' } } : {}),
         ...(provider === 'azure' ? { scopes: 'email' } : {}),
       },
     });

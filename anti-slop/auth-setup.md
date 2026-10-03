@@ -36,6 +36,8 @@ The owner selected existing project `phrasal-descent-465317-c2`. Google Auth bra
 
 Source: [Supabase Google setup](https://supabase.com/docs/guides/auth/social-login/auth-google).
 
+The shared sign-in button uses Google's official color G asset from its [branding guide](https://developers.google.com/identity/branding-guidelines), saved locally as `Assets/auth-google-g.png`. Explicit Google sign-in requests `prompt=select_account` so users can choose an account even after granting consent. Existing ZeroX sessions restore normally; sign out of ZeroX to start a new sign-in. See Google's [prompt parameter documentation](https://developers.google.com/identity/openid-connect/openid-connect#authenticationuriparameters).
+
 ## Microsoft
 
 1. Open [Microsoft Entra app registrations](https://entra.microsoft.com/). Use the owner's existing tenant; do not create a paid Azure resource.
