@@ -4,10 +4,10 @@
 <head>
   <meta charset="utf-8"/>
   <meta content="width=device-width,initial-scale=1" name="viewport"/>
+  <noscript><style>.reveal{opacity:1;transform:none}</style></noscript>
 
   <title>NeuCockpit | Semantic file search and local AI by ZeroX</title>
   <meta name="description" content="Download NeuCockpit for Windows, macOS, and Linux. Search files by meaning and summarize documents with local AI."/>
-  <meta name="keywords" content="NeuCockpit, semantic search, file intelligence, AI desktop software, local AI, offline file search, neural embeddings, FAISS, privacy-first, Windows 11 app"/>
   <meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large"/>
   <meta name="author" content="ZeroX Corporation"/>
   <meta name="theme-color" content="#0A0A0C"/>
@@ -32,7 +32,7 @@
   <meta name="twitter:image" content="https://www.zero-x.live/Assets/neucockpit_screenshot.jpg"/>
 
   <!-- Favicons -->
-  <link rel="icon" type="image/png" sizes="32x32" href="./Assets/zerox-favicon-32.png"/>
+  <link rel="icon" type="image/png" sizes="256x256" href="./Assets/zerox-favicon-centered.png"/>
   <link rel="shortcut icon" type="image/x-icon" href="./Assets/zerox-favicon-centered.ico"/>
   <link rel="apple-touch-icon" sizes="180x180" href="./Assets/zerox-apple-touch-icon.png"/>
 
@@ -44,29 +44,79 @@
   <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
 
   <!-- Supabase Authentication -->
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="./zerox-auth.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" defer></script>
+  <script src="./zerox-auth.js" defer></script>
 
   <!-- Tailwind CDN -->
 
   <!-- JSON-LD Structured Data -->
   <script type="application/ld+json">
-  {
-    "@context": "https://schema.org",
-    "@type": "SoftwareApplication",
-    "name": "NeuCockpit",
-    "applicationCategory": "UtilitiesApplication",
-    "operatingSystem": "Windows 10+, macOS 12+, Linux",
-    "description": "NeuCockpit brings semantic file search and local AI to your desktop.",
-    "url": "https://neuron.zero-x.live",
-    "softwareVersion": "1.0",
-    "author": {
-      "@type": "Organization",
-      "name": "ZeroX Corporation",
-      "url": "https://www.zero-x.live"
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "WebSite",
+      "@id": "https://neuron.zero-x.live/#website",
+      "name": "NeuCockpit by ZeroX",
+      "alternateName": [
+        "NeuCockpit"
+      ],
+      "url": "https://neuron.zero-x.live/",
+      "publisher": {
+        "@id": "https://www.zero-x.live/#organization"
+      }
     },
-    "downloadUrl": "https://neuron.zero-x.live/#downloads"
-  }
+    {
+      "@type": "SoftwareApplication",
+      "@id": "https://neuron.zero-x.live/#software",
+      "name": "NeuCockpit",
+      "applicationCategory": "DesktopEnhancementApplication",
+      "operatingSystem": "Windows, macOS, Linux",
+      "description": "Semantic file search and document summarization with local AI. Optional internet features use online services.",
+      "url": "https://neuron.zero-x.live/",
+      "softwareVersion": "1.0",
+      "author": {
+        "@id": "https://www.zero-x.live/#organization"
+      },
+      "publisher": {
+        "@id": "https://www.zero-x.live/#organization"
+      },
+      "screenshot": "https://www.zero-x.live/Assets/neucockpit_screenshot.jpg",
+      "downloadUrl": "https://neuron.zero-x.live/#downloads"
+    },
+    {
+      "@type": "WebPage",
+      "url": "https://neuron.zero-x.live/",
+      "name": "NeuCockpit | Semantic file search and local AI by ZeroX",
+      "isPartOf": {
+        "@id": "https://neuron.zero-x.live/#website"
+      },
+      "mainEntity": {
+        "@id": "https://neuron.zero-x.live/#software"
+      }
+    },
+    {
+      "@type": "Organization",
+      "@id": "https://www.zero-x.live/#organization",
+      "name": "ZeroX",
+      "alternateName": [
+        "Zero X",
+        "Zero-X"
+      ],
+      "url": "https://www.zero-x.live/",
+      "logo": "https://www.zero-x.live/Assets/zerox-favicon-centered.png",
+      "description": "Desktop tools for semantic file search and local AI, built in Tamil Nadu, India.",
+      "sameAs": [
+        "https://www.instagram.com/zerox.corporation/"
+      ],
+      "contactPoint": {
+        "@type": "ContactPoint",
+        "email": "rahultech72216@gmail.com",
+        "contactType": "customer support"
+      }
+    }
+  ]
+}
   </script>
 
   <style>
@@ -213,7 +263,7 @@
 
       <!-- Heading -->
       <h1 class="text-[clamp(36px,6vw,68px)] font-medium leading-[1.06] tracking-[-0.03em] text-white mb-6 font-display">
-        Unified File Intelligence<br><span class="text-zx-muted">Search, summarize, and navigate<br>your files by meaning.</span>
+        NeuCockpit file search<br><span class="text-zx-muted">Find documents by meaning.<br>Work with local AI.</span>
       </h1>
 
       <!-- Description -->
@@ -387,8 +437,8 @@
     <div class="max-w-[1100px] mx-auto">
       <div class="text-center mb-20 reveal">
         <a class="inline-flex items-center gap-2 text-zx-accent-h text-[13px] font-medium tracking-wide mb-6">1.0&ensp;Capabilities&ensp;→</a>
-        <h2 class="text-[clamp(28px,4vw,40px)] font-medium tracking-[-0.02em] leading-[1.15] text-white mb-5 font-display">Built different.<br><span class="text-zx-muted">Engineered with precision.</span></h2>
-        <p class="text-[16px] text-zx-muted max-w-lg mx-auto leading-relaxed">Every component earns its place. No bloat, no decoration for its own sake.</p>
+        <h2 class="text-[clamp(28px,4vw,40px)] font-medium tracking-[-0.02em] leading-[1.15] text-white mb-5 font-display">Search document contents.<br><span class="text-zx-muted">Use AI on your computer.</span></h2>
+        <p class="text-[16px] text-zx-muted max-w-lg mx-auto leading-relaxed">Index a folder, describe what you remember, and inspect the matching file.</p>
       </div>
       <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 reveal">
         <!-- Card 1 -->
@@ -726,7 +776,8 @@
     <div class="max-w-[1100px] mx-auto mt-14 pt-6 border-t border-white/[0.04]">
       <p class="text-[12px] text-zx-faint">© <script>document.write(new Date().getFullYear())</script> ZeroX Corporation. Built by builders.</p>
     </div>
-  </footer>
+  <p class="mt-6 text-[14px] text-zx-muted"><a href="https://www.zero-x.live/find-files-by-content" class="text-zx-accent hover:text-white underline">Guide: find a file when you forgot its name</a></p>
+</footer>
 
 
   <!-- ═══════════════════════════ JAVASCRIPT ═══════════════════════════ -->

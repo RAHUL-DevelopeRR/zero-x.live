@@ -3,13 +3,13 @@
 <head>
   <meta charset="utf-8"/>
   <meta content="width=device-width,initial-scale=1" name="viewport"/>
+  <noscript><style>.reveal{opacity:1;transform:none}</style></noscript>
 
   <!-- ═══ WWW Redirect (fallback) ═══ -->
   <script>if(location.hostname==='zero-x.live')location.replace('https://www.zero-x.live'+location.pathname+location.search+location.hash);</script>
 
-  <title>ZeroX | NeuCockpit and local AI desktop software</title>
+  <title>ZeroX | NeuCockpit: Local AI File Search</title>
   <meta name="description" content="ZeroX builds NeuCockpit: find files by meaning and summarize documents with local AI. Installers for Windows, macOS, and Linux."/>
-  <meta name="keywords" content="ZeroX, NeuCockpit, semantic search, AI desktop software, local AI, offline file search, neural embeddings, FAISS, privacy-first software, Windows 11 app, file intelligence"/>
   <meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1"/>
   <meta name="author" content="ZeroX Corporation"/>
   <meta name="theme-color" content="#0A0A0C"/>
@@ -34,7 +34,7 @@
   <meta name="twitter:image" content="https://www.zero-x.live/Assets/Zero-xBnW.png"/>
 
   <!-- ═══ Favicons ═══ -->
-  <link rel="icon" type="image/png" sizes="32x32" href="./Assets/zerox-favicon-32.png"/>
+  <link rel="icon" type="image/png" sizes="256x256" href="./Assets/zerox-favicon-centered.png"/>
   <link rel="shortcut icon" type="image/x-icon" href="./Assets/zerox-favicon-centered.ico"/>
   <link rel="apple-touch-icon" sizes="180x180" href="./Assets/zerox-apple-touch-icon.png"/>
 
@@ -46,44 +46,64 @@
   <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
 
   <!-- ═══ Supabase Authentication ═══ -->
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="./zerox-auth.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" defer></script>
+  <script src="./zerox-auth.js" defer></script>
 
   <!-- ═══ Tailwind ═══ -->
 
   <!-- ═══ Structured Data (JSON-LD) ═══ -->
   <script type="application/ld+json">
-  {
-    "@context": "https://schema.org",
-    "@graph": [
-      {
-        "@type": "Organization",
-        "name": "ZeroX Corporation",
-        "url": "https://www.zero-x.live",
-        "logo": "https://www.zero-x.live/Assets/Zero-xBnW.png",
-        "description": "ZeroX builds desktop software for semantic file search and local AI.",
-        "foundingDate": "2026",
-        "contactPoint": {
-          "@type": "ContactPoint",
-          "email": "rahultech72216@gmail.com",
-          "contactType": "customer support"
-        }
-      },
-      {
-        "@type": "SoftwareApplication",
-        "name": "NeuCockpit",
-        "applicationCategory": "UtilitiesApplication",
-        "operatingSystem": "Windows 10+, macOS 12+, Linux",
-        "description": "Unified file intelligence desktop application with semantic search and local AI assistance.",
-        "url": "https://www.zero-x.live/neuron.html",
-        "softwareVersion": "1.0",
-        "author": {
-          "@type": "Organization",
-          "name": "ZeroX Corporation"
-        }
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": "https://www.zero-x.live/#organization",
+      "name": "ZeroX",
+      "alternateName": [
+        "Zero X",
+        "Zero-X"
+      ],
+      "url": "https://www.zero-x.live/",
+      "logo": "https://www.zero-x.live/Assets/zerox-favicon-centered.png",
+      "description": "Desktop tools for semantic file search and local AI, built in Tamil Nadu, India.",
+      "sameAs": [
+        "https://www.instagram.com/zerox.corporation/"
+      ],
+      "contactPoint": {
+        "@type": "ContactPoint",
+        "email": "rahultech72216@gmail.com",
+        "contactType": "customer support"
       }
-    ]
-  }
+    },
+    {
+      "@type": "WebSite",
+      "@id": "https://www.zero-x.live/#website",
+      "name": "ZeroX",
+      "alternateName": [
+        "Zero X",
+        "Zero-X",
+        "zero-x.live"
+      ],
+      "url": "https://www.zero-x.live/",
+      "publisher": {
+        "@id": "https://www.zero-x.live/#organization"
+      }
+    },
+    {
+      "@type": "WebPage",
+      "@id": "https://www.zero-x.live/#webpage",
+      "url": "https://www.zero-x.live/",
+      "name": "ZeroX | NeuCockpit: Local AI File Search",
+      "isPartOf": {
+        "@id": "https://www.zero-x.live/#website"
+      },
+      "about": {
+        "@id": "https://www.zero-x.live/#organization"
+      }
+    }
+  ]
+}
   </script>
 
   <style>
@@ -197,7 +217,7 @@
 
     <nav class="hidden md:flex items-center gap-7" aria-label="Main navigation">
       <a href="#products" class="text-[14px] text-zx-muted hover:text-white transition-colors duration-200">Products</a>
-      <a href="./neuron.html" id="nav-neuron-link" class="text-[14px] text-zx-muted hover:text-white transition-colors duration-200">NeuCockpit</a>
+      <a href="https://neuron.zero-x.live/" id="nav-neuron-link" class="text-[14px] text-zx-muted hover:text-white transition-colors duration-200">NeuCockpit</a>
       <a href="#about" class="text-[14px] text-zx-muted hover:text-white transition-colors duration-200">About</a>
       <a href="#contact" class="text-[14px] text-zx-muted hover:text-white transition-colors duration-200">Contact</a>
     </nav>
@@ -205,7 +225,7 @@
     <div class="flex items-center gap-3">
       <a href="#" id="signin-btn" class="hidden md:block text-[14px] text-zx-muted hover:text-white transition-colors duration-200 mr-1">Sign In</a>
       <div id="user-button"></div>
-      <a href="./neuron.html" id="nav-getneuron-btn" class="hidden md:inline-flex items-center gap-2 bg-white text-[#0A0A0C] text-[13px] font-medium px-5 py-[7px] rounded-full hover:bg-gray-200 transition-colors duration-200">
+      <a href="https://neuron.zero-x.live/" id="nav-getneuron-btn" class="hidden md:inline-flex items-center gap-2 bg-white text-[#0A0A0C] text-[13px] font-medium px-5 py-[7px] rounded-full hover:bg-gray-200 transition-colors duration-200">
         Get NeuCockpit
       </a>
       <button id="mobBtn" class="md:hidden text-white p-1" aria-label="Open menu" aria-controls="mobileNav" aria-expanded="false">
@@ -224,7 +244,7 @@
   <a href="#showcase" onclick="closeMob()" class="text-xl text-white font-medium">NeuCockpit</a>
   <a href="#about" onclick="closeMob()" class="text-xl text-white font-medium">About</a>
   <a href="#contact" onclick="closeMob()" class="text-xl text-white font-medium">Contact</a>
-  <a href="./neuron.html" onclick="closeMob()" class="mt-6 bg-white text-black px-8 py-3 rounded-full font-medium text-[15px]">Get NeuCockpit</a>
+  <a href="https://neuron.zero-x.live/" onclick="closeMob()" class="mt-6 bg-white text-black px-8 py-3 rounded-full font-medium text-[15px]">Get NeuCockpit</a>
 </dialog>
 
 
@@ -249,7 +269,7 @@
       Where's that file?<br><span class="text-zx-accent">Ask NeuCockpit.</span>
     </h1>
     <p class="text-[clamp(16px,2vw,20px)] text-zx-muted leading-relaxed max-w-[580px] mx-auto mb-4 font-body">
-      Find files by meaning. Get the point with local AI.
+      NeuCockpit by ZeroX finds files by meaning and summarizes documents with local AI.
     </p>
     <p class="text-[15px] text-zx-faint leading-relaxed max-w-[500px] mx-auto mb-10">
       Choose a folder, describe the file you remember, and search its contents with local AI.
@@ -257,7 +277,7 @@
 
     <!-- CTA Buttons -->
     <div class="flex flex-wrap justify-center gap-4 mb-10">
-      <a href="./neuron.html" id="hero-explore-btn" class="group inline-flex items-center gap-2 bg-white text-[#0A0A0C] px-7 py-3.5 rounded-full text-[15px] font-medium hover:bg-gray-100 transition-all duration-300 hover:shadow-lg hover:shadow-white/10">
+      <a href="https://neuron.zero-x.live/" id="hero-explore-btn" class="group inline-flex items-center gap-2 bg-white text-[#0A0A0C] px-7 py-3.5 rounded-full text-[15px] font-medium hover:bg-gray-100 transition-all duration-300 hover:shadow-lg hover:shadow-white/10">
         See NeuCockpit and downloads
         <span class="material-symbols-outlined text-[18px] transition-transform group-hover:translate-x-0.5">arrow_forward</span>
       </a>
@@ -314,7 +334,7 @@
           aria-label="Where's that file? NeuCockpit campaign film"
           class="w-full h-full object-contain transition-opacity duration-500">
           <source src="./videos/neucockpit-wheres-that-file.mp4" type="video/mp4"/>
-          <a href="./neuron.html">NeuCockpit details and downloads</a>
+          <a href="https://neuron.zero-x.live/">NeuCockpit details and downloads</a>
         </video>
 
       </div>
@@ -401,7 +421,7 @@
     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 reveal">
 
       <!-- NeuCockpit — LIVE (Featured) -->
-      <a href="./neuron.html" id="product-neucockpit-link" class="group featured-glow bg-zx-card rounded-2xl p-7 border border-zx-accent/30 hover:border-zx-accent/50 transition-all duration-300 hover:shadow-lg hover:shadow-zx-accent/[0.08] flex flex-col">
+      <a href="https://neuron.zero-x.live/" id="product-neucockpit-link" class="group featured-glow bg-zx-card rounded-2xl p-7 border border-zx-accent/30 hover:border-zx-accent/50 transition-all duration-300 hover:shadow-lg hover:shadow-zx-accent/[0.08] flex flex-col">
         <div class="flex items-center gap-2 mb-5">
           <span class="inline-flex items-center gap-1.5 px-2.5 py-1 bg-emerald-500/10 border border-emerald-500/20 rounded-full text-[10px] text-emerald-400 font-medium tracking-widest uppercase">
             <span class="w-[5px] h-[5px] bg-emerald-400 rounded-full"></span>Live
@@ -514,7 +534,7 @@
         </div>
         <h3 class="text-[20px] font-display font-bold text-white mb-3 tracking-tight">Unified File Intelligence</h3>
         <p class="text-[14px] text-zx-muted leading-relaxed mb-6 flex-1">Search file contents and summarize documents with local AI. Local search and AI run on your computer; optional internet features use online services.</p>
-        <a href="./neuron.html" class="inline-flex items-center gap-1.5 text-zx-accent text-[13px] font-medium group-hover:gap-2.5 transition-all">
+        <a href="https://neuron.zero-x.live/" class="inline-flex items-center gap-1.5 text-zx-accent text-[13px] font-medium group-hover:gap-2.5 transition-all">
           See search features <span class="material-symbols-outlined text-[16px]">arrow_forward</span>
         </a>
       </div>
@@ -546,7 +566,7 @@
 
     <!-- CTA Below Posters -->
     <div class="text-center reveal">
-      <a href="./neuron.html" id="showcase-cta-btn" class="group inline-flex items-center gap-3 bg-gradient-to-r from-zx-accent to-zx-accent-h text-[#0A0A0C] px-8 py-4 rounded-full text-[15px] font-bold hover:shadow-lg hover:shadow-zx-accent/20 transition-all duration-300">
+      <a href="https://neuron.zero-x.live/" id="showcase-cta-btn" class="group inline-flex items-center gap-3 bg-gradient-to-r from-zx-accent to-zx-accent-h text-[#0A0A0C] px-8 py-4 rounded-full text-[15px] font-bold hover:shadow-lg hover:shadow-zx-accent/20 transition-all duration-300">
         <span class="material-symbols-outlined text-[20px]">rocket_launch</span>
         Download NeuCockpit
         <span class="material-symbols-outlined text-[18px] transition-transform group-hover:translate-x-1">arrow_forward</span>
@@ -572,7 +592,7 @@
           Built by engineers,<br><span class="text-zx-muted">for the world.</span>
         </h2>
         <p class="text-[16px] text-zx-muted leading-relaxed mb-4">
-          ZeroX is a product-based IT company. Great software starts with great engineering. We don't outsource. We don't cut corners.
+          ZeroX (Zero X) builds desktop software in Tamil Nadu, India. Great software starts with great engineering. We don't outsource. We don't cut corners.
         </p>
         <p class="text-[16px] text-zx-muted leading-relaxed mb-4">
           Our focus is desktop tools for finding and working with files. NeuCockpit includes local search and AI, with optional online features.
@@ -667,7 +687,7 @@
     <!-- Products -->
     <div class="flex flex-col gap-2.5">
       <span class="text-[13px] font-medium text-white mb-1">Products</span>
-      <a href="./neuron.html" class="text-[13px] text-zx-muted hover:text-white transition-colors">NeuCockpit</a>
+      <a href="https://neuron.zero-x.live/" class="text-[13px] text-zx-muted hover:text-white transition-colors">NeuCockpit</a>
       <a href="#products" class="text-[13px] text-zx-muted hover:text-white transition-colors">LuminaPlayer</a>
       <a href="#products" class="text-[13px] text-zx-muted hover:text-white transition-colors">Astra Player</a>
     </div>
@@ -691,6 +711,7 @@
     <p class="text-[12px] text-zx-faint">© 2026 ZeroX Corporation. Built by builders.</p>
     <p class="text-[11px] text-zx-faint/60 font-mono">zero-x.live</p>
   </div>
+<p class="mt-6 text-[14px] text-zx-muted"><a href="https://www.zero-x.live/find-files-by-content" class="text-zx-accent hover:text-white underline">Guide: find a file when you forgot its name</a></p>
 </footer>
 
 

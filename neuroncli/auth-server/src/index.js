@@ -5,6 +5,15 @@ import { accountRpc, databaseConfigured } from './account-store.js';
 const app = new Hono();
 const api = new Hono();
 
+app.use('*', async (c, next) => {
+  const url = new URL(c.req.url);
+  await next();
+  if (url.hostname === 'dashboard.zero-x.live' || url.pathname.startsWith('/auth/') ||
+      url.pathname.startsWith('/neuroncli/') || url.pathname === '/health') {
+    c.header('X-Robots-Tag', 'noindex, nofollow');
+  }
+});
+
 // Hostname-based subdomain routing middleware
 app.use('*', async (c, next) => {
   const url = new URL(c.req.url);
@@ -14,6 +23,19 @@ app.use('*', async (c, next) => {
   // Let Hono handle OPTIONS/CORS preflight
   if (c.req.method === 'OPTIONS') {
     return next();
+  }
+
+  if (c.req.method === 'GET' || c.req.method === 'HEAD') {
+    let target = null;
+    if (path === '/neuron.html' || path === '/neuron') target = 'https://neuron.zero-x.live/';
+    else if (path === '/dashboard.html' || path === '/dashboard') target = 'https://dashboard.zero-x.live/';
+    else if (path === '/index.html') target = `https://${hostname === 'zero-x.live' ? 'www.zero-x.live' : hostname}/`;
+    else if (hostname === 'zero-x.live' && !path.startsWith('/auth/') && !path.startsWith('/neuroncli/'))
+      target = `https://www.zero-x.live${path}`;
+    else if (path === '/find-files-by-content.html') target = 'https://www.zero-x.live/find-files-by-content';
+    else if (path === '/find-files-by-content' && hostname !== 'www.zero-x.live')
+      target = 'https://www.zero-x.live/find-files-by-content';
+    if (target) return c.redirect(target + url.search, 301);
   }
 
   // Resolve host-specific index pages before generic static assets.

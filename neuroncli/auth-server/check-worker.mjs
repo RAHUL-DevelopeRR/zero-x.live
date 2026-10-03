@@ -10,10 +10,20 @@ for (const [host, page] of [
   ['www.zero-x.live', '/index.html'], ['zero-x.live', '/index.html'],
   ['neuron.zero-x.live', '/neuron.html'], ['dashboard.zero-x.live', '/dashboard.html'],
 ]) {
-  for (const path of ['/', '/index.html']) {
-    assert.equal(await (await app.request(`https://${host}${path}`, {}, env)).text(), page);
-  }
+  const root = await app.request(`https://${host}/`, {}, env);
+  if (host === 'zero-x.live') {
+    assert.equal(root.status, 301);
+    assert.equal(root.headers.get('location'), 'https://www.zero-x.live/');
+  } else assert.equal(await root.text(), page);
+  const alias = await app.request(`https://${host}/index.html?utm_source=test`, {}, env);
+  assert.equal(alias.status, 301);
+  assert.equal(alias.headers.get('location'), `https://${host === 'zero-x.live' ? 'www.zero-x.live' : host}/?utm_source=test`);
 }
+const productAlias = await app.request('https://www.zero-x.live/neuron.html', {}, env);
+assert.equal(productAlias.status, 301);
+assert.equal(productAlias.headers.get('location'), 'https://neuron.zero-x.live/');
+const dashboard = await app.request('https://dashboard.zero-x.live/', {}, env);
+assert.equal(dashboard.headers.get('x-robots-tag'), 'noindex, nofollow');
 assert.equal(await (await app.request('https://neuron.zero-x.live/site.min.css', {}, env)).text(), '/site.min.css');
 const originalFetch = globalThis.fetch;
 try {
