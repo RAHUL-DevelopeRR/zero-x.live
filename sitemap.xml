@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:video="http://www.google.com/schemas/sitemap-video/1.1">
   <url>
     <loc>https://www.zero-x.live/</loc>
     <lastmod>2026-10-03</lastmod>
@@ -11,5 +11,17 @@
   <url>
     <loc>https://www.zero-x.live/find-files-by-content</loc>
     <lastmod>2026-10-03</lastmod>
+  </url>
+  <url>
+    <loc>https://www.zero-x.live/wheres-that-file</loc>
+    <lastmod>2026-10-03</lastmod>
+    <video:video>
+      <video:thumbnail_loc>https://www.zero-x.live/Assets/neucockpit-film-poster.webp</video:thumbnail_loc>
+      <video:title>Where’s That File? — NeuCockpit by ZeroX</video:title>
+      <video:description>A 15-second film showing NeuCockpit’s illustrative semantic file search and local AI summary.</video:description>
+      <video:content_loc>https://www.zero-x.live/videos/neucockpit-wheres-that-file.mp4</video:content_loc>
+      <video:publication_date>2026-10-01T16:08:56Z</video:publication_date>
+      <video:duration>15</video:duration>
+    </video:video>
   </url>
 </urlset>

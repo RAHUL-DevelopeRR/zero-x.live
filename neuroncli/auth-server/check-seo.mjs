@@ -5,6 +5,7 @@ const pages = [
   ['index.html', 'https://www.zero-x.live/'],
   ['neuron.html', 'https://neuron.zero-x.live/'],
   ['find-files-by-content.html', 'https://www.zero-x.live/find-files-by-content'],
+  ['wheres-that-file.html', 'https://www.zero-x.live/wheres-that-file'],
 ];
 for (const [file, canonical] of pages) {
   const html = await readFile(new URL(`../../${file}`, import.meta.url), 'utf8');
@@ -18,6 +19,10 @@ for (const [file, canonical] of pages) {
 }
 const sitemap = await readFile(new URL('../../sitemap.xml', import.meta.url), 'utf8');
 assert.deepEqual([...sitemap.matchAll(/<loc>([^<]+)<\/loc>/g)].map(m => m[1]), pages.map(p => p[1]));
+assert.match(sitemap, /<video:content_loc>https:\/\/www\.zero-x\.live\/videos\/neucockpit-wheres-that-file\.mp4<\/video:content_loc>/);
+const watchPage = await readFile(new URL('../../wheres-that-file.html', import.meta.url), 'utf8');
+assert.match(watchPage, /<video\b[\s\S]*?<source src="\.\/videos\/neucockpit-wheres-that-file\.mp4"/);
+assert.equal(JSON.parse(watchPage.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/)[1]).duration, 'PT15.5S');
 if (process.argv.includes('--live')) {
   for (const [, url] of pages) {
     const response = await fetch(url);
@@ -33,6 +38,8 @@ if (process.argv.includes('--live')) {
     ['https://www.zero-x.live/neuron.html', 'https://neuron.zero-x.live/'],
     ['https://neuron.zero-x.live/index.html', 'https://neuron.zero-x.live/'],
     ['https://www.zero-x.live/find-files-by-content.html', 'https://www.zero-x.live/find-files-by-content'],
+    ['https://www.zero-x.live/wheres-that-file.html', 'https://www.zero-x.live/wheres-that-file'],
+    ['https://neuron.zero-x.live/wheres-that-file', 'https://www.zero-x.live/wheres-that-file'],
   ]) {
     const response = await fetch(url, { redirect: 'manual' });
     assert.equal(response.status, 301, url);

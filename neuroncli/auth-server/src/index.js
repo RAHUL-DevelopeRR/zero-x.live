@@ -35,6 +35,9 @@ app.use('*', async (c, next) => {
     else if (path === '/find-files-by-content.html') target = 'https://www.zero-x.live/find-files-by-content';
     else if (path === '/find-files-by-content' && hostname !== 'www.zero-x.live')
       target = 'https://www.zero-x.live/find-files-by-content';
+    else if (path === '/wheres-that-file.html') target = 'https://www.zero-x.live/wheres-that-file';
+    else if (path === '/wheres-that-file' && hostname !== 'www.zero-x.live')
+      target = 'https://www.zero-x.live/wheres-that-file';
     if (target) return c.redirect(target + url.search, 301);
   }
 
