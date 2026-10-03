@@ -45,7 +45,15 @@ The owner-login proof is saved privately at `C:/Users/DELL/deepseekfs/growth-202
 
 Final live checks after `4ede808`: both deployment jobs passed; Overview, Usage, Subscription, Models, API Keys, Profile, and Activity tabs opened correctly. API URL copy acknowledged success. The account produced a real gateway session token, displayed masked; no dummy fallback remained. At an actual 390 px dashboard viewport, the closed sidebar was inert, the menu focused its first navigation button, Escape closed it and restored opener focus, and document width remained within the viewport. Viewport overrides were cleared. Sign Out returned to the sign-in gate, with no captured JavaScript errors. Dashboard proof: `C:/Users/DELL/deepseekfs/growth-2026-10-02/auth-fixes/dashboard-verified.png`. The sign-in test was for the owner, not a new external customer.
 
-Latest configuration check: email enabled; Google, Microsoft, and phone disabled; custom SMTP absent. Google Cloud reached its project limit, so choosing an existing project or increasing that limit is required. The Microsoft setup portal requires the owner's sign-in. Exact setup instructions are in `auth-setup.md`.
+October 2 configuration check: email enabled; Google, Microsoft, and phone disabled; custom SMTP absent. The Microsoft setup portal requires the owner's sign-in. Exact setup instructions are in `auth-setup.md`.
+
+### October 3 OAuth verification
+
+The owner selected Google project `phrasal-descent-465317-c2`, created its web OAuth client, and configured Supabase. A real Google login initially returned to the product page without retaining a session. The shared cookie storage split raw characters before URL encoding; encoded chunks could exceed the browser's 4096-byte cookie limit and be silently dropped. A runnable check reproduced rejected cookie writes. Storage now counts encoded size and preserves Unicode code points; ASCII and punctuation/Unicode sessions round-trip, and cleanup passes.
+
+Commit `321fd77` deployed successfully through both Cloudflare and GitHub Pages. The repeated Google login displayed the owner account, opened the authenticated dashboard on its separate subdomain, and showed **Email, Google** under Connected Accounts. Sign-out returned to the sign-in gate with no captured JavaScript errors. Proof is saved privately as `google-signed-in.png` and `google-dashboard-profile.png` in the auth-fixes evidence directory. This is an owner login, not a new customer.
+
+GitHub was absent from the website's provider allowlist. The same commit adds it and the correct GitHub button label, with checks for both enabled and disabled availability. Its OAuth registration form was prepared with the exact Supabase callback. Private credential generation/entry remains an owner handoff; GitHub was disabled at the last public-settings check and is not claimed working.
 
 ## Delivery gate
 
@@ -54,8 +62,8 @@ The full anti-slop delivery gate remains open. This is a fix report, not a claim
 - R-02/R-17/R-18/R-36/R-38: PASS for the changed marketing copy: visible em dashes and unsourced visitor/performance claims removed; samples labeled; no testimonials added.
 - R-03/R-25/R-32: PASS for the recorded viewport, token contrast, and menu checks above. Exhaustive viewport and screenshot-pixel contrast checks are not claimed.
 - R-23/R-24/R-33/R-34/R-37: PASS for the scoped changes: existing assets/navigation reused, native source edits, approved restored dark direction, no theme toggle introduced; host routing covered by the runnable check.
-- R-26/R-27/R-35/C-2/C-4: NOT CLEARED for the full request. UI and error paths exist, but Google/Microsoft/SMS credentials and public email delivery are not configured or verified. Dashboard/payment/legacy-page exhaustive click-through is not complete.
+- R-26/R-27/R-35/C-2/C-4: NOT CLEARED for the full request. Owner email and Google sign-in have scoped live evidence; GitHub/Microsoft/SMS sessions and public email delivery remain unverified. Dashboard/payment/legacy-page exhaustive click-through is not complete.
 - R-28: no FAQ added in these changes.
 - Purpose, liveliness, and quality locks: restored brand, dials, hierarchy, motion, and technique purposes are documented above. A whole-site visual-compliance PASS is not claimed while the full gate is open.
 
-Next required owner action: follow `auth-setup.md`, choose the Google Cloud project, create provider credentials directly in their consoles, and enter them in Supabase. The website can then discover the methods without another code change; successful real sessions must still be tested.
+Next required owner action: follow `auth-setup.md`, create the remaining provider credentials directly in their consoles, and enter them in Supabase. The website can then discover the methods without another code change; successful real sessions must still be tested.

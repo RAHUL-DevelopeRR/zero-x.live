@@ -11,7 +11,7 @@ Project: `norrtosjwcossxrhhtvd` (zero-x.live). The project is running. The Worke
 
 ## Google
 
-The owner selected existing project `phrasal-descent-465317-c2`. Google Auth branding and a web client were configured; Google is enabled in Supabase as of October 3, 2026. A completed website session must still be verified; provider enablement alone is insufficient.
+The owner selected existing project `phrasal-descent-465317-c2`. Google Auth branding and a web client were configured. On October 3, 2026, owner Google sign-in, callback, cross-subdomain dashboard access, the Email/Google connected-account profile, and sign-out passed on the live website after fixing encoded cookie chunk sizes.
 
 1. Open [Google Auth Platform](https://console.cloud.google.com/auth/overview) in the selected project. Configure branding as **ZeroX NeuCockpit**, using the owner's support/developer email. Use External audience for users outside your organization. During testing, add the actual testers' Google addresses.
 2. Use only `openid`, email, and profile scopes.
