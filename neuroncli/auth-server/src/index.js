@@ -48,6 +48,11 @@ app.use('*', async (c, next) => {
     else if (path === '/wheres-that-file.html') target = 'https://www.zero-x.live/wheres-that-file';
     else if (path === '/wheres-that-file' && hostname !== 'www.zero-x.live')
       target = 'https://www.zero-x.live/wheres-that-file';
+    else if (/^\/(privacy|terms)(\.html|\/)?$/.test(path)) {
+      const legalPath = '/' + path.split('/')[1].replace('.html', '');
+      if (hostname !== 'www.zero-x.live' || path !== legalPath)
+        target = 'https://www.zero-x.live' + legalPath;
+    }
     if (target) return c.redirect(target + url.search, 301);
   }
 

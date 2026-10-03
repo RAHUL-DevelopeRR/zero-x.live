@@ -4,6 +4,8 @@ import { readFile } from 'node:fs/promises';
 const pages = [
   ['index.html', 'https://www.zero-x.live/'],
   ['neuron.html', 'https://neuron.zero-x.live/'],
+  ['privacy.html', 'https://www.zero-x.live/privacy'],
+  ['terms.html', 'https://www.zero-x.live/terms'],
   ['find-files-by-content.html', 'https://www.zero-x.live/find-files-by-content'],
   ['wheres-that-file.html', 'https://www.zero-x.live/wheres-that-file'],
 ];
