@@ -24,6 +24,18 @@ assert.equal(productAlias.status, 301);
 assert.equal(productAlias.headers.get('location'), 'https://neuron.zero-x.live/');
 const dashboard = await app.request('https://dashboard.zero-x.live/', {}, env);
 assert.equal(dashboard.headers.get('x-robots-tag'), 'noindex, nofollow');
+assert.equal(dashboard.headers.get('x-frame-options'), 'DENY');
+for (const route of ['/auth/session', '/auth/azure/exchange']) {
+  const response = await app.request('https://www.zero-x.live' + route, {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({machine_fingerprint: 'test', plan: 'pro', user_id: 'spoofed', email: 'spoofed@test.invalid'}),
+  }, env);
+  const session = await response.json();
+  assert.equal(session.plan, 'free');
+  assert.equal(session.user_id, null);
+  assert.equal(session.email, '');
+  assert.equal(response.headers.get('cache-control'), 'no-store');
+}
 assert.equal(await (await app.request('https://neuron.zero-x.live/site.min.css', {}, env)).text(), '/site.min.css');
 const originalFetch = globalThis.fetch;
 try {

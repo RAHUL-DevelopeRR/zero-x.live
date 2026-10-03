@@ -43,7 +43,8 @@
     const cookies = document.cookie ? document.cookie.split('; ') : [];
     for (const cookie of cookies) {
       if (cookie.indexOf(encodedName) === 0) {
-        return decodeURIComponent(cookie.slice(encodedName.length));
+        try { return decodeURIComponent(cookie.slice(encodedName.length)); }
+        catch { return null; }
       }
     }
     return null;
@@ -93,12 +94,15 @@
   const sharedCookieStorage = {
     getItem(key) {
       const partCount = parseInt(readCookie(key + COOKIE_PART_SUFFIX) || '0', 10);
+      if (partCount < 0 || partCount > 64) return null;
       if (!partCount) {
         return readCookie(key);
       }
       let value = '';
       for (let i = 0; i < partCount; i += 1) {
-        value += readCookie(key + '.' + i) || '';
+        const part = readCookie(key + '.' + i);
+        if (part === null) return null;
+        value += part;
       }
       return value || null;
     },
@@ -114,7 +118,7 @@
       const partCount = parseInt(readCookie(key + COOKIE_PART_SUFFIX) || '0', 10);
       deleteCookie(key);
       deleteCookie(key + COOKIE_PART_SUFFIX);
-      for (let i = 0; i < partCount; i += 1) {
+      for (let i = 0; i < Math.min(partCount, 64); i += 1) {
         deleteCookie(key + '.' + i);
       }
     },
@@ -262,6 +266,7 @@
 
   async function fetchAuthConfig() {
     const response = await fetch('/auth/config', {
+      cache: 'no-store',
       headers: {
         Accept: 'application/json',
       },
@@ -567,7 +572,15 @@
 
   async function openAuthModal(options) {
     let error;
-    try { await init(); } catch (failure) { error = failure; }
+    try {
+      await init();
+      state.config = await fetchAuthConfig();
+      state.config.providers = normalizeProviders(state.config.providers);
+      if (state.config.configured && !state.client) {
+        state.initPromise = null;
+        await init();
+      }
+    } catch (failure) { error = failure; }
     ensureModal(options);
     setModalMessage('');
     if (!state.modal.open) state.modal.showModal();

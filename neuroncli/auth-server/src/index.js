@@ -8,6 +8,13 @@ const api = new Hono();
 app.use('*', async (c, next) => {
   const url = new URL(c.req.url);
   await next();
+  c.header('X-Content-Type-Options', 'nosniff');
+  c.header('Referrer-Policy', 'strict-origin-when-cross-origin');
+  c.header('X-Frame-Options', 'DENY');
+  if (url.pathname.startsWith('/auth/') || url.pathname.startsWith('/neuroncli/')) {
+    c.header('Cache-Control', 'no-store');
+    c.header('Referrer-Policy', 'no-referrer');
+  }
   if (url.hostname === 'dashboard.zero-x.live' || url.pathname.startsWith('/auth/') ||
       url.pathname.startsWith('/neuroncli/') || url.pathname === '/health') {
     c.header('X-Robots-Tag', 'noindex, nofollow');
@@ -456,21 +463,21 @@ const createSessionHandler = async (c) => {
   const fp = body.machine_fingerprint || body.fingerprint;
   const version = body.version || "unknown";
 
-  if (!fp) {
+  if (typeof fp !== 'string' || !fp.trim() || fp.length > 256) {
     return c.json({ error: "Missing machine_fingerprint" }, 400);
   }
 
-  const plan = normalizePlan(body.plan || "free");
+  const plan = 'free';
   const quota = planQuota(plan);
   const sessionToken = "ses_" + generateRandomString(24);
   const sessionData = {
     created: Date.now(),
     fingerprint: fp,
     version: version,
-    user_id: body.user_id || null,
-    email: body.email || "",
-    name: body.name || "",
-    image_url: body.image_url || "",
+    user_id: null,
+    email: "",
+    name: "",
+    image_url: "",
     plan,
     requests: 0,
     tokens_used: 0,
@@ -655,7 +662,7 @@ const chatCompletionsHandler = async (c) => {
   const body = await c.req.json().catch(() => ({}));
   const { model, messages, max_tokens, stream, tools, tool_choice, temperature, top_p } = body;
 
-  if (!model || !messages) {
+  if (typeof model !== 'string' || !model || !Array.isArray(messages) || !messages.length) {
     return c.json({ error: "Missing model or messages" }, 400);
   }
 
@@ -946,7 +953,8 @@ api.get('/auth/openrouter/callback', async (c) => {
   }
 
   const pkceSession = await getSession(c, `pkce:${state}`);
-  if (!pkceSession) {
+  if (!pkceSession || Date.now() - pkceSession.created > 10 * 60 * 1000) {
+    if (pkceSession) await deleteSession(c, `pkce:${state}`);
     return c.json({ error: "Invalid or expired state" }, 400);
   }
 
@@ -981,15 +989,6 @@ api.get('/auth/openrouter/callback', async (c) => {
     await setSession(c, sessionToken, sessionData);
     await deleteSession(c, `pkce:${state}`);
 
-    const cliPort = pkceSession.cliPort;
-    try {
-      fetch(`http://localhost:${cliPort}/oauth/callback`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ session_token: sessionToken, provider: "openrouter" }),
-      });
-    } catch { /* CLI may not be listening */ }
-
     return c.html(successPage(sessionToken, "OpenRouter"));
   } catch (err) {
     return c.json({ error: "OAuth exchange failed", message: err.message }, 500);
@@ -1020,9 +1019,9 @@ function successPage(sessionToken, provider) {
     <div class="icon">✓</div>
     <h1>Authentication Successful</h1>
     <p>Connected via <strong>${provider}</strong>.</p>
-    <p>Your session has been forwarded to NeuronCLI.</p>
+    <p>Authorization exchanged. Check NeuronCLI to confirm the connection.</p>
     <div class="code-box">${masked}</div>
-    <p class="hint">You can close this tab. Your terminal is ready.</p>
+    <p class="hint">If your terminal is still waiting, restart authentication there.</p>
   </div>
 </body>
 </html>`;
