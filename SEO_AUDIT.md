@@ -57,4 +57,16 @@ Public HTML: index, neuron, dashboard, About, guide, film, privacy, terms. Suppo
 
 ## Deployment evidence
 
-Pending deployment/live verification. Update with actual evidence before claiming completion.
+Implementation commits `e9020a6` and `7f76024` are pushed to main. Cloudflare deployment and GitHub Pages workflows completed successfully. The live SEO check passes across all seven pages, redirects, private noindex, static source exclusions, robots, sitemap and media assets. The six installer URLs match assets in the real `v1.0.0-build-202610010440` product release; installers were not downloaded or re-tested by this website audit.
+
+Live browser matrix: all seven destinations at actual 320, 375 and 768px viewports (21 checks), without horizontal overflow. Product menu works at 375px, Escape restores opener focus, and mobile orb animation is disabled. Overrides were cleared after testing. Desktop homepage screenshot and JSON matrix are saved outside the repository in `C:/Users/DELL/deepseekfs/growth-2026-10-03/seo/`.
+
+Two post-deployment mobile PageSpeed runs returned performance 85, accessibility 100, best practices 100 and SEO 100. Latest run after the mobile paint adjustment: FCP 3.0s, LCP 3.5s, TBT 0ms, CLS 0, Speed Index 3.1s. The previous run was LCP 3.4s, CLS 0.053. Report: <https://pagespeed.web.dev/analysis/https-zero-x-live/dcr92o9lm1?form_factor=mobile>. This does not establish a speed gain; LCP still needs improvement and field data is unavailable. Mobile grain/orb work was reduced without altering product functionality, and the final lab run no longer reports forced reflow.
+
+Search Console: verified Domain property accessible. Google live homepage test on 3 October at 18:27 IST says **URL is available to Google / Page can be indexed**. Homepage indexing request accepted and added to priority crawl queue. Stored index report still reflects the old 21 September WWW redirect and has not yet recrawled this deployment. Prior overview: 11 clicks, three indexed pages, seven not indexed; no field Core Web Vitals data. These are current report observations, not proof of newly indexed pages.
+
+Canonical sitemap submission accepted, but Search Console initially reports **Couldn't fetch / Sitemap could not be read**. Direct apex and WWW-followed requests return HTTP 200 application/xml with seven valid URLs, including a Googlebot-user-agent request. One retry was made after full deployment. Do not claim Google successfully processed it until its report changes. Recheck this external processing state later; if it persists, inspect DNS/CDN/WAF logs for verified Google crawler requests rather than broadly weakening protection. The previously submitted WWW sitemap remains in the account and redirects to apex.
+
+## Final gate
+
+Technical SEO, metadata, canonical routing, robots, sitemap XML/delivery, connected structured-data parse/relationship checks, mobile, Worker build and regression tests: PASS. Google sitemap processing: unresolved (last observed fetch failure). Field CWV/INP: no data. Google indexing/ranking: pending recrawl, not guaranteed. No new outreach or fabricated external signals were added.

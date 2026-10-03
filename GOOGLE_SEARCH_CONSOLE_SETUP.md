@@ -11,6 +11,8 @@ Canonical marketing domain: <https://zero-x.live/>. Product: <https://neuron.zer
 
 ## Monitor
 
+Implementation observation (3 October 2026): Domain access verified, homepage live crawl passed and indexing request accepted. Apex sitemap submitted; its first processing report says Couldn't fetch despite valid HTTP 200 XML delivery. One post-rollout retry was made. Recheck the report later; accepted submission is not successful processing. If the fetch failure persists, compare actual verified crawler requests with DNS/CDN/WAF logs. Do not weaken security based only on a delayed report.
+
 - Pages/indexing: investigate unexpected excluded public URLs, server errors and conflicting canonicals. Private dashboard/auth/API exclusion is intentional.
 - Search performance: compare clicks, impressions, CTR and average position over matched periods. Separate branded Zero-X/NeuCockpit queries from category/problem intent; filter device/country/page when interpreting changes.
 - Core Web Vitals: use field reports when traffic is sufficient. A Lighthouse score is not an INP measurement or proof of field performance.
