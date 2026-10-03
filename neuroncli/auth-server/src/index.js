@@ -33,6 +33,9 @@ app.use('*', async (c, next) => {
   }
 
   if (c.req.method === 'GET' || c.req.method === 'HEAD') {
+    if (path === '/neuroncli/callback/' && c.env?.ASSETS) {
+      return c.env.ASSETS.fetch(new Request(new URL('/neuroncli/callback/index.html', url), c.req.raw));
+    }
     let target = null;
     if (path === '/neuron.html' || path === '/neuron') target = 'https://neuron.zero-x.live/';
     else if (path === '/dashboard.html' || path === '/dashboard') target = 'https://dashboard.zero-x.live/';

@@ -25,6 +25,9 @@ assert.equal(productAlias.headers.get('location'), 'https://neuron.zero-x.live/'
 const dashboard = await app.request('https://dashboard.zero-x.live/', {}, env);
 assert.equal(dashboard.headers.get('x-robots-tag'), 'noindex, nofollow');
 assert.equal(dashboard.headers.get('x-frame-options'), 'DENY');
+const callbackPage = await app.request('https://www.zero-x.live/neuroncli/callback/', {}, env);
+assert.equal(await callbackPage.text(), '/neuroncli/callback/index.html');
+assert.equal(callbackPage.headers.get('cache-control'), 'no-store');
 for (const route of ['/auth/session', '/auth/azure/exchange']) {
   const response = await app.request('https://www.zero-x.live' + route, {
     method: 'POST', headers: {'Content-Type': 'application/json'},
