@@ -11,17 +11,29 @@ for (const [host, page] of [
   ['neuron.zero-x.live', '/neuron.html'], ['dashboard.zero-x.live', '/dashboard.html'],
 ]) {
   const root = await app.request(`https://${host}/`, {}, env);
-  if (host === 'zero-x.live') {
+  if (host === 'www.zero-x.live') {
     assert.equal(root.status, 301);
-    assert.equal(root.headers.get('location'), 'https://www.zero-x.live/');
+    assert.equal(root.headers.get('location'), 'https://zero-x.live/');
   } else assert.equal(await root.text(), page);
   const alias = await app.request(`https://${host}/index.html?utm_source=test`, {}, env);
   assert.equal(alias.status, 301);
-  assert.equal(alias.headers.get('location'), `https://${host === 'zero-x.live' ? 'www.zero-x.live' : host}/?utm_source=test`);
+  assert.equal(alias.headers.get('location'), `https://${host === 'www.zero-x.live' ? 'zero-x.live' : host}/?utm_source=test`);
 }
 const productAlias = await app.request('https://www.zero-x.live/neuron.html', {}, env);
 assert.equal(productAlias.status, 301);
 assert.equal(productAlias.headers.get('location'), 'https://neuron.zero-x.live/');
+for (const [path,target] of [
+  ['/about/', 'https://zero-x.live/about'], ['/about.html','https://zero-x.live/about'],
+  ['/legacy.html','https://neuron.zero-x.live/'], ['/index2.html','https://zero-x.live/'],
+  ['/download?utm_source=test','https://neuron.zero-x.live/?utm_source=test#downloads'],
+]) {
+  const response = await app.request('https://zero-x.live'+path, {}, env);
+  assert.equal(response.status,301); assert.equal(response.headers.get('location'),target);
+}
+const https = await app.request('http://zero-x.live/auth/config?test=1', {}, env);
+assert.equal(https.status,308); assert.equal(https.headers.get('location'),'https://zero-x.live/auth/config?test=1');
+const models = await app.request('https://www.zero-x.live/v1/models', {}, env);
+assert.equal(models.status,200); assert.ok(models.headers.get('x-robots-tag').includes('noindex'));
 const dashboard = await app.request('https://dashboard.zero-x.live/', {}, env);
 assert.equal(dashboard.headers.get('x-robots-tag'), 'noindex, nofollow');
 assert.equal(dashboard.headers.get('x-frame-options'), 'DENY');

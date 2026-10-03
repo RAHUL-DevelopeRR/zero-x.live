@@ -1,0 +1,60 @@
+# Zero-X technical and entity SEO audit
+
+Date: 3 October 2026. Scope: website repository, production Worker, seven public destinations, account regression checks and browser verification. Search ranking is an objective, not a promised outcome.
+
+## Architecture / initial issues
+
+Public pages are static HTML with inline compiled CSS, shared styles and vanilla JavaScript. Meaningful content is present before JavaScript executes; no login, hydration or API response is needed. Production is a Hono Cloudflare Worker with static assets on apex, WWW, product and dashboard domains. Supabase supports account identity/storage; the legacy Express server is not production.
+
+Initial gaps: mixed ZeroX/ZeroX Corporation naming; unclear brand/category association; WWW metadata despite the requested apex canonical; prototype duplicates; incomplete policy social metadata; no substantial About page; fragmented setup/indexing-limit information; broken X profile links; a 100,717-byte screenshot JPEG; broad deployment exclusions that missed internal/private file patterns. Existing illustrative video/results disclosure is retained.
+
+## Implementation
+
+| Area | Change |
+| --- | --- |
+| Entity / copy | Zero-X creates NeuCockpit for local AI desktop file search, in visible headings, copy, About, footer, metadata and README. |
+| Useful pages | New `/about`; expanded product setup, readable text extraction, refresh, local/online distinction, limits and native FAQ. Existing guide and film retained. |
+| Metadata | Unique title/description, self canonical, robots, OG and Twitter metadata for all seven public pages. |
+| Schema | Connected WebSite, Organization, WebPage and SoftwareApplication IDs; one NeuCockpit entity across homepage/product. Subpage breadcrumbs; real VideoObject retained. No fabricated offers, ratings, reviews or version. |
+| Canonical / routes | HTTPS apex marketing; clean routes; prototype redirects; `/neucockpit`, `/download`, `/features` use existing substantial product. Auth/API hosts and functional parameters preserved. |
+| Crawl controls | Public robots allows assets/content and advertises apex sitemap. Dashboard robots disallows crawling; dashboard/auth/API use noindex headers. Unknown paths return 404. Robots is not access control. |
+| Sitemap | Seven canonical meaningful public URLs from `seo-pages.json`, regenerated in CI with real Git lastmod and video fields. Full Git history checked out in CI. |
+| Performance | Screenshot WebP 44,542 bytes plus 18,132-byte mobile variant; responsive srcset/lazy decoding/dimensions. Shared OG WebP 9,804 bytes. Heading font preload, unused preconnect removed, video dimensions explicit. |
+| Accessibility | One H1 per public page, semantic landmarks, breadcrumbs, skip links, 44px legal navigation/footer targets. Mobile dialog focus/Escape/scroll restoration preserved. |
+| Trust / assets | Real source/social/contact/privacy links; server/source/report/prototype/dependency/cache and known ignored private patterns excluded from static upload. Secrets remain server-side. |
+| Regression | Metadata/entity/link/image/sitemap checks plus worker, auth storage, dashboard and callback checks. No new app dependency. |
+
+## Destinations / strategy
+
+Homepage owns Zero-X/NeuCockpit brand introduction; `https://neuron.zero-x.live/` owns product/category/features/download/setup intent. `/about` answers identity questions. `/find-files-by-content` solves a filename-forgotten task; `/wheres-that-file` is the disclosed illustrative film watch page. `/privacy` and `/terms` are genuine policies. No thin synonym landing pages were created. Parameters remain functional, while canonical tags consolidate indexing.
+
+## Validation / performance
+
+Local routing, database persistence/outage handling, dashboard quota, session/provider options, callback safety and seven-page SEO checks pass. Dependency audit reports zero vulnerabilities. Worker package dry-run passes. No configured lint or TypeScript typecheck exists in this JavaScript/static repository; neither is claimed as executed.
+
+All seven pages tested at 320, 375 and 768px without horizontal overflow. Product mobile menu opens; Escape closes; aria-expanded resets; focus returns to opener; body scroll restores. Product breadcrumb adjusted after visual review to avoid extending the full-height hero.
+
+PageSpeed mobile baseline (3 October): performance 86, accessibility 100, best practices 100, SEO 100; FCP 3.0s, LCP 3.4s, TBT 0ms, CLS 0.055. No CrUX field data available. Lighthouse SEO 100 is a technical checklist, not evidence of ranking. Post-deployment evidence recorded below.
+
+## Anti-slop after-development audit
+
+Preserved the owner's restored dark/neon identity rather than the stale light-theme export. New copy serves setup, support, privacy and failure cases. No testimonials, invented numbers or filler card sections added. Product heading/film is the focal point; cyan marks actions. About/legal content uses the existing readable document layout. Existing decorative orbs/cards remain part of the requested preserved identity. ENERGY 2 / RHYTHM 2 / MOTION 1 describe the retained restrained motion and varied product/document sections.
+
+## Changed files
+
+Public HTML: index, neuron, dashboard, About, guide, film, privacy, terms. Supporting files: legal.css, two screenshot WebPs, robots.txt, sitemap.xml, seo-pages.json, CNAME, .assetsignore, deploy workflow, worker src/index.js, build-sitemap.mjs, check-seo.mjs, check-worker.mjs, package.json, README and four SEO documents.
+
+## Remaining opportunities / owner actions
+
+1. Monitor indexation and query performance after recrawl. The broad query "zero x" competes with established unrelated entities. Align genuine external profiles with Zero-X/NeuCockpit.
+2. Produce real platform walkthroughs from released builds and observed user questions; follow `SEO_CONTENT_PLAN.md`.
+3. Seek useful community mentions and permitted genuine user stories; follow `SEO_OFFSITE_CHECKLIST.md`.
+4. Fonts, inline CSS and the deferred Supabase client remain measurable performance costs. Further changes should preserve sign-in and follow actual measurements. No field INP claim is possible without data.
+
+## Sources
+
+[People-first content](https://developers.google.com/search/docs/fundamentals/creating-helpful-content), [site names](https://developers.google.com/search/docs/appearance/site-names), [canonicals](https://developers.google.com/search/docs/crawling-indexing/consolidate-duplicate-urls), [Organization](https://developers.google.com/search/docs/appearance/structured-data/organization), [breadcrumbs](https://developers.google.com/search/docs/appearance/structured-data/breadcrumb), [software rich-result eligibility](https://developers.google.com/search/docs/appearance/structured-data/software-app). Semantic SoftwareApplication markup does not guarantee a software rich result; never invent an offer/review to meet eligibility rules.
+
+## Deployment evidence
+
+Pending deployment/live verification. Update with actual evidence before claiming completion.

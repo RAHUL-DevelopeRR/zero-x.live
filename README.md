@@ -1,172 +1,35 @@
-# 🚀 ZeroX Corporation
+# Zero-X — NeuCockpit website
 
-> **Building innovative digital products for the next generation.**
+Official website: <https://zero-x.live/>. [NeuCockpit](https://neuron.zero-x.live/) is Zero-X's local AI desktop application for finding documents by meaning on Windows, macOS and Linux. [Product source and releases](https://github.com/RAHUL-DevelopeRR/deepseekfs) live in a separate repository.
 
-Welcome to the official website repository of **ZeroX Corporation**, a product-based technology platform focused on building modern, scalable, and user-friendly digital solutions.
+## Architecture
 
-## 🌐 About the Project
+Static HTML/CSS and vanilla JavaScript provide crawlable public pages. `neuroncli/auth-server/src/index.js` is the production Hono/Cloudflare Worker: it routes website/product/dashboard hosts and serves authenticated APIs. Supabase supports identity and account persistence. The legacy Express server is not the production Worker.
 
-**ZeroX Corporation** is a modern web platform designed to present the company's products, services, technologies, and digital ecosystem through a clean and responsive web experience.
+Public pages are listed in `seo-pages.json`. About, guide, film and policies use clean paths. `/neucockpit`, `/download` and `/features` redirect to the full product page. WWW marketing pages redirect to HTTPS apex; product/dashboard subdomains remain. Dashboard/auth/API pages are intentionally not indexed.
 
-This repository contains the source code for the ZeroX website, including its web pages, styling, authentication components, assets, and supporting tools.
+## Develop and verify
 
-## ✨ Features
+Use Node.js 22 and locked dependencies:
 
-* 🎨 Modern and responsive user interface
-* 📱 Mobile-friendly design
-* ⚡ Fast and lightweight web experience
-* 🌐 Multiple website pages
-* 🔐 Authentication integration
-* 🧩 Modular website structure
-* 📊 Dashboard interface
-* 🤖 Neuron CLI integration
-* 🔎 SEO-friendly configuration
-* ☁️ Cloud/edge deployment configuration
-* 🗺️ Sitemap and robots configuration
-
-## 🛠️ Technologies Used
-
-* **HTML5** — Website structure
-* **CSS3** — Styling and responsive layouts
-* **JavaScript** — Interactive functionality
-* **Cloudflare / Wrangler** — Deployment and edge configuration
-* **Git & GitHub** — Version control and collaboration
-
-## 📂 Project Structure
-
-```text
-zero-x.live/
-│
-├── Assets/
-│
-├── neuroncli/
-│
-├── .github/
-│   └── workflows/
-│
-├── index.html
-├── index2.html
-├── dashboard.html
-├── neuron.html
-├── legacy.html
-│
-├── base.css
-├── style.css
-├── nitro.css
-│
-├── zerox-auth.js
-├── robots.txt
-├── sitemap.xml
-├── CNAME
-│
-├── TODO.md
-├── Changes27-04.txt
-├── .gitignore
-└── README.md
+```sh
+cd neuroncli/auth-server
+npm ci
+npm run build:seo
+npm run check:production
+npm audit --omit=dev
+npx wrangler deploy --dry-run
 ```
 
-## 🖥️ Website Pages
+After deployment run `node check-seo.mjs --live`. Use Wrangler development with local bindings for production-like routing. A plain static HTTP server previews layout only; it does not implement production routes/auth APIs. No lint or TypeScript typecheck script is configured.
 
-| Page             | Description                   |
-| ---------------- | ----------------------------- |
-| `index.html`     | Main ZeroX landing page       |
-| `index2.html`    | Alternative website interface |
-| `dashboard.html` | Dashboard interface           |
-| `neuron.html`    | Neuron-related interface      |
-| `legacy.html`    | Legacy website interface      |
+GitHub Actions deploys main after production checks. Credentials belong in Cloudflare/GitHub secret stores. `.assetsignore` excludes server source, internal reports, prototypes, dependencies/cache and known private patterns. Keep public asset references working when adjusting it.
 
-## 🚀 Getting Started
+## SEO maintenance
 
-### Clone the Repository
+- [Audit and verification](SEO_AUDIT.md)
+- [Content plan](SEO_CONTENT_PLAN.md)
+- [Search Console instructions](GOOGLE_SEARCH_CONSOLE_SETUP.md)
+- [External identity checklist](SEO_OFFSITE_CHECKLIST.md)
 
-```bash
-git clone https://github.com/RAHUL-DevelopeRR/zero-x.live.git
-```
-
-### Navigate to the Project
-
-```bash
-cd zero-x.live
-```
-
-### Run Locally
-
-Since the project contains static HTML, CSS, and JavaScript files, you can open:
-
-```text
-index.html
-```
-
-directly in your browser.
-
-For development, you can use **Visual Studio Code + Live Server**.
-
-## 🌍 Deployment
-
-The project includes configuration files for web/edge deployment and a `CNAME` file for custom-domain configuration.
-
-Before deploying, verify:
-
-* Domain configuration
-* Environment variables
-* Authentication settings
-* Asset paths
-* Deployment configuration
-* Production security settings
-
-## 🔐 Security
-
-Do not commit sensitive information such as:
-
-* API keys
-* Access tokens
-* Passwords
-* Private credentials
-* Secret environment variables
-
-Use environment variables or secure deployment secrets where required.
-
-## 📸 Screenshots
-
-Add screenshots of the website here:
-
-```text
-screenshots/
-├── homepage.png
-├── dashboard.png
-├── neuron.png
-└── mobile-view.png
-```
-
-Example:
-
-```markdown
-![ZeroX Homepage](screenshots/homepage.png)
-```
-
-## 🎯 Project Goals
-
-The main goals of ZeroX are to:
-
-* Build innovative technology products
-* Provide a modern digital experience
-* Create scalable web solutions
-* Improve user accessibility
-* Develop a strong product ecosystem
-* Continuously improve the platform
-
-## 🔮 Future Improvements
-
-* [ ] Improve mobile responsiveness
-* [ ] Add advanced authentication
-* [ ] Enhance dashboard functionality
-* [ ] Add more product modules
-* [ ] Improve website performance
-* [ ] Add automated testing
-* [ ] Improve accessibility
-* [ ] Add detailed documentation
-* [ ] Introduce CI/CD improvements
-
-
-
-**ZeroX Corporation — Innovate. Build. Scale.**
+Add meaningful public destinations to `seo-pages.json` and regenerate the sitemap. Use consistent Zero-X/NeuCockpit naming and truthful schema. Search Console and successful product use determine progress; metadata or Lighthouse scores do not guarantee rankings.

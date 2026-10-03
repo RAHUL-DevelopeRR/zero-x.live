@@ -14,3 +14,8 @@ h2 { font-size: 1.3rem; line-height: 1.4; margin: 36px 0 12px; }
 p { margin: 0 0 16px; }
 .updated { color: #b6b6c1; }
 footer { border-top: 1px solid #38383e; padding-block: 24px 40px; }
+.skip { position: absolute; left: -9999px; top: 0; }
+.skip:focus { left: 16px; top: 12px; padding: 12px; z-index: 2; background: #0a0a0c; }
+nav a, footer a { display: inline-flex; align-items: center; min-height: 44px; }
+main ul { padding-left: 24px; }
+main nav { margin-bottom: 24px; }

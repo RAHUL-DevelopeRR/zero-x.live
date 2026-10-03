@@ -16,7 +16,7 @@ app.use('*', async (c, next) => {
     c.header('Referrer-Policy', 'no-referrer');
   }
   if (url.hostname === 'dashboard.zero-x.live' || url.pathname.startsWith('/auth/') ||
-      url.pathname.startsWith('/neuroncli/') || url.pathname === '/health') {
+      url.pathname.startsWith('/neuroncli/') || url.pathname.startsWith('/v1/') || url.pathname === '/health') {
     c.header('X-Robots-Tag', 'noindex, nofollow');
   }
 });
@@ -32,28 +32,31 @@ app.use('*', async (c, next) => {
     return next();
   }
 
+  if (url.protocol === 'http:' && ['zero-x.live','www.zero-x.live','neuron.zero-x.live','dashboard.zero-x.live'].includes(hostname)) {
+    url.protocol = 'https:';
+    return c.redirect(url.toString(), 308);
+  }
+
   if (c.req.method === 'GET' || c.req.method === 'HEAD') {
+    if (hostname === 'dashboard.zero-x.live' && path === '/robots.txt')
+      return c.text('User-agent: *\nDisallow: /\n');
     if (path === '/neuroncli/callback/' && c.env?.ASSETS) {
       return c.env.ASSETS.fetch(new Request(new URL('/neuroncli/callback/index.html', url), c.req.raw));
     }
     let target = null;
-    if (path === '/neuron.html' || path === '/neuron') target = 'https://neuron.zero-x.live/';
-    else if (path === '/dashboard.html' || path === '/dashboard') target = 'https://dashboard.zero-x.live/';
-    else if (path === '/index.html') target = `https://${hostname === 'zero-x.live' ? 'www.zero-x.live' : hostname}/`;
-    else if (hostname === 'zero-x.live' && !path.startsWith('/auth/') && !path.startsWith('/neuroncli/'))
-      target = `https://www.zero-x.live${path}`;
-    else if (path === '/find-files-by-content.html') target = 'https://www.zero-x.live/find-files-by-content';
-    else if (path === '/find-files-by-content' && hostname !== 'www.zero-x.live')
-      target = 'https://www.zero-x.live/find-files-by-content';
-    else if (path === '/wheres-that-file.html') target = 'https://www.zero-x.live/wheres-that-file';
-    else if (path === '/wheres-that-file' && hostname !== 'www.zero-x.live')
-      target = 'https://www.zero-x.live/wheres-that-file';
-    else if (/^\/(privacy|terms)(\.html|\/)?$/.test(path)) {
-      const legalPath = '/' + path.split('/')[1].replace('.html', '');
-      if (hostname !== 'www.zero-x.live' || path !== legalPath)
-        target = 'https://www.zero-x.live' + legalPath;
-    }
-    if (target) return c.redirect(target + url.search, 301);
+    let fragment = '';
+    const clean = path.replace(/\.html$/, '').replace(/\/$/, '');
+    if (['/neuron','/neucockpit','/legacy'].includes(clean)) target = 'https://neuron.zero-x.live/';
+    else if (['/start','/download'].includes(clean)) { target = 'https://neuron.zero-x.live/'; fragment = '#downloads'; }
+    else if (clean === '/features') { target = 'https://neuron.zero-x.live/'; fragment = '#features'; }
+    else if (clean === '/dashboard') target = 'https://dashboard.zero-x.live/';
+    else if (['/index','/index2'].includes(clean)) target = `https://${hostname === 'www.zero-x.live' ? 'zero-x.live' : hostname}/`;
+    else if (['/about','/privacy','/terms','/find-files-by-content','/wheres-that-file'].includes(clean)) {
+      if (hostname !== 'zero-x.live' || path !== clean) target = 'https://zero-x.live' + clean;
+    } else if (hostname === 'www.zero-x.live' && path !== '/health' && !path.startsWith('/v1/') && !path.startsWith('/api/') && !path.startsWith('/auth/') && !path.startsWith('/neuroncli/') &&
+               !path.startsWith('/Assets/') && !path.startsWith('/assets/') && !/\.(css|js|png|ico|webp|svg|jpg|mp4|woff2)$/.test(path))
+      target = 'https://zero-x.live' + path;
+    if (target) return c.redirect(target + url.search + fragment, 301);
   }
 
   // Resolve host-specific index pages before generic static assets.

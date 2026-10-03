@@ -6,10 +6,10 @@
   <meta content="width=device-width,initial-scale=1" name="viewport"/>
   <noscript><style>.reveal{opacity:1;transform:none}</style></noscript>
 
-  <title>NeuCockpit | Semantic file search and local AI by ZeroX</title>
+  <title>NeuCockpit | Local AI Desktop File Search by Zero-X</title>
   <meta name="description" content="Download NeuCockpit for Windows, macOS, and Linux. Search files by meaning and summarize documents with local AI."/>
   <meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large"/>
-  <meta name="author" content="ZeroX Corporation"/>
+  <meta name="author" content="Zero-X"/>
   <meta name="theme-color" content="#0A0A0C"/>
 
   <!-- Canonical -->
@@ -17,11 +17,11 @@
 
   <!-- Open Graph -->
   <meta property="og:type" content="website"/>
-  <meta property="og:site_name" content="ZeroX"/>
-  <meta property="og:title" content="NeuCockpit | Semantic file search by ZeroX"/>
+  <meta property="og:site_name" content="Zero-X"/>
+  <meta property="og:title" content="NeuCockpit | Local AI Desktop File Search by Zero-X"/>
   <meta property="og:description" content="Download NeuCockpit for Windows, macOS, and Linux. Search files by meaning and work with local AI."/>
   <meta property="og:url" content="https://neuron.zero-x.live/"/>
-  <meta property="og:image" content="https://www.zero-x.live/Assets/neucockpit_screenshot.jpg"/>
+  <meta property="og:image" content="https://zero-x.live/Assets/neucockpit-semantic-search.webp"/>
   <meta property="og:image:alt" content="NeuCockpit Screenshot"/>
   <meta property="og:locale" content="en_US"/>
 
@@ -29,7 +29,8 @@
   <meta name="twitter:card" content="summary_large_image"/>
   <meta name="twitter:title" content="NeuCockpit | Semantic file search"/>
   <meta name="twitter:description" content="Semantic file search and local AI for Windows, macOS, and Linux."/>
-  <meta name="twitter:image" content="https://www.zero-x.live/Assets/neucockpit_screenshot.jpg"/>
+  <meta name="twitter:image" content="https://zero-x.live/Assets/neucockpit-semantic-search.webp"/>
+  <meta name="twitter:image:alt" content="NeuCockpit desktop semantic file search results"/>
 
   <!-- Favicons -->
   <link rel="icon" type="image/png" sizes="256x256" href="./Assets/zerox-favicon-centered.png"/>
@@ -38,6 +39,7 @@
 
   <!-- Fonts -->
   <link rel="preconnect" href="https://cdn.fontshare.com" crossorigin/>
+  <link rel="preload" as="font" type="font/woff2" crossorigin href="https://cdn.fontshare.com/wf/CKQBK2QBTCDREE7L3MXZ3PPW7LDNJCWU/OTOY7FQFSFOJVZKJWKO2EHUJLOGBDN4Q/4CO2ETY7NITKLUDKMYJ75RHJSPHOJ7XT.woff2"/>
 <style data-public-styles>
 /* Cabinet Grotesk */
 @font-face {
@@ -191,7 +193,6 @@
 
 *,:after,:before{--tw-border-spacing-x:0;--tw-border-spacing-y:0;--tw-translate-x:0;--tw-translate-y:0;--tw-rotate:0;--tw-skew-x:0;--tw-skew-y:0;--tw-scale-x:1;--tw-scale-y:1;--tw-pan-x: ;--tw-pan-y: ;--tw-pinch-zoom: ;--tw-scroll-snap-strictness:proximity;--tw-gradient-from-position: ;--tw-gradient-via-position: ;--tw-gradient-to-position: ;--tw-ordinal: ;--tw-slashed-zero: ;--tw-numeric-figure: ;--tw-numeric-spacing: ;--tw-numeric-fraction: ;--tw-ring-inset: ;--tw-ring-offset-width:0px;--tw-ring-offset-color:#fff;--tw-ring-color:rgba(59,130,246,.5);--tw-ring-offset-shadow:0 0 #0000;--tw-ring-shadow:0 0 #0000;--tw-shadow:0 0 #0000;--tw-shadow-colored:0 0 #0000;--tw-blur: ;--tw-brightness: ;--tw-contrast: ;--tw-grayscale: ;--tw-hue-rotate: ;--tw-invert: ;--tw-saturate: ;--tw-sepia: ;--tw-drop-shadow: ;--tw-backdrop-blur: ;--tw-backdrop-brightness: ;--tw-backdrop-contrast: ;--tw-backdrop-grayscale: ;--tw-backdrop-hue-rotate: ;--tw-backdrop-invert: ;--tw-backdrop-opacity: ;--tw-backdrop-saturate: ;--tw-backdrop-sepia: ;--tw-contain-size: ;--tw-contain-layout: ;--tw-contain-paint: ;--tw-contain-style: }::backdrop{--tw-border-spacing-x:0;--tw-border-spacing-y:0;--tw-translate-x:0;--tw-translate-y:0;--tw-rotate:0;--tw-skew-x:0;--tw-skew-y:0;--tw-scale-x:1;--tw-scale-y:1;--tw-pan-x: ;--tw-pan-y: ;--tw-pinch-zoom: ;--tw-scroll-snap-strictness:proximity;--tw-gradient-from-position: ;--tw-gradient-via-position: ;--tw-gradient-to-position: ;--tw-ordinal: ;--tw-slashed-zero: ;--tw-numeric-figure: ;--tw-numeric-spacing: ;--tw-numeric-fraction: ;--tw-ring-inset: ;--tw-ring-offset-width:0px;--tw-ring-offset-color:#fff;--tw-ring-color:rgba(59,130,246,.5);--tw-ring-offset-shadow:0 0 #0000;--tw-ring-shadow:0 0 #0000;--tw-shadow:0 0 #0000;--tw-shadow-colored:0 0 #0000;--tw-blur: ;--tw-brightness: ;--tw-contrast: ;--tw-grayscale: ;--tw-hue-rotate: ;--tw-invert: ;--tw-saturate: ;--tw-sepia: ;--tw-drop-shadow: ;--tw-backdrop-blur: ;--tw-backdrop-brightness: ;--tw-backdrop-contrast: ;--tw-backdrop-grayscale: ;--tw-backdrop-hue-rotate: ;--tw-backdrop-invert: ;--tw-backdrop-opacity: ;--tw-backdrop-saturate: ;--tw-backdrop-sepia: ;--tw-contain-size: ;--tw-contain-layout: ;--tw-contain-paint: ;--tw-contain-style: }/*! tailwindcss v3.4.17 | MIT License | https://tailwindcss.com*/*,:after,:before{box-sizing:border-box;border:0 solid #e5e7eb}:after,:before{--tw-content:""}:host,html{line-height:1.5;-webkit-text-size-adjust:100%;-moz-tab-size:4;-o-tab-size:4;tab-size:4;font-family:ui-sans-serif,system-ui,sans-serif,Apple Color Emoji,Segoe UI Emoji,Segoe UI Symbol,Noto Color Emoji;font-feature-settings:normal;font-variation-settings:normal;-webkit-tap-highlight-color:transparent}body{margin:0;line-height:inherit}hr{height:0;color:inherit;border-top-width:1px}abbr:where([title]){-webkit-text-decoration:underline dotted;text-decoration:underline dotted}h1,h2,h3,h4,h5,h6{font-size:inherit;font-weight:inherit}a{color:inherit;text-decoration:inherit}b,strong{font-weight:bolder}code,kbd,pre,samp{font-family:JetBrains Mono,monospace;font-feature-settings:normal;font-variation-settings:normal;font-size:1em}small{font-size:80%}sub,sup{font-size:75%;line-height:0;position:relative;vertical-align:baseline}sub{bottom:-.25em}sup{top:-.5em}table{text-indent:0;border-color:inherit;border-collapse:collapse}button,input,optgroup,select,textarea{font-family:inherit;font-feature-settings:inherit;font-variation-settings:inherit;font-size:100%;font-weight:inherit;line-height:inherit;letter-spacing:inherit;color:inherit;margin:0;padding:0}button,select{text-transform:none}button,input:where([type=button]),input:where([type=reset]),input:where([type=submit]){-webkit-appearance:button;background-color:transparent;background-image:none}:-moz-focusring{outline:auto}:-moz-ui-invalid{box-shadow:none}progress{vertical-align:baseline}::-webkit-inner-spin-button,::-webkit-outer-spin-button{height:auto}[type=search]{-webkit-appearance:textfield;outline-offset:-2px}::-webkit-search-decoration{-webkit-appearance:none}::-webkit-file-upload-button{-webkit-appearance:button;font:inherit}summary{display:list-item}blockquote,dd,dl,figure,h1,h2,h3,h4,h5,h6,hr,p,pre{margin:0}fieldset{margin:0}fieldset,legend{padding:0}menu,ol,ul{list-style:none;margin:0;padding:0}dialog{padding:0}textarea{resize:vertical}input::-moz-placeholder,textarea::-moz-placeholder{opacity:1;color:#9ca3af}input::placeholder,textarea::placeholder{opacity:1;color:#9ca3af}[role=button],button{cursor:pointer}:disabled{cursor:default}audio,canvas,embed,iframe,img,object,svg,video{display:block;vertical-align:middle}img,video{max-width:100%;height:auto}[hidden]:where(:not([hidden=until-found])){display:none}.pointer-events-none{pointer-events:none}.visible{visibility:visible}.fixed{position:fixed}.absolute{position:absolute}.relative{position:relative}.inset-0{inset:0}.-bottom-10{bottom:-2.5rem}.-top-3{top:-.75rem}.bottom-8{bottom:2rem}.bottom-\[10\%\]{bottom:10%}.left-1\/2{left:50%}.left-4{left:1rem}.left-\[25\%\]{left:25%}.left-\[30\%\]{left:30%}.right-2{right:.5rem}.right-5{right:1.25rem}.right-\[20\%\]{right:20%}.top-0{top:0}.top-1\/2{top:50%}.top-4{top:1rem}.top-5{top:1.25rem}.top-\[15\%\]{top:15%}.top-\[30\%\]{top:30%}.top-\[35\%\]{top:35%}.top-\[50\%\]{top:50%}.z-10{z-index:10}.z-30{z-index:30}.z-50{z-index:50}.z-\[60\]{z-index:60}.order-1{order:1}.order-2{order:2}.col-span-2{grid-column:span 2/span 2}.mx-auto{margin-left:auto;margin-right:auto}.my-8{margin-top:2rem;margin-bottom:2rem}.mb-1{margin-bottom:.25rem}.mb-10{margin-bottom:2.5rem}.mb-12{margin-bottom:3rem}.mb-14{margin-bottom:3.5rem}.mb-16{margin-bottom:4rem}.mb-2{margin-bottom:.5rem}.mb-20{margin-bottom:5rem}.mb-3{margin-bottom:.75rem}.mb-32{margin-bottom:8rem}.mb-4{margin-bottom:1rem}.mb-5{margin-bottom:1.25rem}.mb-6{margin-bottom:1.5rem}.mb-8{margin-bottom:2rem}.ml-auto{margin-left:auto}.mr-1{margin-right:.25rem}.mr-2{margin-right:.5rem}.mt-0\.5{margin-top:.125rem}.mt-10{margin-top:2.5rem}.mt-14{margin-top:3.5rem}.mt-2\.5{margin-top:.625rem}.mt-3{margin-top:.75rem}.mt-4{margin-top:1rem}.mt-6{margin-top:1.5rem}.mt-auto{margin-top:auto}.line-clamp-2{overflow:hidden;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2}.block{display:block}.inline-block{display:inline-block}.flex{display:flex}.inline-flex{display:inline-flex}.grid{display:grid}.contents{display:contents}.hidden{display:none}.aspect-video{aspect-ratio:16/9}.h-10{height:2.5rem}.h-12{height:3rem}.h-14{height:3.5rem}.h-16{height:4rem}.h-20{height:5rem}.h-3\.5{height:.875rem}.h-4{height:1rem}.h-5{height:1.25rem}.h-8{height:2rem}.h-9{height:2.25rem}.h-\[10px\]{height:10px}.h-\[300px\]{height:300px}.h-\[400px\]{height:400px}.h-\[500px\]{height:500px}.h-\[5px\]{height:5px}.h-\[600px\]{height:600px}.h-\[6px\]{height:6px}.h-\[700px\]{height:700px}.h-\[72px\]{height:72px}.h-\[800px\]{height:800px}.h-full{height:100%}.max-h-\[380px\]{max-height:380px}.max-h-\[580px\]{max-height:580px}.min-h-12{min-height:3rem}.min-h-\[460px\]{min-height:460px}.min-h-screen{min-height:100vh}.w-10{width:2.5rem}.w-12{width:3rem}.w-14{width:3.5rem}.w-16{width:4rem}.w-2{width:.5rem}.w-3\.5{width:.875rem}.w-4{width:1rem}.w-8{width:2rem}.w-9{width:2.25rem}.w-\[10px\]{width:10px}.w-\[300px\]{width:300px}.w-\[400px\]{width:400px}.w-\[500px\]{width:500px}.w-\[5px\]{width:5px}.w-\[6px\]{width:6px}.w-\[700px\]{width:700px}.w-\[800px\]{width:800px}.w-\[85\%\]{width:85%}.w-full{width:100%}.min-w-0{min-width:0}.max-w-2xl{max-width:42rem}.max-w-\[1100px\]{max-width:1100px}.max-w-\[1120px\]{max-width:1120px}.max-w-\[1200px\]{max-width:1200px}.max-w-\[260px\]{max-width:260px}.max-w-\[280px\]{max-width:280px}.max-w-\[500px\]{max-width:500px}.max-w-\[580px\]{max-width:580px}.max-w-\[860px\]{max-width:860px}.max-w-\[880px\]{max-width:880px}.max-w-\[900px\]{max-width:900px}.max-w-lg{max-width:32rem}.max-w-md{max-width:28rem}.flex-1{flex:1 1 0%}.shrink-0{flex-shrink:0}.-translate-x-1\/2{--tw-translate-x:-50%}.-translate-x-1\/2,.-translate-y-1\/2{transform:translate(var(--tw-translate-x),var(--tw-translate-y)) rotate(var(--tw-rotate)) skewX(var(--tw-skew-x)) skewY(var(--tw-skew-y)) scaleX(var(--tw-scale-x)) scaleY(var(--tw-scale-y))}.-translate-y-1\/2{--tw-translate-y:-50%}.cursor-pointer{cursor:pointer}.grid-cols-1{grid-template-columns:repeat(1,minmax(0,1fr))}.grid-cols-2{grid-template-columns:repeat(2,minmax(0,1fr))}.flex-col{flex-direction:column}.flex-wrap{flex-wrap:wrap}.items-start{align-items:flex-start}.items-center{align-items:center}.justify-center{justify-content:center}.justify-between{justify-content:space-between}.gap-1\.5{gap:.375rem}.gap-10{gap:2.5rem}.gap-12{gap:3rem}.gap-16{gap:4rem}.gap-2{gap:.5rem}.gap-2\.5{gap:.625rem}.gap-3{gap:.75rem}.gap-3\.5{gap:.875rem}.gap-4{gap:1rem}.gap-5{gap:1.25rem}.gap-6{gap:1.5rem}.gap-7{gap:1.75rem}.overflow-hidden{overflow:hidden}.overflow-y-auto{overflow-y:auto}.overflow-x-hidden{overflow-x:hidden}.truncate{overflow:hidden;text-overflow:ellipsis}.truncate,.whitespace-nowrap{white-space:nowrap}.rounded{border-radius:.25rem}.rounded-2xl{border-radius:1rem}.rounded-full{border-radius:9999px}.rounded-lg{border-radius:.5rem}.rounded-md{border-radius:.375rem}.rounded-xl{border-radius:.75rem}.border{border-width:1px}.border-b{border-bottom-width:1px}.border-l-2{border-left-width:2px}.border-r{border-right-width:1px}.border-t{border-top-width:1px}.border-emerald-500\/20{border-color:rgba(16,185,129,.2)}.border-white\/10{border-color:hsla(0,0%,100%,.1)}.border-white\/\[0\.04\]{border-color:hsla(0,0%,100%,.04)}.border-white\/\[0\.06\]{border-color:hsla(0,0%,100%,.06)}.border-white\/\[0\.08\]{border-color:hsla(0,0%,100%,.08)}.border-zx-accent{--tw-border-opacity:1;border-color:rgb(0 229 255/var(--tw-border-opacity,1))}.border-zx-accent\/20{border-color:rgba(0,229,255,.2)}.border-zx-accent\/30{border-color:rgba(0,229,255,.3)}.border-zx-purple\/20{border-color:rgba(165,138,255,.2)}.bg-\[\#1a1a1e\]{--tw-bg-opacity:1;background-color:rgb(26 26 30/var(--tw-bg-opacity,1))}.bg-amber-500\/40{background-color:rgba(245,158,11,.4)}.bg-amber-500\/\[0\.08\]{background-color:rgba(245,158,11,.08)}.bg-black\/90{background-color:rgba(0,0,0,.9)}.bg-blue-500\/\[0\.08\]{background-color:rgba(59,130,246,.08)}.bg-cyan-500\/40{background-color:rgba(6,182,212,.4)}.bg-emerald-400{--tw-bg-opacity:1;background-color:rgb(52 211 153/var(--tw-bg-opacity,1))}.bg-emerald-500\/10{background-color:rgba(16,185,129,.1)}.bg-emerald-500\/40{background-color:rgba(16,185,129,.4)}.bg-emerald-500\/\[0\.08\]{background-color:rgba(16,185,129,.08)}.bg-green-500\/60{background-color:rgba(34,197,94,.6)}.bg-red-500\/60{background-color:rgba(239,68,68,.6)}.bg-rose-500\/40{background-color:rgba(244,63,94,.4)}.bg-rose-500\/\[0\.08\]{background-color:rgba(244,63,94,.08)}.bg-white{--tw-bg-opacity:1;background-color:rgb(255 255 255/var(--tw-bg-opacity,1))}.bg-white\/10{background-color:hsla(0,0%,100%,.1)}.bg-white\/\[0\.03\]{background-color:hsla(0,0%,100%,.03)}.bg-white\/\[0\.04\]{background-color:hsla(0,0%,100%,.04)}.bg-white\/\[0\.06\]{background-color:hsla(0,0%,100%,.06)}.bg-yellow-500\/60{background-color:rgba(234,179,8,.6)}.bg-zx-accent{--tw-bg-opacity:1;background-color:rgb(0 229 255/var(--tw-bg-opacity,1))}.bg-zx-accent\/20{background-color:rgba(0,229,255,.2)}.bg-zx-accent\/40{background-color:rgba(0,229,255,.4)}.bg-zx-accent\/\[0\.03\]{background-color:rgba(0,229,255,.03)}.bg-zx-accent\/\[0\.04\]{background-color:rgba(0,229,255,.04)}.bg-zx-accent\/\[0\.05\]{background-color:rgba(0,229,255,.05)}.bg-zx-accent\/\[0\.06\]{background-color:rgba(0,229,255,.06)}.bg-zx-accent\/\[0\.07\]{background-color:rgba(0,229,255,.07)}.bg-zx-accent\/\[0\.08\]{background-color:rgba(0,229,255,.08)}.bg-zx-bg{--tw-bg-opacity:1;background-color:rgb(10 10 12/var(--tw-bg-opacity,1))}.bg-zx-bg\/80{background-color:rgba(10,10,12,.8)}.bg-zx-bg\/90{background-color:rgba(10,10,12,.9)}.bg-zx-card{--tw-bg-opacity:1;background-color:rgb(24 24 28/var(--tw-bg-opacity,1))}.bg-zx-purple\/10{background-color:rgba(165,138,255,.1)}.bg-zx-purple\/40{background-color:rgba(165,138,255,.4)}.bg-zx-purple\/\[0\.04\]{background-color:rgba(165,138,255,.04)}.bg-zx-purple\/\[0\.05\]{background-color:rgba(165,138,255,.05)}.bg-zx-purple\/\[0\.06\]{background-color:rgba(165,138,255,.06)}.bg-zx-purple\/\[0\.08\]{background-color:rgba(165,138,255,.08)}.bg-zx-purple\/\[0\.1\]{background-color:rgba(165,138,255,.1)}.bg-zx-surface{--tw-bg-opacity:1;background-color:rgb(17 17 20/var(--tw-bg-opacity,1))}.bg-zx-surface\/30{background-color:rgba(17,17,20,.3)}.bg-zx-surface\/50{background-color:rgba(17,17,20,.5)}.bg-zx-surface\/70{background-color:rgba(17,17,20,.7)}.bg-gradient-to-b{background-image:linear-gradient(to bottom,var(--tw-gradient-stops))}.bg-gradient-to-br{background-image:linear-gradient(to bottom right,var(--tw-gradient-stops))}.bg-gradient-to-r{background-image:linear-gradient(to right,var(--tw-gradient-stops))}.from-\[\#0a1628\]\/80{--tw-gradient-from:rgba(10,22,40,.8) var(--tw-gradient-from-position);--tw-gradient-to:rgba(10,22,40,0) var(--tw-gradient-to-position);--tw-gradient-stops:var(--tw-gradient-from),var(--tw-gradient-to)}.from-\[\#0d1b2a\]\/80{--tw-gradient-from:rgba(13,27,42,.8) var(--tw-gradient-from-position);--tw-gradient-to:rgba(13,27,42,0) var(--tw-gradient-to-position);--tw-gradient-stops:var(--tw-gradient-from),var(--tw-gradient-to)}.from-zx-accent{--tw-gradient-from:#00e5ff var(--tw-gradient-from-position);--tw-gradient-to:rgba(0,229,255,0) var(--tw-gradient-to-position);--tw-gradient-stops:var(--tw-gradient-from),var(--tw-gradient-to)}.from-zx-accent\/10{--tw-gradient-from:rgba(0,229,255,.1) var(--tw-gradient-from-position);--tw-gradient-to:rgba(0,229,255,0) var(--tw-gradient-to-position);--tw-gradient-stops:var(--tw-gradient-from),var(--tw-gradient-to)}.from-zx-accent\/15{--tw-gradient-from:rgba(0,229,255,.15) var(--tw-gradient-from-position);--tw-gradient-to:rgba(0,229,255,0) var(--tw-gradient-to-position);--tw-gradient-stops:var(--tw-gradient-from),var(--tw-gradient-to)}.from-zx-purple\/20{--tw-gradient-from:rgba(165,138,255,.2) var(--tw-gradient-from-position);--tw-gradient-to:rgba(165,138,255,0) var(--tw-gradient-to-position);--tw-gradient-stops:var(--tw-gradient-from),var(--tw-gradient-to)}.from-zx-purple\/30{--tw-gradient-from:rgba(165,138,255,.3) var(--tw-gradient-from-position);--tw-gradient-to:rgba(165,138,255,0) var(--tw-gradient-to-position);--tw-gradient-stops:var(--tw-gradient-from),var(--tw-gradient-to)}.via-zx-purple\/20{--tw-gradient-to:rgba(165,138,255,0) var(--tw-gradient-to-position);--tw-gradient-stops:var(--tw-gradient-from),rgba(165,138,255,.2) var(--tw-gradient-via-position),var(--tw-gradient-to)}.to-zx-accent-h{--tw-gradient-to:#00b8d4 var(--tw-gradient-to-position)}.to-zx-accent\/10{--tw-gradient-to:rgba(0,229,255,.1) var(--tw-gradient-to-position)}.to-zx-accent\/30{--tw-gradient-to:rgba(0,229,255,.3) var(--tw-gradient-to-position)}.to-zx-card{--tw-gradient-to:#18181c var(--tw-gradient-to-position)}.to-zx-purple\/10{--tw-gradient-to:rgba(165,138,255,.1) var(--tw-gradient-to-position)}.object-contain{-o-object-fit:contain;object-fit:contain}.p-1{padding:.25rem}.p-2\.5{padding:.625rem}.p-3{padding:.75rem}.p-4{padding:1rem}.p-5{padding:1.25rem}.p-6{padding:1.5rem}.p-7{padding:1.75rem}.p-8{padding:2rem}.px-2{padding-left:.5rem;padding-right:.5rem}.px-2\.5{padding-left:.625rem;padding-right:.625rem}.px-3{padding-left:.75rem;padding-right:.75rem}.px-3\.5{padding-left:.875rem;padding-right:.875rem}.px-4{padding-left:1rem;padding-right:1rem}.px-5{padding-left:1.25rem;padding-right:1.25rem}.px-7{padding-left:1.75rem;padding-right:1.75rem}.px-8{padding-left:2rem;padding-right:2rem}.py-0\.5{padding-top:.125rem;padding-bottom:.125rem}.py-1{padding-top:.25rem;padding-bottom:.25rem}.py-1\.5{padding-top:.375rem;padding-bottom:.375rem}.py-2{padding-top:.5rem;padding-bottom:.5rem}.py-28{padding-top:7rem;padding-bottom:7rem}.py-3{padding-top:.75rem;padding-bottom:.75rem}.py-3\.5{padding-top:.875rem;padding-bottom:.875rem}.py-32{padding-top:8rem;padding-bottom:8rem}.py-36{padding-top:9rem;padding-bottom:9rem}.py-4{padding-top:1rem;padding-bottom:1rem}.py-40{padding-top:10rem;padding-bottom:10rem}.py-\[6px\]{padding-top:6px;padding-bottom:6px}.py-\[7px\]{padding-top:7px;padding-bottom:7px}.pb-10{padding-bottom:2.5rem}.pl-12{padding-left:3rem}.pl-6{padding-left:1.5rem}.pl-7{padding-left:1.75rem}.pr-28{padding-right:7rem}.pt-16{padding-top:4rem}.pt-2{padding-top:.5rem}.pt-20{padding-top:5rem}.pt-4{padding-top:1rem}.pt-6{padding-top:1.5rem}.text-left{text-align:left}.text-center{text-align:center}.font-body{font-family:Satoshi,sans-serif}.font-display{font-family:Cabinet Grotesk,sans-serif}.font-mono{font-family:JetBrains Mono,monospace}.text-3xl{font-size:1.875rem;line-height:2.25rem}.text-\[10px\]{font-size:10px}.text-\[11px\]{font-size:11px}.text-\[12px\]{font-size:12px}.text-\[13\.5px\]{font-size:13.5px}.text-\[13px\]{font-size:13px}.text-\[14px\]{font-size:14px}.text-\[15px\]{font-size:15px}.text-\[16px\]{font-size:16px}.text-\[17px\]{font-size:17px}.text-\[18px\]{font-size:18px}.text-\[20px\]{font-size:20px}.text-\[24px\]{font-size:24px}.text-\[26px\]{font-size:26px}.text-\[28px\]{font-size:28px}.text-\[clamp\(16px\2c 2vw\2c 20px\)\]{font-size:clamp(16px,2vw,20px)}.text-\[clamp\(24px\2c 3\.5vw\2c 36px\)\]{font-size:clamp(24px,3.5vw,36px)}.text-\[clamp\(28px\2c 4\.5vw\2c 44px\)\]{font-size:clamp(28px,4.5vw,44px)}.text-\[clamp\(28px\2c 4vw\2c 40px\)\]{font-size:clamp(28px,4vw,40px)}.text-\[clamp\(28px\2c 5vw\2c 52px\)\]{font-size:clamp(28px,5vw,52px)}.text-\[clamp\(30px\2c 5\.5vw\2c 52px\)\]{font-size:clamp(30px,5.5vw,52px)}.text-\[clamp\(36px\2c 6vw\2c 68px\)\]{font-size:clamp(36px,6vw,68px)}.text-\[clamp\(38px\2c 6\.5vw\2c 72px\)\]{font-size:clamp(38px,6.5vw,72px)}.text-lg{font-size:1.125rem;line-height:1.75rem}.text-sm{font-size:.875rem;line-height:1.25rem}.text-xl{font-size:1.25rem;line-height:1.75rem}.font-bold{font-weight:700}.font-medium{font-weight:500}.font-semibold{font-weight:600}.uppercase{text-transform:uppercase}.italic{font-style:italic}.not-italic{font-style:normal}.leading-\[1\.05\]{line-height:1.05}.leading-\[1\.06\]{line-height:1.06}.leading-\[1\.15\]{line-height:1.15}.leading-\[1\.1\]{line-height:1.1}.leading-relaxed{line-height:1.625}.tracking-\[-0\.025em\]{letter-spacing:-.025em}.tracking-\[-0\.02em\]{letter-spacing:-.02em}.tracking-\[-0\.03em\]{letter-spacing:-.03em}.tracking-tight{letter-spacing:-.025em}.tracking-wide{letter-spacing:.025em}.tracking-wider{letter-spacing:.05em}.tracking-widest{letter-spacing:.1em}.text-\[\#0A0A0C\]{--tw-text-opacity:1;color:rgb(10 10 12/var(--tw-text-opacity,1))}.text-amber-400{--tw-text-opacity:1;color:rgb(251 191 36/var(--tw-text-opacity,1))}.text-black{--tw-text-opacity:1;color:rgb(0 0 0/var(--tw-text-opacity,1))}.text-blue-400{--tw-text-opacity:1;color:rgb(96 165 250/var(--tw-text-opacity,1))}.text-emerald-400{--tw-text-opacity:1;color:rgb(52 211 153/var(--tw-text-opacity,1))}.text-rose-400{--tw-text-opacity:1;color:rgb(251 113 133/var(--tw-text-opacity,1))}.text-white{--tw-text-opacity:1;color:rgb(255 255 255/var(--tw-text-opacity,1))}.text-zx-accent{--tw-text-opacity:1;color:rgb(0 229 255/var(--tw-text-opacity,1))}.text-zx-accent-h{--tw-text-opacity:1;color:rgb(0 184 212/var(--tw-text-opacity,1))}.text-zx-accent\/60{color:rgba(0,229,255,.6)}.text-zx-faint{--tw-text-opacity:1;color:rgb(153 153 165/var(--tw-text-opacity,1))}.text-zx-faint\/60{color:hsla(240,6%,62%,.6)}.text-zx-muted{--tw-text-opacity:1;color:rgb(166 166 178/var(--tw-text-opacity,1))}.text-zx-purple{--tw-text-opacity:1;color:rgb(165 138 255/var(--tw-text-opacity,1))}.text-zx-purple\/70{color:rgba(165,138,255,.7)}.antialiased{-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}.opacity-40{opacity:.4}.shadow-2xl{--tw-shadow:0 25px 50px -12px rgba(0,0,0,.25);--tw-shadow-colored:0 25px 50px -12px var(--tw-shadow-color)}.shadow-2xl,.shadow-inner{box-shadow:var(--tw-ring-offset-shadow,0 0 #0000),var(--tw-ring-shadow,0 0 #0000),var(--tw-shadow)}.shadow-inner{--tw-shadow:inset 0 2px 4px 0 rgba(0,0,0,.05);--tw-shadow-colored:inset 0 2px 4px 0 var(--tw-shadow-color)}.shadow-black\/80{--tw-shadow-color:rgba(0,0,0,.8);--tw-shadow:var(--tw-shadow-colored)}.blur{--tw-blur:blur(8px)}.blur,.blur-\[100px\]{filter:var(--tw-blur) var(--tw-brightness) var(--tw-contrast) var(--tw-grayscale) var(--tw-hue-rotate) var(--tw-invert) var(--tw-saturate) var(--tw-sepia) var(--tw-drop-shadow)}.blur-\[100px\]{--tw-blur:blur(100px)}.blur-\[120px\]{--tw-blur:blur(120px)}.blur-\[120px\],.blur-\[140px\]{filter:var(--tw-blur) var(--tw-brightness) var(--tw-contrast) var(--tw-grayscale) var(--tw-hue-rotate) var(--tw-invert) var(--tw-saturate) var(--tw-sepia) var(--tw-drop-shadow)}.blur-\[140px\]{--tw-blur:blur(140px)}.blur-\[150px\]{--tw-blur:blur(150px)}.blur-\[150px\],.blur-\[160px\]{filter:var(--tw-blur) var(--tw-brightness) var(--tw-contrast) var(--tw-grayscale) var(--tw-hue-rotate) var(--tw-invert) var(--tw-saturate) var(--tw-sepia) var(--tw-drop-shadow)}.blur-\[160px\]{--tw-blur:blur(160px)}.blur-\[50px\]{--tw-blur:blur(50px)}.blur-\[50px\],.filter{filter:var(--tw-blur) var(--tw-brightness) var(--tw-contrast) var(--tw-grayscale) var(--tw-hue-rotate) var(--tw-invert) var(--tw-saturate) var(--tw-sepia) var(--tw-drop-shadow)}.backdrop-blur-md{--tw-backdrop-blur:blur(12px)}.backdrop-blur-md,.backdrop-blur-xl{-webkit-backdrop-filter:var(--tw-backdrop-blur) var(--tw-backdrop-brightness) var(--tw-backdrop-contrast) var(--tw-backdrop-grayscale) var(--tw-backdrop-hue-rotate) var(--tw-backdrop-invert) var(--tw-backdrop-opacity) var(--tw-backdrop-saturate) var(--tw-backdrop-sepia);backdrop-filter:var(--tw-backdrop-blur) var(--tw-backdrop-brightness) var(--tw-backdrop-contrast) var(--tw-backdrop-grayscale) var(--tw-backdrop-hue-rotate) var(--tw-backdrop-invert) var(--tw-backdrop-opacity) var(--tw-backdrop-saturate) var(--tw-backdrop-sepia)}.backdrop-blur-xl{--tw-backdrop-blur:blur(24px)}.transition{transition-property:color,background-color,border-color,text-decoration-color,fill,stroke,opacity,box-shadow,transform,filter,-webkit-backdrop-filter;transition-property:color,background-color,border-color,text-decoration-color,fill,stroke,opacity,box-shadow,transform,filter,backdrop-filter;transition-property:color,background-color,border-color,text-decoration-color,fill,stroke,opacity,box-shadow,transform,filter,backdrop-filter,-webkit-backdrop-filter;transition-timing-function:cubic-bezier(.4,0,.2,1);transition-duration:.15s}.transition-all{transition-property:all;transition-timing-function:cubic-bezier(.4,0,.2,1);transition-duration:.15s}.transition-colors{transition-property:color,background-color,border-color,text-decoration-color,fill,stroke;transition-timing-function:cubic-bezier(.4,0,.2,1);transition-duration:.15s}.transition-opacity{transition-property:opacity;transition-timing-function:cubic-bezier(.4,0,.2,1);transition-duration:.15s}.transition-transform{transition-property:transform;transition-timing-function:cubic-bezier(.4,0,.2,1);transition-duration:.15s}.duration-200{transition-duration:.2s}.duration-300{transition-duration:.3s}.duration-500{transition-duration:.5s}.ease-in-out{transition-timing-function:cubic-bezier(.4,0,.2,1)}:focus-visible{outline:3px solid #00e5ff!important;outline-offset:4px}#mobileNav a,button,header a{min-height:44px}button{min-width:44px}#mobileNav a,header nav a{display:inline-flex;align-items:center}header img{-o-object-fit:contain;object-fit:contain}#signin-btn{display:inline-flex;align-items:center}div[id=hero-showcase-viewport],section[id]{scroll-margin-top:88px}body .reveal,body .reveal.visible{opacity:1;transform:none;transition:none}body .anim-float,body .anim-orb,body .anim-orb2{animation:none}body .cat-tab{cursor:default}body .gradient-text{background:none;-webkit-text-fill-color:#00e5ff;color:#00e5ff;animation:none}body .live-dot,body .noise-overlay:after{animation:none}body .text-zx-accent\/60{color:#00e5ff}body .pointer-events-none[class*=blur-]{opacity:.35}body .nav-blur{-webkit-backdrop-filter:none;backdrop-filter:none;background:#0a0a0c}#mobileNav{margin:0;border:0;width:100%;height:100%;max-width:none;max-height:none;background:#0a0a0c}#mobileNav:not([open]){display:none}#mobileNav[open]{display:flex}dialog::backdrop{background:rgba(10,10,12,.85)}.sample-result{border:1px solid #555563}@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}*,:after,:before{animation:none!important;transition:none!important}}.hover\:border-white\/20:hover{border-color:hsla(0,0%,100%,.2)}.hover\:border-white\/\[0\.12\]:hover{border-color:hsla(0,0%,100%,.12)}.hover\:border-zx-accent\/20:hover{border-color:rgba(0,229,255,.2)}.hover\:border-zx-accent\/50:hover{border-color:rgba(0,229,255,.5)}.hover\:border-zx-purple\/20:hover{border-color:rgba(165,138,255,.2)}.hover\:bg-cyan-300:hover{--tw-bg-opacity:1;background-color:rgb(103 232 249/var(--tw-bg-opacity,1))}.hover\:bg-gray-100:hover{--tw-bg-opacity:1;background-color:rgb(243 244 246/var(--tw-bg-opacity,1))}.hover\:bg-gray-200:hover{--tw-bg-opacity:1;background-color:rgb(229 231 235/var(--tw-bg-opacity,1))}.hover\:bg-white\/\[0\.04\]:hover{background-color:hsla(0,0%,100%,.04)}.hover\:bg-white\/\[0\.08\]:hover{background-color:hsla(0,0%,100%,.08)}.hover\:bg-zx-accent-h:hover{--tw-bg-opacity:1;background-color:rgb(0 184 212/var(--tw-bg-opacity,1))}.hover\:text-white:hover{--tw-text-opacity:1;color:rgb(255 255 255/var(--tw-text-opacity,1))}.hover\:underline:hover{text-decoration-line:underline}.hover\:shadow-lg:hover{--tw-shadow:0 10px 15px -3px rgba(0,0,0,.1),0 4px 6px -4px rgba(0,0,0,.1);--tw-shadow-colored:0 10px 15px -3px var(--tw-shadow-color),0 4px 6px -4px var(--tw-shadow-color);box-shadow:var(--tw-ring-offset-shadow,0 0 #0000),var(--tw-ring-shadow,0 0 #0000),var(--tw-shadow)}.hover\:shadow-white\/10:hover{--tw-shadow-color:hsla(0,0%,100%,.1);--tw-shadow:var(--tw-shadow-colored)}.hover\:shadow-zx-accent\/20:hover{--tw-shadow-color:rgba(0,229,255,.2);--tw-shadow:var(--tw-shadow-colored)}.hover\:shadow-zx-accent\/\[0\.08\]:hover{--tw-shadow-color:rgba(0,229,255,.08);--tw-shadow:var(--tw-shadow-colored)}.focus\:border-zx-accent:focus{--tw-border-opacity:1;border-color:rgb(0 229 255/var(--tw-border-opacity,1))}.focus\:outline-none:focus{outline:2px solid transparent;outline-offset:2px}.group:hover .group-hover\:translate-x-0\.5{--tw-translate-x:0.125rem}.group:hover .group-hover\:translate-x-0\.5,.group:hover .group-hover\:translate-x-1{transform:translate(var(--tw-translate-x),var(--tw-translate-y)) rotate(var(--tw-rotate)) skewX(var(--tw-skew-x)) skewY(var(--tw-skew-y)) scaleX(var(--tw-scale-x)) scaleY(var(--tw-scale-y))}.group:hover .group-hover\:translate-x-1{--tw-translate-x:0.25rem}.group:hover .group-hover\:gap-2\.5{gap:.625rem}.group:hover .group-hover\:gap-3{gap:.75rem}.group:hover .group-hover\:bg-amber-500{--tw-bg-opacity:1;background-color:rgb(245 158 11/var(--tw-bg-opacity,1))}.group:hover .group-hover\:bg-amber-500\/\[0\.14\]{background-color:rgba(245,158,11,.14)}.group:hover .group-hover\:bg-blue-500\/\[0\.14\]{background-color:rgba(59,130,246,.14)}.group:hover .group-hover\:bg-cyan-500{--tw-bg-opacity:1;background-color:rgb(6 182 212/var(--tw-bg-opacity,1))}.group:hover .group-hover\:bg-emerald-500{--tw-bg-opacity:1;background-color:rgb(16 185 129/var(--tw-bg-opacity,1))}.group:hover .group-hover\:bg-emerald-500\/\[0\.14\]{background-color:rgba(16,185,129,.14)}.group:hover .group-hover\:bg-rose-500{--tw-bg-opacity:1;background-color:rgb(244 63 94/var(--tw-bg-opacity,1))}.group:hover .group-hover\:bg-rose-500\/\[0\.14\]{background-color:rgba(244,63,94,.14)}.group:hover .group-hover\:bg-zx-accent{--tw-bg-opacity:1;background-color:rgb(0 229 255/var(--tw-bg-opacity,1))}.group:hover .group-hover\:bg-zx-accent\/\[0\.14\]{background-color:rgba(0,229,255,.14)}.group:hover .group-hover\:bg-zx-purple{--tw-bg-opacity:1;background-color:rgb(165 138 255/var(--tw-bg-opacity,1))}.group:hover .group-hover\:bg-zx-purple\/\[0\.14\]{background-color:rgba(165,138,255,.14)}.group:hover .group-hover\:bg-zx-purple\/\[0\.18\]{background-color:rgba(165,138,255,.18)}.group:hover .group-hover\:text-zx-accent{--tw-text-opacity:1;color:rgb(0 229 255/var(--tw-text-opacity,1))}@media (min-width:640px){.sm\:flex{display:flex}.sm\:flex-row{flex-direction:row}.sm\:px-3{padding-left:.75rem;padding-right:.75rem}.sm\:px-4{padding-left:1rem;padding-right:1rem}}@media (min-width:768px){.md\:block{display:block}.md\:flex{display:flex}.md\:inline-flex{display:inline-flex}.md\:hidden{display:none}.md\:min-h-\[520px\]{min-height:520px}.md\:w-56{width:14rem}.md\:grid-cols-2{grid-template-columns:repeat(2,minmax(0,1fr))}.md\:grid-cols-3{grid-template-columns:repeat(3,minmax(0,1fr))}.md\:grid-cols-5{grid-template-columns:repeat(5,minmax(0,1fr))}.md\:flex-row{flex-direction:row}.md\:p-8{padding:2rem}.md\:py-36{padding-top:9rem;padding-bottom:9rem}.md\:py-40{padding-top:10rem;padding-bottom:10rem}.md\:py-44{padding-top:11rem;padding-bottom:11rem}.md\:py-48{padding-top:12rem;padding-bottom:12rem}.md\:text-\[20px\]{font-size:20px}}@media (min-width:1024px){.lg\:order-1{order:1}.lg\:order-2{order:2}.lg\:grid-cols-2{grid-template-columns:repeat(2,minmax(0,1fr))}.lg\:grid-cols-3{grid-template-columns:repeat(3,minmax(0,1fr))}.lg\:gap-20{gap:5rem}.lg\:gap-24{gap:6rem}}
 </style>
-  <link rel="preconnect" href="https://fonts.googleapis.com"/>
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
 
   <!-- Supabase Authentication -->
@@ -208,54 +209,51 @@
     {
       "@type": "WebSite",
       "@id": "https://neuron.zero-x.live/#website",
-      "name": "NeuCockpit by ZeroX",
+      "name": "NeuCockpit by Zero-X",
       "alternateName": [
         "NeuCockpit"
       ],
       "url": "https://neuron.zero-x.live/",
       "publisher": {
-        "@id": "https://www.zero-x.live/#organization"
+        "@id": "https://zero-x.live/#organization"
       }
     },
     {
       "@type": "SoftwareApplication",
-      "@id": "https://neuron.zero-x.live/#software",
+      "@id": "https://zero-x.live/#neucockpit",
       "name": "NeuCockpit",
       "applicationCategory": "DesktopEnhancementApplication",
       "operatingSystem": "Windows, macOS, Linux",
       "description": "Semantic file search and document summarization with local AI. Optional internet features use online services.",
       "url": "https://neuron.zero-x.live/",
-      "softwareVersion": "1.0",
       "author": {
-        "@id": "https://www.zero-x.live/#organization"
+        "@id": "https://zero-x.live/#organization"
       },
       "publisher": {
-        "@id": "https://www.zero-x.live/#organization"
+        "@id": "https://zero-x.live/#organization"
       },
-      "screenshot": "https://www.zero-x.live/Assets/neucockpit_screenshot.jpg",
-      "downloadUrl": "https://neuron.zero-x.live/#downloads"
+      "screenshot": "https://zero-x.live/Assets/neucockpit-semantic-search.webp",
+      "downloadUrl": "https://neuron.zero-x.live/#downloads",
+      "sameAs": ["https://github.com/RAHUL-DevelopeRR/deepseekfs"]
     },
     {
       "@type": "WebPage",
       "url": "https://neuron.zero-x.live/",
-      "name": "NeuCockpit | Semantic file search and local AI by ZeroX",
+      "name": "NeuCockpit | Local AI Desktop File Search by Zero-X",
       "isPartOf": {
         "@id": "https://neuron.zero-x.live/#website"
       },
       "mainEntity": {
-        "@id": "https://neuron.zero-x.live/#software"
+        "@id": "https://zero-x.live/#neucockpit"
       }
     },
     {
       "@type": "Organization",
-      "@id": "https://www.zero-x.live/#organization",
-      "name": "ZeroX",
-      "alternateName": [
-        "Zero X",
-        "Zero-X"
-      ],
-      "url": "https://www.zero-x.live/",
-      "logo": "https://www.zero-x.live/Assets/zerox-favicon-centered.png",
+      "@id": "https://zero-x.live/#organization",
+      "name": "Zero-X",
+      "alternateName": ["ZeroX"],
+      "url": "https://zero-x.live/",
+      "logo": "https://zero-x.live/Assets/zerox-favicon-centered.png",
       "description": "Desktop tools for semantic file search and local AI, built in Tamil Nadu, India.",
       "sameAs": [
         "https://www.instagram.com/zerox.corporation/"
@@ -269,6 +267,13 @@
   ]
 }
   </script>
+  <script type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Zero-X","item":"https://zero-x.live/"},{"@type":"ListItem","position":2,"name":"NeuCockpit","item":"https://neuron.zero-x.live/"}]}</script>
+  <style>
+    .product-notes{max-width:900px;margin:auto;padding:56px 20px;color:#b8b8c2;font:16px/1.7 system-ui,sans-serif}
+    .product-notes h2{font-size:clamp(24px,4vw,36px);color:#fff;margin:28px 0 16px}.product-notes p,.product-notes li{margin-bottom:14px}
+    .product-notes ol,.product-notes ul{padding-left:24px;list-style:revert}.product-notes a{color:#00e5ff;text-decoration:underline;text-underline-offset:3px}
+    .product-notes details{border-bottom:1px solid #38383e;padding:12px 0}.product-notes summary{cursor:pointer;color:#fff;min-height:44px;padding:10px 0}.product-notes details p{padding:8px 0}
+  </style>
 
   <style>
     *{box-sizing:border-box;margin:0;padding:0}
@@ -367,12 +372,12 @@
   <!-- ═══════════════════════════════ NAV ═══════════════════════════════ -->
   <header class="fixed top-0 w-full h-20 z-50 nav-blur border-b border-white/[0.06]">
     <div class="max-w-[1200px] mx-auto h-full flex items-center justify-between px-5">
-      <a href="https://www.zero-x.live/" id="nav-logo-link" class="shrink-0">
-        <img width="255" height="112" src="./Assets/zerox-wordmark.webp" alt="ZeroX" class="block h-14" style="mix-blend-mode:lighten;width:auto"/>
+      <a href="https://zero-x.live/" id="nav-logo-link" class="shrink-0">
+        <img width="255" height="112" src="./Assets/zerox-wordmark.webp" alt="Zero-X" class="block h-14" style="mix-blend-mode:lighten;width:auto"/>
       </a>
 
       <nav class="hidden md:flex items-center gap-7" aria-label="Main navigation">
-        <a href="https://www.zero-x.live/" id="nav-company-link" class="text-[14px] text-zx-muted hover:text-white transition-colors">Company</a>
+        <a href="https://zero-x.live/" id="nav-company-link" class="text-[14px] text-zx-muted hover:text-white transition-colors">Company</a>
         <a href="#" class="text-[14px] text-white font-medium">NeuCockpit</a>
         <a href="#features" class="text-[14px] text-zx-muted hover:text-white transition-colors">Features</a>
         <a href="#downloads" class="text-[14px] text-zx-muted hover:text-white transition-colors">Downloads</a>
@@ -390,13 +395,14 @@
   <!-- ═══════════════════════════ MOBILE NAV ═══════════════════════════ -->
   <dialog id="mobileNav" aria-label="Navigation" class="fixed inset-0 z-[60] flex-col items-center justify-center gap-6">
     <button id="mobClose" aria-label="Close menu" class="absolute top-4 right-5 text-white"><span class="material-symbols-outlined text-3xl" aria-hidden="true">close</span></button>
-    <a href="https://www.zero-x.live/" onclick="closeMob()" class="text-xl text-white">Company</a>
+    <a href="https://zero-x.live/" onclick="closeMob()" class="text-xl text-white">Company</a>
     <a href="#demo" onclick="closeMob()" class="text-xl text-white">Demo</a>
     <a href="#features" onclick="closeMob()" class="text-xl text-white">Features</a>
     <a href="#downloads" onclick="closeMob()" class="text-xl text-white">Downloads</a>
     <a href="#downloads" onclick="closeMob()" class="mt-4 bg-zx-accent text-black px-8 py-3 rounded-full font-medium">Download</a>
   </dialog>
 <main id="main-content">
+  <nav aria-label="Breadcrumb" class="product-notes" style="position:absolute;top:92px;left:20px;right:20px;padding:0;z-index:10"><a href="https://zero-x.live/">Zero-X</a> / NeuCockpit</nav>
 
 
   <!-- ═══════════════════════════════ HERO ═══════════════════════════════ -->
@@ -414,7 +420,7 @@
 
       <!-- Heading -->
       <h1 class="text-[clamp(36px,6vw,68px)] font-medium leading-[1.06] tracking-[-0.03em] text-white mb-6 font-display">
-        NeuCockpit file search<br><span class="text-zx-muted">Find documents by meaning.<br>Work with local AI.</span>
+        NeuCockpit local AI<br> <span class="text-zx-muted">Desktop file search by meaning.</span>
       </h1>
 
       <!-- Description -->
@@ -461,10 +467,13 @@
             </div>
           </div>
           <img width="907" height="926"
-            src="./Assets/neucockpit_screenshot.jpg"
+            src="./Assets/neucockpit-semantic-search.webp"
+            srcset="./Assets/neucockpit-semantic-search-480.webp 480w, ./Assets/neucockpit-semantic-search.webp 907w"
+            sizes="(min-width: 1024px) 500px, calc(100vw - 40px)"
             alt="NeuCockpit search interface showing semantic file search results"
             class="w-full block"
             loading="lazy"
+            decoding="async"
           />
         </div>
 
@@ -880,6 +889,30 @@
   </section>
 
 
+  <section class="product-notes" id="setup" aria-labelledby="setup-title">
+    <h2 id="setup-title">Set up local document search</h2>
+    <p>NeuCockpit is for people who need to revisit documents, specifications, project notes or source files and remember their contents better than their filenames. It searches folders you choose to index.</p>
+    <ol>
+      <li><a href="#downloads">Download the installer for your operating system and CPU architecture</a>. Apple Silicon and ARM64 builds differ from Intel and x64 builds.</li>
+      <li>Install and launch NeuCockpit. Let model setup finish before using local AI; initial downloads and optional account features can require internet access.</li>
+      <li>Choose a folder containing files you are allowed to process and let indexing complete. Start with a small folder to check the results.</li>
+      <li>Describe a document's contents, inspect the returned path and open the original file to verify the match. AI summaries need the same source check.</li>
+    </ol>
+    <p><a href="https://zero-x.live/find-files-by-content">Read the guide to finding a file when you forgot its name</a>. For setup help, email <a href="mailto:rahultech72216@gmail.com?subject=NeuCockpit%20setup%20help">the developer</a> with your operating system and the step where you got stuck. Do not send private documents.</p>
+    <h2>Indexing and document support</h2>
+    <p>The indexing pipeline extracts readable content from supported files, creates local embeddings and stores a searchable index. Supported parsers include PDF, DOCX, PPTX, XLSX and common text and source-code files. A scanned image-only PDF, encrypted document or unsupported format may not produce searchable text. Media file views do not mean every image, audio clip or video can be understood by content.</p>
+    <p>New or edited files need the index to refresh before their latest contents can appear. Search quality depends on the text extracted, the query and the contents of your selected folders. Semantic search can return a related document that is not the one you intended.</p>
+    <h2>Local search and optional online features</h2>
+    <p>Local search uses BGE embeddings with a FAISS index. Local AI uses Qwen through llama.cpp, and metadata is kept in SQLite on your computer. Optional cloud or internet features have a separate data flow and may send submitted content to online providers. Choose the mode that fits your documents. <a href="https://zero-x.live/privacy">Read the privacy policy</a>.</p>
+    <h2>Questions before installing</h2>
+    <details><summary>Does this replace Windows Search, Spotlight or Linux file tools?</summary><p>NeuCockpit provides a separate semantic search interface for indexed folders. You can keep using your operating system's existing file tools.</p></details>
+    <details><summary>Can I search a PDF by a topic instead of its name?</summary><p>Yes, when the PDF contains readable text and its folder has finished indexing. Try a description of the passage or topic and check the original result. Scanned PDFs can need text extraction before their content is searchable.</p></details>
+    <details><summary>Are all my folders indexed automatically?</summary><p>Start by choosing the folders you want to search. A file outside the indexed scope will not be returned as though the app had read it. Check the indexing status when results are missing.</p></details>
+    <details><summary>Can I use it offline?</summary><p>Local search and local AI run on your computer once their required components are available. Downloads, sign-in and optional internet or cloud features require a connection.</p></details>
+    <details><summary>Are AI answers guaranteed to be correct?</summary><p>No. Retrieval and generated summaries can be incomplete or wrong. Open the source and verify important details before acting on them.</p></details>
+    <p><a href="https://github.com/RAHUL-DevelopeRR/deepseekfs">Inspect the NeuCockpit source and documentation on GitHub</a> or <a href="https://zero-x.live/about">read about Zero-X</a>.</p>
+  </section>
+
   <!-- ═══════════════════════════ CTA ═══════════════════════════ -->
   <section class="relative py-40 md:py-48 px-5 border-t border-white/[0.04] text-center overflow-hidden">
     <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[700px] h-[700px] bg-zx-accent/[0.05] rounded-full blur-[140px] pointer-events-none"></div>
@@ -903,12 +936,12 @@
 <footer class="border-t border-white/[0.04] bg-zx-bg pt-16 pb-10 px-5">
     <div class="max-w-[1100px] mx-auto grid grid-cols-2 md:grid-cols-5 gap-10">
       <div class="col-span-2">
-        <a href="https://www.zero-x.live/" class="block mb-4"><img width="255" height="112" src="./Assets/zerox-wordmark.webp" alt="ZeroX" class="h-5" style="mix-blend-mode:lighten;width:auto"/></a>
+        <a href="https://zero-x.live/" class="block mb-4"><img width="255" height="112" src="./Assets/zerox-wordmark.webp" alt="Zero-X" class="h-5" style="mix-blend-mode:lighten;width:auto"/></a>
         <p class="text-[13px] text-zx-faint leading-relaxed max-w-[260px]">Engineering products from zero to extraordinary.</p>
       </div>
       <div class="flex flex-col gap-2.5">
         <span class="text-[13px] font-medium text-white mb-1">Product</span>
-        <a href="https://www.zero-x.live/wheres-that-file" class="text-[13px] text-zx-muted hover:text-white transition-colors">NeuCockpit short film</a>
+        <a href="https://zero-x.live/wheres-that-file" class="text-[13px] text-zx-muted hover:text-white transition-colors">NeuCockpit short film</a>
         <a href="#demo" class="text-[13px] text-zx-muted hover:text-white transition-colors">Demo</a>
         <a href="#features" class="text-[13px] text-zx-muted hover:text-white transition-colors">Features</a>
         <a href="#downloads" class="text-[13px] text-zx-muted hover:text-white transition-colors">Downloads</a>
@@ -916,22 +949,23 @@
       </div>
       <div class="flex flex-col gap-2.5">
         <span class="text-[13px] font-medium text-white mb-1">Company</span>
-        <a href="https://www.zero-x.live/" class="text-[13px] text-zx-muted hover:text-white transition-colors">Homepage</a>
-        <a href="https://www.zero-x.live/#about" class="text-[13px] text-zx-muted hover:text-white transition-colors">About</a>
-        <a href="https://www.zero-x.live/#contact" class="text-[13px] text-zx-muted hover:text-white transition-colors">Contact</a>
-        <a href="https://www.zero-x.live/privacy" class="text-[13px] text-zx-muted hover:text-white transition-colors">Privacy Policy</a>
-        <a href="https://www.zero-x.live/terms" class="text-[13px] text-zx-muted hover:text-white transition-colors">Terms of Service</a>
+        <a href="https://zero-x.live/" class="text-[13px] text-zx-muted hover:text-white transition-colors">Homepage</a>
+        <a href="https://zero-x.live/#about" class="text-[13px] text-zx-muted hover:text-white transition-colors">About</a>
+        <a href="https://zero-x.live/#contact" class="text-[13px] text-zx-muted hover:text-white transition-colors">Contact</a>
+        <a href="https://zero-x.live/privacy" class="text-[13px] text-zx-muted hover:text-white transition-colors">Privacy Policy</a>
+        <a href="https://zero-x.live/terms" class="text-[13px] text-zx-muted hover:text-white transition-colors">Terms of Service</a>
       </div>
       <div class="flex flex-col gap-2.5">
         <span class="text-[13px] font-medium text-white mb-1">Connect</span>
         <a href="mailto:rahultech72216@gmail.com" class="text-[13px] text-zx-muted hover:text-white transition-colors">Email</a>
-        <a href="https://x.com/zerox_corp" target="_blank" class="text-[13px] text-zx-muted hover:text-white transition-colors">Twitter / X</a>
+        <a href="https://github.com/RAHUL-DevelopeRR/deepseekfs" class="text-[13px] text-zx-muted hover:text-white transition-colors">NeuCockpit source code</a>
+        <a href="https://www.instagram.com/zerox.corporation/" class="text-[13px] text-zx-muted hover:text-white transition-colors">Zero-X on Instagram</a>
       </div>
     </div>
     <div class="max-w-[1100px] mx-auto mt-14 pt-6 border-t border-white/[0.04]">
-      <p class="text-[12px] text-zx-faint">© <script>document.write(new Date().getFullYear())</script> ZeroX Corporation. Built by builders.</p>
+      <p class="text-[12px] text-zx-faint">© <script>document.write(new Date().getFullYear())</script> Zero-X. Built by builders.</p>
     </div>
-  <p class="max-w-[1100px] mx-auto mt-6 text-[14px] text-zx-muted"><a href="https://www.zero-x.live/find-files-by-content" class="text-zx-accent hover:text-white underline">Guide: find a file when you forgot its name</a></p>
+  <p class="max-w-[1100px] mx-auto mt-6 text-[14px] text-zx-muted"><a href="https://zero-x.live/find-files-by-content" class="text-zx-accent hover:text-white underline">Guide: find a file when you forgot its name</a></p>
 </footer>
 
 

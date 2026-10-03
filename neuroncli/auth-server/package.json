@@ -7,6 +7,8 @@
     "start": "node server.js",
     "dev": "node server.js",
     "test": "node test.js",
+    "build:seo": "node build-sitemap.mjs",
+    "check:production": "node check-worker.mjs && node check-auth-storage.mjs && node check-dashboard.mjs && node check-seo.mjs && node check-callback.mjs",
     "deploy": "wrangler deploy"
   },
   "dependencies": {

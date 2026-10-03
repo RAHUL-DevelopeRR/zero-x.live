@@ -3,9 +3,9 @@
 <head>
   <meta charset="utf-8"/>
   <meta content="width=device-width,initial-scale=1" name="viewport"/>
-  <title>Dashboard | ZeroX</title>
+  <title>Dashboard | Zero-X</title>
   <meta name="robots" content="noindex, nofollow"/>
-  <meta name="description" content="ZeroX account, gateway session, and current usage."/>
+  <meta name="description" content="Zero-X account, gateway session, and current usage."/>
   <meta name="theme-color" content="#0A0A0C"/>
 
   <!-- Favicons -->
@@ -195,7 +195,7 @@
 <!-- ═══ SIDEBAR ═══ -->
 <aside class="dash-sidebar" id="sidebar">
   <div class="dash-sidebar-header">
-    <a href="./index.html" id="logo-link"><img src="./Assets/Zero-xBnW.png" alt="ZeroX" class="dash-sidebar-logo"/></a>
+    <a href="./index.html" id="logo-link"><img src="./Assets/Zero-xBnW.png" alt="Zero-X" class="dash-sidebar-logo"/></a>
   </div>
   <div class="dash-sidebar-nav">
     <div class="dash-nav-section">Overview</div>
@@ -264,7 +264,7 @@
       <span class="material-symbols-outlined" style="font-size:48px;color:#4E4E5A;margin-bottom:16px">lock</span>
       <h2 style="font-size:24px;margin-bottom:8px">Sign in to access your dashboard</h2>
       <p style="font-size:14px;color:#8A8A96;max-width:400px">View your account, current usage, and gateway API access.</p>
-      <button class="dash-gate-btn" id="gate-signin-btn">Sign In with ZeroX</button>
+      <button class="dash-gate-btn" id="gate-signin-btn">Sign In with Zero-X</button>
     </div>
   </div>
 
@@ -359,7 +359,7 @@
           <div style="font-size:13px;color:#8A8A96" id="sub-details">256K tokens/day • Active Free Models & Tools</div>
         </div>
         <div>
-          <a href="mailto:rahultech72216@gmail.com" style="color:#00E5FF">Contact ZeroX about plans</a>
+          <a href="mailto:rahultech72216@gmail.com" style="color:#00E5FF">Contact Zero-X about plans</a>
         </div>
       </div>
     </div>
@@ -394,7 +394,7 @@
 
     <div class="dash-section dash-card">
       <div class="dash-card-label">Session Token</div>
-      <p style="font-size:13px;color:#8A8A96;margin-bottom:12px">Your active NeuronCLI gateway session token, minted from your authenticated ZeroX session.</p>
+      <p style="font-size:13px;color:#8A8A96;margin-bottom:12px">Your active NeuronCLI gateway session token, minted from your authenticated Zero-X session.</p>
       <div class="api-key-box">
         <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" id="session-token-display">••••••••••••••••••••••••</span>
         <button onclick="copyToken()" id="copy-token-btn">Copy</button>
@@ -405,14 +405,14 @@
       <div class="dash-card-label">API Endpoint</div>
       <p style="font-size:13px;color:#8A8A96;margin-bottom:12px">Base URL for all Neuron API requests.</p>
       <div class="api-key-box">
-        <span style="flex:1;color:#00E5FF;overflow-wrap:anywhere">https://www.zero-x.live/v1/chat/completions</span>
-        <button onclick="copyValue(this,'https://www.zero-x.live/v1/chat/completions')">Copy</button>
+        <span style="flex:1;color:#00E5FF;overflow-wrap:anywhere">https://zero-x.live/v1/chat/completions</span>
+        <button onclick="copyValue(this,'https://zero-x.live/v1/chat/completions')">Copy</button>
       </div>
     </div>
 
     <div class="dash-section dash-card">
       <div class="dash-card-label">Quick Start</div>
-      <pre style="background:#09090B;border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:16px;font-family:'JetBrains Mono',monospace;font-size:12px;color:#a3e635;overflow-x:auto;margin-top:8px">curl https://www.zero-x.live/v1/chat/completions \
+      <pre style="background:#09090B;border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:16px;font-family:'JetBrains Mono',monospace;font-size:12px;color:#a3e635;overflow-x:auto;margin-top:8px">curl https://zero-x.live/v1/chat/completions \
   -H "Authorization: Bearer YOUR_SESSION_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -715,7 +715,7 @@ window.addEventListener('load',async()=>{
       try {
         await window.ZeroXAuth.openAuthModal({
           title: 'Sign in',
-          subtitle: 'to continue to ZeroX Dashboard',
+          subtitle: 'to continue to Zero-X Dashboard',
         });
       } catch (err) {
         console.error('Supabase sign-in error:', err);

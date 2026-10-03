@@ -1,4 +1,7 @@
 User-agent: *
 Allow: /
+Disallow: /auth/
+Disallow: /neuroncli/auth-server/
+Disallow: /neuroncli/callback/
 
-Sitemap: https://www.zero-x.live/sitemap.xml
+Sitemap: https://zero-x.live/sitemap.xml
