@@ -1,8 +1,19 @@
 # Auth review — 3 October 2026
 
-The Google account chooser displays the actual Supabase callback host. Live Google configuration uses app name **ZeroX NeuCockpit** and the matching web client. Its audience remains Testing; branding has no logo, home page, privacy policy or terms links. Supabase is on the Free plan.
+At the start of this review, the Google account chooser displayed the Supabase callback host. The app name was already **ZeroX NeuCockpit**, but the audience was Testing and its branding lacked a logo and policy links.
 
-To display verified name/logo, complete Google's brand verification with actual published policies and verified domain ownership. Replacing the callback hostname with `auth.zero-x.live` requires Supabase's paid custom domain add-on and provider callback/DNS changes. No purchase, unverified policy submission, or credential change was made.
+## Google branding completed
+
+- Uploaded the repository's `Assets/zerox-favicon-centered.png` as the app logo.
+- Published the owner-approved privacy policy and terms at `https://www.zero-x.live/privacy` and `https://www.zero-x.live/terms`; both are linked from the homepage and product page.
+- Saved those URLs and the homepage in Google Branding.
+- Confirmed Search Console identifies the current account as a verified owner of `zero-x.live`.
+- Changed the app audience to **In production**. Google confirmed that no sensitive or restricted scopes are requested.
+- Ran **Verify branding**, received successful verification, then selected **Publish branding**. Google reports: “Your branding has been verified and is being shown to users.”
+- Opened a fresh Supabase Google authorization flow. Its account chooser displays **ZeroX NeuCockpit**, the logo and both policy links. No account selection was necessary for this branding check; this was not a fresh end-to-end login test.
+- Deployment and the live metadata/sitemap checks passed. Policy pages were verified in the browser.
+
+The callback itself still uses the existing Supabase project hostname. Changing that URL to `auth.zero-x.live` would require the paid custom domain setup; it is unnecessary for the now-verified display name. No purchase or credential change was made.
 
 ## Repairs
 
@@ -17,7 +28,6 @@ To display verified name/logo, complete Google's brand verification with actual 
 
 ## Release gates still outstanding
 
-- Google public publishing and brand verification.
 - Real public-user email delivery using custom SMTP.
 - Microsoft and SMS provider setup if offered publicly.
 - OpenRouter CLI session handoff: currently the server exchanges authorization but has no verified mechanism to deliver the resulting session to the user's local CLI. Do not advertise that flow as production ready.
