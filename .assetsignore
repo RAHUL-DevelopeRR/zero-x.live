@@ -13,6 +13,7 @@ neuroncli/auth-server/src/
 neuroncli/auth-server/migrations/
 neuroncli/auth-server/server.js
 neuroncli/auth-server/check-*.mjs
+neuroncli/auth-server/inline-page-styles.mjs
 neuroncli/auth-server/package*
 neuroncli/auth-server/.env
 .git/
