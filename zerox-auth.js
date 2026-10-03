@@ -431,13 +431,13 @@
           'width:100%;background:#17171B;color:#fff;border:1px solid rgba(255,255,255,0.08);' +
           'border-radius:14px;padding:13px 16px;font-size:14px;font-weight:600;cursor:pointer;' +
           'transition:background .15s ease,border-color .15s ease;';
-        if (provider === 'google') {
+        if (provider === 'google' || provider === 'github') {
           const icon = document.createElement('img');
-          icon.src = new URL('Assets/auth-google-g.png', stylesheet.href).href;
+          icon.src = new URL(provider === 'google' ? 'Assets/auth-google-g.png' : 'Assets/auth-github.svg', stylesheet.href).href;
           icon.alt = '';
-          icon.className = 'zerox-google-icon';
+          icon.className = 'zerox-' + provider + '-icon';
           button.prepend(icon);
-          button.className = 'zerox-google-button';
+          button.className = 'zerox-' + provider + '-button';
         }
         button.addEventListener('mouseenter', function () {
           button.style.background = '#1D1D22';
