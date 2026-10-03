@@ -22,7 +22,10 @@ assert.deepEqual([...sitemap.matchAll(/<loc>([^<]+)<\/loc>/g)].map(m => m[1]), p
 assert.match(sitemap, /<video:content_loc>https:\/\/www\.zero-x\.live\/videos\/neucockpit-wheres-that-file\.mp4<\/video:content_loc>/);
 const watchPage = await readFile(new URL('../../wheres-that-file.html', import.meta.url), 'utf8');
 assert.match(watchPage, /<video\b[\s\S]*?<source src="\.\/videos\/neucockpit-wheres-that-file\.mp4"/);
-assert.equal(JSON.parse(watchPage.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/)[1]).duration, 'PT15.5S');
+const videoSchema = JSON.parse(watchPage.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/)[1]);
+assert.equal(videoSchema.duration, 'PT15.5S');
+assert.equal(videoSchema.uploadDate, '2026-10-01T16:09:34Z');
+assert.match(sitemap, /<video:publication_date>2026-10-01T16:09:34Z<\/video:publication_date>/);
 if (process.argv.includes('--live')) {
   for (const [, url] of pages) {
     const response = await fetch(url);
@@ -48,5 +51,13 @@ if (process.argv.includes('--live')) {
   const privatePage = await fetch('https://dashboard.zero-x.live/');
   assert.ok(privatePage.headers.get('x-robots-tag')?.includes('noindex'));
   assert.equal((await fetch('https://www.zero-x.live/does-not-exist-seo-check')).status, 404);
+  for (const [url, contentType] of [
+    ['https://www.zero-x.live/videos/neucockpit-wheres-that-file.mp4', 'video/mp4'],
+    ['https://www.zero-x.live/Assets/neucockpit-film-poster.webp', 'image/webp'],
+  ]) {
+    const response = await fetch(url, { method: 'HEAD' });
+    assert.equal(response.status, 200, url);
+    assert.ok(response.headers.get('content-type')?.includes(contentType), url);
+  }
 }
 console.log('PASS: public page metadata and sitemap' + (process.argv.includes('--live') ? ', live canonical redirects, private noindex, and real 404' : ''));
