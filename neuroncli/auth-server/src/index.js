@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import { neon } from '@neondatabase/serverless';
+import { accountRpc, databaseConfigured } from './account-store.js';
 
 const app = new Hono();
 const api = new Hono();
@@ -265,78 +265,16 @@ async function getIdentityAuth(c) {
   }
 }
 
-async function ensureUserSchema(c) {
-  if (!c.env.DATABASE_URL) return null;
-  const sql = neon(c.env.DATABASE_URL);
-  await sql`
-    CREATE TABLE IF NOT EXISTS users (
-      id SERIAL PRIMARY KEY,
-      clerk_id VARCHAR(255) UNIQUE NOT NULL,
-      email VARCHAR(255) NOT NULL DEFAULT '',
-      first_name VARCHAR(255),
-      last_name VARCHAR(255),
-      name VARCHAR(255),
-      username VARCHAR(255),
-      image_url TEXT,
-      plan VARCHAR(64) NOT NULL DEFAULT 'free',
-      daily_tokens_used BIGINT NOT NULL DEFAULT 0,
-      daily_requests BIGINT NOT NULL DEFAULT 0,
-      last_usage_reset DATE NOT NULL DEFAULT CURRENT_DATE,
-      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-      last_seen_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-    );
-  `;
-  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS name VARCHAR(255);`;
-  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS username VARCHAR(255);`;
-  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS image_url TEXT;`;
-  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS plan VARCHAR(64) NOT NULL DEFAULT 'free';`;
-  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS daily_tokens_used BIGINT NOT NULL DEFAULT 0;`;
-  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS daily_requests BIGINT NOT NULL DEFAULT 0;`;
-  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_usage_reset DATE NOT NULL DEFAULT CURRENT_DATE;`;
-  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;`;
-  return sql;
+async function loadUserRecord(c, userId) {
+  return accountRpc(c.env, 'zerox_get_account', { p_user_id: userId });
 }
 
-async function loadUserRecord(c, clerkId) {
-  const sql = await ensureUserSchema(c);
-  if (!sql) return null;
-  const rows = await sql`SELECT * FROM users WHERE clerk_id = ${clerkId} LIMIT 1`;
-  return rows[0] || null;
-}
-
-async function syncUserRecord(c, auth, profile = {}) {
-  const sql = await ensureUserSchema(c);
-  if (!sql) return null;
-
-  const existing = await loadUserRecord(c, auth.userId);
-  const claimedPlan = authClaimsPlan(auth);
-  const clientPlan = c.env.ALLOW_CLIENT_PLAN_OVERRIDE === "true" ? profile.plan : "";
-  const plan = normalizePlan(existing?.plan || claimedPlan || clientPlan || "free");
-  const email = profile.email || existing?.email || "";
-  const firstName = profile.firstName || existing?.first_name || "";
-  const lastName = profile.lastName || existing?.last_name || "";
-  const name = profile.name || existing?.name || [firstName, lastName].filter(Boolean).join(" ") || email;
-  const username = profile.username || existing?.username || "";
-  const imageUrl = profile.imageUrl || existing?.image_url || "";
-
-  const rows = await sql`
-    INSERT INTO users (clerk_id, email, first_name, last_name, name, username, image_url, plan)
-    VALUES (${auth.userId}, ${email}, ${firstName}, ${lastName}, ${name}, ${username}, ${imageUrl}, ${plan})
-    ON CONFLICT (clerk_id)
-    DO UPDATE SET
-      email = ${email},
-      first_name = ${firstName},
-      last_name = ${lastName},
-      name = ${name},
-      username = ${username},
-      image_url = ${imageUrl},
-      plan = COALESCE(NULLIF(users.plan, ''), ${plan}),
-      updated_at = CURRENT_TIMESTAMP,
-      last_seen_at = CURRENT_TIMESTAMP
-    RETURNING *;
-  `;
-  return rows[0] || null;
+async function syncUserRecord(c, auth) {
+  return accountRpc(c.env, 'zerox_sync_account', {
+    p_user_id: auth.userId,
+    p_profile: identityProfileFromUser(auth.user),
+    p_plan: authClaimsPlan(auth),
+  });
 }
 
 function userResponse(user, fallbackUserId = "") {
@@ -358,23 +296,12 @@ function userResponse(user, fallbackUserId = "") {
   };
 }
 
-async function recordUserUsage(c, userId, requests, tokens) {
-  if (!userId || !c.env.DATABASE_URL) return;
-  try {
-    const sql = await ensureUserSchema(c);
-    await sql`
-      UPDATE users
-      SET
-        daily_requests = CASE WHEN last_usage_reset < CURRENT_DATE THEN ${requests} ELSE daily_requests + ${requests} END,
-        daily_tokens_used = CASE WHEN last_usage_reset < CURRENT_DATE THEN ${tokens} ELSE daily_tokens_used + ${tokens} END,
-        last_usage_reset = CURRENT_DATE,
-        updated_at = CURRENT_TIMESTAMP,
-        last_seen_at = CURRENT_TIMESTAMP
-      WHERE clerk_id = ${userId};
-    `;
-  } catch (err) {
-    console.warn("Usage update failed:", err.message);
-  }
+async function recordUserUsage(c, session, requests, tokens) {
+  if (!session.account_backed) return;
+  const userId = session.user_id;
+  return accountRpc(c.env, 'zerox_record_usage', {
+    p_user_id: userId, p_requests: requests, p_tokens: tokens,
+  });
 }
 
 // ── Session persistence helpers (Support Cloudflare KV with in-memory fallback) ──
@@ -419,6 +346,13 @@ async function validateSession(c) {
     return null;
   }
 
+  if (session.account_backed) {
+    const user = await loadUserRecord(c, session.user_id);
+    if (!user) return null;
+    session.plan = user.plan;
+    session.requests = Number(user.daily_requests);
+    session.tokens_used = Number(user.daily_tokens_used);
+  }
   return { token, session };
 }
 
@@ -461,6 +395,7 @@ api.get('/health', (c) => {
     azure_configured: !!c.env.AZURE_OPENAI_API_KEY,
     supabase_configured: !!(supabaseUrl && supabaseKey),
     kv_bound: !!c.env.SESSIONS_KV,
+    database_configured: databaseConfigured(c.env),
   });
 });
 
@@ -554,7 +489,8 @@ const createIdentityCliSessionHandler = async (c) => {
   try {
     user = await syncUserRecord(c, auth, profile);
   } catch (err) {
-    console.warn("Supabase CLI session sync failed:", err.message);
+    console.warn("Account session sync failed:", err.message);
+    return c.json({ error: "Account database unavailable" }, 503);
   }
 
   const account = userResponse(user, auth.userId);
@@ -568,8 +504,9 @@ const createIdentityCliSessionHandler = async (c) => {
     name: account.name,
     image_url: account.image_url,
     plan: account.plan,
-    requests: 0,
-    tokens_used: 0,
+    account_backed: true,
+    requests: account.usage.requests,
+    tokens_used: account.usage.tokens_used,
     provider_used: "azure",
   };
 
@@ -658,7 +595,7 @@ api.post('/auth/sync', async (c) => {
     );
     const user = await syncUserRecord(c, auth, profile);
     if (!user) {
-      return c.json({ status: "skipped", message: "DATABASE_URL is not configured on the Worker" });
+      return c.json({ status: "skipped", message: "Account database returned no record" });
     }
     return c.json({ status: "success", ...userResponse(user, auth.userId) });
   } catch (err) {
@@ -725,7 +662,7 @@ const chatCompletionsHandler = async (c) => {
 
     session.provider_used = "cloudflare-workers-ai";
     await setSession(c, token, session);
-    await recordUserUsage(c, session.user_id, 1, 0);
+    await recordUserUsage(c, session, 1, 0);
 
     try {
       if (stream) {
@@ -807,7 +744,7 @@ const chatCompletionsHandler = async (c) => {
         if (estimatedTokens > 0) {
           session.tokens_used = Number(session.tokens_used || 0) + estimatedTokens;
           await setSession(c, token, session);
-          await recordUserUsage(c, session.user_id, 0, estimatedTokens);
+          await recordUserUsage(c, session, 0, estimatedTokens);
         }
 
         const openaiRes = {
@@ -868,7 +805,7 @@ const chatCompletionsHandler = async (c) => {
       });
     }
 
-    await recordUserUsage(c, session.user_id, 1, 0);
+    await recordUserUsage(c, session, 1, 0);
 
     if (!stream) {
       const responseText = await azureRes.text();
@@ -880,7 +817,7 @@ const chatCompletionsHandler = async (c) => {
       if (usageTokens > 0) {
         session.tokens_used = Number(session.tokens_used || 0) + usageTokens;
         await setSession(c, token, session);
-        await recordUserUsage(c, session.user_id, 0, usageTokens);
+        await recordUserUsage(c, session, 0, usageTokens);
       }
       return new Response(responseText, {
         status: azureRes.status,
