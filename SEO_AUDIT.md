@@ -70,3 +70,15 @@ Canonical sitemap submission accepted, but Search Console initially reports **Co
 ## Final gate
 
 Technical SEO, metadata, canonical routing, robots, sitemap XML/delivery, connected structured-data parse/relationship checks, mobile, Worker build and regression tests: PASS. Google sitemap processing: unresolved (last observed fetch failure). Field CWV/INP: no data. Google indexing/ranking: pending recrawl, not guaranteed. No new outreach or fabricated external signals were added.
+
+## Follow-up: broad "zero x" visibility
+
+Same-day browser follow-up after the owner's report: the signed-in Google result included the old "ZeroX | NeuCockpit: Local AI File Search" listing. Clicking Google's **Try without personalisation** removed this result from the first organic results shown. Do not report the signed-in position as a general ranking or evidence of SEO success. Google's owner-only query panel showed one click, 150 impressions and average position 45.1 over the last 90 days; that historical average is not today's universal position.
+
+Search Console has now crawled the apex homepage at **3 October 2026, 18:29:45**. Fetch/crawl/indexing permission succeeded, and it read the new apex canonical. Google nevertheless selected the old WWW URL and labels apex "Duplicate, Google chose different canonical than user". WWW is still indexed with its older **3 October, 09:28:57** crawl and old WWW canonical. The WWW URL currently returns 301 to apex, apex returns 200, and the sitemap returns 200 XML. The canonical migration is not yet reflected in Google's selection. An inspection/indexing request for the old WWW destination was attempted once to expose the current redirect; its outcome is recorded below.
+
+The apex sitemap report still says Couldn't fetch. A valid direct response or an accepted submission does not prove Google's processing succeeded. Do not remove the old indexed URL, reverse the canonical again, weaken crawler security or repeatedly submit the same URL as a ranking shortcut.
+
+Additional external identity correction: both genuine GitHub repositories had blank homepage fields and inconsistent descriptions. Set the website repository to `https://zero-x.live/` with a Zero-X/NeuCockpit/local desktop search description; set the product repository to `https://neuron.zero-x.live/` with its actual product/category/platform description. Read-back and browser verification confirm these fields. No stars, reviews, links or user numbers were manufactured.
+
+Old WWW request outcome: Google accepted the request and added the URL to its priority crawl queue. This is a request to process the current redirect, not a reversal of the preferred apex domain. It does not prove canonical migration, sitemap processing or ranking is complete. The broad-query visibility goal remains unachieved in the non-personalised result checked.

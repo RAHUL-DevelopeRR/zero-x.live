@@ -12,6 +12,8 @@ Consistent description: **Zero-X builds NeuCockpit, a local AI desktop applicati
 ## Owner actions
 
 1. Set repository About/website fields and the separate product README to the genuine canonical destinations. The website README is updated in this implementation; product-repository changes require their own review.
+
+   Completed follow-up: website and product repositories' public descriptions and homepage fields now consistently name Zero-X/NeuCockpit and link the canonical site/product destination. This metadata update does not change the separate product README or application code, and does not guarantee Google ranking.
 2. Submit the canonical sitemap in the verified Search Console Domain property. Follow `GOOGLE_SEARCH_CONSOLE_SETUP.md`.
 3. Verify Bing Webmaster Tools or import the verified Search Console site with owner authorization. Submit the same sitemap.
 4. Align existing social bios with Zero-X, NeuCockpit and the actual product category. Keep optional cloud behavior clear.
