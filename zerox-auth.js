@@ -16,6 +16,7 @@
     initPromise: null,
     callbacks: [],
     modal: null,
+    redirectTo: null,
   };
 
   function sharedCookieDomain(hostname) {
@@ -288,6 +289,7 @@
     }
 
     const sessionResult = await state.client.auth.getSession();
+    if (sessionResult.error) throw sessionResult.error;
     state.session = sessionResult.data ? sessionResult.data.session : null;
     if (!state.session) {
       state.user = null;
@@ -333,7 +335,8 @@
         state.client.auth.onAuthStateChange(function (eventName, session) {
           state.session = session || null;
           state.user = session && session.user ? session.user : null;
-          notifyAuthChange(eventName);
+          // Supabase holds its auth lock during this callback. Subscribers may need getSession().
+          setTimeout(function () { notifyAuthChange(eventName); }, 0);
         });
 
         await refreshState();
@@ -359,10 +362,16 @@
   }
 
   function redirectTarget() {
-    return window.location.origin + window.location.pathname;
+    return state.redirectTo || window.location.origin + window.location.pathname;
   }
 
   function ensureModal(options) {
+    state.redirectTo = null;
+    if (options && options.redirectTo) {
+      const target = new URL(options.redirectTo, window.location.origin);
+      if (target.origin !== window.location.origin) throw new Error('Sign-in must return to this website.');
+      state.redirectTo = target.href;
+    }
     const title = options && options.title ? options.title : 'Sign in';
     const subtitle = options && options.subtitle ? options.subtitle : 'Continue with your ZeroX account';
     const providers = state.config?.providers || [];
@@ -633,6 +642,7 @@
   function mountUserButton(container, options) {
     const profile = buildProfile(state.user);
     if (!container) return;
+    if (container._zeroXAuthCleanup) container._zeroXAuthCleanup();
     if (!profile) {
       container.innerHTML = '';
       return;
@@ -666,9 +676,14 @@
       document.removeEventListener('click', closeMenuOnOutsideClick);
     }
 
-    container.addEventListener('keydown', function (event) {
+    function onKeydown(event) {
       if (event.key === 'Escape') { closeMenu(); trigger.focus(); }
-    });
+    }
+    container.addEventListener('keydown', onKeydown);
+    container._zeroXAuthCleanup = function () {
+      closeMenu();
+      container.removeEventListener('keydown', onKeydown);
+    };
 
     function closeMenuOnOutsideClick(event) {
       if (!container.contains(event.target)) {
@@ -684,7 +699,7 @@
       trigger.setAttribute('aria-expanded', String(!isOpen));
       if (!isOpen) {
         setTimeout(function () {
-          document.addEventListener('click', closeMenuOnOutsideClick);
+          if (menu.isConnected && menu.style.display === 'block') document.addEventListener('click', closeMenuOnOutsideClick);
         }, 0);
       } else {
         document.removeEventListener('click', closeMenuOnOutsideClick);
@@ -692,7 +707,10 @@
     });
 
     signOutButton.addEventListener('click', async function () {
-      await signOut({ redirectUrl: afterSignOutUrl });
+      signOutButton.disabled = true;
+      try { await signOut({ redirectUrl: afterSignOutUrl }); }
+      catch (error) { signOutButton.textContent = error.message || 'Sign out failed. Try again.'; }
+      finally { signOutButton.disabled = false; }
     });
   }
 
@@ -725,10 +743,9 @@
     await init();
     if (!state.client) return '';
     const sessionResult = await state.client.auth.getSession();
+    if (sessionResult.error) throw sessionResult.error;
     state.session = sessionResult.data ? sessionResult.data.session : null;
-    if (state.session && state.session.user) {
-      state.user = state.session.user;
-    }
+    state.user = state.session && state.session.user ? state.session.user : null;
     return state.session ? state.session.access_token || '' : '';
   }
 

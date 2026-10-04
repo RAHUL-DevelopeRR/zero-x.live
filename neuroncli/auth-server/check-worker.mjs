@@ -41,10 +41,12 @@ const callbackPage = await app.request('https://www.zero-x.live/neuroncli/callba
 assert.equal(await callbackPage.text(), '/neuroncli/callback/index.html');
 assert.equal(callbackPage.headers.get('cache-control'), 'no-store');
 for (const route of ['/auth/session', '/auth/azure/exchange']) {
+  const blocked = await app.request('https://www.zero-x.live' + route, { method: 'POST' }, env);
+  assert.equal(blocked.status, 403);
   const response = await app.request('https://www.zero-x.live' + route, {
     method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({machine_fingerprint: 'test', plan: 'pro', user_id: 'spoofed', email: 'spoofed@test.invalid'}),
-  }, env);
+  }, { ...env, ALLOW_ANONYMOUS_SESSIONS: 'true' });
   const session = await response.json();
   assert.equal(session.plan, 'free');
   assert.equal(session.user_id, null);

@@ -19,19 +19,26 @@ const document = {
 };
 let storage;
 const oauthRequests = [];
+let sdkListener;
+let sdkCallbackRunning=false;
+let activeSession=null;
+let sessionError=null;
 const window = {
   location: { hostname: 'www.zero-x.live', protocol: 'https:', origin: 'https://www.zero-x.live', pathname: '/neuron.html' },
   supabase: { createClient(_url, _key, options) {
     storage = options.auth.storage;
     return { auth: {
-      onAuthStateChange() {}, getSession: async () => ({ data: { session: null } }),
+      onAuthStateChange(fn) {sdkListener=fn;}, getSession: async () => {
+        assert.equal(sdkCallbackRunning,false,'Subscriber must not access the SDK while its auth lock is held');
+        return { data: { session: activeSession },error:sessionError };
+      },
       signInWithOAuth: async request => { oauthRequests.push(request); return {}; },
     } };
   } },
 };
 const source = readFileSync(new URL('../../zerox-auth.js', import.meta.url), 'utf8');
 vm.runInNewContext(source.replace('window.ZeroXAuth = {', 'window.ZeroXAuth = { signInWithOAuth, runAuthAction,'), {
-  document, window, URL, console,
+  document, window, URL, console,setTimeout,
   fetch: async () => ({ ok: true, json: async () => ({ configured: true, providers: [] }) }),
 });
 await window.ZeroXAuth.init();
@@ -48,6 +55,13 @@ assert.equal(oauthRequests[0].options.queryParams.prompt, 'select_account');
 assert.equal(oauthRequests[0].options.redirectTo, 'https://www.zero-x.live/neuron.html');
 assert.equal(oauthRequests[1].options.queryParams, undefined);
 assert.equal(oauthRequests[2].options.scopes, 'email');
+activeSession={access_token:'identity-token',user:{id:'owner'}};
+let notification;
+window.ZeroXAuth.onAuthStateChange(async()=>{notification=await window.ZeroXAuth.getAccessToken();});
+sdkCallbackRunning=true;sdkListener('SIGNED_IN',activeSession);sdkCallbackRunning=false;
+await new Promise(resolve=>setTimeout(resolve,20));assert.equal(notification,'identity-token');
+activeSession=null;assert.equal(await window.ZeroXAuth.getAccessToken(),'');assert.equal(await window.ZeroXAuth.getUser(),null);
+sessionError=new Error('Session storage failed');await assert.rejects(window.ZeroXAuth.getAccessToken(),/Session storage failed/);sessionError=null;
 const icon = {}, text = {};
 const button = {
   childNodes: [icon, text], disabled: false,
@@ -62,4 +76,4 @@ for (const fail of [false, true]) {
   assert.deepEqual(button.childNodes, [icon, text]);
   assert.equal(button.disabled, false);
 }
-console.log('PASS: session cookie limits and cleanup, Google chooser, provider options, and logo restoration after success/failure');
+console.log('PASS: session cookies, provider options, SDK lock-safe subscribers, expired user cleanup, session errors, and button restoration');
