@@ -45,6 +45,9 @@ app.use('*', async (c, next) => {
     if (path === '/neuroncli/callback/' && c.env?.ASSETS) {
       return c.env.ASSETS.fetch(new Request(new URL('/neuroncli/callback/index.html', url), c.req.raw));
     }
+    if (path === '/neuroncli/login/' && c.env?.ASSETS) {
+      return c.env.ASSETS.fetch(new Request(new URL('/neuroncli/login/index.html', url), c.req.raw));
+    }
     let target = null;
     let fragment = '';
     const clean = path.replace(/\.html$/, '').replace(/\/$/, '');
