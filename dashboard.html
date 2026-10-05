@@ -273,6 +273,8 @@
     <div class="dash-section">
       <h1 style="font-size:24px;margin-bottom:4px">Welcome back, <span id="greeting-name">Developer</span></h1>
       <p style="font-size:14px;color:#8A8A96">Here's your account overview for today.</p>
+      <p id="account-status" role="status" aria-live="polite" style="font-size:13px;color:#A6A6B2;margin-top:12px"></p>
+      <button id="refresh-account" type="button" class="dash-gate-btn" style="margin-top:8px">Refresh account</button>
     </div>
 
     <!-- Stats Row -->
@@ -395,9 +397,9 @@
     <div class="dash-section dash-card">
       <div class="dash-card-label">Session Token</div>
       <p style="font-size:13px;color:#8A8A96;margin-bottom:12px">Your active NeuronCLI gateway session token, minted from your authenticated Zero-X session.</p>
-      <div class="api-key-box">
-        <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" id="session-token-display">••••••••••••••••••••••••</span>
-        <button onclick="copyToken()" id="copy-token-btn">Copy</button>
+  <div class="api-key-box">
+        <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" id="session-token-display">Session unavailable</span>
+        <button onclick="copyToken()" id="copy-token-btn" disabled>Copy</button>
       </div>
     </div>
 
@@ -519,16 +521,20 @@ let dashboardState = {
   usage: {tokens: 0, requests: 0},
   limits: planLimits.free,
   models: null,
+  accountAvailable: false,
+  catalog: {},
   activity: [],
 };
+function escapeHtml(value){return String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function finiteCount(value){return Number.isFinite(Number(value))?Math.max(0,Number(value)):0;}
 
 function populateDashboard(user) {
   const userPlan = dashboardState.plan || 'free';
   const limits = dashboardState.limits || planLimits[userPlan] || planLimits.free;
   const usage = dashboardState.usage || {tokens:0,requests:0};
-  const available = dashboardState.models !== null;
-  const pct_t = Math.min(100,Math.round((usage.tokens||0)/limits.tokens*100));
-  const pct_r = Math.min(100,Math.round((usage.requests||0)/limits.requests*100));
+  const available = dashboardState.accountAvailable;
+  const pct_t = limits.tokens>0?Math.min(100,Math.round(usage.tokens/limits.tokens*100)):0;
+  const pct_r = limits.requests>0?Math.min(100,Math.round(usage.requests/limits.requests*100)):0;
 
   // Overview stats
   document.getElementById('stat-tokens').textContent=available?(usage.tokens||0).toLocaleString():'Unavailable';
@@ -542,8 +548,9 @@ function populateDashboard(user) {
   document.getElementById('requests-pct').textContent=available?pct_r+'%':'';
 
   // Plan
-  const planNames={free:'Free',pro:'Pro',ultrawork:'Ultrawork'};
-  const planDescription=available?limits.tokens.toLocaleString()+' tokens/day • '+(dashboardState.models||[]).length+' included models':'Account data unavailable';
+  const planNames={free:'Free',pro:'Pro',ultrawork:'Ultrawork',[userPlan]:userPlan.charAt(0).toUpperCase()+userPlan.slice(1)};
+  const modelCount=(dashboardState.models||[]).length;
+  const planDescription=available?limits.tokens.toLocaleString()+' tokens/day • '+modelCount+' included '+(modelCount===1?'model':'models'):'Account data unavailable';
   document.getElementById('stat-plan').textContent=available?planNames[userPlan]:'Unavailable';
   document.getElementById('plan-desc').textContent=planDescription;
   const badge=document.getElementById('plan-badge');
@@ -555,7 +562,10 @@ function populateDashboard(user) {
   document.getElementById('sub-details').textContent=planDescription;
 
   // Models chips (overview)
-  const models = (dashboardState.models||[]).map(name=>({name,limit:(limits.tokens/1000)+'K/day',status:'included'}));
+  const models = (dashboardState.models||[]).map(id=>{
+    const metadata=dashboardState.catalog[id]||{};
+    return {name:escapeHtml(id),limit:escapeHtml(limits.tokens.toLocaleString()+' shared/day'),status:metadata.available===false?'unavailable':'included',type:escapeHtml(metadata.provider||metadata.owned_by||'Gateway')+(metadata.capabilities?.tools?' · Tools':'')};
+  });
     
   document.getElementById('models-chips').innerHTML=models.slice(0,6).map(m=>
     m.status==='unavailable'
@@ -566,12 +576,12 @@ function populateDashboard(user) {
   // Models table
   document.getElementById('models-tbody').innerHTML=models.map(m=>
     m.status==='unavailable'
-      ? `<tr class="model-unavailable-row"><td style="font-weight:600">${m.name}</td><td class="mono" style="color:#8A8A96">Chat</td><td class="mono">${m.limit}</td><td><span class="model-unavailable-badge">model unavailable</span></td></tr>`
-      : `<tr><td style="font-weight:600">${m.name}</td><td class="mono" style="color:#8A8A96">Chat</td><td class="mono">${m.limit}</td><td><span style="color:#34d399;font-size:12px">Included in plan</span></td></tr>`
+      ? `<tr class="model-unavailable-row"><td style="font-weight:600">${m.name}</td><td class="mono" style="color:#8A8A96">${m.type}</td><td class="mono">${m.limit}</td><td><span class="model-unavailable-badge">Provider unavailable</span></td></tr>`
+      : `<tr><td style="font-weight:600">${m.name}</td><td class="mono" style="color:#8A8A96">${m.type}</td><td class="mono">${m.limit}</td><td><span style="color:#34d399;font-size:12px">Included in plan</span></td></tr>`
   ).join('');
 
   const activity = dashboardState.activity;
-  if(!models.length){document.getElementById('models-chips').textContent='Model data unavailable';document.getElementById('models-tbody').innerHTML='<tr><td colspan="4">Model data unavailable</td></tr>';}
+  if(!models.length){const empty=dashboardState.models===null?'Model data unavailable':'No providers are currently available for this plan.';document.getElementById('models-chips').textContent=empty;document.getElementById('models-tbody').innerHTML='<tr><td colspan="4">'+empty+'</td></tr>';}
 
   // Recent activity (overview)
   document.getElementById('recent-activity').innerHTML=activity.slice(0,4).map(a=>`<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.03);font-size:12px"><span class="activity-dot ${a.status}"></span><span style="flex:1;color:#E8E8EC;font-family:'JetBrains Mono',monospace">${a.endpoint}</span><span style="color:#8A8A96">${a.time}</span></div>`).join('');
@@ -592,14 +602,14 @@ function populateDashboard(user) {
 
   // Profile
   if(user){
-    document.getElementById('profile-avatar').src=user.imageUrl||'./Assets/Zero-xBnW.png';
+    document.getElementById('profile-avatar').src=/^https?:\/\//.test(user.imageUrl||'')?user.imageUrl:'./Assets/Zero-xBnW.png';
     document.getElementById('profile-name').textContent=user.fullName||'Developer';
     document.getElementById('profile-email').textContent=user.email||'—';
     document.getElementById('profile-uid').textContent=user.id;
     document.getElementById('profile-username').textContent=user.username||'—';
     document.getElementById('profile-created').textContent=user.createdAt ? new Date(user.createdAt).toLocaleDateString('en-US',{year:'numeric',month:'long',day:'numeric'}) : '—';
     document.getElementById('profile-providers').textContent=user.providersDisplay||'Email';
-    document.getElementById('profile-plan').textContent=planNames[userPlan];
+    document.getElementById('profile-plan').textContent=available?planNames[userPlan]:'Unavailable';
   }
 }
 
@@ -614,21 +624,23 @@ async function dashboardAuthFetch(path, token, options = {}) {
     },
   });
   const data = await res.json().catch(()=>({}));
-  if(!res.ok) throw new Error(data.message || data.error || res.statusText);
+  if(!res.ok){const error=new Error(data.message || (typeof data.error==='string'?data.error:data.error?.message) || res.statusText || 'Gateway request failed');error.status=res.status;throw error;}
   return data;
 }
 
 function applyAccountState(account) {
-  if(!account) return;
-  const plan = account.plan || 'free';
+  if(!account || account.status==='skipped') return;
+  const plan = typeof account.plan==='string'?account.plan:dashboardState.plan;
   dashboardState = {
     plan,
     usage: {
-      tokens: account.usage?.tokens_used || account.tokens_used || account.quota?.used || 0,
-      requests: account.usage?.requests || account.requests || 0,
+      tokens: finiteCount(account.usage?.tokens_used ?? account.tokens_used ?? account.quota?.used ?? dashboardState.usage.tokens),
+      requests: finiteCount(account.usage?.requests ?? account.requests ?? dashboardState.usage.requests),
     },
-    limits: account.limits || planLimits[plan] || planLimits.free,
-    models: account.models || null,
+    limits: {tokens:finiteCount(account.limits?.tokens ?? account.quota?.daily ?? dashboardState.limits.tokens),requests:finiteCount(account.limits?.requests ?? dashboardState.limits.requests)},
+    models: Array.isArray(account.models)?account.models.filter(id=>typeof id==='string'):dashboardState.models,
+    accountAvailable: true,
+    catalog: dashboardState.catalog,
     activity: dashboardState.activity,
   };
 }
@@ -643,15 +655,6 @@ async function syncDashboardAccount(user, accessToken) {
     imageUrl: user.imageUrl || '',
   };
 
-  const synced = await dashboardAuthFetch('/auth/sync', accessToken, {
-    method:'POST',
-    body: JSON.stringify(profile),
-  }).catch(err=>{
-    console.warn('Dashboard user sync failed:', err.message);
-    return null;
-  });
-  if(synced){applyAccountState(synced);dashboardState.activity.push({status:'success',endpoint:'/auth/sync',model:'Account',tokens:0,time:'now'});}
-
   const cliSession = await dashboardAuthFetch('/auth/cli/session', accessToken, {
     method:'POST',
     body: JSON.stringify({
@@ -659,19 +662,58 @@ async function syncDashboardAccount(user, accessToken) {
       machine_fingerprint: 'dashboard-'+user.id,
       version: 'dashboard',
     }),
-  }).catch(err=>{
-    console.warn('CLI session mint failed:', err.message);
-    return null;
   });
-  if(cliSession){applyAccountState(cliSession);dashboardState.activity.push({status:'success',endpoint:'/auth/cli/session',model:'Gateway',tokens:0,time:'now'});}
+  if(!/^ses_[A-Za-z0-9_-]+$/.test(cliSession.session_token||''))throw new Error('Gateway did not return a valid session');
+  applyAccountState(cliSession);dashboardState.activity.push({status:'success',endpoint:'/auth/cli/session',model:'Gateway',tokens:0,time:'now'});
   return cliSession;
 }
 
 /* ═══ Copy Token ═══ */
 let sessionToken='';
+let currentProfile=null;
+let accountRefresh=0;
+async function refreshAccount(){
+  if(!currentProfile)return;
+  const revision=++accountRefresh;
+  const refreshButton=document.getElementById('refresh-account');
+  const status=document.getElementById('account-status');
+  refreshButton.disabled=true;status.textContent='Loading gateway account…';
+  try{
+    let account;
+    if(sessionToken){
+      try{account=await dashboardAuthFetch('/auth/session',sessionToken);}
+      catch(error){if(error.status!==401)throw error;sessionToken='';}
+    }
+    if(!account){
+      const accessToken=await window.ZeroXAuth.getAccessToken();
+      if(!accessToken)throw new Error('Sign in again to create a gateway session.');
+      account=await syncDashboardAccount(currentProfile,accessToken);
+    }
+    if(revision!==accountRefresh)return;
+    sessionToken=account.session_token||sessionToken;
+    applyAccountState(account);
+    try{
+      const catalog=await dashboardAuthFetch('/v1/models',sessionToken);
+      if(revision!==accountRefresh)return;
+      dashboardState.catalog=Object.fromEntries((catalog.data||[]).filter(model=>typeof model.id==='string').map(model=>[model.id,model]));
+      status.textContent='Account updated.';
+    }catch(error){status.textContent='Account updated. Model details unavailable: '+error.message;}
+  }catch(error){
+    if(revision!==accountRefresh)return;
+    status.textContent=(dashboardState.accountAvailable?'Showing the last loaded account. ':'')+(error.name==='TimeoutError'?'Gateway timed out.':error.message)+' Use Refresh account to retry.';
+  }finally{
+    if(revision===accountRefresh){
+      document.getElementById('session-token-display').textContent=sessionToken?sessionToken.slice(0,12)+'••••••••'+sessionToken.slice(-6):'Session unavailable';
+      document.getElementById('copy-token-btn').disabled=!sessionToken;
+      populateDashboard(currentProfile);refreshButton.disabled=false;
+    }
+  }
+}
 async function copyValue(button,value){
+  const label=button.textContent;
   try{await navigator.clipboard.writeText(value);button.textContent='Copied!';}
   catch{button.textContent='Copy unavailable';}
+  setTimeout(()=>{button.textContent=label;},2000);
 }
 function copyToken(){
   if(sessionToken)copyValue(document.getElementById('copy-token-btn'),sessionToken);
@@ -693,19 +735,7 @@ window.addEventListener('load',async()=>{
     const user = await window.ZeroXAuth.getUser();
     profile = await window.ZeroXAuth.getProfile(user);
   } catch (authErr) {
-    console.warn('Supabase Auth init warning (falling back to local developer session):', authErr);
-  }
-
-  // Local fallback profile when running on localhost if Supabase is unconfigured
-  if (!profile && isLocal) {
-    profile = {
-      id: 'local-dev-id',
-      email: 'developer@zero-x.live',
-      fullName: 'Local Developer',
-      firstName: 'Developer',
-      imageUrl: './Assets/Zero-xBnW.png',
-      plan: 'free'
-    };
+    console.warn('Supabase Auth init failed:', authErr);
   }
 
   if (!profile) {
@@ -728,9 +758,9 @@ window.addEventListener('load',async()=>{
   // Sidebar user info — show card now that user is authenticated
   const sidebarUser = document.getElementById('sidebar-user');
   sidebarUser.style.display = 'flex';
-  document.getElementById('sidebar-avatar').src = profile.imageUrl || './Assets/Zero-xBnW.png';
+  document.getElementById('sidebar-avatar').src = /^https?:\/\//.test(profile.imageUrl||'')?profile.imageUrl:'./Assets/Zero-xBnW.png';
   document.getElementById('sidebar-name').textContent = profile.fullName || 'Developer';
-  document.getElementById('sidebar-email').textContent = profile.email || 'developer@zero-x.live';
+  document.getElementById('sidebar-email').textContent = profile.email || 'Signed in';
   document.getElementById('greeting-name').textContent = (profile.firstName || profile.fullName || 'Account');
 
   // Mount minimal user button if available
@@ -742,29 +772,12 @@ window.addEventListener('load',async()=>{
   loadEl.style.display = 'none';
   document.getElementById('tab-overview').style.display = 'block';
 
-  // Sync identity to Neon and mint a CLI gateway session
-  try {
-    const accessToken = (window.ZeroXAuth && typeof window.ZeroXAuth.getAccessToken === 'function') ? await window.ZeroXAuth.getAccessToken() : '';
-    const cliSession = await syncDashboardAccount(profile, accessToken);
-    sessionToken = cliSession?.session_token || '';
-  } catch (e) {
-    sessionToken = '';
-  }
-  
-  if (sessionToken) {
-    const masked = sessionToken.slice(0, 20) + '••••••••' + sessionToken.slice(-8);
-    document.getElementById('session-token-display').textContent = masked;
-  } else {
-    document.getElementById('session-token-display').textContent = 'Session unavailable';
-    document.getElementById('copy-token-btn').disabled = true;
-  }
-
-  // Populate all dashboard data
-  populateDashboard(profile);
-
-  // Show overview tab
-  loadEl.style.display = 'none';
-  document.getElementById('tab-overview').style.display = 'block';
+  currentProfile=profile;
+  document.getElementById('refresh-account').addEventListener('click',refreshAccount);
+  if(typeof window.ZeroXAuth.onAuthStateChange==='function')window.ZeroXAuth.onAuthStateChange(({event})=>{
+    if(event==='SIGNED_OUT'){accountRefresh++;sessionToken='';currentProfile=null;window.location.reload();}
+  });
+  await refreshAccount();
 });
 
 </script>

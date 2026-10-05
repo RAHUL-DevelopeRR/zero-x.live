@@ -40,11 +40,17 @@ assert.equal(dashboard.headers.get('x-frame-options'), 'DENY');
 const callbackPage = await app.request('https://www.zero-x.live/neuroncli/callback/', {}, env);
 assert.equal(await callbackPage.text(), '/neuroncli/callback/index.html');
 assert.equal(callbackPage.headers.get('cache-control'), 'no-store');
+const loginPage = await app.request('https://zero-x.live/neuroncli/login/?state=fixture', {}, env);
+assert.equal(await loginPage.text(), '/neuroncli/login/index.html');
+assert.equal(loginPage.headers.get('cache-control'), 'no-store');
+assert.equal(loginPage.headers.get('referrer-policy'), 'origin');
 for (const route of ['/auth/session', '/auth/azure/exchange']) {
+  const blocked = await app.request('https://www.zero-x.live' + route, { method: 'POST' }, env);
+  assert.equal(blocked.status, 403);
   const response = await app.request('https://www.zero-x.live' + route, {
     method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({machine_fingerprint: 'test', plan: 'pro', user_id: 'spoofed', email: 'spoofed@test.invalid'}),
-  }, env);
+  }, { ...env, ALLOW_ANONYMOUS_SESSIONS: 'true' });
   const session = await response.json();
   assert.equal(session.plan, 'free');
   assert.equal(session.user_id, null);

@@ -86,12 +86,13 @@
         <div id="badge"></div>
         <p id="message">Connecting to NeuronCLI...</p>
         <div id="steps"></div>
-        <p class="meta" id="meta">v6.2.4 · zero-x.live</p>
+        <div class="code-box" id="session" hidden></div>
+        <button class="btn" id="copy-session" type="button" hidden>Copy gateway token</button>
+        <p class="meta" id="meta">zero-x.live</p>
     </div>
 
     <script>
-        const isLocal = ['localhost', '127.0.0.1'].includes(location.hostname);
-        const AUTH_SERVER = isLocal ? 'http://localhost:19284' : '/neuroncli/auth-server';
+        const AUTH_SERVER = '/neuroncli/auth-server';
         const params = new URLSearchParams(location.search);
         const code = params.get('code');
         const state = params.get('state');
@@ -113,15 +114,24 @@
                 if (provider === 'openrouter' && code && state) {
                     const response = await fetch(AUTH_SERVER + '/auth/openrouter/callback?' +
                         new URLSearchParams({code, state}), {signal: AbortSignal.timeout(15000)});
-                    if (!response.ok) throw new Error('Authorization exchange failed. Restart neuron auth login in your terminal.');
-                    finish(true, 'OpenRouter authorization exchanged. Check your terminal to confirm the connection.');
+                    const result = await response.json().catch(() => ({}));
+                    if (!response.ok || !/^ses_[A-Za-z0-9_-]+$/.test(result.session_token || '')) throw new Error('Authorization exchange failed. Restart the provider connection.');
+                    const session = document.getElementById('session');
+                    const copy = document.getElementById('copy-session');
+                    session.textContent = result.session_token;
+                    session.hidden = copy.hidden = false;
+                    copy.addEventListener('click', async () => {
+                        try { await navigator.clipboard.writeText(result.session_token); copy.textContent = 'Copied'; }
+                        catch { copy.textContent = 'Select and copy the token above'; }
+                    });
+                    finish(true, 'Your OpenRouter connection is ready. This is a gateway token. For account sign-in, start neuron auth login in your terminal.');
                 } else if (provider === 'azure' && token) {
-                    const response = await fetch(AUTH_SERVER + '/auth/azure/session', {
+                    const response = await fetch(AUTH_SERVER + '/auth/session', {
                         headers: {Authorization: 'Bearer ' + token}, signal: AbortSignal.timeout(15000)
                     });
                     if (!response.ok) throw new Error('Invalid or expired session. Restart authentication in your terminal.');
                     await response.json();
-                    finish(true, 'Your session was verified. Check your terminal to confirm the connection.');
+                    finish(true, 'Your gateway session was verified. For terminal sign-in, start neuron auth login.');
                 } else {
                     finish(false, 'Start authentication from NeuronCLI using neuron auth login. This page requires a valid authentication callback.');
                 }

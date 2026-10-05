@@ -26,11 +26,7 @@ jobs:
         run: |
           npm ci
           node build-sitemap.mjs
-          node check-worker.mjs
-          node check-auth-storage.mjs
-          node check-dashboard.mjs
-          node check-seo.mjs
-          node check-callback.mjs
+          npm run check:production
           npm audit --omit=dev
 
       - name: Deploy Worker

@@ -1,6 +1,8 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { accountRpc, databaseConfigured } from './account-store.js';
+import { modelCatalog, publicModel } from './providers.js';
+import { createChatHandler } from './chat-handler.js';
 
 const app = new Hono();
 const api = new Hono();
@@ -13,7 +15,7 @@ app.use('*', async (c, next) => {
   c.header('X-Frame-Options', 'DENY');
   if (url.pathname.startsWith('/auth/') || url.pathname.startsWith('/neuroncli/')) {
     c.header('Cache-Control', 'no-store');
-    c.header('Referrer-Policy', 'no-referrer');
+    c.header('Referrer-Policy', url.pathname.startsWith('/neuroncli/login/') ? 'origin' : 'no-referrer');
   }
   if (url.hostname === 'dashboard.zero-x.live' || url.pathname.startsWith('/auth/') ||
       url.pathname.startsWith('/neuroncli/') || url.pathname.startsWith('/v1/') || url.pathname === '/health') {
@@ -42,6 +44,9 @@ app.use('*', async (c, next) => {
       return c.text('User-agent: *\nDisallow: /\n');
     if (path === '/neuroncli/callback/' && c.env?.ASSETS) {
       return c.env.ASSETS.fetch(new Request(new URL('/neuroncli/callback/index.html', url), c.req.raw));
+    }
+    if (path === '/neuroncli/login/' && c.env?.ASSETS) {
+      return c.env.ASSETS.fetch(new Request(new URL('/neuroncli/login/index.html', url), c.req.raw));
     }
     let target = null;
     let fragment = '';
@@ -103,46 +108,9 @@ const PLAN_LIMITS = {
   ultrawork: { name: "Pro (Legacy Ultrawork)", daily_tokens: 2000000, daily_requests: 20000, price_usd: 10 },
 };
 
-// Active Working Free & Neuron Models (Expired Azure models moved to LEGACY_EXPIRED_MODELS)
-const MODELS_BY_PLAN = {
-  free: [
-    "meta-llama/llama-3.3-70b-instruct:free",
-    "google/gemini-2.5-flash:free",
-    "qwen/qwen-2.5-coder-32b-instruct:free",
-    "@cf/meta/llama-3.1-8b-instruct",
-    "@cf/deepseek-ai/deepseek-r1-distill-qwen-32b",
-    "@cf/qwen/qwen1.5-14b-chat",
-    "@cf/mistral/mistral-7b-instruct-v0.1"
-  ],
-  pro: [
-    "Neuron-Llama-70B-Fast",
-    "Neuron-DeepSeek-R1-Reasoning",
-    "model-router",
-    "meta-llama/llama-3.3-70b-instruct:free",
-    "google/gemini-2.5-flash:free",
-    "qwen/qwen-2.5-coder-32b-instruct:free",
-    "@cf/meta/llama-3.1-8b-instruct",
-    "@cf/deepseek-ai/deepseek-r1-distill-qwen-32b",
-    "@cf/qwen/qwen1.5-14b-chat",
-    "@cf/mistral/mistral-7b-instruct-v0.1"
-  ],
-  ultrawork: [
-    "Neuron-Llama-70B-Fast",
-    "Neuron-DeepSeek-R1-Reasoning",
-    "model-router",
-    "meta-llama/llama-3.3-70b-instruct:free",
-    "google/gemini-2.5-flash:free",
-    "qwen/qwen-2.5-coder-32b-instruct:free",
-    "@cf/meta/llama-3.1-8b-instruct",
-    "@cf/deepseek-ai/deepseek-r1-distill-qwen-32b"
-  ],
-};
-
-// Archived / Expired Azure & Legacy Models (Read-only historical reference)
-const LEGACY_EXPIRED_MODELS = [
-  "gpt-5.4-pro", "gpt-5.4-mini", "gpt-5.5-2", "gpt-5.1-codex-max",
-  "FW-DeepSeek-V3.2", "FW-MiniMax-M2.5", "DeepSeek-V4-Flash", "DeepSeek-V4-Pro"
-];
+function availableModels(c, session = {}) {
+  return modelCatalog(c.env, session).map(model => model.id);
+}
 
 function normalizePlan(plan) {
   const key = String(plan || "free").toLowerCase().replace(/[^a-z0-9_-]/g, "");
@@ -320,7 +288,7 @@ async function syncUserRecord(c, auth) {
   });
 }
 
-function userResponse(user, fallbackUserId = "") {
+function userResponse(c, user, fallbackUserId = "") {
   const plan = normalizePlan(user?.plan || "free");
   const tokensUsed = Number(user?.daily_tokens_used || 0);
   const requests = Number(user?.daily_requests || 0);
@@ -334,17 +302,9 @@ function userResponse(user, fallbackUserId = "") {
     username: user?.username || "",
     image_url: user?.image_url || "",
     plan,
-    models: MODELS_BY_PLAN[plan] || MODELS_BY_PLAN.free,
+    models: availableModels(c),
     ...quota,
   };
-}
-
-async function recordUserUsage(c, session, requests, tokens) {
-  if (!session.account_backed) return;
-  const userId = session.user_id;
-  return accountRpc(c.env, 'zerox_record_usage', {
-    p_user_id: userId, p_requests: requests, p_tokens: tokens,
-  });
 }
 
 // ── Session persistence helpers (Support Cloudflare KV with in-memory fallback) ──
@@ -378,8 +338,18 @@ async function validateSession(c) {
   if (!auth || !auth.startsWith("Bearer ")) return null;
   const token = auth.replace("Bearer ", "");
 
-  const session = await getSession(c, token);
-  if (!session) return null;
+  if (!/^ses_[A-Za-z0-9_-]+$/.test(token)) return null;
+  const stored = await getSession(c, token);
+  if (!stored || !Number.isFinite(stored.created)) return null;
+  const session = { ...stored };
+  if (!session.account_backed) {
+    if (session.openrouter_key) session.owned_provider_only = true;
+    else if (c.env.ALLOW_ANONYMOUS_SESSIONS !== 'true') return null;
+  }
+  const today = new Date().toISOString().slice(0, 10);
+  if (!session.account_backed && session.usage_day !== today) {
+    session.usage_day = today; session.requests = 0; session.tokens_used = 0;
+  }
 
   const ttlHours = parseInt(c.env.SESSION_TTL_HOURS) || 24;
   const sessionTtlMs = ttlHours * 3600 * 1000;
@@ -423,7 +393,7 @@ async function sha256(plain) {
 app.use('*', cors({
   origin: '*',
   allowHeaders: ['Content-Type', 'Authorization'],
-  allowMethods: ['POST', 'GET', 'OPTIONS'],
+  allowMethods: ['POST', 'GET', 'DELETE', 'OPTIONS'],
 }));
 
 // ── Routes ──
@@ -435,7 +405,7 @@ api.get('/health', (c) => {
     status: "ok",
     service: "neuroncli-gateway-worker",
     version: "2.0.0",
-    azure_configured: !!c.env.AZURE_OPENAI_API_KEY,
+    providers: [...new Set(modelCatalog(c.env).map(model => model.provider))],
     supabase_configured: !!(supabaseUrl && supabaseKey),
     kv_bound: !!c.env.SESSIONS_KV,
     database_configured: databaseConfigured(c.env),
@@ -470,6 +440,9 @@ api.get('/auth/config', async (c) => {
 
 // 2. Session creation (main & legacy exchange)
 const createSessionHandler = async (c) => {
+  if (c.env.ALLOW_ANONYMOUS_SESSIONS !== 'true') {
+    return c.json({ error: 'Account sign-in required', code: 'authentication_required', login_url: 'https://zero-x.live/neuroncli/login/' }, 403);
+  }
   const body = await c.req.json().catch(() => ({}));
   const fp = body.machine_fingerprint || body.fingerprint;
   const version = body.version || "unknown";
@@ -505,7 +478,7 @@ const createSessionHandler = async (c) => {
     image_url: sessionData.image_url,
     plan,
     provider: "gateway",
-    models: MODELS_BY_PLAN[plan] || MODELS_BY_PLAN.free,
+    models: availableModels(c),
     quota: quota.quota,
     usage: quota.usage,
     limits: quota.limits,
@@ -536,7 +509,8 @@ const createIdentityCliSessionHandler = async (c) => {
     return c.json({ error: "Account database unavailable" }, 503);
   }
 
-  const account = userResponse(user, auth.userId);
+  if (!user) return c.json({ error: 'Account database returned no record' }, 503);
+  const account = userResponse(c, user, auth.userId);
   const sessionToken = "ses_" + generateRandomString(24);
   const sessionData = {
     created: Date.now(),
@@ -550,7 +524,7 @@ const createIdentityCliSessionHandler = async (c) => {
     account_backed: true,
     requests: account.usage.requests,
     tokens_used: account.usage.tokens_used,
-    provider_used: "azure",
+    provider_used: null,
   };
 
   await setSession(c, sessionToken, sessionData);
@@ -584,7 +558,7 @@ const verifySessionHandler = async (c) => {
     name: session.name,
     image_url: session.image_url,
     plan: normalizePlan(session.plan),
-    models: MODELS_BY_PLAN[normalizePlan(session.plan)] || MODELS_BY_PLAN.free,
+    models: availableModels(c, session),
     requests: session.requests,
     tokens_used: session.tokens_used,
     quota: planQuota(normalizePlan(session.plan), Number(session.tokens_used || 0), Number(session.requests || 0)).quota,
@@ -600,6 +574,14 @@ const verifySessionHandler = async (c) => {
 
 api.get('/auth/session', verifySessionHandler);
 api.get('/auth/azure/session', verifySessionHandler);
+api.delete('/auth/session', async c => {
+  const authorization = c.req.header('Authorization') || '';
+  const token = authorization.startsWith('Bearer ') ? authorization.slice(7) : '';
+  if (!/^ses_[A-Za-z0-9_-]+$/.test(token)) return c.json({ error: 'Missing or invalid session token' }, 401);
+  // Revocation must remain available during an account database outage.
+  await deleteSession(c, token);
+  return c.json({ status: 'signed_out' });
+});
 
 api.get('/auth/usage', async (c) => {
   const valid = await validateSession(c);
@@ -618,7 +600,7 @@ api.get('/auth/plan', async (c) => {
     user_id: session.user_id,
     plan,
     plan_name: PLAN_LIMITS[plan].name,
-    models: MODELS_BY_PLAN[plan] || MODELS_BY_PLAN.free,
+    models: availableModels(c, session),
     limits: PLAN_LIMITS[plan],
   });
 });
@@ -640,7 +622,7 @@ api.post('/auth/sync', async (c) => {
     if (!user) {
       return c.json({ status: "skipped", message: "Account database returned no record" });
     }
-    return c.json({ status: "success", ...userResponse(user, auth.userId) });
+    return c.json({ status: "success", ...userResponse(c, user, auth.userId) });
   } catch (err) {
     console.error("Database sync error:", err);
     return c.json({ error: "Internal Server Error", message: err.message }, 500);
@@ -654,272 +636,25 @@ api.get('/auth/me', async (c) => {
   }
   try {
     const user = await loadUserRecord(c, auth.userId);
-    return c.json({ status: user ? "success" : "missing", ...userResponse(user, auth.userId) });
+    return c.json({ status: user ? "success" : "missing", ...userResponse(c, user, auth.userId) });
   } catch (err) {
     console.error("Account lookup error:", err);
     return c.json({ error: "Internal Server Error", message: err.message }, 500);
   }
 });
 
-const chatCompletionsHandler = async (c) => {
-  const valid = await validateSession(c);
-  if (!valid) {
-    return c.json({ error: "Invalid or expired session token" }, 401);
-  }
-
-  const { token, session } = valid;
-  const azureApiKey = c.env.AZURE_OPENAI_API_KEY;
-
-  const body = await c.req.json().catch(() => ({}));
-  const { model, messages, max_tokens, stream, tools, tool_choice, temperature, top_p } = body;
-
-  if (typeof model !== 'string' || !model || !Array.isArray(messages) || !messages.length) {
-    return c.json({ error: "Missing model or messages" }, 400);
-  }
-
-  const isWorkersAI = model.startsWith('@cf/') || model.includes('/llama') || model.includes('/mistral') || model.includes('/qwen');
-
-  if (!isWorkersAI && !azureApiKey) {
-    return c.json({
-      error: "Provider not configured",
-      hint: "Azure credentials not set on worker variables",
-    }, 503);
-  }
-
-  // Rate limiting
-  session.requests++;
-  const plan = normalizePlan(session.plan);
-  const maxRequests = Number(PLAN_LIMITS[plan]?.daily_requests || parseInt(c.env.MAX_REQUESTS_PER_SESSION) || 1000);
-  if (session.requests > maxRequests) {
-    return c.json({ error: "Daily request limit exceeded" }, 429);
-  }
-
-  // 1. Handle Cloudflare Workers AI Free Tier Models
-  if (isWorkersAI) {
-    if (!c.env.AI) {
-      return c.json({
-        error: "Workers AI binding not configured",
-        hint: "Please add [ai] binding to wrangler.toml",
-      }, 500);
-    }
-
-    session.provider_used = "cloudflare-workers-ai";
-    await setSession(c, token, session);
-    await recordUserUsage(c, session, 1, 0);
-
-    try {
-      if (stream) {
-        const aiStream = await c.env.AI.run(model, {
-          messages: messages,
-          stream: true,
-          max_tokens: max_tokens || 2048,
-        });
-
-        // Translate Cloudflare's stream format to OpenAI-compatible Server-Sent Events (SSE)
-        const { readable, writable } = new TransformStream();
-        const writer = writable.getWriter();
-        const reader = aiStream.getReader();
-        const decoder = new TextDecoder();
-        const encoder = new TextEncoder();
-        let buffer = '';
-
-        (async () => {
-          try {
-            while (true) {
-              const { done, value } = await reader.read();
-              if (done) {
-                await writer.write(encoder.encode("data: [DONE]\n\n"));
-                break;
-              }
-              buffer += decoder.decode(value, { stream: true });
-              const lines = buffer.split('\n');
-              buffer = lines.pop();
-
-              for (const line of lines) {
-                if (line.startsWith('data: ')) {
-                  const dataStr = line.slice(6).trim();
-                  if (dataStr === '[DONE]') continue;
-                  try {
-                    const parsed = JSON.parse(dataStr);
-                    const content = parsed.response || parsed.text || '';
-                    if (content) {
-                      const openaiChunk = {
-                        id: `chatcmpl-${generateRandomString(12)}`,
-                        object: "chat.completion.chunk",
-                        created: Math.floor(Date.now() / 1000),
-                        model: model,
-                        choices: [{
-                          delta: { content: content },
-                          index: 0,
-                          finish_reason: null
-                        }]
-                      };
-                      await writer.write(encoder.encode(`data: ${JSON.stringify(openaiChunk)}\n\n`));
-                    }
-                  } catch (e) {
-                    // Skip partial lines
-                  }
-                }
-              }
-            }
-          } catch (err) {
-            console.error("Stream translation error:", err);
-          } finally {
-            writer.close();
-          }
-        })();
-
-        return new Response(readable, {
-          headers: {
-            "Content-Type": "text/event-stream",
-            "Cache-Control": "no-cache",
-          },
-        });
-      } else {
-        const aiRes = await c.env.AI.run(model, {
-          messages: messages,
-          max_tokens: max_tokens || 2048,
-        });
-        
-        const responseText = aiRes.response || aiRes.text || '';
-        const estimatedTokens = Math.ceil(responseText.split(/\s+/).length * 1.3);
-
-        if (estimatedTokens > 0) {
-          session.tokens_used = Number(session.tokens_used || 0) + estimatedTokens;
-          await setSession(c, token, session);
-          await recordUserUsage(c, session, 0, estimatedTokens);
-        }
-
-        const openaiRes = {
-          id: `chatcmpl-${generateRandomString(12)}`,
-          object: "chat.completion",
-          created: Math.floor(Date.now() / 1000),
-          model: model,
-          choices: [{
-            message: {
-              role: "assistant",
-              content: responseText,
-            },
-            index: 0,
-            finish_reason: "stop"
-          }],
-          usage: {
-            prompt_tokens: 0,
-            completion_tokens: estimatedTokens,
-            total_tokens: estimatedTokens
-          }
-        };
-        return c.json(openaiRes);
-      }
-    } catch (err) {
-      return c.json({ error: "Workers AI execution error", message: err.message }, 502);
-    }
-  }
-
-  // 2. Handle Azure AI Foundry Models
-  session.provider_used = "azure";
-  await setSession(c, token, session);
-
-  const azureBody = { model, messages, max_tokens: max_tokens || 16384 };
-  if (stream) azureBody.stream = true;
-  if (tools) azureBody.tools = tools;
-  if (tool_choice) azureBody.tool_choice = tool_choice;
-  if (temperature !== undefined) azureBody.temperature = temperature;
-  if (top_p !== undefined) azureBody.top_p = top_p;
-
-  const azureEndpoint = c.env.AZURE_OPENAI_ENDPOINT || "https://rahul-mok8ryyn-eastus2.services.ai.azure.com";
-  const azureUrl = `${azureEndpoint}/models/chat/completions?api-version=${c.env.AZURE_API_VERSION || '2024-05-01-preview'}`;
-
-  try {
-    const azureRes = await fetch(azureUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${azureApiKey}`,
-      },
-      body: JSON.stringify(azureBody),
-    });
-
-    if (!azureRes.ok) {
-      const errorText = await azureRes.text();
-      return new Response(errorText, {
-        status: azureRes.status,
-        headers: { "Content-Type": "application/json" },
-      });
-    }
-
-    await recordUserUsage(c, session, 1, 0);
-
-    if (!stream) {
-      const responseText = await azureRes.text();
-      let usageTokens = 0;
-      try {
-        const parsed = JSON.parse(responseText);
-        usageTokens = Number(parsed?.usage?.total_tokens || 0);
-      } catch { /* pass through non-JSON providers */ }
-      if (usageTokens > 0) {
-        session.tokens_used = Number(session.tokens_used || 0) + usageTokens;
-        await setSession(c, token, session);
-        await recordUserUsage(c, session, 0, usageTokens);
-      }
-      return new Response(responseText, {
-        status: azureRes.status,
-        headers: {
-          "Content-Type": azureRes.headers.get("content-type") || "application/json",
-          "Cache-Control": "no-cache",
-        },
-      });
-    }
-
-    return new Response(azureRes.body, {
-      status: azureRes.status,
-      headers: {
-        "Content-Type": azureRes.headers.get("content-type") || "application/json",
-        "Cache-Control": "no-cache",
-        ...(azureRes.headers.get("transfer-encoding") ? { "Transfer-Encoding": azureRes.headers.get("transfer-encoding") } : {}),
-      },
-    });
-  } catch (err) {
-    return c.json({ error: "Proxy error", message: err.message }, 502);
-  }
-};
-
+const chatCompletionsHandler = createChatHandler({ validateSession, setSession, getSession, planLimits: PLAN_LIMITS });
 api.post('/v1/chat/completions', chatCompletionsHandler);
 api.post('/auth/azure/proxy', chatCompletionsHandler);
 api.post('/auth/azure/chat/completions', chatCompletionsHandler);
 
-// 5. Models listing
-api.get('/v1/models', (c) => {
-  const models = [
-    { id: "Kimi-K2.5", aliases: ["default", "kimi"], type: "Global Standard" },
-    { id: "Kimi-K2.6", aliases: ["max", "reasoning"], type: "Global Standard" },
-    { id: "DeepSeek-V4-Flash", aliases: ["power", "deepseek", "fast", "flash"], type: "Global Standard" },
-    { id: "FW-DeepSeek-V3.2", aliases: ["code", "coder"], type: "Data Zone" },
-    { id: "FW-MiniMax-M2.5", aliases: ["minimax", "mm"], type: "Data Zone" },
-    { id: "model-router", aliases: ["router", "auto"], type: "Global Standard" },
-    { id: "gpt-5.4-pro", aliases: ["gpt54", "gpt-5.4"], type: "Global Standard" },
-    { id: "gpt-5.4-mini", aliases: ["gpt54m"], type: "Global Standard" },
-    { id: "gpt-5.5-2", aliases: ["gpt5", "gpt55", "gpt-5.5"], type: "Global Standard" },
-    { id: "gpt-5.1-codex-max", aliases: ["codex", "codex-max"], type: "Global Standard" },
-    { id: "@cf/meta/llama-3.1-8b-instruct", aliases: ["llama3", "llama"], type: "Workers AI Free Tier" },
-    { id: "@cf/deepseek-ai/deepseek-coder-7b-instruct-v1.5", aliases: ["deepseek-coder"], type: "Workers AI Free Tier" },
-    { id: "@cf/qwen/qwen1.5-14b-chat", aliases: ["qwen"], type: "Workers AI Free Tier" },
-    { id: "@cf/mistral/mistral-7b-instruct-v0.1", aliases: ["mistral"], type: "Workers AI Free Tier" },
-    { id: "@cf/zai-org/glm-5.2", aliases: ["glm", "glm5"], type: "Workers AI Free Tier" },
-    { id: "@cf/deepseek-ai/deepseek-r1-distill-qwen-32b", aliases: ["r1", "reasoner"], type: "Workers AI Free Tier" },
-  ];
-
-  return c.json({
-    object: "list",
-    data: models.map((m) => ({
-      id: m.id,
-      object: "model",
-      created: Date.now(),
-      owned_by: "azure-ai-foundry",
-      aliases: m.aliases,
-      type: m.type,
-    })),
-  });
+api.get('/v1/models', async (c) => {
+  let session = {};
+  if (c.req.header('Authorization')) {
+    try { const valid = await validateSession(c); if (!valid) return c.json({ error: 'Invalid session' }, 401); session = valid.session; }
+    catch { return c.json({ error: 'Account database unavailable' }, 503); }
+  }
+  return c.json({ object: 'list', data: modelCatalog(c.env, session).map(publicModel) });
 });
 
 // 6. OpenRouter OAuth Start
@@ -928,22 +663,15 @@ api.get('/auth/openrouter/start', async (c) => {
   const challenge = await sha256(verifier);
   const state = generateRandomString(16);
 
-  const cliPort = c.req.query("cli_port") || "4545";
-
   await setSession(c, `pkce:${state}`, {
     verifier,
     created: Date.now(),
-    cliPort,
   });
 
-  const clientId = c.env.OPENROUTER_CLIENT_ID || "neuroncli";
   const callbackUrl = c.env.OPENROUTER_CALLBACK_URL || "https://zero-x.live/neuroncli/callback/";
 
   const authUrl = new URL("https://openrouter.ai/auth");
-  authUrl.searchParams.set("client_id", clientId);
-  authUrl.searchParams.set("redirect_uri", callbackUrl);
-  authUrl.searchParams.set("response_type", "code");
-  authUrl.searchParams.set("scope", "openid");
+  authUrl.searchParams.set("callback_url", callbackUrl);
   authUrl.searchParams.set("code_challenge", challenge);
   authUrl.searchParams.set("code_challenge_method", "S256");
   authUrl.searchParams.set("state", state);
@@ -969,21 +697,24 @@ api.get('/auth/openrouter/callback', async (c) => {
     return c.json({ error: "Invalid or expired state" }, 400);
   }
 
+  await deleteSession(c, `pkce:${state}`);
   try {
-    const tokenRes = await fetch("https://openrouter.ai/api/v1/auth/keys", {
+    const exchange = await fetch("https://openrouter.ai/api/v1/auth/keys", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         code,
         code_verifier: pkceSession.verifier,
-        redirect_uri: c.env.OPENROUTER_CALLBACK_URL || "https://zero-x.live/neuroncli/callback/",
+        code_challenge_method: "S256",
       }),
-    }).then(res => res.json());
-
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!exchange.ok) return c.json({ error: 'Token exchange failed' }, 502);
+    const tokenRes = await exchange.json();
     const apiKey = tokenRes.key;
 
-    if (!apiKey) {
-      return c.json({ error: "Token exchange failed" }, 500);
+    if (typeof apiKey !== 'string' || !apiKey) {
+      return c.json({ error: "Token exchange failed" }, 502);
     }
 
     const sessionToken = "ses_" + generateRandomString(24);
@@ -995,48 +726,19 @@ api.get('/auth/openrouter/callback', async (c) => {
       tokens_used: 0,
       provider_used: "openrouter",
       openrouter_key: apiKey,
+      plan: "free",
+      owned_provider_only: true,
+      usage_day: new Date().toISOString().slice(0, 10),
     };
 
     await setSession(c, sessionToken, sessionData);
-    await deleteSession(c, `pkce:${state}`);
-
-    return c.html(successPage(sessionToken, "OpenRouter"));
-  } catch (err) {
-    return c.json({ error: "OAuth exchange failed", message: err.message }, 500);
+    return c.json({ session_token: sessionToken, provider: 'gateway', plan: 'free',
+      models: availableModels(c, sessionData), ...planQuota('free'),
+      ttl_seconds: (parseInt(c.env.SESSION_TTL_HOURS) || 24) * 3600 });
+  } catch {
+    return c.json({ error: "OAuth exchange failed" }, 502);
   }
 });
-
-// Success page helper HTML
-function successPage(sessionToken, provider) {
-  const masked = sessionToken.slice(0, 12) + "..." + sessionToken.slice(-6);
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8"/>
-  <title>NeuronCLI — Authentication Complete</title>
-  <style>
-    * { margin:0; padding:0; box-sizing:border-box; }
-    body { font-family:-apple-system,sans-serif; background:#0a0a0f; color:#e0e0e8; display:flex; justify-content:center; align-items:center; min-height:100vh; }
-    .card { background:rgba(20,20,30,0.9); border:1px solid rgba(100,120,255,0.2); border-radius:16px; padding:48px; max-width:520px; text-align:center; }
-    .icon { font-size:48px; margin-bottom:16px; color:#2D8C3C; }
-    h1 { font-size:24px; margin-bottom:8px; color:#8cf; }
-    p { color:#aab; margin-bottom:16px; line-height:1.5; }
-    .code-box { background:#111118; border:1px solid #333; border-radius:8px; padding:12px; font-family:monospace; font-size:12px; color:#7f8; margin:16px 0; }
-    .hint { font-size:12px; color:#667; }
-  </style>
-</head>
-<body>
-  <div class="card">
-    <div class="icon">✓</div>
-    <h1>Authentication Successful</h1>
-    <p>Connected via <strong>${provider}</strong>.</p>
-    <p>Authorization exchanged. Check NeuronCLI to confirm the connection.</p>
-    <div class="code-box">${masked}</div>
-    <p class="hint">If your terminal is still waiting, restart authentication there.</p>
-  </div>
-</body>
-</html>`;
-}
 
 app.route('/neuroncli/auth-server', api);
 app.route('/', api);
