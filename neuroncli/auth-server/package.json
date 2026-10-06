@@ -1,15 +1,18 @@
 {
   "name": "neuroncli-gateway",
   "version": "2.0.0",
-  "description": "NeuronCLI Gateway Server — Auth + streaming LLM proxy for Azure/OpenRouter",
+  "description": "Standalone Neuron account provisioning, quota policy and model-routing server",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
     "test": "npm run check:production",
     "build:seo": "node build-sitemap.mjs",
-    "check:production": "node check-worker.mjs && node check-gateway.mjs && node check-providers.mjs && node check-auth-storage.mjs && node check-dashboard.mjs && node check-seo.mjs && node check-callback.mjs && node check-cli-login.mjs && node check-node-server.cjs",
-    "deploy": "wrangler deploy"
+    "check:production": "node check-server-policy.mjs && node check-worker.mjs && node check-gateway.mjs && node check-providers.mjs && node check-auth-storage.mjs && node check-dashboard.mjs && node check-seo.mjs && node check-callback.mjs && node check-cli-login.mjs && node check-node-server.cjs",
+    "deploy": "wrangler deploy",
+    "deploy:api": "wrangler deploy --config wrangler.api.toml",
+    "start:api": "node server.js",
+    "check:database": "node check-quota-policy.mjs && node check-session-store.mjs"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",
@@ -17,5 +20,8 @@
     "dotenv": "^16.4.0",
     "express": "^4.21.0",
     "hono": "^4.3.0"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.5.8"
   }
 }

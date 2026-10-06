@@ -89,6 +89,19 @@ try {
   assert.equal(ownedRequests, 1);
   assert.ok(!catalog.some(item => item.id === 'owned-only'));
 
+  const managedSession = { account_backed: true, owned_provider_only: true, openrouter_key: 'stale-user-key' };
+  const managedEnv = { AI: { run: async () => ({ response: 'OK' }) }, OPENROUTER_API_KEY: 'server-key', OPENROUTER_MODELS: 'approved-model' };
+  const managedCatalog = await resolveModelCatalog(managedEnv, managedSession);
+  assert.equal(managedCatalog[0].provider, 'cloudflare', 'Provisioned accounts keep the server-backed coding default');
+  assert.ok(managedCatalog[0].tools);
+  globalThis.fetch = async (url, options) => {
+    assert.equal(url, 'https://openrouter.ai/api/v1/chat/completions');
+    assert.equal(options.headers.Authorization, 'Bearer server-key', 'Provisioned accounts never depend on a user provider key');
+    return Response.json({ choices: [{ message: { content: 'OK' } }] });
+  };
+  await requestCompletion(managedEnv, managedSession, managedCatalog.find(model => model.provider === 'openrouter'), { messages: [], max_tokens: 8 });
+  assert.equal(modelCatalog({ AI: managedEnv.AI }, managedSession)[0].provider, 'cloudflare');
+
   globalThis.fetch = async () => new Response('sensitive provider diagnostics secret-token', { status: 401 });
   const failedEnv = { GROQ_API_KEY: 'secret-token' };
   assert.deepEqual(await resolveModelCatalog(failedEnv), []);
@@ -98,7 +111,7 @@ try {
 
   const sessions = new Map([['ses_probe', JSON.stringify({ created: Date.now(), plan: 'free', requests: 0,
     tokens_used: 0, usage_day: new Date().toISOString().slice(0, 10) })]]);
-  const probeEnv = { ALLOW_ANONYMOUS_SESSIONS: 'true', AI: { run: async (_, payload) => {
+  const probeEnv = { GATEWAY_ADMIN_TOKEN: 'operator-test-token-with-32-characters', ALLOW_ANONYMOUS_SESSIONS: 'true', AI: { run: async (_, payload) => {
     assert.equal(payload.max_tokens, 8);
     return { response: 'OK', usage: { total_tokens: 3 } };
   } }, SESSIONS_KV: { get: async key => sessions.get(key), put: async (key, value) => sessions.set(key, value) } };
@@ -107,6 +120,8 @@ try {
     ...(model ? { body: JSON.stringify({ model }) } : {}),
   }, probeEnv);
   assert.equal((await probe('/v1/providers/health', null, 'bad')).status, 401);
+  assert.equal((await probe('/v1/providers/health', null)).status, 401);
+  assert.equal((await probe('/v1/providers/health', null, probeEnv.GATEWAY_ADMIN_TOKEN)).status, 200);
   assert.equal((await probe('/v1/models/health', 'auto', 'bad')).status, 401);
   const response = await probe('/v1/models/health', 'auto');
   assert.equal(response.status, 200);
