@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import app from './src/index.js';
-import { modelCatalog } from './src/providers.js';
+import { estimatePromptTokens, modelCatalog } from './src/providers.js';
 
 const store = new Map();
 const day = new Date().toISOString().slice(0, 10);
@@ -23,6 +23,7 @@ const request = (path, body, token = 'ses_test', bindings = env) => app.request(
 }, bindings);
 const messages = [{ role: 'user', content: 'Read hello.js' }];
 const tools = [{ type: 'function', function: { name: 'read_file', description: 'Read a file', parameters: { type: 'object', properties: { path: { type: 'string' } } } } }];
+assert.equal(estimatePromptTokens(messages, tools), Math.ceil(new TextEncoder().encode(JSON.stringify({ messages, tools })).byteLength / 4));
 const originalFetch = globalThis.fetch;
 try {
   assert.equal((await request('/v1/chat/completions', { model: 'auto', messages }, 'pkce_bad')).status, 401);
@@ -115,7 +116,9 @@ try {
   assert.equal(serviceError.error.upstream_status, undefined);
   assert.ok(!JSON.stringify(serviceError).includes('credential'));
   store.set('ses_exhausted', JSON.stringify({ ...session, tokens_used: 256000 }));
-  assert.equal((await request('/v1/chat/completions', { model: 'auto', messages }, 'ses_exhausted')).status, 429);
+  response = await request('/v1/chat/completions', { model: 'auto', messages }, 'ses_exhausted');
+  assert.equal(response.status, 429);
+  assert.equal((await response.json()).error.code, 'insufficient_quota');
   store.set('ses_yesterday', JSON.stringify({ ...session, tokens_used: 256000, usage_day: '2000-01-01' }));
   globalThis.fetch = async () => Response.json({ choices: [], usage: { total_tokens: 2 } });
   assert.equal((await request('/v1/chat/completions', { model: 'groq/llama-3.3-70b-versatile', messages }, 'ses_yesterday')).status, 200);
@@ -146,9 +149,12 @@ try {
   assert.equal((await request('/v1/chat/completions', { model: 'groq/llama-3.3-70b-versatile', messages }, 'ses_account', accountEnv)).status, 200);
   assert.equal(rpcCalls.at(-1)[0], 'zerox_settle_usage');
   assert.equal(rpcCalls.at(-1)[1].p_actual, 99);
+  assert.equal(rpcCalls.at(-1)[1].p_reserved, estimatePromptTokens(messages) + 4096);
   assert.equal(rpcCalls.at(-1)[1].p_day, day);
   allowReserve = false;
-  assert.equal((await request('/v1/chat/completions', { model: 'groq/llama-3.3-70b-versatile', messages }, 'ses_account', accountEnv)).status, 429);
+  response = await request('/v1/chat/completions', { model: 'groq/llama-3.3-70b-versatile', messages }, 'ses_account', accountEnv);
+  assert.equal(response.status, 429);
+  assert.equal((await response.json()).error.code, 'insufficient_quota');
   globalThis.fetch = async () => { throw new Error('database down'); };
   assert.equal((await app.request('https://zero-x.live/auth/session', { method: 'DELETE', headers: { Authorization: 'Bearer ses_account' } }, accountEnv)).status, 200);
   assert.equal(store.has('ses_account'), false);

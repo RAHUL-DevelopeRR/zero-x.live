@@ -150,8 +150,9 @@ export function publicModel(model) {
     capabilities: { tools: model.tools, streaming: true }, aliases: [], type: model.provider };
 }
 
-export function estimatePromptTokens(messages) {
-  return Math.max(1, Math.ceil(JSON.stringify(messages).length / 4));
+export function estimatePromptTokens(messages, tools) {
+  const serialized = JSON.stringify({ messages, tools });
+  return Math.max(1, Math.ceil(new TextEncoder().encode(serialized).byteLength / 4));
 }
 
 function normalizeCalls(calls = [], streaming = false) {
@@ -163,14 +164,15 @@ function normalizeCalls(calls = [], streaming = false) {
   });
 }
 
-export function normalizeCompletion(result, model, messages) {
+export function normalizeCompletion(result, model, messages, tools) {
   if (Array.isArray(result?.choices)) return { ...result, model };
   if (!result || typeof result !== 'object') throw new Error('Provider returned an invalid completion');
   const calls = normalizeCalls(result.tool_calls);
   const content = result.response ?? result.text ?? '';
   const completion = Math.ceil((content.length + JSON.stringify(calls).length) / 4);
-  const usage = result.usage || { prompt_tokens: estimatePromptTokens(messages), completion_tokens: completion,
-    total_tokens: estimatePromptTokens(messages) + completion, estimated: true };
+  const promptTokens = estimatePromptTokens(messages, tools);
+  const usage = result.usage || { prompt_tokens: promptTokens, completion_tokens: completion,
+    total_tokens: promptTokens + completion, estimated: true };
   return { id: `chatcmpl-${crypto.randomUUID()}`, object: 'chat.completion', created: Math.floor(Date.now() / 1000), model,
     choices: [{ index: 0, message: { role: 'assistant', content: calls.length && !content ? null : content,
       ...(calls.length ? { tool_calls: calls } : {}) }, finish_reason: calls.length ? 'tool_calls' : 'stop' }], usage };
@@ -188,7 +190,7 @@ export async function requestCompletion(env, session, entry, body, signal) {
         if (typeof result?.getReader !== 'function') throw new Error('Workers AI did not return a stream');
         return new Response(result, { headers: { 'Content-Type': 'text/event-stream' } });
       }
-      return Response.json(normalizeCompletion(result, entry.id, body.messages));
+      return Response.json(normalizeCompletion(result, entry.id, body.messages, body.tools));
     }
     const response = await fetch(`https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(env.CLOUDFLARE_ACCOUNT_ID)}/ai/run/${entry.id}`, {
       method: 'POST', headers: { Authorization: `Bearer ${env.CLOUDFLARE_API_TOKEN}`, 'Content-Type': 'application/json' },
@@ -197,7 +199,7 @@ export async function requestCompletion(env, session, entry, body, signal) {
     if (!response.ok || body.stream) return response;
     const result = await response.json();
     if (result.success === false) throw new Error('Cloudflare returned an unsuccessful completion');
-    return Response.json(normalizeCompletion(result.result || result, entry.id, body.messages));
+    return Response.json(normalizeCompletion(result.result || result, entry.id, body.messages, body.tools));
   }
   const config = HTTP_PROVIDERS[entry.provider];
   let url = `${providerBase(env, entry.provider)}/chat/completions`;
@@ -211,7 +213,7 @@ export async function requestCompletion(env, session, entry, body, signal) {
 }
 
 // Parse complete SSE events rather than network chunks; UTF-8 and CRLF may cross reads.
-export function completionStream(upstream, { model, messages, onUsage, signal, cancelUpstream }) {
+export function completionStream(upstream, { model, messages, tools, onUsage, signal, cancelUpstream }) {
   const reader = upstream.getReader();
   const decoder = new TextDecoder();
   const encoder = new TextEncoder();
@@ -225,7 +227,7 @@ export function completionStream(upstream, { model, messages, onUsage, signal, c
   const tally = async (incomplete = false) => {
     if (finished) return;
     finished = true;
-    await onUsage(usage || (incomplete ? {} : { total_tokens: estimatePromptTokens(messages) + Math.ceil(outputChars / 4), estimated: true }));
+    await onUsage(usage || (incomplete ? {} : { total_tokens: estimatePromptTokens(messages, tools) + Math.ceil(outputChars / 4), estimated: true }));
   };
   return new ReadableStream({
     async start(controller) {
