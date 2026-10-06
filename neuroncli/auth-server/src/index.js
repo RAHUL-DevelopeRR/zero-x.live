@@ -129,6 +129,7 @@ async function planQuota(c, plan, used = 0, requests = 0) {
       daily_limit: limits.daily_tokens,
       used,
       remaining: Math.max(0, limits.daily_tokens - used),
+      resets_at: new Date((Math.floor(Date.now() / 86400000) + 1) * 86400000).toISOString(),
     },
     usage: {
       requests,
