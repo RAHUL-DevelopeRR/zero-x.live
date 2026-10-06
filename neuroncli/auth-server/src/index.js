@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { accountRpc, databaseConfigured } from './account-store.js';
-import { modelCatalog, publicModel } from './providers.js';
+import { modelCatalog, resolveModelCatalog, providerHealth, providerConfiguration, publicModel } from './providers.js';
 import { createChatHandler } from './chat-handler.js';
 
 const app = new Hono();
@@ -406,6 +406,7 @@ api.get('/health', (c) => {
     service: "neuroncli-gateway-worker",
     version: "2.0.0",
     providers: [...new Set(modelCatalog(c.env).map(model => model.provider))],
+    provider_configuration: providerConfiguration(c.env),
     supabase_configured: !!(supabaseUrl && supabaseKey),
     kv_bound: !!c.env.SESSIONS_KV,
     database_configured: databaseConfigured(c.env),
@@ -654,7 +655,33 @@ api.get('/v1/models', async (c) => {
     try { const valid = await validateSession(c); if (!valid) return c.json({ error: 'Invalid session' }, 401); session = valid.session; }
     catch { return c.json({ error: 'Account database unavailable' }, 503); }
   }
-  return c.json({ object: 'list', data: modelCatalog(c.env, session).map(publicModel) });
+  return c.json({ object: 'list', data: (await resolveModelCatalog(c.env, session)).map(publicModel) });
+});
+
+api.get('/v1/providers/health', async (c) => {
+  let valid;
+  try { valid = await validateSession(c); }
+  catch { return c.json({ error: 'Account database unavailable' }, 503); }
+  if (!valid) return c.json({ error: 'Invalid or expired session token' }, 401);
+  c.header('Cache-Control', 'no-store');
+  return c.json({ providers: await providerHealth(c.env, valid.session) });
+});
+
+// Inference probes use the same authentication and quota accounting as a normal completion.
+api.post('/v1/models/health', async (c) => {
+  const body = await c.req.json().catch(() => null);
+  if (typeof body?.model !== 'string') return c.json({ error: 'Provide a model' }, 400);
+  const started = Date.now();
+  const response = await app.fetch(new Request(new URL('/v1/chat/completions', c.req.url), {
+    method: 'POST', headers: { Authorization: c.req.header('Authorization') || '', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: body.model, messages: [{ role: 'user', content: 'Reply OK.' }], max_tokens: 8 }),
+    signal: c.req.raw.signal,
+  }), c.env);
+  const result = await response.json();
+  if (!response.ok) return c.json({ model: body.model, status: 'unavailable', error: result.error, latency_ms: Date.now() - started }, response.status);
+  const validCompletion = result.choices?.some(choice => choice.message?.content || choice.message?.tool_calls?.length);
+  return c.json({ model: result.model, status: validCompletion ? 'healthy' : 'invalid_completion', inference_checked: true,
+    latency_ms: Date.now() - started, usage: result.usage }, validCompletion ? 200 : 502);
 });
 
 // 6. OpenRouter OAuth Start

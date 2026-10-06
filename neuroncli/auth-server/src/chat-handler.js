@@ -1,5 +1,5 @@
 import { accountRpc } from './account-store.js';
-import { modelCatalog, requestCompletion, normalizeCompletion, completionStream } from './providers.js';
+import { resolveModelCatalog, requestCompletion, normalizeCompletion, completionStream } from './providers.js';
 
 export function createChatHandler({ validateSession, setSession, getSession, planLimits }) {
   return async c => {
@@ -18,7 +18,7 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
     if (body.tools !== undefined && (!Array.isArray(body.tools) || body.tools.some(tool => tool?.type !== 'function' || !tool.function?.name))) {
       return c.json({ error: 'tools must contain function definitions' }, 400);
     }
-    const catalog = modelCatalog(c.env, session);
+    const catalog = await resolveModelCatalog(c.env, session);
     const entry = ['auto', 'default'].includes(body.model)
       ? catalog.find(model => model.tools) || catalog[0] : catalog.find(model => model.id === body.model);
     if (!entry) return c.json({ error: { message: 'Model is unavailable in the configured provider catalog', type: 'model_not_found', code: 'model_not_found' } }, 404);

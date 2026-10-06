@@ -8,7 +8,7 @@
     "dev": "node server.js",
     "test": "npm run check:production",
     "build:seo": "node build-sitemap.mjs",
-    "check:production": "node check-worker.mjs && node check-gateway.mjs && node check-auth-storage.mjs && node check-dashboard.mjs && node check-seo.mjs && node check-callback.mjs && node check-cli-login.mjs && node check-node-server.cjs",
+    "check:production": "node check-worker.mjs && node check-gateway.mjs && node check-providers.mjs && node check-auth-storage.mjs && node check-dashboard.mjs && node check-seo.mjs && node check-callback.mjs && node check-cli-login.mjs && node check-node-server.cjs",
     "deploy": "wrangler deploy"
   },
   "dependencies": {
