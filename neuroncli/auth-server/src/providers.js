@@ -1,12 +1,60 @@
 const CF_DEFAULTS = ['@cf/meta/llama-3.3-70b-instruct-fp8-fast', '@cf/meta/llama-3.1-8b-instruct'];
 const CF_TOOL_MODELS = new Set([CF_DEFAULTS[0]]);
 const HTTP_PROVIDERS = {
-  openrouter: { key: 'OPENROUTER_API_KEY', models: 'OPENROUTER_MODELS', url: 'https://openrouter.ai/api/v1/chat/completions' },
-  groq: { key: 'GROQ_API_KEY', models: 'GROQ_MODELS', url: 'https://api.groq.com/openai/v1/chat/completions' },
-  gemini: { key: 'GEMINI_API_KEY', models: 'GEMINI_MODELS', url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions' },
-  nvidia: { key: 'NVIDIA_API_KEY', models: 'NVIDIA_MODELS', url: 'https://integrate.api.nvidia.com/v1/chat/completions' },
+  openrouter: { key: 'OPENROUTER_API_KEY', models: 'OPENROUTER_MODELS', base: 'https://openrouter.ai/api/v1' },
+  groq: { key: 'GROQ_API_KEY', models: 'GROQ_MODELS', base: 'https://api.groq.com/openai/v1' },
+  gemini: { key: 'GEMINI_API_KEY', models: 'GEMINI_MODELS', base: 'https://generativelanguage.googleapis.com/v1beta/openai' },
+  nvidia: { key: 'NVIDIA_API_KEY', models: 'NVIDIA_MODELS', base: 'https://integrate.api.nvidia.com/v1' },
+  omniroute: { key: 'OMNIROUTE_API_KEY', models: 'OMNIROUTE_MODELS' },
+  bedrock: { key: 'BEDROCK_API_KEY', models: 'BEDROCK_MODELS' },
   azure: { key: 'AZURE_OPENAI_API_KEY', models: 'AZURE_MODELS' },
 };
+
+function providerBase(env, provider) {
+  if (provider === 'omniroute') {
+    if (!env.OMNIROUTE_BASE_URL) return null;
+    try {
+      const url = new URL(env.OMNIROUTE_BASE_URL);
+      if (url.username || url.password || url.search || url.hash ||
+          !(url.protocol === 'https:' || (url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)))) return null;
+      return url.toString().replace(/\/$/, '');
+    } catch { return null; }
+  }
+  if (provider === 'bedrock') {
+    const region = env.BEDROCK_REGION || env.AWS_REGION;
+    if (!region || !/^[a-z]{2}(?:-[a-z]+)+-\d+$/.test(region)) return null;
+    return env.BEDROCK_ENDPOINT === 'runtime'
+      ? `https://bedrock-runtime.${region}.amazonaws.com/openai/v1`
+      : `https://bedrock-mantle.${region}.api.aws/v1`;
+  }
+  return HTTP_PROVIDERS[provider]?.base;
+}
+
+function configuredProviders(env, session = {}) {
+  return Object.entries(HTTP_PROVIDERS).filter(([provider, config]) => {
+    if (session.owned_provider_only && provider !== 'openrouter') return false;
+    if (!(provider === 'openrouter' ? session.openrouter_key || env[config.key] : env[config.key])) return false;
+    return provider === 'azure' ? !!env.AZURE_OPENAI_ENDPOINT : !!providerBase(env, provider);
+  });
+}
+
+function providerKey(env, session, provider, config) {
+  return provider === 'openrouter' ? session.openrouter_key || env[config.key] : env[config.key];
+}
+
+function catalogEntry(env, provider, upstream, metadata) {
+  const id = ['groq', 'gemini', 'nvidia', 'omniroute', 'bedrock'].includes(provider) ? `${provider}/${upstream}` : upstream;
+  const explicitTools = modelIds(env[`${provider.toUpperCase()}_TOOL_MODELS`]).includes(upstream);
+  return { id, upstream, provider, tools: metadata
+    ? explicitTools || Array.isArray(metadata.supported_parameters) && metadata.supported_parameters.includes('tools') || metadata.capabilities?.tools === true
+    : explicitTools || (!['omniroute', 'bedrock'].includes(provider) && env[`${provider.toUpperCase()}_TOOL_MODELS`] === undefined) };
+}
+
+export function providerConfiguration(env, session = {}) {
+  const configured = configuredProviders(env, session).map(([provider]) => provider);
+  return Object.entries(HTTP_PROVIDERS).map(([provider, config]) => ({ provider, configured: configured.includes(provider),
+    catalog_source: env[config.models] !== undefined || provider === 'azure' || provider === 'bedrock' && env.BEDROCK_ENDPOINT === 'runtime' ? 'allowlist' : 'discovery' }));
+}
 
 function modelIds(value, fallback = []) {
   return value === undefined ? fallback : String(value).split(',').map(id => id.trim()).filter(Boolean);
@@ -21,19 +69,80 @@ export function modelCatalog(env, session = {}) {
       catalog.push({ id, provider: 'cloudflare', tools: CF_TOOL_MODELS.has(id) || modelIds(env.CLOUDFLARE_TOOL_MODELS).includes(id) });
     }
   }
-  for (const [provider, config] of Object.entries(HTTP_PROVIDERS)) {
-    if (session.owned_provider_only && provider !== 'openrouter') continue;
-    if (!(provider === 'openrouter' ? session.openrouter_key || env[config.key] : env[config.key])) continue;
-    if (provider === 'azure' && !env.AZURE_OPENAI_ENDPOINT) continue;
+  for (const [provider, config] of configuredProviders(env, session)) {
     // Session-owned OpenRouter keys can use its maintained free-model router without publishing stale model IDs.
     const fallback = provider === 'openrouter' ? ['openrouter/free'] : [];
     for (const upstream of modelIds(env[config.models], fallback)) {
-      const id = ['groq', 'gemini', 'nvidia'].includes(provider) ? `${provider}/${upstream}` : upstream;
-      if (catalog.some(model => model.id === id)) continue;
-      catalog.push({ id, upstream, provider, tools: true });
+      const entry = catalogEntry(env, provider, upstream);
+      if (catalog.some(model => model.id === entry.id)) continue;
+      catalog.push(entry);
     }
   }
   return catalog;
+}
+
+// Cache by environment and credential so one user's provider key cannot populate another user's catalog.
+const discoveryCache = new WeakMap();
+async function discoverProvider(env, session, provider, config) {
+  if (provider === 'azure' || (provider === 'bedrock' && env.BEDROCK_ENDPOINT === 'runtime')) {
+    const models = modelCatalog(env, session).filter(model => model.provider === provider);
+    return { provider, status: models.length ? 'configured' : 'allowlist_required', discovery: false, models };
+  }
+  let cache = discoveryCache.get(env);
+  if (!cache) { cache = new Map(); discoveryCache.set(env, cache); }
+  const key = `${provider}:${providerBase(env, provider)}:${providerKey(env, session, provider, config)}`;
+  const cached = cache.get(key);
+  if (cached && cached.expires > Date.now()) return cached.promise;
+  const promise = (async () => {
+    const started = Date.now();
+    const result = { provider, checked_at: new Date().toISOString(), discovery: true, models: [] };
+    try {
+      const response = await fetch(`${providerBase(env, provider)}/models`, {
+        headers: { Authorization: `Bearer ${providerKey(env, session, provider, config)}` },
+        signal: AbortSignal.timeout(5000), redirect: 'error',
+      });
+      result.http_status = response.status;
+      if (!response.ok) {
+        await response.body?.cancel();
+        return { ...result, status: response.status === 401 || response.status === 403 ? 'unauthorized' : response.status === 429 ? 'rate_limited' : 'unavailable', latency_ms: Date.now() - started };
+      }
+      const data = await response.json();
+      if (!Array.isArray(data.data)) throw new Error('Invalid provider catalog');
+      result.models = data.data.filter(model => typeof model?.id === 'string' && model.id.trim().length > 0 && model.id.length <= 512 && model.active !== false)
+        .filter(model => !model.architecture?.output_modalities || model.architecture.output_modalities.includes('text'))
+        .filter(model => provider !== 'openrouter' || env.OPENROUTER_FREE_ONLY === 'false' || model.id === 'openrouter/free' ||
+          model.pricing?.prompt != null && model.pricing?.completion != null &&
+          model.pricing.prompt !== '' && model.pricing.completion !== '' && Number(model.pricing.prompt) === 0 && Number(model.pricing.completion) === 0)
+        .map(model => catalogEntry(env, provider, model.id, model));
+      return { ...result, status: 'reachable', latency_ms: Date.now() - started };
+    } catch { return { ...result, status: 'unavailable', latency_ms: Date.now() - started }; }
+  })();
+  if (cache.size >= 100) cache.delete(cache.keys().next().value);
+  cache.set(key, { expires: Date.now() + 60000, promise });
+  return promise;
+}
+
+export async function resolveModelCatalog(env, session = {}) {
+  const catalog = modelCatalog(env, session);
+  const providers = configuredProviders(env, session).filter(([, config]) => env[config.models] === undefined);
+  const discovered = await Promise.all(providers.map(([provider, config]) => discoverProvider(env, session, provider, config)));
+  for (const result of discovered) {
+    for (const entry of result.models) if (!catalog.some(model => model.id === entry.id)) catalog.push(entry);
+  }
+  return catalog;
+}
+
+export async function providerHealth(env, session = {}) {
+  const configured = configuredProviders(env, session);
+  const states = await Promise.all(configured.map(([provider, config]) => discoverProvider(env, session, provider, config)));
+  const health = Object.keys(HTTP_PROVIDERS).map(provider => {
+    const state = states.find(item => item.provider === provider);
+    return state ? { ...state, models: undefined, configured: true, model_count: state.models.length,
+      inference_checked: false } : { provider, configured: false, status: 'not_configured', inference_checked: false };
+  });
+  health.unshift({ provider: 'cloudflare', configured: !session.owned_provider_only && !!(env.AI || env.CLOUDFLARE_ACCOUNT_ID && env.CLOUDFLARE_API_TOKEN),
+    status: modelCatalog(env, session).some(model => model.provider === 'cloudflare') ? 'binding_configured' : 'not_configured', inference_checked: false });
+  return health;
 }
 
 export function publicModel(model) {
@@ -83,7 +192,7 @@ export async function requestCompletion(env, session, entry, body, signal) {
     }
     const response = await fetch(`https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(env.CLOUDFLARE_ACCOUNT_ID)}/ai/run/${entry.id}`, {
       method: 'POST', headers: { Authorization: `Bearer ${env.CLOUDFLARE_API_TOKEN}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload), signal,
+      body: JSON.stringify(payload), signal, redirect: 'error',
     });
     if (!response.ok || body.stream) return response;
     const result = await response.json();
@@ -91,14 +200,14 @@ export async function requestCompletion(env, session, entry, body, signal) {
     return Response.json(normalizeCompletion(result.result || result, entry.id, body.messages));
   }
   const config = HTTP_PROVIDERS[entry.provider];
-  let url = config.url;
+  let url = `${providerBase(env, entry.provider)}/chat/completions`;
   if (entry.provider === 'azure') {
     url = `${env.AZURE_OPENAI_ENDPOINT.replace(/\/$/, '')}/models/chat/completions?api-version=${encodeURIComponent(env.AZURE_API_VERSION || '2024-05-01-preview')}`;
   }
   if (body.stream) payload.stream_options = { include_usage: true };
-  const key = entry.provider === 'openrouter' ? session.openrouter_key || env[config.key] : env[config.key];
+  const key = providerKey(env, session, entry.provider, config);
   return fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
-    body: JSON.stringify(payload), signal });
+    body: JSON.stringify(payload), signal, redirect: 'error' });
 }
 
 // Parse complete SSE events rather than network chunks; UTF-8 and CRLF may cross reads.
