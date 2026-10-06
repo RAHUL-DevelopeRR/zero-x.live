@@ -6,13 +6,14 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
-    "test": "npm run check:production",
+    "test": "npm run check:server && npm run check:database",
     "build:seo": "node build-sitemap.mjs",
     "check:production": "node check-server-policy.mjs && node check-worker.mjs && node check-gateway.mjs && node check-providers.mjs && node check-auth-storage.mjs && node check-dashboard.mjs && node check-seo.mjs && node check-callback.mjs && node check-cli-login.mjs && node check-node-server.cjs",
     "deploy": "wrangler deploy",
     "deploy:api": "wrangler deploy --config wrangler.api.toml",
     "start:api": "node server.js",
-    "check:database": "node check-quota-policy.mjs && node check-session-store.mjs"
+    "check:database": "node check-quota-policy.mjs && node check-session-store.mjs",
+    "check:server": "node check-server-policy.mjs && node check-gateway.mjs && node check-providers.mjs && node check-api-server.cjs"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",

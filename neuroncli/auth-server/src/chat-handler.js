@@ -1,5 +1,5 @@
 import { accountRpc } from './account-store.js';
-import { resolveModelCatalog, requestCompletion, normalizeCompletion, completionStream } from './providers.js';
+import { resolveModelCatalog, requestCompletion, normalizeCompletion, completionStream, estimatePromptTokens } from './providers.js';
 
 export function createChatHandler({ validateSession, setSession, getSession, planLimits }) {
   return async c => {
@@ -30,19 +30,19 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
       if (body[key] !== undefined) payload[key] = body[key];
     }
     // Bytes give a conservative budget across tokenizers and include the tool definitions.
-    const reserved = new TextEncoder().encode(JSON.stringify({ messages: body.messages, tools: body.tools })).byteLength + maxTokens;
+    const reserved = estimatePromptTokens(body.messages, body.tools) + maxTokens;
     let day = new Date().toISOString().slice(0, 10);
     try {
       if (session.account_backed) {
         const account = await accountRpc(c.env, 'zerox_reserve_usage', { p_user_id: session.user_id, p_tokens: reserved });
-        if (!account) return c.json({ error: 'This request exceeds your remaining daily Neuron allocation. It resets at midnight UTC.' }, 429);
+        if (!account) return c.json({ error: { message: 'This request exceeds your remaining daily Neuron allocation. It resets at midnight UTC.', type: 'insufficient_quota', code: 'insufficient_quota' } }, 429);
         day = account.last_usage_reset || day;
         session.requests = Number(account.daily_requests); session.tokens_used = Number(account.daily_tokens_used);
       } else {
         const policies = await planLimits(c.env);
         const limits = policies[session.plan] || policies.free;
         if (Number(session.requests || 0) >= limits.daily_requests || Number(session.tokens_used || 0) + reserved > limits.daily_tokens) {
-          return c.json({ error: 'This request exceeds your remaining daily Neuron allocation. It resets at midnight UTC.' }, 429);
+          return c.json({ error: { message: 'This request exceeds your remaining daily Neuron allocation. It resets at midnight UTC.', type: 'insufficient_quota', code: 'insufficient_quota' } }, 429);
         }
         session.requests = Number(session.requests || 0) + 1;
         session.tokens_used = Number(session.tokens_used || 0) + reserved;
@@ -82,10 +82,10 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
       }
       if (payload.stream) {
         if (!upstream.body || !upstream.headers.get('content-type')?.includes('text/event-stream')) throw new Error('Provider did not return SSE');
-        return new Response(completionStream(upstream.body, { model: entry.id, messages: body.messages, onUsage: settle,
+        return new Response(completionStream(upstream.body, { model: entry.id, messages: body.messages, tools: body.tools, onUsage: settle,
           signal, cancelUpstream: () => controller.abort() }), { headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store' } });
       }
-      const completion = normalizeCompletion(await upstream.json(), entry.id, body.messages);
+      const completion = normalizeCompletion(await upstream.json(), entry.id, body.messages, body.tools);
       await settle(completion.usage);
       return c.json(completion);
     } catch {
