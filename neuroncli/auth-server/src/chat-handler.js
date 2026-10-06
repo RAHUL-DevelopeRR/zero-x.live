@@ -5,7 +5,7 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
   return async c => {
     let valid;
     try { valid = await validateSession(c); }
-    catch { return c.json({ error: { message: 'Account database unavailable', type: 'service_unavailable' } }, 503); }
+    catch { return c.json({ error: { message: 'Neuron is temporarily unavailable. Retry shortly.', type: 'service_unavailable' } }, 503); }
     if (!valid) return c.json({ error: { message: 'Invalid or expired session token', type: 'authentication_error' } }, 401);
     const { token, session } = valid;
     const body = await c.req.json().catch(() => null);
@@ -21,7 +21,7 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
     const catalog = await resolveModelCatalog(c.env, session);
     const entry = ['auto', 'default'].includes(body.model)
       ? catalog.find(model => model.tools) || catalog[0] : catalog.find(model => model.id === body.model);
-    if (!entry) return c.json({ error: { message: 'Model is unavailable in the configured provider catalog', type: 'model_not_found', code: 'model_not_found' } }, 404);
+    if (!entry) return c.json({ error: { message: 'The requested model is unavailable. Select another model or retry shortly.', type: 'model_not_found', code: 'model_not_found' } }, 404);
     if (body.tools?.length && !entry.tools) return c.json({ error: { message: 'This model does not support tools; choose a tool-capable model', type: 'invalid_request_error' } }, 400);
     const maxTokens = body.max_tokens ?? body.max_completion_tokens ?? 4096;
     if (!Number.isSafeInteger(maxTokens) || maxTokens < 1 || maxTokens > 32768) return c.json({ error: 'max_tokens must be between 1 and 32768' }, 400);
@@ -32,23 +32,27 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
     // Bytes give a conservative budget across tokenizers and include the tool definitions.
     const reserved = new TextEncoder().encode(JSON.stringify({ messages: body.messages, tools: body.tools })).byteLength + maxTokens;
     let day = new Date().toISOString().slice(0, 10);
-    const limits = planLimits[session.plan] || planLimits.free;
     try {
       if (session.account_backed) {
         const account = await accountRpc(c.env, 'zerox_reserve_usage', { p_user_id: session.user_id, p_tokens: reserved });
-        if (!account) return c.json({ error: 'Daily request or token limit exceeded' }, 429);
+        if (!account) return c.json({ error: 'This request exceeds your remaining daily Neuron allocation. It resets at midnight UTC.' }, 429);
         day = account.last_usage_reset || day;
         session.requests = Number(account.daily_requests); session.tokens_used = Number(account.daily_tokens_used);
       } else {
+        const policies = await planLimits(c.env);
+        const limits = policies[session.plan] || policies.free;
         if (Number(session.requests || 0) >= limits.daily_requests || Number(session.tokens_used || 0) + reserved > limits.daily_tokens) {
-          return c.json({ error: 'Daily request or token limit exceeded' }, 429);
+          return c.json({ error: 'This request exceeds your remaining daily Neuron allocation. It resets at midnight UTC.' }, 429);
         }
         session.requests = Number(session.requests || 0) + 1;
         session.tokens_used = Number(session.tokens_used || 0) + reserved;
       }
       session.provider_used = entry.provider;
       await setSession(c, token, session);
-    } catch { return c.json({ error: 'Quota accounting unavailable; apply the quota reservation migration' }, 503); }
+    } catch {
+      console.error('Neuron allocation reservation unavailable');
+      return c.json({ error: 'Neuron is temporarily unavailable. Retry shortly.' }, 503);
+    }
     let settled = false;
     const settle = async usage => {
       if (settled) return;
@@ -72,7 +76,8 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
       if (!upstream.ok) {
         await upstream.body?.cancel();
         await settle({ total_tokens: 0 });
-        return c.json({ error: { message: `Provider ${entry.provider} rejected the request (${upstream.status})`, type: 'upstream_error', provider: entry.provider, upstream_status: upstream.status } }, upstream.status === 429 ? 429 : 502,
+        console.error('Neuron upstream rejected request', { provider: entry.provider, status: upstream.status });
+        return c.json({ error: { message: 'Generation is temporarily unavailable. Retry shortly.', type: 'upstream_error' } }, upstream.status === 429 ? 429 : 502,
           upstream.headers.get('retry-after') ? { 'Retry-After': upstream.headers.get('retry-after') } : {});
       }
       if (payload.stream) {
@@ -86,7 +91,8 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
     } catch {
       // Unknown transport failures can incur upstream work; retain the reservation.
       controller.abort();
-      return c.json({ error: { message: 'Provider request failed or timed out', type: 'upstream_error', provider: entry.provider } }, 502);
+      console.error('Neuron upstream request failed', { provider: entry.provider });
+      return c.json({ error: { message: 'Generation failed or timed out. Retry your request.', type: 'upstream_error' } }, 502);
     }
   };
 }

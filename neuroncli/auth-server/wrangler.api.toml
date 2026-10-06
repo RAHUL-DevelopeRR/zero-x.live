@@ -1,0 +1,12 @@
+name = "neuron-gateway"
+main = "src/index.js"
+compatibility_date = "2026-10-06"
+workers_dev = true
+
+# Operator supplies identity configuration and SESSIONS_KV binding before deploy.
+# Provider keys are Worker secrets; Cloudflare AI works without client provider keys.
+[ai]
+binding = "AI"
+
+[observability]
+enabled = true

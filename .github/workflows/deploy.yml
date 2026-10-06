@@ -27,6 +27,7 @@ jobs:
           npm ci
           node build-sitemap.mjs
           npm run check:production
+          npm run check:database
           npm audit --omit=dev
 
       - name: Deploy Worker

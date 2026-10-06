@@ -3,9 +3,16 @@ import { cors } from 'hono/cors';
 import { accountRpc, databaseConfigured } from './account-store.js';
 import { modelCatalog, resolveModelCatalog, providerHealth, providerConfiguration, publicModel } from './providers.js';
 import { createChatHandler } from './chat-handler.js';
+import { loadPlanLimits } from './plan-policy.js';
+import { isOperator } from './operator-auth.js';
+import { persistentSessionStore } from './session-store.js';
 
 const app = new Hono();
 const api = new Hono();
+app.onError((error, c) => {
+  console.error('Neuron service request failed', { name: error.name });
+  return c.json({ error: 'Service temporarily unavailable. Please try again shortly.', code: 'service_unavailable' }, 503);
+});
 
 app.use('*', async (c, next) => {
   const url = new URL(c.req.url);
@@ -101,25 +108,20 @@ app.use('*', async (c, next) => {
 // Global sessions in-memory fallback (useful for dev/zero-config, ephemerally persists per isolate)
 const sessions = new Map();
 
-const PLAN_LIMITS = {
-  free: { name: "Free", daily_tokens: 256000, daily_requests: 2000, price_usd: 0 },
-  pro: { name: "Pro", daily_tokens: 2000000, daily_requests: 20000, price_usd: 10 },
-  // Legacy Fallback mapping for existing DB accounts
-  ultrawork: { name: "Pro (Legacy Ultrawork)", daily_tokens: 2000000, daily_requests: 20000, price_usd: 10 },
-};
 
-function availableModels(c, session = {}) {
-  return modelCatalog(c.env, session).map(model => model.id);
+async function availableModels(c, session = {}) {
+  return (await resolveModelCatalog(c.env, session)).map(model => model.id);
 }
 
 function normalizePlan(plan) {
   const key = String(plan || "free").toLowerCase().replace(/[^a-z0-9_-]/g, "");
-  return PLAN_LIMITS[key] ? key : "free";
+  return ["free", "pro", "ultrawork"].includes(key) ? key : "free";
 }
 
-function planQuota(plan, used = 0, requests = 0) {
+async function planQuota(c, plan, used = 0, requests = 0) {
   const key = normalizePlan(plan);
-  const limits = PLAN_LIMITS[key];
+  const policies = await loadPlanLimits(c.env);
+  const limits = policies[key] || policies.free;
   return {
     plan: key,
     plan_name: limits.name,
@@ -288,11 +290,11 @@ async function syncUserRecord(c, auth) {
   });
 }
 
-function userResponse(c, user, fallbackUserId = "") {
+async function userResponse(c, user, fallbackUserId = "") {
   const plan = normalizePlan(user?.plan || "free");
   const tokensUsed = Number(user?.daily_tokens_used || 0);
   const requests = Number(user?.daily_requests || 0);
-  const quota = planQuota(plan, tokensUsed, requests);
+  const quota = await planQuota(c, plan, tokensUsed, requests);
   return {
     user_id: user?.clerk_id || fallbackUserId,
     email: user?.email || "",
@@ -302,33 +304,39 @@ function userResponse(c, user, fallbackUserId = "") {
     username: user?.username || "",
     image_url: user?.image_url || "",
     plan,
-    models: availableModels(c),
+    models: await availableModels(c),
     ...quota,
   };
 }
 
 // ── Session persistence helpers (Support Cloudflare KV with in-memory fallback) ──
 async function getSession(c, token) {
-  if (c.env && c.env.SESSIONS_KV) {
-    const data = await c.env.SESSIONS_KV.get(token);
+  const store = persistentSessionStore(c.env);
+  if (store) {
+    const data = await store.get(token);
     return data ? JSON.parse(data) : null;
   }
-  return sessions.get(token);
+  if (c.env.ALLOW_ANONYMOUS_SESSIONS === 'true') return sessions.get(token);
+  throw new Error('Session persistence unavailable');
 }
 
 async function setSession(c, token, session) {
-  if (c.env && c.env.SESSIONS_KV) {
+  const store = persistentSessionStore(c.env);
+  if (store) {
     const ttlHours = parseInt(c.env.SESSION_TTL_HOURS) || 24;
-    await c.env.SESSIONS_KV.put(token, JSON.stringify(session), { expirationTtl: ttlHours * 3600 });
+    await store.put(token, JSON.stringify(session), { expirationTtl: ttlHours * 3600 });
   } else {
+    if (c.env.ALLOW_ANONYMOUS_SESSIONS !== 'true') throw new Error('Session persistence unavailable');
     sessions.set(token, session);
   }
 }
 
 async function deleteSession(c, token) {
-  if (c.env && c.env.SESSIONS_KV) {
-    await c.env.SESSIONS_KV.delete(token);
+  const store = persistentSessionStore(c.env);
+  if (store) {
+    await store.delete(token);
   } else {
+    if (c.env.ALLOW_ANONYMOUS_SESSIONS !== 'true') throw new Error('Session persistence unavailable');
     sessions.delete(token);
   }
 }
@@ -406,11 +414,19 @@ api.get('/health', (c) => {
     service: "neuroncli-gateway-worker",
     version: "2.0.0",
     providers: [...new Set(modelCatalog(c.env).map(model => model.provider))],
-    provider_configuration: providerConfiguration(c.env),
     supabase_configured: !!(supabaseUrl && supabaseKey),
     kv_bound: !!c.env.SESSIONS_KV,
     database_configured: databaseConfigured(c.env),
   });
+});
+
+api.get('/ready', async c => {
+  await loadPlanLimits(c.env);
+  const store = persistentSessionStore(c.env);
+  if (!store) return c.json({ ready: false }, 503);
+  await store.get('readiness');
+  const models = await resolveModelCatalog(c.env);
+  return c.json({ ready: models.some(model => model.tools) }, models.some(model => model.tools) ? 200 : 503);
 });
 
 api.get('/auth/config', async (c) => {
@@ -453,7 +469,7 @@ const createSessionHandler = async (c) => {
   }
 
   const plan = 'free';
-  const quota = planQuota(plan);
+  const quota = await planQuota(c, plan);
   const sessionToken = "ses_" + generateRandomString(24);
   const sessionData = {
     created: Date.now(),
@@ -479,7 +495,7 @@ const createSessionHandler = async (c) => {
     image_url: sessionData.image_url,
     plan,
     provider: "gateway",
-    models: availableModels(c),
+    models: await availableModels(c),
     quota: quota.quota,
     usage: quota.usage,
     limits: quota.limits,
@@ -511,7 +527,7 @@ const createIdentityCliSessionHandler = async (c) => {
   }
 
   if (!user) return c.json({ error: 'Account database returned no record' }, 503);
-  const account = userResponse(c, user, auth.userId);
+  const account = await userResponse(c, user, auth.userId);
   const sessionToken = "ses_" + generateRandomString(24);
   const sessionData = {
     created: Date.now(),
@@ -550,6 +566,7 @@ const verifySessionHandler = async (c) => {
   const { session } = valid;
   const ttlHours = parseInt(c.env.SESSION_TTL_HOURS) || 24;
   const sessionTtlMs = ttlHours * 3600 * 1000;
+  const quota = await planQuota(c, session.plan, Number(session.tokens_used || 0), Number(session.requests || 0));
 
   return c.json({
     created: new Date(session.created).toISOString(),
@@ -559,12 +576,12 @@ const verifySessionHandler = async (c) => {
     name: session.name,
     image_url: session.image_url,
     plan: normalizePlan(session.plan),
-    models: availableModels(c, session),
+    models: await availableModels(c, session),
     requests: session.requests,
     tokens_used: session.tokens_used,
-    quota: planQuota(normalizePlan(session.plan), Number(session.tokens_used || 0), Number(session.requests || 0)).quota,
-    usage: planQuota(normalizePlan(session.plan), Number(session.tokens_used || 0), Number(session.requests || 0)).usage,
-    limits: planQuota(normalizePlan(session.plan), Number(session.tokens_used || 0), Number(session.requests || 0)).limits,
+    quota: quota.quota,
+    usage: quota.usage,
+    limits: quota.limits,
     provider_used: session.provider_used,
     ttl_remaining_seconds: Math.max(
       0,
@@ -588,7 +605,7 @@ api.get('/auth/usage', async (c) => {
   const valid = await validateSession(c);
   if (!valid) return c.json({ error: "Invalid or expired session" }, 401);
   const session = valid.session;
-  const quota = planQuota(normalizePlan(session.plan), Number(session.tokens_used || 0), Number(session.requests || 0));
+  const quota = await planQuota(c, normalizePlan(session.plan), Number(session.tokens_used || 0), Number(session.requests || 0));
   return c.json({ user_id: session.user_id, ...quota });
 });
 
@@ -597,12 +614,13 @@ api.get('/auth/plan', async (c) => {
   if (!valid) return c.json({ error: "Invalid or expired session" }, 401);
   const session = valid.session;
   const plan = normalizePlan(session.plan);
+  const policies = await loadPlanLimits(c.env);
   return c.json({
     user_id: session.user_id,
     plan,
-    plan_name: PLAN_LIMITS[plan].name,
-    models: availableModels(c, session),
-    limits: PLAN_LIMITS[plan],
+    plan_name: (policies[plan] || policies.free).name,
+    models: await availableModels(c, session),
+    limits: (policies[plan] || policies.free),
   });
 });
 
@@ -623,10 +641,10 @@ api.post('/auth/sync', async (c) => {
     if (!user) {
       return c.json({ status: "skipped", message: "Account database returned no record" });
     }
-    return c.json({ status: "success", ...userResponse(c, user, auth.userId) });
+    return c.json({ status: "success", ...(await userResponse(c, user, auth.userId)) });
   } catch (err) {
     console.error("Database sync error:", err);
-    return c.json({ error: "Internal Server Error", message: err.message }, 500);
+    return c.json({ error: "Account service temporarily unavailable. Please try again shortly.", code: "service_unavailable" }, 503);
   }
 });
 
@@ -636,15 +654,15 @@ api.get('/auth/me', async (c) => {
     return c.json({ error: auth.error, message: auth.message }, auth.status);
   }
   try {
-    const user = await loadUserRecord(c, auth.userId);
-    return c.json({ status: user ? "success" : "missing", ...userResponse(c, user, auth.userId) });
+    const user = await loadUserRecord(c, auth.userId) || await syncUserRecord(c, auth);
+    return c.json({ status: user ? "success" : "missing", ...(await userResponse(c, user, auth.userId)) });
   } catch (err) {
     console.error("Account lookup error:", err);
-    return c.json({ error: "Internal Server Error", message: err.message }, 500);
+    return c.json({ error: "Account service temporarily unavailable. Please try again shortly.", code: "service_unavailable" }, 503);
   }
 });
 
-const chatCompletionsHandler = createChatHandler({ validateSession, setSession, getSession, planLimits: PLAN_LIMITS });
+const chatCompletionsHandler = createChatHandler({ validateSession, setSession, getSession, planLimits: loadPlanLimits });
 api.post('/v1/chat/completions', chatCompletionsHandler);
 api.post('/auth/azure/proxy', chatCompletionsHandler);
 api.post('/auth/azure/chat/completions', chatCompletionsHandler);
@@ -659,12 +677,9 @@ api.get('/v1/models', async (c) => {
 });
 
 api.get('/v1/providers/health', async (c) => {
-  let valid;
-  try { valid = await validateSession(c); }
-  catch { return c.json({ error: 'Account database unavailable' }, 503); }
-  if (!valid) return c.json({ error: 'Invalid or expired session token' }, 401);
+  if (!await isOperator(c)) return c.json({ error: 'Operator authentication required' }, 401);
   c.header('Cache-Control', 'no-store');
-  return c.json({ providers: await providerHealth(c.env, valid.session) });
+  return c.json({ provider_configuration: providerConfiguration(c.env), providers: await providerHealth(c.env) });
 });
 
 // Inference probes use the same authentication and quota accounting as a normal completion.
@@ -760,7 +775,7 @@ api.get('/auth/openrouter/callback', async (c) => {
 
     await setSession(c, sessionToken, sessionData);
     return c.json({ session_token: sessionToken, provider: 'gateway', plan: 'free',
-      models: availableModels(c, sessionData), ...planQuota('free'),
+      models: await availableModels(c, sessionData), ...(await planQuota(c, 'free')),
       ttl_seconds: (parseInt(c.env.SESSION_TTL_HOURS) || 24) * 3600 });
   } catch {
     return c.json({ error: "OAuth exchange failed" }, 502);

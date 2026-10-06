@@ -106,6 +106,14 @@ try {
   response = await request('/v1/chat/completions', { model: 'groq/llama-3.3-70b-versatile', messages });
   assert.equal(response.status, 429); assert.equal(response.headers.get('retry-after'), '15');
   assert.ok(!(await response.text()).includes('owned-key'));
+  globalThis.fetch = async () => new Response('invalid credential sensitive diagnostics', { status: 401 });
+  response = await request('/v1/chat/completions', { model: 'groq/llama-3.3-70b-versatile', messages });
+  assert.equal(response.status, 502);
+  const serviceError = await response.json();
+  assert.equal(serviceError.error.message, 'Generation is temporarily unavailable. Retry shortly.');
+  assert.equal(serviceError.error.provider, undefined);
+  assert.equal(serviceError.error.upstream_status, undefined);
+  assert.ok(!JSON.stringify(serviceError).includes('credential'));
   store.set('ses_exhausted', JSON.stringify({ ...session, tokens_used: 256000 }));
   assert.equal((await request('/v1/chat/completions', { model: 'auto', messages }, 'ses_exhausted')).status, 429);
   store.set('ses_yesterday', JSON.stringify({ ...session, tokens_used: 256000, usage_day: '2000-01-01' }));
@@ -116,7 +124,7 @@ try {
   globalThis.fetch = async () => new Response('data: {"choices":[{"delta":{"content":"partial"},"finish_reason":null}]}\n\n', { headers: { 'Content-Type': 'text/event-stream' } });
   response = await request('/v1/chat/completions', { model: 'groq/llama-3.3-70b-versatile', messages, stream: true });
   const interrupted = await response.text();
-  assert.ok(interrupted.includes('Provider stream interrupted'));
+  assert.ok(interrupted.includes('Generation interrupted. Retry your request.'));
   assert.ok(!interrupted.includes('[DONE]'));
   assert.ok(JSON.parse(store.get('ses_test')).tokens_used > beforeInterrupted + 4096);
 

@@ -1,3 +1,4 @@
+import { DEVELOPMENT_PLANS } from './src/plan-policy.js';
 import assert from 'node:assert/strict';
 import app from './src/index.js';
 
@@ -99,6 +100,7 @@ try {
     }
     assert.equal(options.headers.apikey, databaseEnv.SUPABASE_SECRET_KEY);
     assert.equal(options.headers.Authorization, undefined);
+    if (url.endsWith('/zerox_plan_policies')) return Response.json([{ policies: DEVELOPMENT_PLANS }]);
     const args = JSON.parse(options.body);
     assert.equal(args.p_user_id, userId);
     if (url.endsWith('/zerox_sync_account')) {

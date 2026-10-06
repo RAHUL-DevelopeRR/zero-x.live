@@ -32,14 +32,14 @@ function providerBase(env, provider) {
 
 function configuredProviders(env, session = {}) {
   return Object.entries(HTTP_PROVIDERS).filter(([provider, config]) => {
-    if (session.owned_provider_only && provider !== 'openrouter') return false;
-    if (!(provider === 'openrouter' ? session.openrouter_key || env[config.key] : env[config.key])) return false;
+    if (session.owned_provider_only && !session.account_backed && provider !== 'openrouter') return false;
+    if (!providerKey(env, session, provider, config)) return false;
     return provider === 'azure' ? !!env.AZURE_OPENAI_ENDPOINT : !!providerBase(env, provider);
   });
 }
 
 function providerKey(env, session, provider, config) {
-  return provider === 'openrouter' ? session.openrouter_key || env[config.key] : env[config.key];
+  return provider === 'openrouter' && !session.account_backed ? session.openrouter_key || env[config.key] : env[config.key];
 }
 
 function catalogEntry(env, provider, upstream, metadata) {
@@ -63,7 +63,7 @@ function modelIds(value, fallback = []) {
 // Provider/model allowlists are operator configuration, never inferred from model substrings.
 export function modelCatalog(env, session = {}) {
   const catalog = [];
-  if (!session.owned_provider_only && (env.AI || (env.CLOUDFLARE_ACCOUNT_ID && env.CLOUDFLARE_API_TOKEN))) {
+  if ((!session.owned_provider_only || session.account_backed) && (env.AI || (env.CLOUDFLARE_ACCOUNT_ID && env.CLOUDFLARE_API_TOKEN))) {
     for (const id of modelIds(env.CLOUDFLARE_MODELS, CF_DEFAULTS)) {
       if (!id.startsWith('@cf/') && !id.startsWith('@hf/')) continue;
       catalog.push({ id, provider: 'cloudflare', tools: CF_TOOL_MODELS.has(id) || modelIds(env.CLOUDFLARE_TOOL_MODELS).includes(id) });
@@ -140,7 +140,7 @@ export async function providerHealth(env, session = {}) {
     return state ? { ...state, models: undefined, configured: true, model_count: state.models.length,
       inference_checked: false } : { provider, configured: false, status: 'not_configured', inference_checked: false };
   });
-  health.unshift({ provider: 'cloudflare', configured: !session.owned_provider_only && !!(env.AI || env.CLOUDFLARE_ACCOUNT_ID && env.CLOUDFLARE_API_TOKEN),
+  health.unshift({ provider: 'cloudflare', configured: (!session.owned_provider_only || session.account_backed) && !!(env.AI || env.CLOUDFLARE_ACCOUNT_ID && env.CLOUDFLARE_API_TOKEN),
     status: modelCatalog(env, session).some(model => model.provider === 'cloudflare') ? 'binding_configured' : 'not_configured', inference_checked: false });
   return health;
 }
@@ -274,7 +274,7 @@ export function completionStream(upstream, { model, messages, onUsage, signal, c
         await reader.cancel().catch(() => {});
         await tally(true).catch(() => {});
         if (!interruptedByClient) {
-          try { send({ error: { message: 'Provider stream interrupted', type: 'upstream_error' } }); controller.close(); } catch { /* consumer already closed */ }
+          try { send({ error: { message: 'Generation interrupted. Retry your request.', type: 'upstream_error' } }); controller.close(); } catch { /* consumer already closed */ }
         } else { try { controller.error(error); } catch { /* consumer already closed */ } }
       } finally { signal?.removeEventListener('abort', abortReader); reader.releaseLock(); }
     },

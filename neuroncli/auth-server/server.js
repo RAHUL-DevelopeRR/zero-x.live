@@ -41,7 +41,7 @@ async function asset(request) {
 
 async function start() {
   const { default: app } = await import('./src/index.js');
-  const env = { ...process.env, ASSETS: { fetch: asset } };
+  const env = { ...process.env, ...(process.env.NEURON_API_ONLY === 'true' ? {} : { ASSETS: { fetch: asset } }) };
   const server = http.createServer(async (req, res) => {
     const controller = new AbortController();
     res.on('close', () => { if (!res.writableEnded) controller.abort(); });
@@ -79,7 +79,8 @@ async function start() {
     }
   });
   const port = Number(process.env.AUTH_PORT || 8787);
-  server.listen(port, '127.0.0.1', () => console.log(`Neuron gateway: http://127.0.0.1:${port}`));
+  const host = process.env.AUTH_HOST || '127.0.0.1';
+  server.listen(port, host, () => console.log(`Neuron gateway listening on ${host}:${port}`));
   return server;
 }
 
