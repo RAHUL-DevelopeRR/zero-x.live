@@ -39,5 +39,13 @@ jobs:
           workingDirectory: 'neuroncli/auth-server'
           secrets: |
             SUPABASE_SECRET_KEY
+            GROQ_API_KEY
+            OPENROUTER_API_KEY
+            GEMINI_API_KEY
+            NVIDIA_API_KEY
         env:
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}

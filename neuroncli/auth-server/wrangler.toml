@@ -27,6 +27,14 @@ custom_domain = true
 
 
 [vars]
+
+GROQ_MODELS = "openai/gpt-oss-120b,openai/gpt-oss-20b,qwen/qwen3.8-27b"
+GROQ_TOOL_MODELS = "openai/gpt-oss-120b,openai/gpt-oss-20b,qwen/qwen3.8-27b"
+OPENROUTER_MODELS = "cohere/north-mini-code:free"
+GEMINI_MODELS = "gemini-2.5-flash,gemini-2.5-pro"
+GEMINI_TOOL_MODELS = "gemini-2.5-flash,gemini-2.5-pro"
+NVIDIA_MODELS = "meta/llama-3.2-11b-vision-instruct,deepseek-ai/deepseek-coder-6.7b-instruct"
+NVIDIA_TOOL_MODELS = "meta/llama-3.2-11b-vision-instruct,deepseek-ai/deepseek-coder-6.7b-instruct"
 SUPABASE_URL = "https://norrtosjwcossxrhhtvd.supabase.co"
 # Public browser key. OAuth, SMTP, SMS and service-role secrets stay outside this repository.
 SUPABASE_PUBLISHABLE_KEY = "sb_publishable_Fgrm-Cfyj3w0xAfepK-CFg_SpUydF2T"
