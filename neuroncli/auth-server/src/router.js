@@ -37,8 +37,16 @@ export class RoutingEngine {
       return { primary, fallbacks, error: null };
     }
 
-    // Specific model requested - do not silently fall back to a different model
-    const specific = catalog.find(m => m.id === requestedModel);
+    // Specific model requested - do not silently fall back to a different model.
+    // Normalize OpenAI transport prefix (e.g., openai/gemini/gemini-2.5-flash -> gemini/gemini-2.5-flash).
+    const cleanRequested = (requestedModel || '').replace(/^openai\//, '');
+    const specific = catalog.find(m =>
+      m.id === requestedModel ||
+      m.id === cleanRequested ||
+      m.upstream === cleanRequested ||
+      m.upstream === requestedModel ||
+      (m.id.includes('/') && m.id.split('/')[1] === cleanRequested)
+    );
     if (!specific) {
       return { primary: null, fallbacks: [], error: 'model_not_found' };
     }
