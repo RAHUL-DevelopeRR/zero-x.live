@@ -271,7 +271,17 @@ export function geoBlocked(entry, pool, country, env = {}) {
 
 // Caller country from Cloudflare's request metadata. CF-IPCountry is trusted only when an
 // operator states the Node origin is reachable exclusively through Cloudflare.
+// Internal sub-requests (POST /v1/models/health) are built by the gateway and carry no
+// request.cf, so they inherit the outer caller's country through this map. Keys are the
+// gateway's own Request objects, which callers cannot reach or forge.
+const INHERITED_COUNTRIES = new WeakMap();
+export function inheritCallerCountry(request, country) {
+  INHERITED_COUNTRIES.set(request, country ?? null);
+  return request;
+}
+
 export function callerCountry(request, env = {}) {
+  if (request && INHERITED_COUNTRIES.has(request)) return INHERITED_COUNTRIES.get(request);
   let country = request?.cf?.country;
   if (!country && env.TRUST_CF_IPCOUNTRY === 'true') country = request?.headers?.get?.('cf-ipcountry');
   return normalizeCountry(country);

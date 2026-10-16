@@ -19,6 +19,10 @@ export function persistentSessionStore(env) {
       p_key: await storageKey(key), p_value: value, p_ttl: expirationTtl,
     }),
     delete: async key => accountRpc(env, 'zerox_session_delete', { p_key: await storageKey(key) }),
+    // Rewrites the record only while it still exists (never recreates a deleted session).
+    rearm: async (key, value, { expirationTtl }) => (await accountRpc(env, 'zerox_session_rearm', {
+      p_key: await storageKey(key), p_value: value, p_ttl: expirationTtl,
+    }))?.rearmed === true,
   });
   return stores.get(env);
 }
@@ -65,6 +69,12 @@ function memoryStore(env) {
       memory.set(key, { value, expires: Date.now() + expirationTtl * 1000 });
     },
     delete: async key => { memory.delete(key); },
+    rearm: async (key, value, { expirationTtl }) => {
+      const entry = memory.get(key);
+      if (!entry || entry.expires <= Date.now()) return false;
+      memory.set(key, { value, expires: Date.now() + expirationTtl * 1000 });
+      return true;
+    },
   };
 }
 const recordStore = env => persistentSessionStore(env) || memoryStore(env);
@@ -80,12 +90,17 @@ export async function readRecord(env, key) {
   return record;
 }
 
-export async function writeRecord(env, key, record, ttlSeconds) {
-  const store = recordStore(env);
+async function recordTarget(env, key, record, ttlSeconds) {
   const limit = env.SESSIONS_KV ? Infinity : DATABASE_TTL_LIMIT;
-  const ttl = Math.max(60, Math.min(Math.ceil(ttlSeconds), limit));
-  const target = record?.[LEGACY_RECORD] ? key : await sha256Hex(key);
-  await store.put(target, JSON.stringify(record), { expirationTtl: ttl });
+  return {
+    target: record?.[LEGACY_RECORD] ? key : await sha256Hex(key),
+    ttl: Math.max(60, Math.min(Math.ceil(ttlSeconds), limit)),
+  };
+}
+
+export async function writeRecord(env, key, record, ttlSeconds) {
+  const { target, ttl } = await recordTarget(env, key, record, ttlSeconds);
+  await recordStore(env).put(target, JSON.stringify(record), { expirationTtl: ttl });
 }
 
 export async function deleteRecord(env, key) {
@@ -96,7 +111,9 @@ export async function deleteRecord(env, key) {
 // Without SESSIONS_KV the Postgres store caps each write at seven days, while CLI sessions
 // last CLI_SESSION_TTL_HOURS (720 h). A session still in use is therefore re-armed (rewritten
 // as stored, sealed fields included, with its remaining lifetime) at most once a day when it
-// is read; only a session left unused for seven days ends before its expires_at.
+// is read; only a session left unused for seven days ends before its expires_at. The rewrite
+// is conditional (zerox_session_rearm): a sign-out or revoke-all that deleted the record after
+// it was read is never undone.
 const REARM_INTERVAL_MS = 24 * HOUR * 1000;
 export async function rearmRecord(env, key, record, now = Date.now()) {
   if (env.SESSIONS_KV || !record || typeof record !== 'object') return false;
@@ -104,9 +121,11 @@ export async function rearmRecord(env, key, record, now = Date.now()) {
   if (Number.isFinite(last) && now - last < REARM_INTERVAL_MS) return false;
   const remaining = (sessionExpiry(env, record) - now) / 1000;
   if (!(remaining > 60)) return false;
-  record.rearmed_at = now;
-  await writeRecord(env, key, record, remaining);
-  return true;
+  const rearmed = { ...record, rearmed_at: now };
+  const { target, ttl } = await recordTarget(env, key, record, remaining);
+  const done = await recordStore(env).rearm(target, JSON.stringify(rearmed), { expirationTtl: ttl });
+  if (done) record.rearmed_at = now;
+  return done;
 }
 
 // Revoke-all only knows token hashes (from the session index).

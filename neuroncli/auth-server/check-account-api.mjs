@@ -7,7 +7,7 @@ import { createRequire } from 'node:module';
 import app from './src/index.js';
 import { DEVELOPMENT_PLANS } from './src/plan-policy.js';
 import { devToken, devUserId, resolveCaller } from './src/auth-context.js';
-import { openSession, sealSession } from './src/session-store.js';
+import { openSession, rearmRecord, sealSession } from './src/session-store.js';
 import { runScheduledMaintenance } from './src/routes/admin.js';
 import { v1ModelsPayload } from './src/routes/plans.js';
 import { overviewPools } from './src/routes/admin.js';
@@ -117,6 +117,17 @@ function fakeDatabase() {
     zerox_session_get: ({ p_key }) => state.store.has(p_key) ? [{ value: state.store.get(p_key) }] : [],
     zerox_session_put: ({ p_key, p_value, p_ttl }) => { assert.ok(p_ttl >= 1 && p_ttl <= 604800); state.store.set(p_key, p_value); return []; },
     zerox_session_delete: ({ p_key }) => { state.store.delete(p_key); return []; },
+    // Updates only an existing record (WP-B1 zerox_session_rearm).
+    zerox_session_rearm: ({ p_key, p_value, p_ttl }) => {
+      assert.ok(p_ttl >= 1 && p_ttl <= 604800);
+      if (!state.store.has(p_key)) return [{ rearmed: false }];
+      state.store.set(p_key, p_value);
+      return [{ rearmed: true }];
+    },
+    // Minimal quota RPCs for the /v1/models/health probe (the full semantics are in check-business-db).
+    zerox_reserve_v2: () => [{ status: 'ok', reservation_id: crypto.randomUUID(), plan: 'free', remaining_requests: 99,
+      remaining_tokens: 499000, credit_balance_microusd: 0, resets_at: `${dayOffset(1)}T00:00:00.000Z`, retry_after_seconds: null }],
+    zerox_settle_v2: () => [{ status: 'settled', credit_balance_microusd: 0 }],
     zerox_admin_overview: () => [{ overview: { users: { total: accounts.size, active_today: 1, by_plan: { free: 1 } },
       revenue: { active_subscriptions: 0, mrr_usd_estimate: 0 }, usage_today: { requests: 3, tokens: 30, cost_usd: 0 }, pools: [] } }],
     zerox_release_stale_reservations: () => [{ released: 2 }],
@@ -141,6 +152,7 @@ function fakeDatabase() {
 
 // ── Stubbed Supabase Auth ──
 const identity = { users: new Map(), calls: 0, down: false };
+const upstream = { gemini: null, calls: [] };
 const addUser = (token, user) => { identity.users.set(token, user); return user; };
 
 const db = fakeDatabase();
@@ -156,6 +168,10 @@ const router = async (input, init = {}) => {
     return user ? Response.json(user) : Response.json({ code: 401, msg: 'invalid JWT' }, { status: 401 });
   }
   if (url === `${SUPABASE_URL}/auth/v1/settings`) return Response.json({ external: { email: true, google: true } });
+  if (url.startsWith('https://generativelanguage.googleapis.com/') && upstream.gemini) {
+    upstream.calls.push(JSON.parse(init.body));
+    return upstream.gemini();
+  }
   if (url.startsWith('http://127.0.0.1:') && servers.length) return originalFetch(input, init);
   throw new Error(`Unexpected outbound request: ${url}`);
 };
@@ -270,14 +286,28 @@ try {
   const dbStoreKey = sha256(sha256(dbStoredToken));
   db.store.set(dbStoreKey, JSON.stringify({ created: Date.now() - 3 * DAY, expires: Date.now() + 27 * DAY, account_backed: true,
     user_id: userA.id, plan: 'free' }));
+  // The rewrite is conditional (zerox_session_rearm), never zerox_session_put.
+  const sessionRearms = () => db.calls.filter(call => call.name === 'zerox_session_rearm');
   const sessionPuts = () => db.calls.filter(call => call.name === 'zerox_session_put');
   const putsBefore = sessionPuts().length;
+  const rearmsBefore = sessionRearms().length;
   assert.equal((await request('/auth/session', { token: dbStoredToken, bindings: dbStoreEnv })).status, 200);
-  assert.equal(sessionPuts().length - putsBefore, 1, 'the session is rewritten on read');
-  assert.equal(sessionPuts().at(-1).args.p_ttl, 604800, 'with the longest TTL the store accepts');
+  assert.equal(sessionRearms().length - rearmsBefore, 1, 'the session is rewritten on read');
+  assert.equal(sessionPuts().length, putsBefore, 'with a conditional write, not a put');
+  assert.equal(sessionRearms().at(-1).args.p_ttl, 604800, 'with the longest TTL the store accepts');
   assert.ok(JSON.parse(db.store.get(dbStoreKey)).rearmed_at > Date.now() - 60000);
   assert.equal((await request('/auth/session', { token: dbStoredToken, bindings: dbStoreEnv })).status, 200);
-  assert.equal(sessionPuts().length - putsBefore, 1, 'at most once a day');
+  assert.equal(sessionRearms().length - rearmsBefore, 1, 'at most once a day');
+  // Review P3 (integration): a sign-out landing between the read and the re-arm was undone by
+  // the rewrite. The record is read, then deleted, then re-armed: it stays deleted.
+  const racedToken = 'ses_signedOutWhileRearming0123456789';
+  const racedKey = sha256(sha256(racedToken));
+  const racedRecord = { created: Date.now() - 3 * DAY, expires: Date.now() + 27 * DAY, account_backed: true, user_id: userA.id, plan: 'free' };
+  db.store.set(racedKey, JSON.stringify(racedRecord));
+  db.store.delete(racedKey);
+  assert.equal(await rearmRecord(dbStoreEnv, racedToken, { ...racedRecord }), false);
+  assert.equal(db.store.has(racedKey), false, 'a deleted session is never recreated by its re-arm');
+  assert.equal((await request('/auth/session', { token: racedToken, bindings: dbStoreEnv })).status, 401);
   // Account-less sessions are not accounts.
   const anonymous = 'ses_anonymousSession0123456789abcd';
   kv.records.set(sha256(anonymous), JSON.stringify({ created: Date.now(), expires: Date.now() + 3600000, plan: 'free' }));
@@ -368,12 +398,23 @@ try {
     ['flag missing', { base: 'http://127.0.0.1:8787', bindings: { ...env, NEURON_RUNTIME: 'node' } }],
     ['public host', { base: 'https://zero-x.live', bindings: devEnv }],
     ['spoofed Host header', { base: 'http://127.0.0.1:8787', bindings: devEnv, headers: { Host: 'zero-x.live' } }],
+    // Review P3 (integration): refused under NODE_ENV=production even on loopback, and on browser
+    // requests from another site (the /v1 CORS policy is open).
+    ['NODE_ENV=production', { base: 'http://127.0.0.1:8787', bindings: { ...devEnv, NODE_ENV: 'production' } }],
+    ['cross-origin page', { base: 'http://127.0.0.1:8787', bindings: devEnv, headers: { Origin: 'https://evil.example' } }],
+    ['opaque origin', { base: 'http://127.0.0.1:8787', bindings: devEnv, headers: { Origin: 'null' } }],
   ]) {
     assertOpenAIError(await json(await request('/api/account', { ...options, token: dev })), 401, 'invalid_session');
     assert.equal((await request('/v1/models', { ...options, token: dev })).status, 401, label);
     assert.equal((await request('/auth/cli/session', { ...options, method: 'POST', token: dev, body: {} })).status, 401, label);
     assert.notEqual((await json(await request('/auth/config', options))).body.provider, 'dev', label);
   }
+  for (const origin of ['http://127.0.0.1:8787', 'http://localhost:5173', 'http://[::1]:8787']) {
+    assert.equal((await request('/api/account', { ...local, token: dev, headers: { Origin: origin } })).status, 200, `loopback page ${origin}`);
+  }
+  const crossOrigin = await request('/v1/chat/completions', { ...local, method: 'POST', token: dev, headers: { Origin: 'https://evil.example' },
+    body: { model: 'groq/openai/gpt-oss-20b', messages: [{ role: 'user', content: 'hi' }] } });
+  assert.equal(crossOrigin.status, 401, 'a minted dev token from another site never reaches the upstream');
   const navigatorDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
   Object.defineProperty(globalThis, 'navigator', { value: { userAgent: 'Cloudflare-Workers' }, configurable: true });
   try {
@@ -594,6 +635,37 @@ try {
   for (const token of [racing.body.session_token, late.body.session_token]) {
     assertOpenAIError(await json(await request('/auth/session', { token })), 401, 'invalid_session');
   }
+  // Review P3 (integration): sign-in fails (and leaves no session behind) when the session
+  // cannot be indexed, since revoke-all could never reach it.
+  const recordsBefore = kv.records.size;
+  const indexAdds = () => db.calls.filter(call => call.name === 'zerox_session_index_add').length;
+  const addsBefore = indexAdds();
+  db.fail.add('zerox_session_index_add');
+  const unindexed = await json(await request('/auth/cli/session', { method: 'POST', token: 'supabase-token-user-a', body: {} }));
+  db.fail.delete('zerox_session_index_add');
+  assertOpenAIError(unindexed, 503, 'service_unavailable');
+  assert.equal(kv.records.size, recordsBefore, 'the unindexed session record is deleted');
+  assert.equal(indexAdds() - addsBefore, 2, 'the index write is retried once');
+  // Revoke-all can also revoke API keys (a leaked session may have minted some).
+  const keyForB = await json(await request('/api/keys', { method: 'POST', token: 'supabase-token-user-b', body: { name: 'bob ci' } }));
+  assert.equal(keyForB.status, 201);
+  const freeSlot = db.keys.find(key => key.user_id === userA.id && !key.revoked_at);
+  if (freeSlot) freeSlot.revoked_at = new Date().toISOString(); // user A is at the 10-key limit here
+  const keyForA = await json(await request('/api/keys', { method: 'POST', token: 'supabase-token-user-a', body: { name: 'leaked?' } }));
+  assert.equal(keyForA.status, 201);
+  assert.equal((await request('/v1/models', { token: keyForA.body.secret })).status, 200);
+  const keyed = await json(await request('/auth/cli/session', { method: 'POST', token: 'supabase-token-user-a', body: {} }));
+  assertOpenAIError(await json(await request('/api/sessions/revoke-all', { method: 'POST', token: 'supabase-token-user-a', body: { api_keys: 'yes' } })),
+    400, 'invalid_request');
+  const activeKeys = db.keys.filter(key => key.user_id === userA.id && !key.revoked_at).length;
+  assert.ok(activeKeys >= 1);
+  assert.deepEqual((await json(await request('/api/sessions/revoke-all', { method: 'POST', token: 'supabase-token-user-a', body: { api_keys: true } }))).body,
+    { revoked: 1, api_keys_revoked: activeKeys });
+  assertOpenAIError(await json(await request('/auth/session', { token: keyed.body.session_token })), 401, 'invalid_session');
+  assertOpenAIError(await json(await request('/v1/models', { token: keyForA.body.secret })), 401, 'invalid_session');
+  assert.equal(db.keys.filter(key => key.user_id === userA.id && !key.revoked_at).length, 0, 'every key of the user is revoked');
+  assert.equal((await request('/v1/models', { token: keyForB.body.secret })).status, 200, 'other users keep their keys');
+
   // Single sign-out removes the session's index entry.
   const single = await json(await request('/auth/cli/session', { method: 'POST', token: 'supabase-token-user-a', body: {} }));
   assert.equal((await request('/auth/session', { method: 'DELETE', token: single.body.session_token })).status, 200);
@@ -784,6 +856,31 @@ try {
   assert.equal(routed.body.data[0].id, 'auto');
   assert.ok(routed.body.data.every(model => typeof model.available === 'boolean' && 'unavailable_reason' in model && 'pricing' in model));
 
+  // Review P3 (integration): POST /v1/models/health built a Request without request.cf, so on
+  // Workers every free-Gemini probe failed the geo rule. The probe now inherits the caller country.
+  const healthUser = addUser('supabase-token-health', { id: '55555555-5555-4555-8555-555555555555', email: 'health@example.test',
+    user_metadata: { name: 'Health' }, app_metadata: {} });
+  const healthSession = (await json(await request('/auth/cli/session', { method: 'POST', token: 'supabase-token-health', body: {} }))).body.session_token;
+  assert.ok(healthSession && healthUser.id);
+  upstream.gemini = () => Response.json({ id: 'probe', object: 'chat.completion', choices: [{ index: 0,
+    message: { role: 'assistant', content: 'OK' }, finish_reason: 'stop' }], usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 } });
+  const healthEnv = modelsEnv({ GEMINI_PAID_API_KEY: '' });
+  const probeFrom = (path, country, body) => {
+    const probe = new Request('https://zero-x.live' + path, { method: 'POST',
+      headers: { Authorization: `Bearer ${healthSession}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (country) Object.defineProperty(probe, 'cf', { value: { country } });
+    return app.fetch(probe, healthEnv);
+  };
+  const usChat = await probeFrom('/v1/chat/completions', 'US', { model: 'gemini/gemini-3.5-flash', messages: [{ role: 'user', content: 'hi' }] });
+  assert.equal(usChat.status, 200, 'a US caller may use the free Gemini pool');
+  const usHealth = await json(await probeFrom('/v1/models/health', 'US', { model: 'gemini/gemini-3.5-flash' }));
+  assert.equal(usHealth.status, 200, `the probe answers like the chat: ${JSON.stringify(usHealth.body)}`);
+  assert.equal(usHealth.body.status, 'healthy');
+  const deHealth = await json(await probeFrom('/v1/models/health', 'DE', { model: 'gemini/gemini-3.5-flash' }));
+  assert.equal(deHealth.status, 403, 'an EEA caller is still geo-blocked through the probe');
+  assert.equal(deHealth.body.error.code, 'region_unavailable');
+  upstream.gemini = null;
+
   // ── 13. Node server: runtime marker, loopback-only dev identity, trusted client address ──
   const { runtimeEnv, start: startServer } = require('./server.js');
   const saved = { ...process.env };
@@ -791,6 +888,9 @@ try {
     process.env.DEV_AUTH_ENABLED = 'true';
     assert.equal(runtimeEnv('0.0.0.0').DEV_AUTH_ENABLED, undefined, 'dev identity is dropped when not bound to loopback');
     assert.equal(runtimeEnv('127.0.0.1').DEV_AUTH_ENABLED, 'true');
+    process.env.NODE_ENV = 'production';
+    assert.equal(runtimeEnv('127.0.0.1').DEV_AUTH_ENABLED, undefined, 'dev identity is dropped under NODE_ENV=production');
+    delete process.env.NODE_ENV;
     process.env.NEURON_RUNTIME = 'worker';
     assert.equal(runtimeEnv('127.0.0.1').NEURON_RUNTIME, 'node', 'server.js always marks the Node runtime');
     Object.assign(process.env, { AUTH_PORT: '0', AUTH_HOST: '127.0.0.1', NEURON_API_ONLY: 'true', SUPABASE_URL,

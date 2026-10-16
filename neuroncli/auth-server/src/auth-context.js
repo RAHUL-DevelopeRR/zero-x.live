@@ -93,11 +93,20 @@ export function isLoopbackHost(host) {
   try { return ['127.0.0.1', 'localhost', '[::1]'].includes(new URL(`http://${host}`).hostname); }
   catch { return false; }
 }
+// Never under NODE_ENV=production, even on loopback: a production server behind a same-host
+// reverse proxy sees the proxy's loopback Host header.
 export function devRuntimeEnabled(env) {
-  return env?.DEV_AUTH_ENABLED === 'true' && env?.NEURON_RUNTIME === 'node' && !isWorkersRuntime();
+  return env?.DEV_AUTH_ENABLED === 'true' && env?.NEURON_RUNTIME === 'node' && !isWorkersRuntime() &&
+    String(env?.NODE_ENV || '').trim().toLowerCase() !== 'production';
 }
+const LOOPBACK_ORIGIN = /^http:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d{1,5})?$/;
+// Browsers send Origin with cross-origin requests. A page on another site must never use the
+// (deterministic) dev identity, and with it the operator's provider keys, through the open /v1
+// CORS policy: dev credentials are honoured only without an Origin or from a loopback origin.
 export function devAuthEnabled(c) {
-  return devRuntimeEnabled(c.env) && isLoopbackHost(c.req.header('host') || new URL(c.req.url).host);
+  if (!devRuntimeEnabled(c.env) || !isLoopbackHost(c.req.header('host') || new URL(c.req.url).host)) return false;
+  const origin = c.req.header('origin');
+  return !origin || LOOPBACK_ORIGIN.test(origin);
 }
 
 const EMAIL_PATTERN = /^[^\s@<>()",;:]{1,64}@[^\s@<>()",;:]{1,190}$/;

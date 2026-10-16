@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { accountRpc, databaseConfigured } from './account-store.js';
 import { modelCatalog, resolveModelCatalog, providerHealth, providerConfiguration } from './providers.js';
-import { catalogWarnings } from './catalog.js';
+import { callerCountry, catalogWarnings, inheritCallerCountry } from './catalog.js';
 import { globalHealthTracker } from './provider-health.js';
 import { createChatHandler } from './chat-handler.js';
 import { loadPlanLimits } from './plan-policy.js';
@@ -567,7 +567,12 @@ const createIdentityCliSessionHandler = async (c) => {
   };
 
   await setSession(c, sessionToken, sessionData);
-  await registerSessionIndex(c.env, account.user_id, sessionToken, expires);
+  // A session missing from the index could not be signed out by revoke-all: without the index
+  // entry the session is dropped and sign-in fails (the client retries).
+  if (!await registerSessionIndex(c.env, account.user_id, sessionToken, expires)) {
+    await deleteSession(c, sessionToken).catch(() => {});
+    return errorResponse(c, 503, 'service_unavailable', 'Sign-in could not be completed. Please retry shortly.');
+  }
 
   return c.json({
     session_token: sessionToken,
@@ -704,17 +709,20 @@ api.get('/v1/providers/health', async (c) => {
     pools: globalHealthTracker.getSnapshot(), catalog_warnings: catalogWarnings(c.env) });
 });
 
-// Inference probes use the same authentication and quota accounting as a normal completion.
+// Inference probes use the same authentication, quota accounting and caller country (geo rules)
+// as a normal completion; the Origin header is passed on so the dev-identity origin rule holds.
 api.post('/v1/models/health', async (c) => {
   const body = await c.req.json().catch(() => null);
   if (typeof body?.model !== 'string') return errorResponse(c, 400, 'invalid_request', 'Provide a model', { param: 'model' });
   const started = Date.now();
-  const response = await app.fetch(new Request(new URL('/v1/chat/completions', c.req.url), {
-    method: 'POST', headers: { Authorization: c.req.header('Authorization') || '', 'Content-Type': 'application/json',
-      ...(c.req.header('host') ? { Host: c.req.header('host') } : {}) },
+  const forwarded = Object.fromEntries(['host', 'origin', 'x-neuron-client-ip']
+    .filter(name => c.req.header(name)).map(name => [name, c.req.header(name)]));
+  const probe = inheritCallerCountry(new Request(new URL('/v1/chat/completions', c.req.url), {
+    method: 'POST', headers: { ...forwarded, Authorization: c.req.header('Authorization') || '', 'Content-Type': 'application/json' },
     body: JSON.stringify({ model: body.model, messages: [{ role: 'user', content: 'Reply OK.' }], max_tokens: 8 }),
     signal: c.req.raw.signal,
-  }), c.env);
+  }), callerCountry(c.req.raw, c.env));
+  const response = await app.fetch(probe, c.env);
   const result = await response.json();
   if (!response.ok) return c.json({ model: body.model, status: 'unavailable', error: result.error, latency_ms: Date.now() - started }, response.status);
   const validCompletion = result.choices?.some(choice => choice.message?.content || choice.message?.tool_calls?.length);

@@ -47,7 +47,10 @@ function runtimeEnv(host) {
   const env = { ...process.env, ...(process.env.NEURON_API_ONLY === 'true' ? {} : { ASSETS: { fetch: asset } }) };
   // Marks the Node runtime: the local dev identity is never honoured by the Worker build.
   env.NEURON_RUNTIME = 'node';
-  if (env.DEV_AUTH_ENABLED === 'true' && !LOOPBACK_HOSTS.includes(host)) {
+  if (env.DEV_AUTH_ENABLED === 'true' && String(env.NODE_ENV || '').trim().toLowerCase() === 'production') {
+    console.warn('DEV_AUTH_ENABLED ignored: the dev identity is refused when NODE_ENV=production');
+    delete env.DEV_AUTH_ENABLED;
+  } else if (env.DEV_AUTH_ENABLED === 'true' && !LOOPBACK_HOSTS.includes(host)) {
     console.warn('DEV_AUTH_ENABLED ignored: the dev identity requires AUTH_HOST to be a loopback address');
     delete env.DEV_AUTH_ENABLED;
   } else if (env.DEV_AUTH_ENABLED === 'true') {
