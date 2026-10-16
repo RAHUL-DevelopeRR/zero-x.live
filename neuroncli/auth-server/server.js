@@ -39,9 +39,39 @@ async function asset(request) {
   } catch { return new Response('Not found', { status: 404 }); }
 }
 
+const LOOPBACK_HOSTS = ['127.0.0.1', 'localhost', '::1', '[::1]'];
+
+// Builds the bindings object shared by every request. process.env passes through unchanged
+// (including DATABASE_DRIVER=pglite and its settings for the account store).
+function runtimeEnv(host) {
+  const env = { ...process.env, ...(process.env.NEURON_API_ONLY === 'true' ? {} : { ASSETS: { fetch: asset } }) };
+  // Marks the Node runtime: the local dev identity is never honoured by the Worker build.
+  env.NEURON_RUNTIME = 'node';
+  if (env.DEV_AUTH_ENABLED === 'true' && !LOOPBACK_HOSTS.includes(host)) {
+    console.warn('DEV_AUTH_ENABLED ignored: the dev identity requires AUTH_HOST to be a loopback address');
+    delete env.DEV_AUTH_ENABLED;
+  } else if (env.DEV_AUTH_ENABLED === 'true') {
+    console.warn('DEV_AUTH_ENABLED: dev_<base64url(email)> tokens are accepted from loopback hosts. Never use in production.');
+  }
+  return env;
+}
+
+function requestHeaders(req) {
+  const headers = new Headers();
+  for (const [name, value] of Object.entries(req.headers)) {
+    if (name === 'x-neuron-client-ip' || value === undefined) continue;
+    headers.set(name, Array.isArray(value) ? value.join(', ') : value);
+  }
+  // Trusted client address for per-IP limits; any client-supplied value was dropped above.
+  if (req.socket.remoteAddress) headers.set('x-neuron-client-ip', req.socket.remoteAddress);
+  return headers;
+}
+
 async function start() {
   const { default: app } = await import('./src/index.js');
-  const env = { ...process.env, ...(process.env.NEURON_API_ONLY === 'true' ? {} : { ASSETS: { fetch: asset } }) };
+  const port = Number(process.env.AUTH_PORT || 8787);
+  const host = process.env.AUTH_HOST || '127.0.0.1';
+  const env = runtimeEnv(host);
   const server = http.createServer(async (req, res) => {
     const controller = new AbortController();
     res.on('close', () => { if (!res.writableEnded) controller.abort(); });
@@ -58,7 +88,7 @@ async function start() {
         chunks.push(chunk);
       }
       const request = new Request(new URL(req.url, 'http://127.0.0.1'), {
-        method: req.method, headers: req.headers,
+        method: req.method, headers: requestHeaders(req),
         body: ['GET', 'HEAD'].includes(req.method) ? undefined : Buffer.concat(chunks),
         signal: controller.signal,
       });
@@ -78,11 +108,9 @@ async function start() {
       } else res.destroy();
     }
   });
-  const port = Number(process.env.AUTH_PORT || 8787);
-  const host = process.env.AUTH_HOST || '127.0.0.1';
   server.listen(port, host, () => console.log(`Neuron gateway listening on ${host}:${port}`));
   return server;
 }
 
 if (require.main === module) start().catch(error => { console.error(error.message); process.exitCode = 1; });
-module.exports = { start, asset };
+module.exports = { start, asset, runtimeEnv };

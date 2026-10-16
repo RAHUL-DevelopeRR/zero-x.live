@@ -1,0 +1,84 @@
+# Zero-X gateway configuration reference. Copy to `.dev.vars` (wrangler dev) or `.env`
+# (node server.js). Both copies are gitignored; never commit real values.
+# Production: plain values live in wrangler.toml [vars]; secrets are Worker secrets bound by
+# .github/workflows/deploy.yml from GitHub Actions secrets.
+
+# ── Node server (server.js) ──
+AUTH_HOST=127.0.0.1                 # bind address; the dev identity only works on loopback
+AUTH_PORT=8787
+NEURON_API_ONLY=false               # true = API only, no website assets
+# DATABASE_DRIVER=pglite            # in-process Postgres for local development (account store)
+
+# ── Local dev identity (Node server only; NEVER set in wrangler files or production) ──
+# When true and the request Host is 127.0.0.1/localhost, /auth/config reports provider "dev"
+# and `Bearer dev_<base64url(email)>` is accepted wherever a Supabase token or ses_ is.
+DEV_AUTH_ENABLED=false
+
+# ── Identity and database (Supabase) ──
+SUPABASE_URL=https://YOUR_PROJECT.supabase.co
+SUPABASE_PUBLISHABLE_KEY=           # public browser key (sb_publishable_...)
+SUPABASE_SECRET_KEY=                # SECRET: server-only key (sb_secret_...) for RPCs
+SUPABASE_AUTH_PROVIDERS=google,email,phone,azure,github
+SUPABASE_STORAGE_KEY=zerox-supabase-auth
+
+# ── Sessions ──
+CLI_SESSION_TTL_HOURS=720           # lifetime of CLI sessions (default 30 days)
+SESSION_TTL_HOURS=24                # lifetime of sessions created before hashed storage
+SESSION_ENCRYPTION_KEY=             # SECRET: >= 32 chars (openssl rand -base64 32); seals BYOK keys
+ALLOW_ANONYMOUS_SESSIONS=false      # development only: account-less sessions and in-memory store
+# SESSIONS_KV is a Worker KV binding (wrangler.toml), not a variable.
+
+# ── Operator ──
+GATEWAY_ADMIN_TOKEN=                # SECRET: >= 32 chars; /admin/*, /v1/providers/health, full /health
+
+# ── Website and security headers ──
+PRICING_URL=https://zero-x.live/pricing   # upgrade_url in errors
+CSP_ENFORCE=false                   # true sends Content-Security-Policy instead of -Report-Only
+
+# ── Billing (Razorpay; use rzp_test_ keys outside production) ──
+RAZORPAY_KEY_ID=                    # public key id (rzp_test_... / rzp_live_...)
+RAZORPAY_KEY_SECRET=                # SECRET: API key secret (checkout signatures, REST calls)
+RAZORPAY_WEBHOOK_SECRET=            # SECRET: webhook signing secret from the Razorpay dashboard
+# RAZORPAY_API_BASE=http://127.0.0.1:9999/v1   # tests only: fake Razorpay server
+
+# ── Upstream providers (free pools) ──
+GROQ_API_KEY=                       # SECRET
+GROQ_MODELS=openai/gpt-oss-120b,openai/gpt-oss-20b,qwen/qwen3.8-27b
+GROQ_TOOL_MODELS=openai/gpt-oss-120b,openai/gpt-oss-20b,qwen/qwen3.8-27b
+GEMINI_API_KEY=                     # SECRET (free tier is geo-blocked for EEA/GB/CH callers)
+GEMINI_MODELS=gemini-2.5-flash
+GEMINI_TOOL_MODELS=gemini-2.5-flash
+CLOUDFLARE_ACCOUNT_ID=              # Node only; the Worker uses its AI binding
+CLOUDFLARE_API_TOKEN=               # SECRET, Node only
+CLOUDFLARE_MODELS=
+CLOUDFLARE_TOOL_MODELS=
+
+# ── Upstream providers (paid pools, used by paid plans) ──
+GROQ_PAID_API_KEY=                  # SECRET: Groq Developer plan key
+GEMINI_PAID_API_KEY=                # SECRET: billing-linked Gemini project key
+
+# ── Not hosted by default (docs/PROVIDER_TERMS.md) ──
+NVIDIA_HOSTED=false                 # true only for internal evaluation (trial terms)
+NVIDIA_API_KEY=                     # SECRET
+NVIDIA_MODELS=meta/llama-3.2-11b-vision-instruct
+NVIDIA_TOOL_MODELS=meta/llama-3.2-11b-vision-instruct
+OPENROUTER_HOSTED=false             # true re-enables the operator key (otherwise BYOK only)
+OPENROUTER_API_KEY=                 # SECRET
+OPENROUTER_MODELS=cohere/north-mini-code:free
+OPENROUTER_FREE_ONLY=
+OPENROUTER_CALLBACK_URL=https://zero-x.live/neuroncli/callback/
+
+# ── Optional OpenAI-compatible upstreams ──
+OMNIROUTE_BASE_URL=
+OMNIROUTE_API_KEY=                  # SECRET
+OMNIROUTE_MODELS=
+OMNIROUTE_TOOL_MODELS=
+BEDROCK_REGION=
+BEDROCK_ENDPOINT=                   # "runtime" for bedrock-runtime, empty for bedrock-mantle
+BEDROCK_API_KEY=                    # SECRET
+BEDROCK_MODELS=
+BEDROCK_TOOL_MODELS=
+AZURE_OPENAI_ENDPOINT=
+AZURE_API_VERSION=2024-05-01-preview
+AZURE_OPENAI_API_KEY=               # SECRET
+AZURE_MODELS=

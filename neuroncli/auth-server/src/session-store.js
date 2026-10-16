@@ -1,11 +1,15 @@
 import { accountRpc, databaseConfigured } from './account-store.js';
 
 const stores = new WeakMap();
-async function storageKey(key) {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(key));
+const encoder = new TextEncoder();
+
+export async function sha256Hex(value) {
+  const digest = await crypto.subtle.digest('SHA-256', encoder.encode(value));
   return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
 }
+const storageKey = sha256Hex;
 
+// Raw key/value store: Cloudflare KV, or the Postgres store (which hashes keys itself).
 export function persistentSessionStore(env) {
   if (env.SESSIONS_KV) return env.SESSIONS_KV;
   if (!databaseConfigured(env)) return null;
@@ -17,4 +21,152 @@ export function persistentSessionStore(env) {
     delete: async key => accountRpc(env, 'zerox_session_delete', { p_key: await storageKey(key) }),
   });
   return stores.get(env);
+}
+
+// ── Lifetimes ──
+const HOUR = 3600;
+const boundedHours = (value, fallback) => {
+  const hours = Number.parseInt(value, 10);
+  return Number.isSafeInteger(hours) && hours >= 1 && hours <= 8760 ? hours : fallback;
+};
+// CLI sessions created by this version (stored hashed with an explicit `expires`).
+export function sessionTtlSeconds(env) {
+  return boundedHours(env.CLI_SESSION_TTL_HOURS, 720) * HOUR;
+}
+// Sessions created before hashed storage keep their original lifetime.
+export function legacySessionTtlSeconds(env) {
+  return boundedHours(env.SESSION_TTL_HOURS, 24) * HOUR;
+}
+export function sessionExpiry(env, session) {
+  if (Number.isFinite(session?.expires)) return session.expires;
+  return Number(session?.created) + legacySessionTtlSeconds(env) * 1000;
+}
+// The Postgres store rejects TTLs above seven days; long-lived sessions are re-armed on write.
+const DATABASE_TTL_LIMIT = 7 * 24 * HOUR;
+
+// ── Hashed records with a raw-key read fallback for sessions created before hashing ──
+// Records are stored under sha256(token). A record found only under its raw key is marked
+// legacy (a symbol, so it never serialises) and keeps being written to that key until its
+// original lifetime ends; new records are never written under a raw key.
+export const LEGACY_RECORD = Symbol('zerox.legacyRecord');
+const memory = new Map();
+
+function memoryStore(env) {
+  if (env.ALLOW_ANONYMOUS_SESSIONS !== 'true') throw new Error('Session persistence unavailable');
+  return {
+    get: async key => {
+      const entry = memory.get(key);
+      if (!entry) return null;
+      if (entry.expires <= Date.now()) { memory.delete(key); return null; }
+      return entry.value;
+    },
+    put: async (key, value, { expirationTtl }) => {
+      if (memory.size >= 10000) memory.delete(memory.keys().next().value);
+      memory.set(key, { value, expires: Date.now() + expirationTtl * 1000 });
+    },
+    delete: async key => { memory.delete(key); },
+  };
+}
+const recordStore = env => persistentSessionStore(env) || memoryStore(env);
+
+export async function readRecord(env, key) {
+  const store = recordStore(env);
+  const hashed = await store.get(await sha256Hex(key));
+  if (hashed) return JSON.parse(hashed);
+  const raw = await store.get(key);
+  if (!raw) return null;
+  const record = JSON.parse(raw);
+  if (record && typeof record === 'object') record[LEGACY_RECORD] = true;
+  return record;
+}
+
+export async function writeRecord(env, key, record, ttlSeconds) {
+  const store = recordStore(env);
+  const limit = env.SESSIONS_KV ? Infinity : DATABASE_TTL_LIMIT;
+  const ttl = Math.max(60, Math.min(Math.ceil(ttlSeconds), limit));
+  const target = record?.[LEGACY_RECORD] ? key : await sha256Hex(key);
+  await store.put(target, JSON.stringify(record), { expirationTtl: ttl });
+}
+
+export async function deleteRecord(env, key) {
+  const store = recordStore(env);
+  await Promise.all([store.delete(await sha256Hex(key)), store.delete(key)]);
+}
+
+// Revoke-all only knows token hashes (from the session index).
+export async function deleteRecordByHash(env, hash) {
+  if (!/^[0-9a-f]{64}$/.test(hash)) return;
+  await recordStore(env).delete(hash);
+}
+
+// ── Owned provider keys are sealed with AES-256-GCM when SESSION_ENCRYPTION_KEY is set ──
+const SEALED_FIELDS = ['openrouter_key'];
+const keyCache = new Map();
+let plaintextWarningShown = false;
+
+const toBase64Url = bytes => btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const fromBase64Url = text => Uint8Array.from(atob(text.replace(/-/g, '+').replace(/_/g, '/')), char => char.charCodeAt(0));
+
+async function encryptionKey(env) {
+  const secret = typeof env.SESSION_ENCRYPTION_KEY === 'string' ? env.SESSION_ENCRYPTION_KEY.trim() : '';
+  if (secret.length < 32) return null;
+  if (!keyCache.has(secret)) {
+    // The secret is high-entropy (openssl rand -base64 32); SHA-256 maps it to an AES-256 key.
+    const material = await crypto.subtle.digest('SHA-256', encoder.encode(secret));
+    keyCache.set(secret, crypto.subtle.importKey('raw', material, 'AES-GCM', false, ['encrypt', 'decrypt']));
+  }
+  return keyCache.get(secret);
+}
+
+export function sessionEncryptionConfigured(env) {
+  return typeof env.SESSION_ENCRYPTION_KEY === 'string' && env.SESSION_ENCRYPTION_KEY.trim().length >= 32;
+}
+
+// Returns a copy safe to persist. The ciphertext is bound to the token hash so it cannot be
+// replayed into another session record.
+export async function sealSession(env, token, session) {
+  const fields = SEALED_FIELDS.filter(field => typeof session?.[field] === 'string' && session[field]);
+  if (!fields.length) return session;
+  const key = await encryptionKey(env);
+  if (!key) {
+    if (!plaintextWarningShown) {
+      plaintextWarningShown = true;
+      console.warn('SESSION_ENCRYPTION_KEY is not set; owned provider keys are stored without encryption');
+    }
+    return session;
+  }
+  const sealed = { ...session };
+  const additionalData = encoder.encode(await sha256Hex(token));
+  for (const field of fields) {
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const ciphertext = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData }, key, encoder.encode(session[field])));
+    sealed[`${field}_enc`] = `v1.${toBase64Url(iv)}.${toBase64Url(ciphertext)}`;
+    delete sealed[field];
+  }
+  return sealed;
+}
+
+// Returns the session with sealed fields decrypted. Undecryptable fields (rotated key,
+// tampering) are dropped, which leaves the session without its owned key.
+export async function openSession(env, token, stored) {
+  if (!stored || typeof stored !== 'object') return stored;
+  const fields = SEALED_FIELDS.filter(field => typeof stored[`${field}_enc`] === 'string');
+  if (!fields.length) return stored;
+  const session = { ...stored };
+  const key = await encryptionKey(env);
+  const additionalData = encoder.encode(await sha256Hex(token));
+  for (const field of fields) {
+    const sealed = session[`${field}_enc`];
+    delete session[`${field}_enc`];
+    if (!key) continue;
+    try {
+      const [version, iv, ciphertext] = sealed.split('.');
+      if (version !== 'v1') continue;
+      const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: fromBase64Url(iv), additionalData }, key, fromBase64Url(ciphertext));
+      session[field] = new TextDecoder().decode(plain);
+    } catch {
+      console.warn('Sealed session field could not be decrypted', { field });
+    }
+  }
+  return session;
 }
