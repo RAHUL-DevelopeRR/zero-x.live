@@ -7,8 +7,11 @@
 //   DATABASE_URL=postgresql://... node scripts/apply-migrations.mjs --apply    # apply pending ones
 //
 // Applied versions are recorded in supabase_migrations.schema_migrations, the table the
-// Supabase CLI uses, so `supabase db push` and this tool agree on what is applied. The
-// connection string is passed to psql through PG* environment variables, never argv.
+// Supabase CLI uses, so `supabase db push` and this tool agree on what is applied. Each file and
+// its history row go to psql as one script, with the row inserted inside the file's own
+// transaction (just before its final COMMIT), so a migration is never applied without being
+// recorded. The connection string is read only from the DATABASE_URL environment variable and
+// reaches psql through PG* environment variables; it never appears in any process's argv.
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
@@ -17,6 +20,9 @@ import { listMigrations, readMigration } from '../src/db/migrations.js';
 const HISTORY_DDL = `CREATE SCHEMA IF NOT EXISTS supabase_migrations;
 CREATE TABLE IF NOT EXISTS supabase_migrations.schema_migrations (version text PRIMARY KEY, statements text[], name text);`;
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
+const VERSION = /^\d{8,14}$/;
+const NAME = /^[a-z0-9_]+$/;
+const FINAL_COMMIT = /\bCOMMIT\s*;\s*$/i;
 
 export function connectionEnv(databaseUrl) {
   let url;
@@ -43,6 +49,24 @@ export function maskUrl(databaseUrl) {
     url.search = '';
     return url.toString();
   } catch { return '<invalid DATABASE_URL>'; }
+}
+
+// The psql script for one migration: make sure the history table exists, then run the file with
+// its history row inserted just before the file's final COMMIT. A file without a final COMMIT
+// gets the row appended; psql's ON_ERROR_STOP still keeps a failed file from being recorded.
+export function migrationScript(migration) {
+  if (!VERSION.test(migration.version) || !NAME.test(migration.name)) {
+    throw new Error(`Unexpected migration identity: ${migration.file}`);
+  }
+  const record = `INSERT INTO supabase_migrations.schema_migrations (version, name)
+  VALUES ('${migration.version}', '${migration.name}') ON CONFLICT (version) DO NOTHING;
+`;
+  const body = migration.sql.replace(/\s+$/, '');
+  const commit = FINAL_COMMIT.exec(body);
+  const script = commit
+    ? `${body.slice(0, commit.index)}${record}${body.slice(commit.index)}\n`
+    : `${body}\n${record}`;
+  return `${HISTORY_DDL}\n${script}`;
 }
 
 function psql(env, args, input) {
@@ -81,21 +105,26 @@ async function main() {
     process.exit(2);
   }
   if (values.help) {
-    console.log('usage: node scripts/apply-migrations.mjs [--status | --apply] [--database-url <url>]');
+    console.log('usage: DATABASE_URL=postgresql://... node scripts/apply-migrations.mjs [--status | --apply]');
     return;
+  }
+  if (values['database-url'] !== undefined) {
+    // Recognised only to refuse it: argv (and the password in it) is visible in the process list.
+    console.error('error: --database-url is not supported because it exposes the password in the process list; set DATABASE_URL instead');
+    process.exit(2);
   }
   const migrations = await plan();
   if (!values.apply && !values.status) {
     console.log(`dry run: ${migrations.length} migrations in apply order (nothing is executed)`);
     for (const migration of migrations) console.log(`  ${migration.version}  ${migration.file}  sha256:${migration.sha256.slice(0, 16)}`);
-    console.log('each pending file is piped to: psql -X -v ON_ERROR_STOP=1 -q -f -, then its version is recorded in supabase_migrations.schema_migrations');
+    console.log('each pending file is piped to psql -X -v ON_ERROR_STOP=1 -q -f - with its supabase_migrations.schema_migrations row inserted before the final COMMIT');
     console.log('re-run with --status (read-only) or --apply and DATABASE_URL to execute');
     return;
   }
 
-  const databaseUrl = values['database-url'] || process.env.DATABASE_URL;
+  const databaseUrl = process.env.DATABASE_URL;
   if (!databaseUrl) {
-    console.error('error: DATABASE_URL (or --database-url) is required for --status and --apply');
+    console.error('error: DATABASE_URL is required for --status and --apply');
     process.exit(2);
   }
   const version = psqlAvailable();
@@ -117,10 +146,7 @@ async function main() {
   }
   for (const migration of pending) {
     console.log(`applying ${migration.file}`);
-    psql(env, ['-f', '-'], migration.sql);
-    psql(env, ['-c', `${HISTORY_DDL}
-      INSERT INTO supabase_migrations.schema_migrations (version, name)
-      VALUES ('${migration.version}', '${migration.name}') ON CONFLICT (version) DO NOTHING;`]);
+    psql(env, ['-f', '-'], migrationScript(migration));
   }
   console.log(`applied ${pending.length} migration(s)`);
 }
