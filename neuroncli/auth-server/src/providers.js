@@ -522,7 +522,11 @@ function retryDelay(headers, info) {
 export function classifyUpstreamFailure(status, body = '', headers = null, fallbackKind = FailureKind.SERVER) {
   const info = parseUpstreamError(body);
   const httpStatus = Number.isInteger(status) && status >= 400 ? status : null;
-  const effective = httpStatus ?? (info.numericCode >= 400 ? info.numericCode : null) ?? RPC_STATUS_HTTP[info.rpcStatus] ?? null;
+  // A Workers AI error code is more specific than its HTTP status (e.g. 3036, the daily
+  // free allocation, is a rate limit until 00:00 UTC whatever status carries it).
+  const workersStatus = Object.hasOwn(WORKERS_AI_ERRORS, info.workersCode) ? WORKERS_AI_ERRORS[info.workersCode] : null;
+  const effective = workersStatus ?? httpStatus ?? (info.numericCode >= 400 ? info.numericCode : null) ??
+    RPC_STATUS_HTTP[info.rpcStatus] ?? null;
   let kind = effective ? failureKindForStatus(effective) : fallbackKind;
   if (kind === FailureKind.INVALID || !effective) {
     const refined = structuredKind(info);
@@ -884,19 +888,31 @@ export function createCompletionStream({ reader, first, model, controller, clien
     return tail;
   };
   const encode = item => encoder.encode(`data: ${typeof item === 'string' ? item : JSON.stringify(item)}\n\n`);
+  // Idle budget: measured from the last body bytes (SSE comments and keep-alives included),
+  // re-read whenever the timer fires so progress inside one event extends it.
+  const streamStarted = Date.now();
+  const idleDeadline = () => (reader.lastByteAt ?? streamStarted) + timeouts.idleMs;
+  // [DONE] completes the attempt even when the upstream keeps its connection open.
+  const complete = async () => {
+    queue.push(...await finalize());
+    done = true;
+    void reader.cancel();
+  };
   queue = handle(first);
 
   return new ReadableStream({
     async pull(stream) {
       try {
+        if (state.sawDone && !done) await complete();
         while (!queue.length && !done) {
-          const data = await guarded(reader.next(), { ms: timeouts.idleMs, phase: 'idle', signal: clientSignal, controller });
+          const data = await guarded(reader.next(), { deadline: idleDeadline, phase: 'idle', signal: clientSignal, controller });
           if (cancelled) return;
           if (data === null) {
             queue.push(...await finalize());
             done = true;
           } else {
             queue.push(...handle(data));
+            if (state.sawDone) await complete();
           }
         }
         if (queue.length) stream.enqueue(encode(queue.shift()));
@@ -910,6 +926,7 @@ export function createCompletionStream({ reader, first, model, controller, clien
         controller.abort(error);
         await reader.cancel();
         await finish({ status: 'error', kind: client ? FailureKind.ABORTED : error.kind || FailureKind.SERVER,
+          phase: timeout ? error.phase : null, retryAfterSeconds: error.retryAfterSeconds ?? null,
           errorCode: client ? 'client_disconnected' : timeout ? 'upstream_timeout' : 'upstream_error' });
         if (client) {
           try { stream.error(error); } catch { /* consumer already closed */ }

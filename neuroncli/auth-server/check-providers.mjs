@@ -26,6 +26,7 @@ try {
     assert.ok(options.signal);
     return Response.json({ data: [{ id: 'chat-model', supported_parameters: ['tools'], pricing: { prompt: '0', completion: '0' } },
       { id: 'unknown-capabilities', pricing: { prompt: '0', completion: '0' } },
+      { id: 'malformed-capabilities', supported_parameters: 'notools', pricing: { prompt: '0', completion: '0' } },
       { id: 'unknown-price', pricing: { prompt: null, completion: null } },
       { id: '' }, { id: 'image-only', architecture: { output_modalities: ['image'] } },
       { id: 'paid-model', pricing: { prompt: '1', completion: '1' } }, { id: 'disabled', active: false }] });
@@ -37,6 +38,9 @@ try {
     assert.equal(item.status, 'reachable');
     assert.equal(item.inference_checked, false);
     assert.ok(item.models.some(model => model.upstream === 'chat-model' && model.tools));
+    // Tool support needs an explicit supported_parameters array (BYOK and health discovery).
+    assert.equal(item.models.find(model => model.upstream === 'unknown-capabilities').tools, false);
+    assert.equal(item.models.find(model => model.upstream === 'malformed-capabilities').tools, false);
     assert.ok(!item.models.some(model => ['disabled', 'image-only', ''].includes(model.upstream)));
   }
   assert.ok(!health.find(item => item.provider === 'openrouter').models.some(model => ['paid-model', 'unknown-price'].includes(model.upstream)));

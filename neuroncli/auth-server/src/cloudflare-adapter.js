@@ -1,5 +1,18 @@
 import { ProviderAdapter } from './provider-adapter.js';
 
+// Workers AI binding errors are thrown as plain Errors whose message starts with the platform
+// error code (e.g. "3036: Account limited: ..."). Only that leading code is read (the rest can
+// quote the request); it becomes a REST-shaped error response so the gateway classifies it
+// like any other upstream failure (3036/3040 are rate limits; other known codes map through
+// WORKERS_AI_ERRORS in providers.js; unknown 3xxx codes are 5xx, unknown 5xxx request errors).
+const BINDING_ERROR_CODE = /^\s*(?:[A-Za-z]*Error:\s*)?(\d{4})\b/;
+export function bindingErrorResponse(error) {
+  const match = BINDING_ERROR_CODE.exec(String(error?.message ?? ''));
+  const code = match ? Number(match[1]) : null;
+  const status = code !== null && code >= 5000 ? 400 : 500;
+  return Response.json({ success: false, errors: [{ code: code ?? 0, message: 'Workers AI request failed' }] }, { status });
+}
+
 // Workers AI accepts only these chat parameters (the rest are dropped upstream of here).
 const WORKERS_AI_PARAMS = ['messages', 'tools', 'max_tokens', 'stream', 'temperature', 'top_p', 'seed',
   'presence_penalty', 'frequency_penalty'];
@@ -35,7 +48,18 @@ export class CloudflareWorkersAIAdapter extends ProviderAdapter {
     const body = this.requestBody(payload);
 
     if (env.AI) {
-      const result = await env.AI.run(model, body);
+      let result;
+      try {
+        result = await env.AI.run(model, body);
+      } catch (error) {
+        return bindingErrorResponse(error);
+      }
+      // The binding takes no abort signal: when the attempt was abandoned (first-byte timeout
+      // or client disconnect) while run() was pending, stop the generation it started.
+      if (signal?.aborted) {
+        if (typeof result?.cancel === 'function') result.cancel().catch(() => {});
+        throw signal.reason ?? new DOMException('The operation was aborted', 'AbortError');
+      }
       if (payload.stream) {
         if (typeof result?.getReader !== 'function') {
           throw new Error('Workers AI did not return a stream');

@@ -14,6 +14,12 @@ import { billableUsage, costMicrousd, estimatePromptTokens, priceFromCost } from
 import { errorBody, errorResponse } from './src/errors.js';
 import { reservationArgs, reserveError, settlementArgs } from './src/capacity.js';
 import { buildUpstreamPayload, classifyUpstreamFailure, listModelsForSession, retryAfterSeconds } from './src/providers.js';
+import { planPolicyRows } from './contract-rows.mjs';
+
+// Plan policy rows exactly as WP-B1's zerox_plan_policies_v2 returns them (in-memory PGlite
+// with every migration applied), so the gateway is tested against the real column names.
+const B1_POLICY_ROWS = await planPolicyRows();
+const policyRow = (plan, overrides = {}) => ({ ...B1_POLICY_ROWS.find(row => row.plan === plan), ...overrides });
 
 const results = [];
 async function test(name, fn) {
@@ -270,20 +276,44 @@ try {
     assert.deepEqual(planPolicy({}, 'ultrawork').tiers, ['free', 'paid']);
     assert.equal(planPolicy({}, 'enterprise').id, 'free');
     assert.equal(BUILTIN_PLANS.max.daily_tokens, 50000000);
+    assert.deepEqual(Object.keys(B1_POLICY_ROWS[0]).filter(name => ['allowed_tiers', 'rpm_limit', 'concurrency_limit'].includes(name)).sort(),
+      ['allowed_tiers', 'concurrency_limit', 'rpm_limit'], 'B1 column names');
+    // The seeded rows map onto exactly the contract section 1 plans, with no fallback.
+    const seeded = { ...DB };
+    const logged = [];
+    const originalError = console.error;
+    console.error = (...args) => logged.push(args);
+    try {
+      reset({ 'rpc:zerox_plan_policies_v2': () => Response.json(B1_POLICY_ROWS) });
+      const fromSeed = await loadPlanPolicies(seeded);
+      for (const id of ['free', 'pro', 'max', 'ultrawork']) assert.deepEqual({ ...fromSeed[id] }, { ...BUILTIN_PLANS[id] }, id);
+      assert.deepEqual(logged, [], 'complete B1 rows report no problems');
+      // A row without any recognised tiers column is reported loudly instead of routing silently.
+      reset({ 'rpc:zerox_plan_policies_v2': () => Response.json([policyRow('free'), { plan: 'pro', name: 'Pro' }]) });
+      await loadPlanPolicies({ ...DB });
+      assert.ok(logged.some(([message, details]) => /incomplete/.test(message) && details.plan === 'pro' &&
+        details.problems.includes('missing allowed_tiers')), 'missing columns are logged');
+    } finally {
+      console.error = originalError;
+    }
     const env = { ...DB };
     reset({ 'rpc:zerox_plan_policies_v2': () => Response.json([
-      { plan: 'free', name: 'Free', tiers: '{free}', daily_requests: 50 },
-      { plan: 'pro', name: 'Pro', tiers: ['free'], daily_requests: 900 },
-      { plan: 'max', tiers: ['free', 'bogus'] },
+      policyRow('free', { daily_requests: 50, allowed_tiers: '{free}' }),
+      policyRow('pro', { allowed_tiers: ['free'], daily_requests: 900, rpm_limit: 99, concurrency_limit: 9 }),
+      policyRow('max', { allowed_tiers: ['free', 'bogus'] }),
+      { ...policyRow('pro'), plan: 'team', name: 'Team', allowed_tiers: ['free', 'paid'] },
     ]) });
     const policies = await loadPlanPolicies(env);
     await loadPlanPolicies(env);
     assert.equal(rpcCalls('zerox_plan_policies_v2').length, 1, 'cached for 60 s');
     assert.deepEqual(policies.free.tiers, ['free']);
     assert.equal(policies.free.daily_requests, 50);
-    assert.deepEqual(policies.pro.tiers, ['free']);
+    assert.deepEqual(policies.pro.tiers, ['free'], 'allowed_tiers edited in the database');
+    assert.deepEqual([policies.pro.rpm, policies.pro.concurrency], [99, 9], 'rpm_limit and concurrency_limit are read');
     assert.deepEqual(policies.max.tiers, ['free', 'paid'], 'invalid tiers fall back to the contract');
+    assert.deepEqual(policies.team.tiers, ['free', 'paid'], 'a custom database plan keeps its paid tier');
     assert.deepEqual(planPolicy(env, 'pro').tiers, ['free'], 'sync lookup uses the fresh cache');
+    assert.deepEqual(planPolicy(env, 'team').tiers, ['free', 'paid']);
     const broken = { ...DB };
     reset({ 'rpc:zerox_plan_policies_v2': () => new Response('down', { status: 500 }) });
     assert.equal(await loadPlanPolicies(broken), BUILTIN_PLANS);
@@ -344,7 +374,7 @@ try {
     const router = new RoutingEngine(tracker);
     const flash = catalogEntry('gemini/gemini-2.5-flash');
     tracker.recordFailure(poolKey(flash, flash.pools[0]), { kind: FailureKind.MODEL_UNAVAILABLE });
-    const base = { env: KEYS, requestedModel: 'auto', needsTools: true, promptTokens: 500, maxTokens: 2000, tiers: ['free', 'paid'] };
+    const base = { env: KEYS, requestedModel: 'auto', needsTools: true, promptTokens: 500, maxTokens: 2000, tiers: ['free', 'paid'], country: 'US' };
     const route = router.route(base);
     assert.equal(ids(route)[0], 'gemini/gemini-3.5-flash#free');
     assert.ok(ids(route).includes('gemini/gemini-2.5-flash#paid'), 'the paid key is a separate pool');
@@ -368,16 +398,46 @@ try {
   await test('upstream failure classification and retry hints', () => {
     assert.equal(classifyUpstreamFailure(413, '{"error":{"code":"rate_limit_exceeded","message":"Request too large"}}').kind, FailureKind.CONTEXT);
     assert.equal(classifyUpstreamFailure(400, 'This model\'s maximum context length is 131072 tokens').kind, FailureKind.CONTEXT);
-    assert.equal(classifyUpstreamFailure(400, 'models/gemini-x is not found for API version v1beta').kind, FailureKind.MODEL_UNAVAILABLE);
+    // Free text never selects a pool-wide state: upstream messages can quote client input
+    // (review B2 P2). The previous expectations (MODEL_UNAVAILABLE / AUTH from message text)
+    // were exploitable and are replaced by the structured cases below.
+    assert.equal(classifyUpstreamFailure(400, 'models/gemini-x is not found for API version v1beta').kind, FailureKind.INVALID);
+    assert.equal(classifyUpstreamFailure(400, 'User location is not supported for the API use.').kind, FailureKind.INVALID);
+    const echoed = [{ error: { code: 400, status: 'INVALID_ARGUMENT',
+      message: 'Invalid JSON payload received. Unknown name "model is not found" at \'tools[0]\': API key not valid' } }];
+    assert.equal(classifyUpstreamFailure(400, JSON.stringify(echoed)).kind, FailureKind.INVALID, 'attacker-chosen field names stay request-scoped');
     assert.equal(classifyUpstreamFailure(400, 'Invalid tool schema').kind, FailureKind.INVALID);
-    assert.equal(classifyUpstreamFailure(400, 'User location is not supported for the API use.').kind, FailureKind.AUTH);
+    assert.equal(classifyUpstreamFailure(400, '{"error":{"code":"model_not_found","message":"x"}}').kind, FailureKind.MODEL_UNAVAILABLE);
+    assert.equal(classifyUpstreamFailure(400, JSON.stringify([{ error: { code: 400, status: 'FAILED_PRECONDITION',
+      message: 'User location is not supported for the API use.' } }])).kind, FailureKind.AUTH, 'Gemini precondition failures park the pool');
+    assert.equal(classifyUpstreamFailure(400, JSON.stringify([{ error: { code: 400, status: 'INVALID_ARGUMENT', message: 'API key not valid.',
+      details: [{ '@type': 'type.googleapis.com/google.rpc.ErrorInfo', reason: 'API_KEY_INVALID' }] } }])).kind, FailureKind.AUTH, 'invalid Gemini key');
+    assert.equal(classifyUpstreamFailure(401, '{"error":{"code":"invalid_api_key"}}').kind, FailureKind.AUTH);
+    assert.equal(classifyUpstreamFailure(400, '{"error":{"code":"tool_use_failed","message":"Failed to call a function"}}').kind, FailureKind.MODEL_ERROR);
+    assert.equal(classifyUpstreamFailure(400, '{"error":{"code":"context_length_exceeded"}}').kind, FailureKind.CONTEXT);
     assert.equal(classifyUpstreamFailure(404, '').kind, FailureKind.MODEL_UNAVAILABLE);
     assert.equal(classifyUpstreamFailure(503, '').kind, FailureKind.SERVER);
+    // Workers AI error codes are structured and override the HTTP status.
+    const daily = classifyUpstreamFailure(400, '{"success":false,"errors":[{"code":3036,"message":"daily free allocation"}]}');
+    assert.equal(daily.kind, FailureKind.RATE_LIMITED);
+    const untilMidnight = Math.ceil(((Math.floor(Date.now() / 86400000) + 1) * 86400000 - Date.now()) / 1000);
+    assert.ok(Math.abs(daily.retryAfterSeconds - untilMidnight) <= 2, 'the daily allocation resets at 00:00 UTC');
+    assert.equal(classifyUpstreamFailure(500, '{"errors":[{"code":3040}]}').kind, FailureKind.RATE_LIMITED);
+    assert.equal(classifyUpstreamFailure(500, '{"errors":[{"code":5007}]}').kind, FailureKind.MODEL_UNAVAILABLE);
+    assert.equal(classifyUpstreamFailure(500, '{"errors":[{"code":3999}]}').kind, FailureKind.SERVER);
+    // In-stream errors carry no HTTP status.
+    assert.equal(classifyUpstreamFailure(null, { error: { code: 429, status: 'RESOURCE_EXHAUSTED' } }).kind, FailureKind.RATE_LIMITED);
+    assert.equal(classifyUpstreamFailure(null, { error: { message: 'model not found; user location is not supported' } }).kind, FailureKind.SERVER);
     assert.equal(retryAfterSeconds(new Headers({ 'retry-after': '7' })), 7);
     assert.equal(retryAfterSeconds(new Headers({ 'x-ratelimit-remaining-requests': '0', 'x-ratelimit-reset-requests': '2m59.56s', 'x-ratelimit-reset-tokens': '7.66s' })), 180);
     assert.equal(retryAfterSeconds(new Headers({ 'x-ratelimit-remaining-tokens': '0', 'x-ratelimit-reset-tokens': '7.66s' })), 8);
     assert.equal(retryAfterSeconds(new Headers(), '[{"error":{"details":[{"retryDelay":"41s"}]}}]'), 41);
-    assert.equal(retryAfterSeconds(new Headers(), '"quotaId":"GenerateRequestsPerDayPerProjectPerModel-FreeTier","retryDelay":"30s"'), 3600);
+    const perDay = JSON.stringify([{ error: { code: 429, status: 'RESOURCE_EXHAUSTED', details: [
+      { '@type': 'type.googleapis.com/google.rpc.QuotaFailure', violations: [{ quotaId: 'GenerateRequestsPerDayPerProjectPerModel-FreeTier' }] },
+      { '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay: '30s' }] } }]);
+    assert.equal(retryAfterSeconds(new Headers(), perDay), 3600, 'per-day quotas wait at least an hour');
+    // Delay hints come only from structured fields (the old free-text match is gone).
+    assert.equal(retryAfterSeconds(new Headers(), '"quotaId":"GenerateRequestsPerDayPerProjectPerModel-FreeTier","retryDelay":"30s"'), null);
   });
 
   await test('safe OpenAI params are forwarded per provider and unsafe ones dropped', () => {
@@ -623,6 +683,152 @@ try {
     assert.equal(late.at(-1).error.message, 'Generation interrupted. Retry your request.');
   });
 
+  await test('client-chosen upstream error text never parks a shared pool (review B2 P2)', async () => {
+    const gw = gateway();
+    gw.addSession('ses_anon', {});
+    // A fake Gemini that echoes an unknown schema field name chosen by the caller.
+    reset({ gemini: call => {
+      const field = Object.keys(call.body.tools?.[0]?.function?.parameters?.properties || {})[0];
+      if (field) {
+        return Response.json([{ error: { code: 400, status: 'INVALID_ARGUMENT',
+          message: `Invalid JSON payload received. Unknown name "${field}": model is not found; user location is not supported` } }], { status: 400 });
+      }
+      return completion({ content: 'benign' });
+    } });
+    const crafted = [{ type: 'function', function: { name: 'x', parameters: { type: 'object',
+      properties: { 'model is not found': { type: 'string' } } } } }];
+    for (let i = 0; i < 3; i++) {
+      await expectError(await gw.call({ ...KEYS }, { model: 'gemini/gemini-2.5-flash', messages, tools: crafted }, { country: 'US' }), 400, 'invalid_request');
+    }
+    const key = 'gemini:gemini-2.5-flash:free';
+    assert.equal(gw.tracker.isAvailable(key), true, 'the pool stays available');
+    assert.equal(gw.tracker.getRecord(key).failed_attempts, 0);
+    const benign = await gw.call({ ...KEYS }, { model: 'gemini/gemini-2.5-flash', messages }, { country: 'US' });
+    assert.equal(benign.status, 200);
+    assert.equal(gw.session('ses_anon').requests, 4, 'the rejected requests counted against the caller');
+  });
+
+  await test('an invalid Gemini key trips AUTH and model-side 400s are refunded (review B2 P3)', async () => {
+    const gw = gateway();
+    gw.addSession('ses_anon', {});
+    reset({ gemini: () => Response.json([{ error: { code: 400, status: 'INVALID_ARGUMENT', message: 'API key not valid. Please pass a valid API key.',
+      details: [{ '@type': 'type.googleapis.com/google.rpc.ErrorInfo', reason: 'API_KEY_INVALID', domain: 'googleapis.com' }] } }], { status: 400 }) });
+    await expectError(await gw.call({ ...KEYS }, { model: 'gemini/gemini-3.5-flash', messages }, { country: 'US' }), 502, 'upstream_error');
+    assert.equal(gw.tracker.getRecord('gemini:gemini-3.5-flash:free').status, HealthState.AUTH_FAILED);
+    calls.length = 0;
+    await expectError(await gw.call({ ...KEYS }, { model: 'gemini/gemini-3.5-flash', messages }, { country: 'US' }), 502, 'upstream_error');
+    assert.equal(upstreamCalls().length, 0, 'the dead key is not called again');
+    assert.equal(gw.session('ses_anon').requests, 0, 'provider-side failures are refunded');
+
+    reset({ groq: call => call.body.model === 'openai/gpt-oss-120b'
+      ? Response.json({ error: { code: 'tool_use_failed', message: 'Failed to call a function', type: 'invalid_request_error' } }, { status: 400 })
+      : completion({ content: 'next model' }) });
+    const failover = await gw.call({ ...KEYS }, { model: 'auto', messages, tools }, { country: 'DE' });
+    assert.equal(failover.status, 200, 'auto fails over after a model-side rejection');
+    assert.equal(failover.headers.get('x-neuron-model'), 'groq/qwen/qwen3.8-27b');
+    assert.equal(gw.tracker.isAvailable('groq:openai/gpt-oss-120b:free'), true, 'model errors are request-scoped');
+    reset({ groq: () => Response.json({ error: { code: 'tool_use_failed', message: 'Failed to call a function' } }, { status: 400 }) });
+    const before = gw.session('ses_anon').requests;
+    const modelError = await expectError(await gw.call({ ...KEYS }, { model: 'groq/openai/gpt-oss-120b', messages, tools }), 502, 'upstream_error');
+    assert.equal(modelError.type, 'server_error');
+    assert.equal(gw.session('ses_anon').requests, before, 'a model-side rejection is refunded');
+  });
+
+  await test('[DONE] completes a stream even when the upstream keeps the connection open (review B2 P3)', async () => {
+    const gw = gateway();
+    gw.addSession('ses_anon', {});
+    reset({ groq: () => sse([chunk({ role: 'assistant', content: 'done' }, 'stop'),
+      chunk({}, null, { choices: [], usage: { prompt_tokens: 6, completion_tokens: 4, total_tokens: 10 } }), '[DONE]'], { hangAfter: true }) });
+    const started = Date.now();
+    const response = await gw.call({ ...KEYS, UPSTREAM_IDLE_TIMEOUT_MS: '5000' }, { model: 'groq/openai/gpt-oss-120b', messages, stream: true });
+    const events = parseSse(await response.text());
+    assert.ok(Date.now() - started < 2000, 'no wait for the idle timeout');
+    assert.equal(events.at(-1), '[DONE]');
+    assert.ok(!events.some(event => event?.error), 'no timeout error event');
+    assert.equal(gw.session('ses_anon').tokens_used, 10, 'settled with the real usage');
+    assert.equal(gw.tracker.getRecord('groq:openai/gpt-oss-120b:free').failed_attempts, 0);
+  });
+
+  await test('SSE comment keep-alives count as upstream bytes for the first-byte and idle budgets (review B2 P3)', async () => {
+    const gw = gateway();
+    gw.addSession('ses_anon', {});
+    // 150 ms budgets. Before the first data event the upstream sends a comment every 50 ms for
+    // ~200 ms (beyond the first-byte budget, within first byte + idle, the pre-commit cap); then
+    // comments for ~400 ms between data events (beyond the idle budget).
+    const slowSse = () => new Response(new ReadableStream({
+      async start(controller) {
+        const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+        for (let i = 0; i < 5; i++) { controller.enqueue(encoder.encode(': OPENROUTER PROCESSING\n\n')); await pause(40); }
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk({ role: 'assistant', content: 'slow' }))}\n\n`));
+        for (let i = 0; i < 8; i++) { controller.enqueue(encoder.encode(':\n\n')); await pause(50); }
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk({ content: ' answer' }, 'stop'))}\n\ndata: [DONE]\n\n`));
+        controller.close();
+      },
+    }), { headers: { 'Content-Type': 'text/event-stream' } });
+    reset({ groq: slowSse });
+    const response = await gw.call({ ...KEYS, ...FAST }, { model: 'groq/openai/gpt-oss-120b', messages, stream: true });
+    assert.equal(response.status, 200);
+    const events = parseSse((await response.text()).split('\n\n').filter(part => part.startsWith('data:')).join('\n\n') + '\n\n');
+    assert.equal(events.at(-1), '[DONE]');
+    assert.equal(events.filter(event => event !== '[DONE]').map(event => event.choices[0]?.delta?.content).join(''), 'slow answer');
+    assert.equal(gw.tracker.getRecord('groq:openai/gpt-oss-120b:free').failed_attempts, 0);
+  });
+
+  await test('first-byte timeouts open the circuit at once; slow non-streaming responses need three strikes', async () => {
+    const tracker = new ProviderHealthTracker();
+    tracker.recordFailure('a', { kind: FailureKind.TIMEOUT, phase: 'first_byte' });
+    assert.equal(tracker.isAvailable('a'), false);
+    tracker.recordFailure('b', { kind: FailureKind.TIMEOUT, phase: 'idle' });
+    assert.equal(tracker.isAvailable('b'), false);
+    tracker.recordFailure('c', { kind: FailureKind.TIMEOUT, phase: 'response' });
+    assert.equal(tracker.isAvailable('c'), true, 'a long generation is not a dead pool');
+    const gw = gateway();
+    gw.addSession('ses_anon', {});
+    reset({ groq: untilAborted });
+    await expectError(await gw.call({ ...KEYS, ...FAST }, { model: 'groq/openai/gpt-oss-120b', messages, stream: true }), 504, 'upstream_timeout');
+    assert.equal(gw.tracker.isAvailable('groq:openai/gpt-oss-120b:free'), false, 'the chat handler passes the timeout phase');
+  });
+
+  await test('Workers AI binding errors are rate limits and late streams are cancelled (review B2 P3)', async () => {
+    const gw = gateway();
+    gw.addSession('ses_anon', {});
+    reset({});
+    const env = { AI: { run: async () => { throw new Error('3036: Account limited: you have used up your daily free allocation of 10,000 neurons'); } } };
+    const limited = await expectError(await gw.call(env, { model: '@cf/meta/llama-3.3-70b-instruct-fp8-fast', messages }), 503, 'capacity_exhausted');
+    assert.ok(limited.retry_after_seconds > 0);
+    const record = gw.tracker.getRecord('cloudflare:@cf/meta/llama-3.3-70b-instruct-fp8-fast:free');
+    assert.equal(record.status, HealthState.RATE_LIMITED);
+    const untilMidnight = (Math.floor(Date.now() / 86400000) + 1) * 86400000 - Date.now();
+    assert.ok(Math.abs(gw.tracker.cooldownRemainingMs(record.key) - untilMidnight) < 5000, 'parked until 00:00 UTC');
+    assert.equal(gw.session('ses_anon').requests, 0, 'refunded');
+
+    const late = gateway();
+    late.addSession('ses_anon', {});
+    let cancelled = false;
+    const lateEnv = { ...FAST, AI: { run: () => new Promise(resolve => setTimeout(() => resolve(new ReadableStream({
+      start() {}, cancel() { cancelled = true; },
+    })), 300)) } };
+    await expectError(await late.call(lateEnv, { model: '@cf/meta/llama-3.3-70b-instruct-fp8-fast', messages, stream: true }), 504, 'upstream_timeout');
+    await new Promise(resolve => setTimeout(resolve, 400));
+    assert.equal(cancelled, true, 'the generation started after the timeout is cancelled');
+  });
+
+  await test('session-quota settlement after a client cancel runs through waitUntil (review B2 P3)', async () => {
+    const gw = gateway();
+    gw.addSession('ses_anon', {});
+    reset({ groq: () => sse([chunk({ role: 'assistant', content: 'partial' })], { hangAfter: true }) });
+    const waited = [];
+    const ctx = { waitUntil: promise => waited.push(promise), passThroughOnException() {} };
+    const response = await gw.call({ ...KEYS }, { model: 'groq/openai/gpt-oss-120b', messages, stream: true }, { ctx });
+    const reader = response.body.getReader();
+    await reader.read();
+    await reader.cancel();
+    assert.equal(waited.length, 1, 'the KV settlement is handed to waitUntil');
+    await Promise.all(waited);
+    const used = gw.session('ses_anon').tokens_used;
+    assert.ok(used > 0 && used < 4096, 'the reservation was replaced by the estimate');
+  });
+
   await test('request validation and authentication errors', async () => {
     const gw = gateway();
     gw.addSession('ses_anon', {});
@@ -647,7 +853,7 @@ try {
 
   // ── Chat handler: account-backed sessions (zerox_reserve_v2 / zerox_settle_v2) ──
   const accountEnv = (extra = {}) => ({ ...KEYS, ...DB, ...extra });
-  const policiesRpc = () => Response.json(Object.values(BUILTIN_PLANS).map(plan => ({ ...plan, plan: plan.id })));
+  const policiesRpc = () => Response.json(B1_POLICY_ROWS);
   const okReserve = (overrides = {}) => ({ status: 'ok', reservation_id: crypto.randomUUID(), plan: 'pro', remaining_requests: 1999,
     remaining_tokens: 9990000, credit_balance_microusd: 8000000, resets_at: '2026-10-17T00:00:00.000Z', retry_after_seconds: null, ...overrides });
   const accountGateway = () => {
@@ -769,6 +975,29 @@ try {
     assert.deepEqual(gw.writes, [], 'no KV write after a DB reservation');
   });
 
+  await test('paid plans keep their last attempt for paid capacity (review B2 P3)', async () => {
+    const gw = accountGateway();
+    const tried = [];
+    reset({ 'rpc:zerox_plan_policies_v2': policiesRpc,
+      'rpc:zerox_reserve_v2': call => Response.json([okReserve({ reservation_id: `res-${call.body.p_model}-${call.body.p_tier}` })]),
+      'rpc:zerox_settle_v2': () => Response.json([{ status: 'settled' }]),
+      gemini: call => {
+        tried.push(`gemini:${call.headers.Authorization}`);
+        return call.headers.Authorization === 'Bearer gemini-paid-key' ? completion({ content: 'paid' }) : new Response('down', { status: 503 });
+      },
+      groq: call => { tried.push(`groq:${call.headers.Authorization}`); return new Response('down', { status: 503 }); } });
+    const response = await gw.call(accountEnv(), { model: 'auto', messages, tools }, { token: 'ses_pro', country: 'US' });
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('x-neuron-model'), 'gemini/gemini-2.5-flash');
+    assert.deepEqual(tried, ['gemini:Bearer gemini-free-key', 'gemini:Bearer gemini-free-key', 'gemini:Bearer gemini-paid-key'],
+      'two free attempts, then the attempt kept for the best paid pool (ROUTER_MAX_ATTEMPTS = 3)');
+    const freeOnly = gateway();
+    freeOnly.addSession('ses_free', { account_backed: true, user_id: ACCOUNT, plan: 'free' });
+    tried.length = 0;
+    await expectError(await freeOnly.call(accountEnv(), { model: 'auto', messages, tools }, { token: 'ses_free', country: 'US' }), 502, 'upstream_error');
+    assert.equal(tried.length, 3, 'free plans spend every attempt on free pools');
+  });
+
   await test('an unexpected failure after reserving releases the reservation', async () => {
     class ExplodingTracker extends ProviderHealthTracker {
       recordSuccess() { throw new Error('bug'); }
@@ -829,7 +1058,7 @@ try {
 
   await test('plan tiers from the database gate paid pools', async () => {
     const gw = accountGateway();
-    reset({ 'rpc:zerox_plan_policies_v2': () => Response.json([{ plan: 'free', tiers: ['free'] }, { plan: 'pro', tiers: ['free'] }]) });
+    reset({ 'rpc:zerox_plan_policies_v2': () => Response.json([policyRow('free'), policyRow('pro', { allowed_tiers: ['free'] })]) });
     await expectError(await gw.call(accountEnv(), { model: 'gemini/gemini-2.5-pro', messages }, { token: 'ses_pro' }), 403, 'upgrade_required');
     assert.equal(rpcCalls('zerox_reserve_v2').length, 0, 'routing refuses before reserving');
     const anonymous = gateway();

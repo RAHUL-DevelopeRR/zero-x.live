@@ -73,6 +73,7 @@ function positiveInt(value, fallback) {
 const ERROR_CODES_BY_KIND = {
   [FailureKind.CONTEXT]: 'context_length_exceeded',
   [FailureKind.INVALID]: 'invalid_request',
+  [FailureKind.MODEL_ERROR]: 'model_error',
   [FailureKind.MODEL_UNAVAILABLE]: 'model_unavailable',
   [FailureKind.RATE_LIMITED]: 'rate_limited',
   [FailureKind.AUTH]: 'upstream_auth',
@@ -102,7 +103,9 @@ function finalError({ failures, exhausted, paidDenied }) {
   if (kinds.every(kind => kind === FailureKind.CONTEXT || kind === FailureKind.INVALID)) {
     return { code: 'invalid_request', message: 'The model rejected the request. Check the messages, tools and parameters.' };
   }
-  if (kinds.some(kind => [FailureKind.SERVER, FailureKind.AUTH, FailureKind.MODEL_UNAVAILABLE].includes(kind))) {
+  // Model-side rejections (e.g. a malformed tool call) are the provider's failure: refunded.
+  if (kinds.some(kind => [FailureKind.SERVER, FailureKind.AUTH, FailureKind.MODEL_UNAVAILABLE,
+    FailureKind.MODEL_ERROR].includes(kind))) {
     return { code: 'upstream_error' };
   }
   if (kinds.includes(FailureKind.TIMEOUT)) return { code: 'upstream_timeout' };
@@ -193,13 +196,16 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
         console.error('Neuron allocation settlement failed', { request_id: requestId });
       }
     };
-    const settleDb = (reservation, candidate, outcome, background) => {
+    // Settlement I/O after the response has been handed over (stream end, client cancel)
+    // runs through waitUntil on Workers so it is not dropped after a disconnect.
+    const background = promise => runInBackground(c, promise) ? Promise.resolve() : promise;
+    const settleDb = (reservation, candidate, outcome, inBackground) => {
       const args = settlementArgs({ reservationId: reservation.reservation_id, entry: candidate.entry, pool: candidate.pool,
         promptEstimate: promptTokens, ...outcome });
       const promise = settleCapacity(env, args).catch(error => {
         console.error('Neuron settlement failed', { name: error?.name, request_id: requestId });
       });
-      return background && runInBackground(c, promise) ? Promise.resolve() : promise;
+      return inBackground ? background(promise) : promise;
     };
     // Settles a committed attempt with real (or estimated) usage.
     const finishAttempt = async ({ reservation, candidate, startedAt }, outcome) => {
@@ -211,11 +217,12 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
       if (kv) {
         const billed = billableUsage(outcome.usage, { prompt_tokens: promptTokens,
           completion_tokens: estimateOutputTokens(outcome.outputBytes) });
-        await settleKv({ actualTokens: billed.total_tokens, refundRequest: false });
+        await background(settleKv({ actualTokens: billed.total_tokens, refundRequest: false }));
       }
     };
-    const recordFailure = (key, kind, retryAfterSeconds, latencyMs) => {
-      if (key) healthTracker.recordFailure(key, { kind, retryAfterSeconds: retryAfterSeconds || 0, latencyMs });
+    // phase ('first_byte' | 'idle' | 'response') tells liveness timeouts from slow generations.
+    const recordFailure = (key, kind, retryAfterSeconds, latencyMs, phase = null) => {
+      if (key) healthTracker.recordFailure(key, { kind, retryAfterSeconds: retryAfterSeconds || 0, latencyMs, phase });
     };
 
     const timeouts = streamTimeouts(env);
@@ -232,7 +239,7 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
       } catch (error) {
         const kind = clientSignal?.aborted ? FailureKind.ABORTED : error?.kind || FailureKind.SERVER;
         const latencyMs = Date.now() - startedAt;
-        recordFailure(key, kind, error?.retryAfterSeconds, latencyMs);
+        recordFailure(key, kind, error?.retryAfterSeconds, latencyMs, error?.phase ?? null);
         if (kind !== FailureKind.ABORTED) console.error('Neuron upstream request failed', { ...log, kind });
         return { ok: false, kind, retryAfterSeconds: error?.retryAfterSeconds ?? null, latencyMs, errorCode: ERROR_CODES_BY_KIND[kind] };
       }
@@ -263,7 +270,7 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
         ...started.stream, model: entry.id, controller: started.controller, clientSignal, timeouts, requestId, env,
         onFinish: async outcome => {
           if (outcome.status !== 'ok') {
-            recordFailure(key, outcome.kind, null, Date.now() - startedAt);
+            recordFailure(key, outcome.kind, outcome.retryAfterSeconds, Date.now() - startedAt, outcome.phase ?? null);
             if (outcome.kind !== FailureKind.ABORTED) console.error('Neuron stream interrupted', { ...log, kind: outcome.kind });
           }
           await finishAttempt(info, outcome);
@@ -272,7 +279,12 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
       return { ok: true, response: new Response(stream, { headers: { ...responseHeaders, 'Content-Type': 'text/event-stream' } }) };
     };
 
+    // ROUTER_MAX_ATTEMPTS caps upstream attempts per request. When the plan includes paid
+    // capacity, the last attempt is kept for a paid pool so failing free pools (tried first)
+    // cannot use up every attempt of a paying user.
     const maxAttempts = positiveInt(env.ROUTER_MAX_ATTEMPTS, 3);
+    const paidCandidates = route.candidates.some(candidate => candidate.pool.tier === 'paid');
+    const freeAttemptLimit = paidCandidates && maxAttempts > 1 ? maxAttempts - 1 : maxAttempts;
     const failures = [];
     const exhausted = [];
     const skipModels = new Set();
@@ -281,6 +293,7 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
     let current = null; // reservation whose attempt is in flight
     let reservations = 0;
     let attempts = 0;
+    let freeAttempts = 0;
     const releasePending = async (status, outcome = {}) => {
       if (!pending) return;
       const { reservation, candidate, latencyMs = 0, errorCode = null } = pending;
@@ -292,6 +305,7 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
       for (const candidate of route.candidates) {
         if (attempts >= maxAttempts || clientSignal?.aborted) break;
         if (skipModels.has(candidate.entry.id) || (paidDenied && candidate.pool.tier === 'paid')) continue;
+        if (candidate.pool.tier !== 'paid' && !paidDenied && freeAttempts >= freeAttemptLimit) continue;
         let reservation = null;
         if (ledger) {
           // A failed attempt is refunded before failing over, so it never holds the caller's
@@ -321,6 +335,7 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
           setQuotaHeaders(row.remaining_requests, row.remaining_tokens);
         }
         attempts++;
+        if (candidate.pool.tier !== 'paid') freeAttempts++;
         const result = await attempt(candidate, reservation);
         current = null;
         if (result.ok) return result.response;
