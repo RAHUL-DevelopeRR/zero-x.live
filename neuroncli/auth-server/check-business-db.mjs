@@ -9,10 +9,11 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PGlite } from '@electric-sql/pglite';
-import { AccountDatabaseError, databaseConfigured, databaseDriver, rpc, rpcRows } from './src/account-store.js';
+import { AccountDatabaseError, databaseConfigured, databaseDriver, localDatabaseRefusal, rpc, rpcRows } from './src/account-store.js';
 import { closeAllPglite, closePglite, getPgliteHandle, migrate } from './src/db/pglite.js';
-import { listMigrations } from './src/db/migrations.js';
-import { connectionEnv, maskUrl } from './scripts/apply-migrations.mjs';
+import { DEV_BOOTSTRAP_SQL } from './src/db/bootstrap.js';
+import { listMigrations, readMigration } from './src/db/migrations.js';
+import { connectionEnv, maskUrl, migrationScript } from './scripts/apply-migrations.mjs';
 
 const root = dirname(fileURLToPath(import.meta.url));
 const env = { DATABASE_DRIVER: 'pglite' };
@@ -68,6 +69,31 @@ try {
   assert.equal(databaseConfigured({}), false);
   assert.equal(databaseConfigured({ DATABASE_DRIVER: 'mysql', SUPABASE_URL: 'https://x', SUPABASE_SECRET_KEY: 'sb_secret_x' }), false);
   assert.equal(databaseConfigured({ SUPABASE_URL: 'https://x.supabase.co', SUPABASE_SECRET_KEY: 'sb_secret_x' }), true);
+  // The local driver is refused wherever it could silently serve real users.
+  for (const [extra, reason] of [
+    [{ NODE_ENV: 'production' }, /refused when NODE_ENV=production/],
+    [{ NODE_ENV: 'production', ALLOW_LOCAL_DATABASE: 'true' }, /refused when NODE_ENV=production/],
+    [{ AUTH_HOST: '0.0.0.0' }, /only serves a gateway bound to loopback \(AUTH_HOST=0\.0\.0\.0\)/],
+    [{ AUTH_HOST: '192.168.1.20' }, /ALLOW_LOCAL_DATABASE=true/],
+  ]) {
+    const refusedEnv = { ...env, ...extra };
+    assert.equal(databaseConfigured(refusedEnv), false, JSON.stringify(extra));
+    assert.match(localDatabaseRefusal(refusedEnv), reason);
+    await assert.rejects(rpc(refusedEnv, 'zerox_plan_policies_v2', {}), error =>
+      error instanceof AccountDatabaseError && reason.test(error.message));
+  }
+  for (const extra of [{ AUTH_HOST: '127.0.0.1' }, { AUTH_HOST: 'localhost' }, { AUTH_HOST: '::1' }, { AUTH_HOST: '127.0.0.2' },
+    { AUTH_HOST: '0.0.0.0', ALLOW_LOCAL_DATABASE: 'true' }, { NODE_ENV: 'development' }]) {
+    assert.equal(databaseConfigured({ ...env, ...extra }), true, JSON.stringify(extra));
+    assert.equal(localDatabaseRefusal({ ...env, ...extra }), null);
+  }
+  const realNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  Object.defineProperty(globalThis, 'navigator', { value: { userAgent: 'Cloudflare-Workers' }, configurable: true });
+  try {
+    assert.equal(databaseConfigured(env), false, 'pglite is never configured inside Cloudflare Workers');
+    await assert.rejects(rpc(env, 'zerox_plan_policies_v2', {}), /not available in Cloudflare Workers/);
+  } finally { Object.defineProperty(globalThis, 'navigator', realNavigator); }
+  assert.equal(databaseConfigured(env), true);
   const storeSource = await readFile(join(root, 'src/account-store.js'), 'utf8');
   assert.ok(!/\b(?:from|import)\s*\(?\s*['"][^'"]*pglite[^'"]*['"]/.test(storeSource),
     'account-store never imports the PGlite driver statically or with a bundler-visible specifier');
@@ -92,7 +118,8 @@ try {
     'single-column TABLE functions yield objects, as with PostgREST');
   assert.equal(await rpc(env, 'zerox_subscription_effective_plan', { p_user_id: randomUUID() }), null,
     'a NULL scalar result yields no row');
-  assert.equal(await rpc(env, 'zerox_subscription_grants_plan', { p_status: 'active', p_current_period_end: null }), true,
+  assert.equal(await rpc(env, 'zerox_subscription_grants_plan', { p_status: 'active',
+    p_current_period_end: new Date(Date.now() + 86400000).toISOString(), p_cancel_at_period_end: false, p_updated_at: null }), true,
     'scalar functions yield bare values');
   ok('pglite driver: configuration, migration order, PostgREST-style errors, void, scalar and row results');
 
@@ -306,7 +333,25 @@ try {
   const freeTierCost = await reserve(proUser, { p_tier: 'free' });
   assert.deepEqual(await settle(freeTierCost.reservation_id, { p_cost_microusd: 999 }),
     { status: 'settled', credit_balance_microusd: 5000 }, 'free pool usage costs no credits');
-  ok('insufficient_credits, credit holds, deduction, clamp at zero with ledger shortfall, refunds and free pool not billed');
+  // A long-running paid request keeps its credits held after its concurrency slot lapses (10 min),
+  // until it is settled or released (15 min).
+  const longRunner = await newUser('pro', { credits: 1000 });
+  const longPaid = await reserve(longRunner, { p_tier: 'paid', p_cost_microusd: 1000 });
+  assert.equal(longPaid.status, 'ok');
+  await sql("UPDATE public.zerox_reservations SET created_at = now() - interval '11 minutes' WHERE id = $1", [longPaid.reservation_id]);
+  assert.equal((await reserve(longRunner, { p_tier: 'paid', p_cost_microusd: 1000 })).status, 'insufficient_credits',
+    'credits stay held beyond the 10 minute concurrency horizon');
+  await sql("UPDATE public.zerox_reservations SET created_at = now() - interval '16 minutes' WHERE id = $1", [longPaid.reservation_id]);
+  await rpc(env, 'zerox_release_stale_reservations', {});
+  assert.equal((await reserve(longRunner, { p_tier: 'paid', p_cost_microusd: 1000 })).status, 'ok', 'release returns the held credits');
+  // The usage: ref namespace belongs to settlements, so a grant can never block one.
+  const reservedRef = await reserve(longRunner, { p_tier: 'free' });
+  await assert.rejects(rpc(env, 'zerox_credit_grant', { p_user_id: longRunner, p_delta_microusd: 5, p_reason: 'topup',
+    p_ref: `usage:${reservedRef.reservation_id}` }), /invalid_credit_ref: the usage: prefix is reserved/);
+  await assert.rejects(rpc(env, 'zerox_credit_grant', { p_user_id: longRunner, p_delta_microusd: 5, p_reason: 'topup',
+    p_ref: 'USAGE:anything' }), /invalid_credit_ref/);
+  assert.equal((await settle(reservedRef.reservation_id)).status, 'settled');
+  ok('insufficient_credits, credit holds until settle or release, deduction, clamp at zero with ledger shortfall, refunds, free pool not billed, reserved usage: refs');
 
   // ---------------------------------------------------------------- refund path
   await clockHeadroom();
@@ -387,7 +432,30 @@ try {
   assert.equal((await reserve(staleUser)).status, 'ok', 'released reservation frees its concurrency slot');
   assert.equal((await settle(abandoned.reservation_id)).status, 'settled', 'a late settle still reconciles a released reservation');
   assert.equal((await settle(abandoned.reservation_id)).status, 'already_settled');
-  ok('stale reservations released after 15 minutes, late settle, bounded housekeeping');
+  // Every reservation query of the quota path and the housekeeping job has a supporting index,
+  // also for a heavy user with weeks of finished reservations.
+  const historyUser = await newUser('max');
+  await sql(`INSERT INTO public.zerox_reservations (user_id, request_id, model, tier, plan, reserved_tokens, usage_day,
+      pool_minute, pool_day, status, created_at)
+    SELECT $1, 'hist_' || n, 'hist/model', 'free', 'max', 10, current_date, now(), now(),
+      CASE WHEN n <= 2 THEN 'active' ELSE 'settled' END, now() - (n || ' minutes')::interval * CASE WHEN n <= 2 THEN 0 ELSE 5 END
+    FROM generate_series(1, 6000) AS n`, [historyUser]);
+  await db.exec('ANALYZE public.zerox_reservations');
+  const planFor = async query => {
+    await db.exec('SET enable_seqscan = off');
+    try { return (await sql(`EXPLAIN ${query}`)).map(row => row['QUERY PLAN']).join('\n'); }
+    finally { await db.exec('RESET enable_seqscan'); }
+  };
+  assert.match(await planFor(`DELETE FROM public.zerox_reservations AS r WHERE r.id IN (SELECT old.id FROM public.zerox_reservations AS old
+    WHERE old.status <> 'active' AND old.created_at < now() - interval '30 days' LIMIT 10000)`), /zerox_reservations_finished_idx/);
+  assert.match(await planFor(`SELECT r.id FROM public.zerox_reservations AS r WHERE r.status = 'active'
+    AND r.created_at < now() - interval '15 minutes' ORDER BY r.created_at LIMIT 10000`), /zerox_reservations_active_idx/);
+  assert.match(await planFor(`SELECT count(*), sum(r.reserved_cost_microusd) FROM public.zerox_reservations AS r
+    WHERE r.user_id = '${historyUser}' AND r.status = 'active'`), /zerox_reservations_(?:user_)?active_idx/,
+  'credit holds and concurrency read only in-flight rows (partial indexes), never the finished history');
+  assert.equal((await reserve(historyUser)).status, 'ok', 'finished history does not hold concurrency slots');
+  await sql("DELETE FROM public.zerox_reservations WHERE user_id = $1 AND request_id LIKE 'hist_%'", [historyUser]);
+  ok('stale reservations released after 15 minutes, late settle, bounded and indexed housekeeping');
 
   // ---------------------------------------------------------------- API keys
   const keyUser = await newUser('pro');
@@ -480,22 +548,133 @@ try {
   // Cancel max at period end: the plan stays until the period ends, then the expiry job downgrades.
   await upsert({ p_provider_subscription_id: 'sub_TEST2', p_plan: 'max', p_status: 'cancelled', p_current_period_end: periodEnd, p_cancel_at_period_end: true });
   assert.equal((await account(subscriber)).plan, 'max', 'cancelled subscriptions keep the plan until current_period_end');
-  assert.deepEqual(await rpc(env, 'zerox_apply_subscription_expiry', {}), { downgraded: 0 });
+  assert.deepEqual(await rpc(env, 'zerox_apply_subscription_expiry', {}), { downgraded: 0, reconciled: 0 });
   await sql("UPDATE public.zerox_subscriptions SET current_period_end = now() - interval '1 minute' WHERE provider_subscription_id = 'sub_TEST2'");
   const manualPro = await newUser('pro');
-  assert.deepEqual(await rpc(env, 'zerox_apply_subscription_expiry', {}), { downgraded: 1 });
+  assert.deepEqual(await rpc(env, 'zerox_apply_subscription_expiry', {}), { downgraded: 1, reconciled: 1 });
   subAccount = await account(subscriber);
   assert.equal(subAccount.plan, 'free'); assert.equal(subAccount.plan_source, 'default');
   assert.equal((await account(manualPro)).plan, 'pro', 'operator-granted plans are never downgraded by billing');
-  assert.deepEqual(await rpc(env, 'zerox_apply_subscription_expiry', {}), { downgraded: 0 });
-  assert.equal((await upsert({ p_provider_subscription_id: 'sub_TEST2', p_plan: 'max', p_status: 'active' })).status, 'cancelled',
-    'out-of-order webhooks cannot resurrect a cancelled subscription');
+  assert.deepEqual(await rpc(env, 'zerox_apply_subscription_expiry', {}), { downgraded: 0, reconciled: 0 });
+  const replayed = await upsert({ p_provider_subscription_id: 'sub_TEST2', p_plan: 'pro', p_status: 'active',
+    p_current_period_end: new Date(Date.now() + 60 * 86400000).toISOString(), p_cancel_at_period_end: false, p_raw: { late: true } });
+  assert.equal(replayed.status, 'cancelled', 'out-of-order webhooks cannot resurrect a cancelled subscription');
+  assert.equal(replayed.plan, 'max', 'nor change its plan');
+  assert.ok(new Date(replayed.current_period_end) < new Date(), 'nor extend its period');
+  assert.equal(replayed.cancel_at_period_end, true);
+  assert.equal(replayed.raw.late, undefined, 'the late payload is not stored');
   assert.equal((await account(subscriber)).plan, 'free');
+  const ended = await upsert({ p_provider_subscription_id: 'sub_TEST2', p_plan: 'pro', p_status: 'completed', p_raw: { done: true } });
+  assert.equal(ended.status, 'completed', 'ended subscriptions still accept ending updates');
+  assert.equal(ended.plan, 'max', 'but keep their plan');
+  assert.deepEqual(ended.raw, { done: true });
   await upsert({ p_provider_subscription_id: 'sub_TEST3', p_plan: 'pro', p_status: 'active', p_current_period_end: periodEnd });
   assert.equal((await account(subscriber)).plan, 'pro');
   await upsert({ p_provider_subscription_id: 'sub_TEST3', p_plan: 'pro', p_status: 'halted', p_current_period_end: new Date(Date.now() - 60000).toISOString() });
   assert.equal((await account(subscriber)).plan, 'free', 'halted after period end reverts to free immediately');
-  ok('subscription upsert: plan grant on authenticated/active, upgrade, cancel at period end, expiry downgrade, sticky terminal states');
+  ok('subscription upsert: plan grant on authenticated/active, upgrade, cancel at period end, expiry downgrade, ended subscriptions frozen');
+
+  // ---------------------------------------------------------------- subscription grants are bounded in time
+  const hoursAgo = hours => new Date(Date.now() - hours * 3600000).toISOString();
+  const grantsPlan = (status, end, cancel = false, updated = hoursAgo(1)) => rpc(env, 'zerox_subscription_grants_plan', {
+    p_status: status, p_current_period_end: end, p_cancel_at_period_end: cancel, p_updated_at: updated });
+  for (const status of ['authenticated', 'active', 'pending']) {
+    assert.equal(await grantsPlan(status, hoursAgo(-24)), true, `${status} grants during the period`);
+    assert.equal(await grantsPlan(status, hoursAgo(48)), true, `${status} grants within the 3 day grace window`);
+    assert.equal(await grantsPlan(status, hoursAgo(73)), false, `${status} stops granting after the grace window`);
+    assert.equal(await grantsPlan(status, hoursAgo(1), true), false, `${status} set to cancel at period end gets no grace`);
+    assert.equal(await grantsPlan(status, null, false, hoursAgo(48)), true, `${status} without a period end grants briefly`);
+    assert.equal(await grantsPlan(status, null, false, hoursAgo(73)), false, `${status} without a period end lapses after 3 days`);
+    assert.equal(await grantsPlan(status, null, false, null), false);
+  }
+  for (const status of ['halted', 'paused', 'cancelled', 'completed', 'expired']) {
+    assert.equal(await grantsPlan(status, hoursAgo(-1)), true, `${status} grants until current_period_end`);
+    assert.equal(await grantsPlan(status, hoursAgo(1)), false, `${status} gets no grace`);
+    assert.equal(await grantsPlan(status, null), false);
+  }
+  assert.equal(await grantsPlan('created', hoursAgo(-24)), false, 'created grants nothing');
+  // A paid plan whose renewal was never recorded (lost halted/cancelled webhook) lapses.
+  const revenueBefore = (await rpc(env, 'zerox_admin_overview', {})).overview.revenue;
+  const lapsed = {};
+  for (const [status, end] of [['active', true], ['pending', true], ['authenticated', false]]) {
+    const user = await newUser('free');
+    lapsed[status] = user;
+    await rpc(env, 'zerox_billing_upsert_subscription', { p_user_id: user, p_provider: 'razorpay',
+      p_provider_subscription_id: `sub_LAPSE_${status}`, p_plan: 'pro', p_status: status, p_current_period_start: null,
+      p_current_period_end: end ? hoursAgo(-24) : null, p_cancel_at_period_end: false, p_raw: null });
+    assert.equal((await account(user)).plan, 'pro', `${status} grants the plan`);
+  }
+  const grantingRevenue = (await rpc(env, 'zerox_admin_overview', {})).overview.revenue;
+  assert.equal(grantingRevenue.active_subscriptions, revenueBefore.active_subscriptions + 2, 'authenticated and active count in MRR');
+  assert.equal(grantingRevenue.mrr_usd_estimate, revenueBefore.mrr_usd_estimate + 20);
+  for (const [status, aged] of [['active', false], ['pending', false], ['authenticated', true]]) {
+    await sql(`UPDATE public.zerox_subscriptions SET current_period_end = CASE WHEN $2 THEN NULL ELSE now() - interval '90 days' END,
+      updated_at = now() - interval '90 days', created_at = now() - interval '90 days' WHERE provider_subscription_id = $1`,
+    [`sub_LAPSE_${status}`, aged]);
+  }
+  const lapsedRevenue = (await rpc(env, 'zerox_admin_overview', {})).overview.revenue;
+  assert.deepEqual(lapsedRevenue, revenueBefore, 'lapsed authenticated/active subscriptions drop out of MRR');
+  assert.deepEqual(await rpc(env, 'zerox_apply_subscription_expiry', {}), { downgraded: 3, reconciled: 3 },
+    'the expiry job catches subscriptions whose period ended without a renewal');
+  for (const user of Object.values(lapsed)) {
+    const row = await account(user);
+    assert.equal(row.plan, 'free'); assert.equal(row.plan_source, 'default');
+    assert.equal((await rpc(env, 'zerox_billing_get', { p_user_id: user })).subscription.plan, 'pro', 'the lapsed subscription stays visible');
+  }
+  const stale = await newUser('free');
+  await rpc(env, 'zerox_billing_upsert_subscription', { p_user_id: stale, p_provider: 'razorpay', p_provider_subscription_id: 'sub_STALE',
+    p_plan: 'max', p_status: 'active', p_current_period_start: null, p_current_period_end: hoursAgo(24 * 90),
+    p_cancel_at_period_end: false, p_raw: null });
+  assert.equal((await account(stale)).plan, 'free', 'an active webhook for a long-ended period grants nothing');
+  ok('subscription grants bounded: 3 day grace for renewing statuses, none when cancelling or ended, lapsed grants downgraded and excluded from MRR');
+
+  // ---------------------------------------------------------------- operator plans survive billing
+  const subscribe = (user, id, plan, status, end) => rpc(env, 'zerox_billing_upsert_subscription', { p_user_id: user,
+    p_provider: 'razorpay', p_provider_subscription_id: id, p_plan: plan, p_status: status, p_current_period_start: null,
+    p_current_period_end: end, p_cancel_at_period_end: false, p_raw: null });
+  const planOf = async user => { const row = await account(user); return [row.plan, row.plan_source, row.manual_plan]; };
+  const compMax = await newUser('max');
+  await subscribe(compMax, 'sub_COMP1', 'pro', 'active', periodEnd);
+  assert.deepEqual(await planOf(compMax), ['max', 'manual', null], 'a higher-priced operator plan is kept while subscribed');
+  await subscribe(compMax, 'sub_COMP1', 'pro', 'cancelled', hoursAgo(1));
+  assert.deepEqual(await planOf(compMax), ['max', 'manual', null], 'and survives the subscription ending');
+  const compPro = await newUser('pro');
+  await subscribe(compPro, 'sub_COMP2', 'max', 'active', periodEnd);
+  assert.deepEqual(await planOf(compPro), ['max', 'subscription', 'pro'], 'a higher-priced subscription applies and remembers the operator plan');
+  await subscribe(compPro, 'sub_COMP2', 'max', 'cancelled', periodEnd);
+  assert.deepEqual(await planOf(compPro), ['max', 'subscription', 'pro']);
+  await sql("UPDATE public.zerox_subscriptions SET current_period_end = now() - interval '1 minute' WHERE provider_subscription_id = 'sub_COMP2'");
+  assert.deepEqual(await rpc(env, 'zerox_apply_subscription_expiry', {}), { downgraded: 1, reconciled: 1 });
+  assert.deepEqual(await planOf(compPro), ['pro', 'manual', null], 'the operator plan is restored when billing ends');
+  const legacyComp = await newUser('free');
+  await sql("UPDATE public.zerox_accounts SET plan = 'ultrawork', plan_source = 'default' WHERE clerk_id = $1", [legacyComp]);
+  await subscribe(legacyComp, 'sub_COMP3', 'pro', 'active', periodEnd);
+  assert.deepEqual(await planOf(legacyComp), ['pro', 'subscription', 'ultrawork'],
+    'an equally priced subscription applies; a paid plan set without a source counts as an operator plan');
+  await subscribe(legacyComp, 'sub_COMP3', 'pro', 'halted', hoursAgo(1));
+  assert.deepEqual(await planOf(legacyComp), ['ultrawork', 'manual', null]);
+  const withdrawn = await newUser('pro');
+  await subscribe(withdrawn, 'sub_COMP4', 'max', 'active', periodEnd);
+  await sql('UPDATE public.zerox_accounts SET manual_plan = NULL WHERE clerk_id = $1', [withdrawn]);
+  await subscribe(withdrawn, 'sub_COMP4', 'max', 'expired', hoursAgo(1));
+  assert.deepEqual(await planOf(withdrawn), ['free', 'default', null], 'clearing manual_plan withdraws the operator grant');
+  // The expiry job also corrects billing plans changed out of band, counting only downgrades as such.
+  const drifted = await newUser('free');
+  await subscribe(drifted, 'sub_DRIFT', 'pro', 'active', periodEnd);
+  await sql("UPDATE public.zerox_subscriptions SET plan = 'max' WHERE provider_subscription_id = 'sub_DRIFT'");
+  assert.deepEqual(await rpc(env, 'zerox_apply_subscription_expiry', {}), { downgraded: 0, reconciled: 1 },
+    'an upgrade is reconciled but not reported as a downgrade');
+  assert.deepEqual(await planOf(drifted), ['max', 'subscription', null]);
+  await sql("UPDATE public.zerox_accounts SET manual_plan = 'max' WHERE clerk_id = $1", [drifted]);
+  await sql("UPDATE public.zerox_subscriptions SET plan = 'pro' WHERE provider_subscription_id = 'sub_DRIFT'");
+  assert.deepEqual(await rpc(env, 'zerox_apply_subscription_expiry', {}), { downgraded: 0, reconciled: 0 },
+    'a newly granted higher operator plan is applied without counting a plan change');
+  assert.deepEqual(await planOf(drifted), ['max', 'manual', null]);
+  for (const id of ['sub_COMP1', 'sub_COMP2', 'sub_COMP3', 'sub_COMP4', 'sub_DRIFT']) {
+    await sql("UPDATE public.zerox_subscriptions SET status = 'expired', current_period_end = now() - interval '1 day' WHERE provider_subscription_id = $1", [id]);
+  }
+  assert.deepEqual(await rpc(env, 'zerox_apply_subscription_expiry', {}), { downgraded: 0, reconciled: 0 });
+  ok('operator plans: kept when priced higher, remembered and restored when billing ends, withdrawable; expiry reports downgrades only as downgrades');
 
   // ---------------------------------------------------------------- payments, credits, webhooks
   const payer = await newUser('pro');
@@ -603,9 +782,10 @@ try {
   assert.equal(Object.values(admin.users.by_plan).reduce((sum, value) => sum + value, 0), counts.total);
   await upsert({ p_provider_subscription_id: 'sub_TEST4', p_plan: 'max', p_status: 'active', p_current_period_end: periodEnd });
   const { overview: adminWithRevenue } = await rpc(env, 'zerox_admin_overview', {});
-  assert.equal(adminWithRevenue.revenue.active_subscriptions, 1);
-  assert.equal(adminWithRevenue.revenue.mrr_usd_estimate, 40);
-  assert.deepEqual(adminWithRevenue.revenue.by_plan, { max: 1 });
+  assert.equal(adminWithRevenue.revenue.active_subscriptions, admin.revenue.active_subscriptions + 1);
+  assert.equal(adminWithRevenue.revenue.mrr_usd_estimate, admin.revenue.mrr_usd_estimate + 40);
+  assert.deepEqual(adminWithRevenue.revenue, { active_subscriptions: 1, mrr_usd_estimate: 40, by_plan: { max: 1 } },
+    'only the one current subscription counts; ended and lapsed ones do not');
   const [todayUsage] = await sql(`SELECT coalesce(sum(requests), 0)::int AS requests, coalesce(sum(cost_microusd), 0)::int AS cost
     FROM public.zerox_usage_daily WHERE day = (now() AT TIME ZONE 'UTC')::date`);
   assert.ok(todayUsage.requests > 0 && todayUsage.cost > 0);
@@ -637,7 +817,11 @@ try {
   assert.deepEqual(await rpcRows(env, 'zerox_session_index_revoke_all', { p_user_id: cliUser }), []);
   ok('session index add/list/remove/revoke_all with hashed ids and ownership checks');
 
-  // ---------------------------------------------------------------- concurrency
+  // ---------------------------------------------------------------- bursts (serialized by PGlite)
+  // PGlite has a single connection and runs each RPC in its own transaction one after another, so
+  // these bursts check the limit logic and exactly-once results under many queued calls, not lock
+  // contention. Row locks (FOR UPDATE, INSERT ... ON CONFLICT) are what make the same calls safe on
+  // multi-connection Postgres; run an equivalent burst against a real Postgres before release.
   await clockHeadroom();
   const parallelUser = await newUser('free');
   const burst = await Promise.all(Array.from({ length: 12 }, () => reserve(parallelUser)));
@@ -674,7 +858,7 @@ try {
     p_user_id: keyBurstUser, p_name: `k${index}`, p_prefix: 'nzx_burst', p_hash: sha(`burst-${index}`) })));
   assert.equal(keyBurst.filter(result => result.status === 'fulfilled').length, 10);
   assert.ok(keyBurst.filter(result => result.status === 'rejected').every(result => /too_many_keys/.test(result.reason.message)));
-  ok('concurrency: parallel reserves never exceed concurrency, pool, daily or credit limits; settles, claims, grants and key creation are exactly-once');
+  ok('serialized bursts (one PGlite connection, so no lock contention): reserves never exceed concurrency, pool, daily or credit limits; settles, claims, grants and key creation are exactly-once');
 
   // ---------------------------------------------------------------- legacy RPCs still work
   const legacyUser = await newUser('pro');
@@ -753,8 +937,14 @@ try {
     const ready = await app.request('https://zero-x.live/ready', {}, gatewayEnv);
     assert.equal(ready.status, 200, 'plan policies and the session store load through DATABASE_DRIVER=pglite');
     assert.deepEqual(await ready.json(), { ready: true });
+    for (const misconfigured of [{ NODE_ENV: 'production' }, { AUTH_HOST: '0.0.0.0' }]) {
+      const exposedEnv = { ...gatewayEnv, ...misconfigured };
+      const exposedHealth = await (await app.request('https://zero-x.live/health', {}, exposedEnv)).json();
+      assert.equal(exposedHealth.database_configured, false, `${JSON.stringify(misconfigured)} does not count as a configured database`);
+      assert.equal((await app.request('https://zero-x.live/ready', {}, exposedEnv)).status, 503, 'and the gateway does not report ready');
+    }
   } finally { globalThis.fetch = originalFetch; }
-  ok('gateway /health and /ready run against DATABASE_DRIVER=pglite (plan policies and session store)');
+  ok('gateway /health and /ready run against DATABASE_DRIVER=pglite, and refuse it in production or beyond loopback');
 
   // ---------------------------------------------------------------- operator scripts
   const node = process.execPath;
@@ -768,6 +958,36 @@ try {
   const refused = spawnSync(node, ['scripts/apply-migrations.mjs', '--apply'], { cwd: root, env: cleanEnv, encoding: 'utf8' });
   assert.equal(refused.status, 2);
   assert.match(refused.stderr, /DATABASE_URL/);
+  const argvUrl = spawnSync(node, ['scripts/apply-migrations.mjs', '--status', '--database-url', 'postgresql://u:secret@db.example.invalid/x'],
+    { cwd: root, env: cleanEnv, encoding: 'utf8' });
+  assert.equal(argvUrl.status, 2, 'a connection string in argv is refused before connecting');
+  assert.match(argvUrl.stderr, /--database-url is not supported because it exposes the password in the process list; set DATABASE_URL instead/);
+  assert.ok(!`${argvUrl.stdout}${argvUrl.stderr}`.includes('secret'));
+  // Each file and its history row run as one psql script, the row inside the file's transaction.
+  for (const migration of await Promise.all(migrations.map(readMigration))) {
+    const script = migrationScript(migration);
+    assert.ok(script.trimEnd().endsWith(`VALUES ('${migration.version}', '${migration.name}') ON CONFLICT (version) DO NOTHING;\nCOMMIT;`),
+      `${migration.file}: history row inserted just before the final COMMIT`);
+    assert.equal(script.split(/\bCOMMIT\s*;/i).length, migration.sql.split(/\bCOMMIT\s*;/i).length, 'no extra COMMIT');
+  }
+  assert.match(migrationScript({ version: '20990101000000', name: 'no_tx', file: '20990101000000_no_tx.sql', sql: 'SELECT 1;' }),
+    /SELECT 1;\nINSERT INTO supabase_migrations\.schema_migrations/, 'files without a final COMMIT get the row appended');
+  assert.throws(() => migrationScript({ version: "1'; DROP", name: 'x', file: 'x.sql', sql: '' }), /Unexpected migration identity/);
+  const psqlStandIn = await PGlite.create();
+  try {
+    // Running the generated scripts in order (as psql would) applies and records every migration.
+    await psqlStandIn.exec(DEV_BOOTSTRAP_SQL);
+    for (const migration of await Promise.all(migrations.map(readMigration))) await psqlStandIn.exec(migrationScript(migration));
+    assert.deepEqual((await psqlStandIn.query('SELECT version FROM supabase_migrations.schema_migrations ORDER BY version')).rows
+      .map(row => row.version), migrations.map(migration => migration.version).sort());
+    const failing = { version: '20990101000100', name: 'failing', file: '20990101000100_failing.sql',
+      sql: 'BEGIN;\nCREATE TABLE public.half_applied (id int);\nSELECT 1/0;\nCOMMIT;\n' };
+    await assert.rejects(psqlStandIn.exec(migrationScript(failing)), /division by zero/);
+    await psqlStandIn.exec('ROLLBACK');
+    assert.equal((await psqlStandIn.query("SELECT count(*)::int AS n FROM supabase_migrations.schema_migrations WHERE version = '20990101000100'")).rows[0].n, 0,
+      'a failed migration is never recorded');
+    assert.equal((await psqlStandIn.query("SELECT to_regclass('public.half_applied') AS t")).rows[0].t, null);
+  } finally { await psqlStandIn.close(); }
   assert.deepEqual(connectionEnv('postgresql://postgres.ref:p%40ss@db.example.invalid:6543/postgres'), {
     PGHOST: 'db.example.invalid', PGPORT: '6543', PGUSER: 'postgres.ref', PGPASSWORD: 'p@ss', PGDATABASE: 'postgres',
     PGSSLMODE: 'require', PGCONNECT_TIMEOUT: '15', PGAPPNAME: 'zerox-apply-migrations' });
@@ -821,7 +1041,7 @@ try {
     assert.equal(dirname(resolve(dataDir)), resolve(tmpdir()));
     await rm(dataDir, { recursive: true, force: true });
   }
-  ok('operator scripts and migration runner: dry run/refusal/connection env, failed-migration rollback, dev-db create, seed, reseed and on-disk persistence');
+  ok('operator scripts and migration runner: dry run, DATABASE_URL only (argv refused), history row inside each migration transaction, failed-migration rollback, dev-db create, seed, reseed and on-disk persistence');
 
   console.log(`PASS: business data model (${passed.length} groups): every contract RPC, quota/credit/pool atomicity, billing idempotency, access control and the PGlite driver`);
 } finally {
