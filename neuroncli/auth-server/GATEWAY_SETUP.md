@@ -74,6 +74,28 @@ them in `zerox_plan_policy.razorpay_plan_id_inr/usd`.
 | `ROUTER_MAX_ATTEMPTS` | var | `3` | Upstream attempts per request; plans with paid capacity keep the last one for a paid pool. |
 | `OMNIROUTE_*`, `BEDROCK_*`, `AZURE_*` | var + **secret** | unset | Optional adapters for operator health probes; not part of the hosted catalog (see PROVIDERS.md). |
 
+No new variables control request shaping or 429 handling; both are always on:
+
+- **Request shaping** (`src/provider-request.js`, docs/PROVIDER_TERMS.md "Request
+  compatibility"). Every upstream body passes through a provider normalizer: `is_error` on tool
+  results is removed (a failed result becomes `Error: …`), Groq and Gemini get only the OpenAI
+  message and tool-call fields, and Gemini gets its thought signatures back. Gemini 3 rejects
+  tool-call history without them; the gateway keeps the signatures Gemini returns in memory
+  (per isolate, per caller and upstream model, 6 h, at most 2,000) and never sends them to
+  clients. On a miss (another isolate, a restart, history from another model) it sends Google's
+  placeholder, which Gemini accepts. Tool schemas are forwarded unchanged.
+- **Upstream error diagnostics.** Each rejected attempt logs `Neuron upstream rejected request`
+  (error: provider, model, tier, request id, HTTP status, failure kind) and `Neuron upstream
+  error detail` (warn) with a sanitized summary: HTTP status, the provider's code, status and
+  type, google.rpc reasons and quota violations, the retry delay and at most 300 characters of
+  the provider's message with keys, e-mail addresses, opaque blobs and quoted text replaced.
+  In-stream error events log the same summary. Request bodies and keys are never logged, and
+  clients keep the masked contract errors.
+- **429 backoff.** A rate-limited pool is parked for the upstream's delay (or 30 s) and backs off
+  further while it keeps answering 429 (docs/PROVIDER_TERMS.md "Free-pool limits and 429
+  handling"). The circuit is per isolate; the shared per-minute budgets in Postgres are what all
+  isolates have in common, so keep `POOL_LIMITS` below what the upstream enforces.
+
 No longer read: `*_TOOL_MODELS` (tool support comes from the catalog), `MAX_REQUESTS_PER_SESSION`,
 `OPENROUTER_CLIENT_ID`. Test-only: `E2E_*` (read by `e2e-upstream-shim.mjs`), `PGLITE_ENTRY`
 (`check-session-store.mjs`, `check-quota.mjs`).
@@ -117,7 +139,9 @@ Work through these in order; nothing in this repository does them for you.
 4. **Paid upstream capacity.** Create a Groq Developer-plan key and a billing-linked Gemini
    project key and store them as `GROQ_PAID_API_KEY` and `GEMINI_PAID_API_KEY`. Without them Pro
    and Max have no paid pool (credits cannot be spent). Check the real Gemini free-tier limits in
-   AI Studio against `POOL_LIMITS` in `src/catalog.js`.
+   AI Studio (or the `quotas` field of `Neuron upstream error detail` log lines) against
+   `POOL_LIMITS` in `src/catalog.js`; the free Gemini budget is 5 rpm / 100K tpm per model after
+   the project was rate limited below its published limits on 2026-10-16.
 5. **Operator secrets.** Set `GATEWAY_ADMIN_TOKEN` (≥ 32 random characters) and
    `SESSION_ENCRYPTION_KEY` (`openssl rand -base64 32`) as GitHub Actions secrets.
 6. **Legal and support review (owner).** Confirm the refund windows in `refund.html` and remove

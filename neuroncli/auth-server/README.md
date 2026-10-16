@@ -20,7 +20,13 @@ environment/secret reference and the launch checklist are in [GATEWAY_SETUP.md](
 - **Catalog and routing** (`src/catalog.js`, `src/router.js`, `src/chat-handler.js`). Only
   live-verified models are hosted. A route is a (model, pool) pair: free pools first, then paid
   pools for plans with the `paid` tier. Free Gemini is refused for EEA/GB/CH callers and for
-  callers whose country is unknown. Health is tracked per pool.
+  callers whose country is unknown. Health is tracked per pool; a pool that answers 429 is
+  parked for the upstream's delay and backs off further while it keeps doing so.
+- **Request shaping** (`src/provider-request.js`). Each upstream gets the request in the subset
+  it accepts: Groq and Gemini only the OpenAI message fields (Neuron's `is_error` is folded into
+  the tool result), Gemini 3 its thought signatures back on tool-call history (kept in the
+  gateway, never sent to clients; a placeholder when unknown). See docs/PROVIDER_TERMS.md
+  "Request compatibility".
 - **Quota and credits** (`migrations/2026101600*`). Every upstream attempt is reserved with
   `zerox_reserve_v2` (per-user daily caps, rpm, concurrency, credits and the shared pool budget,
   atomically) and settled with `zerox_settle_v2` (real usage). Provider failures the upstream
@@ -100,6 +106,10 @@ Nothing below needs Supabase, Razorpay or provider accounts.
 - `GET /admin/overview` (operator token) returns users, revenue, today's usage and every pool
   with its counters, shared budget and circuit state. `GET /v1/providers/health` adds upstream
   discovery, per-pool health and ignored `*_MODELS` entries.
+- Upstream rejections are logged as `Neuron upstream rejected request` (error) plus `Neuron
+  upstream error detail` (warn): a sanitized summary with the provider's error code/status,
+  quota violations, retry delay and a redacted excerpt of its message (GATEWAY_SETUP.md,
+  "Upstream pools and routing"). Search the logs by the response's `x-request-id`.
 - The Worker cron (`*/10 * * * *`) releases stale reservations and applies subscription expiry.
   A production Node deployment (PostgREST driver) must run the same jobs from its own scheduler:
   `node -e "import('./src/routes/admin.js').then(m => m.runScheduledMaintenance(process.env))"`
