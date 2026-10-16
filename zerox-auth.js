@@ -25,6 +25,7 @@
     callbacks: [],
     modal: null,
     redirectTo: null,
+    navigating: false,
     dev: false,
     sdkPromise: null,
   };
@@ -353,6 +354,8 @@
     };
   }
 
+  // navigating: this document is about to reload or navigate (dev and SMS sign-in), so
+  // subscribers should leave follow-up work (such as a pending checkout) to the next page.
   function notifyAuthChange(eventName) {
     const profile = buildProfile(state.user);
     state.callbacks.forEach(function (callback) {
@@ -362,6 +365,7 @@
           session: state.session,
           user: state.user,
           profile: profile,
+          navigating: !!state.navigating,
         });
       } catch (err) {
         console.error('Auth change callback failed:', err);
@@ -632,8 +636,19 @@
         const token = state.modal.querySelector('#zerox-auth-code').value.trim();
         if (!state.pendingPhone || !/^\d{6}$/.test(token)) throw new Error('Enter the six-digit code from your SMS.');
         const client = await requireConfiguredClient();
-        const result = await client.auth.verifyOtp({ phone: state.pendingPhone, token, type: 'sms' });
-        if (result.error) throw result.error;
+        // The SIGNED_IN notification fires during verifyOtp; the page reloads right after it.
+        state.navigating = true;
+        let result;
+        try {
+          result = await client.auth.verifyOtp({ phone: state.pendingPhone, token, type: 'sms' });
+        } catch (error) {
+          state.navigating = false;
+          throw error;
+        }
+        if (result.error) {
+          state.navigating = false;
+          throw result.error;
+        }
         window.location.reload();
       });
     };
@@ -724,6 +739,7 @@
     state.session = { access_token: token, user: state.user };
     const target = state.redirectTo;
     closeAuthModal();
+    state.navigating = true;
     notifyAuthChange('SIGNED_IN');
     if (target) window.location.assign(target);
     else window.location.reload();
@@ -928,6 +944,7 @@
     signOut: signOut,
     onAuthStateChange: onAuthStateChange,
     isDevMode: function () { return !!state.dev; },
+    isNavigating: function () { return !!state.navigating; },
     devTokenKey: DEV_TOKEN_KEY,
     sdkVersion: SUPABASE_JS_VERSION,
   };

@@ -311,6 +311,7 @@ export function createDashboard({ doc = globalThis.document, win = globalThis.wi
   const state = {
     tab: 'overview', profile: null, account: null, loaded: new Set(), metric: 'requests', usage: null,
     cursors: [null], page: 0, keys: [], billing: null, catalog: PLAN_CATALOG, revisions: {}, gated: false,
+    paymentLocked: false, // a payment Razorpay took could not be confirmed: no further purchases here
   };
   const api = (path, options = {}) => apiFetch(path, { ...options, auth: getAuth(), fetchImpl });
 
@@ -479,6 +480,7 @@ export function createDashboard({ doc = globalThis.document, win = globalThis.wi
     if (account.user.email) setText('acct-email', account.user.email);
     if (account.user.name) setText('acct-name', account.user.name);
     if (account.user.image_url) $('acct-avatar').setAttribute('src', account.user.image_url);
+    if (state.billing) renderTopups();
   }
 
   function renderProfile() {
@@ -705,13 +707,30 @@ export function createDashboard({ doc = globalThis.document, win = globalThis.wi
     return normalizeCurrency($('topup-currency') ? $('topup-currency').value : 'USD');
   }
 
+  // Credits are spent only on paid pools, so top-ups need a plan with the paid tier (the API
+  // refuses them on Free too). Unknown while the account is still loading.
+  function topupsAllowed() {
+    const planId = state.account && state.account.plan ? state.account.plan.id : null;
+    const plan = planId ? state.catalog.plans.find(item => item.id === planId) : null;
+    return Boolean(plan && Array.isArray(plan.tiers) && plan.tiers.includes('paid'));
+  }
+
   function renderTopups() {
     const currency = topupCurrency();
+    const allowed = topupsAllowed() && !state.paymentLocked;
     for (const button of doc.querySelectorAll('[data-topup]')) {
       const pack = state.catalog.topups.find(item => item.id === button.dataset.topup);
       if (!pack) { button.hidden = true; continue; }
       const price = formatMoney(currency === 'INR' ? pack.price.inr_paise : pack.price.usd_cents, currency);
       button.textContent = 'Add ' + formatUsd(pack.credit_usd).replace('.00', '') + ' credit for ' + price;
+      button.disabled = !allowed;
+    }
+    const note = $('topup-note');
+    if (note) {
+      const needsPlan = Boolean(state.account) && !topupsAllowed();
+      note.hidden = !needsPlan;
+      note.replaceChildren(...(needsPlan ? ['Top-ups need an active Pro or Max plan. ',
+        el('a', { href: siteUrl('/pricing', host()), text: 'See plans' })] : []));
     }
   }
 
@@ -733,16 +752,25 @@ export function createDashboard({ doc = globalThis.document, win = globalThis.wi
         : summary.label === 'Payment issue' ? 'Razorpay could not collect the last payment. Update your payment method from the Razorpay email or cancel.'
           : summary.active ? 'Cancel any time. Access continues until the end of the paid period.' : '');
     $('sub-cancel').hidden = !summary.canCancel;
-    $('sub-upgrade').hidden = summary.active && !(sub && sub.cancel_at_period_end);
+    // While a cancellation is scheduled the subscription is still live (checkout answers
+    // already_subscribed), so plans are offered again only once it has ended.
+    $('sub-upgrade').hidden = summary.active;
+    if (sub && sub.cancel_at_period_end && summary.active) {
+      setText('sub-note', 'Your plan will not renew. You keep access until the date above and can subscribe again after it ends.');
+    }
     const body = $('payments-list');
     body.replaceChildren(...(billing.payments.length ? billing.payments.map(payment => el('tr', {},
       el('th', { scope: 'row', text: formatDate(payment.created_at) }),
       cell(payment.kind === 'topup' ? 'Credit top-up' : 'Subscription'),
       cell(formatMinor(payment.amount_minor, payment.currency), 'zx-num'),
       cell(payment.status ? badge(titleCase(payment.status), paymentStatusTone(payment.status)) : '—'),
+      // The Razorpay payment ID (pay_…) that the refund and contact pages ask for.
+      el('td', {}, payment.id ? el('code', { text: payment.id }) : '—',
+        payment.id ? el('button', { type: 'button', class: 'zx-btn zx-btn--sm', 'aria-label': 'Copy payment ID ' + payment.id,
+          text: 'Copy', onclick: () => copyText(payment.id, 'Payment ID') }) : null),
       el('td', {}, payment.invoice_url
         ? el('a', { href: payment.invoice_url, target: '_blank', rel: 'noopener noreferrer', text: 'Invoice' })
-        : '—'))) : [emptyRow(5, 'No payments yet.')]));
+        : '—'))) : [emptyRow(6, 'No payments yet.')]));
     renderTopups();
   }
 
@@ -786,6 +814,7 @@ export function createDashboard({ doc = globalThis.document, win = globalThis.wi
   }
 
   async function buyTopup(pack) {
+    if (!topupsAllowed() || state.paymentLocked) { renderTopups(); return; }
     const buttons = Array.from(doc.querySelectorAll('[data-topup]'));
     buttons.forEach(button => { button.disabled = true; });
     setAlert('billing-error', '');
@@ -796,9 +825,14 @@ export function createDashboard({ doc = globalThis.document, win = globalThis.wi
       await Promise.all([loadBilling(), loadAccount()]);
     } catch (error) {
       if (error && error.code === 'checkout_dismissed') setText('billing-status', describeError(error));
-      else { setText('billing-status', ''); handleError(error, 'billing-error'); }
+      else if (error && error.code === 'payment_unverified') {
+        // Razorpay took the payment: never offer a retry (or a sign-in that leads to one).
+        state.paymentLocked = true;
+        setText('billing-status', '');
+        setAlert('billing-error', describeError(error));
+      } else { setText('billing-status', ''); handleError(error, 'billing-error'); }
     } finally {
-      buttons.forEach(button => { button.disabled = false; });
+      renderTopups();
     }
   }
 

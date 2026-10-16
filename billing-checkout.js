@@ -23,6 +23,7 @@ const FRIENDLY_MESSAGES = {
   network_error: 'Could not reach Zero-X. Check your connection and try again.',
   timeout: 'Zero-X took too long to respond. Try again.',
   account_suspended: 'This account is suspended. Email ' + SUPPORT_EMAIL + ' for help.',
+  topup_requires_plan: 'Credit top-ups need an active Pro or Max plan: credits pay only for paid-capacity models.',
 };
 
 export class ApiError extends Error {
@@ -102,6 +103,9 @@ export function parseApiError(status, body, retryAfterHeader) {
 /** A user-facing sentence for any thrown value. */
 export function describeError(error) {
   if (!error) return 'Something went wrong. Try again.';
+  if (error.code === 'payment_unverified' && error.paymentId) {
+    return FRIENDLY_MESSAGES.payment_unverified + ' Payment ID: ' + error.paymentId + '.';
+  }
   if (error.code && FRIENDLY_MESSAGES[error.code]) return FRIENDLY_MESSAGES[error.code];
   if (error instanceof ApiError || error.name === 'ApiError') {
     let message = error.message;
@@ -224,9 +228,23 @@ function paymentFailureMessage(event) {
   return (description ? 'Payment failed: ' + description + '.' : 'Payment failed.') + ' You can retry in the payment window or close it.';
 }
 
+/**
+ * Razorpay has already taken the payment when its handler runs, so any failure to confirm it with
+ * Zero-X (network, timeout, 5xx, an expired sign-in) is reported as payment_unverified: terminal,
+ * never "try again" and never a new checkout. The payment id is kept for the support message.
+ */
+export function unverifiedPaymentError(response, cause) {
+  const id = response && typeof response.razorpay_payment_id === 'string' && PROVIDER_ID.test(response.razorpay_payment_id)
+    ? response.razorpay_payment_id : '';
+  const error = new ApiError(FRIENDLY_MESSAGES.payment_unverified, { code: 'payment_unverified', status: cause && cause.status });
+  error.paymentId = id;
+  error.cause = cause;
+  return error;
+}
+
 /** Opens Razorpay Checkout and resolves with the /api/billing/verify result. */
 export async function runCheckout(payload, deps = {}) {
-  const { auth, fetchImpl, win, doc, onStatus } = deps;
+  const { auth, fetchImpl, win, doc, onStatus, onOpen } = deps;
   const Razorpay = await loadRazorpay({ win, doc });
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -243,7 +261,7 @@ export async function runCheckout(payload, deps = {}) {
           const result = await apiFetch('/api/billing/verify', { method: 'POST', body: verifyPayload(response), auth, fetchImpl });
           settle(resolve, result);
         } catch (error) {
-          settle(reject, error);
+          settle(reject, error && error.code === 'payment_unverified' && error.paymentId ? error : unverifiedPaymentError(response, error));
         }
       },
       onDismiss: () => settle(reject, new ApiError(lastFailure || FRIENDLY_MESSAGES.checkout_dismissed, { code: lastFailure ? 'payment_failed' : 'checkout_dismissed' })),
@@ -257,6 +275,7 @@ export async function runCheckout(payload, deps = {}) {
       });
     }
     checkout.open();
+    if (typeof onOpen === 'function') onOpen();
   });
 }
 

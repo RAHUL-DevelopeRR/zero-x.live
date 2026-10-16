@@ -518,7 +518,7 @@ async function mountDashboard({profile = PROFILE, hash = '', state = {}, routes 
 
 {
   // Direct deep link, free plan and suspended account.
-  const {$, calls} = await mountDashboard({hash: '#billing', state: {account: () => accountPayload({plan: {id: 'free', name: 'Free'}, subscription: null, credits: {balance_usd: 0, monthly_grant_usd: 0}, flags: {suspended: true}})},
+  const {$, calls, doc} = await mountDashboard({hash: '#billing', state: {account: () => accountPayload({plan: {id: 'free', name: 'Free'}, subscription: null, credits: {balance_usd: 0, monthly_grant_usd: 0}, flags: {suspended: true}})},
     routes: {'GET /api/billing': {provider_configured: false, subscription: null, payments: []}}});
   assert.equal($('panel-billing').hidden, false);
   assert.equal($('ov-upgrade').hidden, false);
@@ -528,6 +528,52 @@ async function mountDashboard({profile = PROFILE, hash = '', state = {}, routes 
   assert.equal($('sub-cancel').hidden, true);
   assert.equal($('payments-list').textContent, 'No payments yet.');
   assert.ok(calls.some(call => call.path === '/api/billing'));
+  // Free accounts cannot buy credits they cannot spend (review B4 P2).
+  assert.ok(doc.querySelectorAll('[data-topup]').every(button => button.disabled), 'top-ups are disabled on Free');
+  assert.equal($('topup-note').hidden, false);
+  assert.match($('topup-note').textContent, /need an active Pro or Max plan/);
+  assert.equal($('topup-note').querySelector('a').getAttribute('href'), 'https://zero-x.live/pricing');
+  doc.querySelector('[data-topup="credits_5"]').click();
+  await settle();
+  assert.ok(!calls.some(call => call.path === '/api/billing/topup'), 'no top-up order is created for Free');
+}
+
+{
+  // Payment IDs are shown (the refund and contact pages ask for them); a scheduled
+  // cancellation does not offer plans the checkout would refuse (review B4 P3).
+  const {$, win} = await mountDashboard({hash: '#billing', state: {account: () => accountPayload({subscription:
+    {status: 'active', current_period_end: '2026-11-01T00:00:00Z', cancel_at_period_end: true}})},
+    routes: {'GET /api/billing': {provider_configured: true, subscription: {id: 'sub_TEST12345', plan: 'pro', status: 'active',
+      current_period_end: '2026-11-01T00:00:00Z', cancel_at_period_end: true, provider: 'razorpay'},
+      payments: [{id: 'pay_TEST1234567', kind: 'subscription', amount_minor: 89900, currency: 'INR', status: 'captured', created_at: '2026-10-01T10:00:00Z', invoice_url: null}]}}});
+  const row = $('payments-list').querySelector('tr');
+  assert.equal(row.querySelector('code').textContent, 'pay_TEST1234567');
+  row.querySelector('button').click();
+  await settle();
+  assert.equal(win.copied, 'pay_TEST1234567');
+  assert.equal($('sub-upgrade').hidden, true, 'no See plans while the cancelled subscription is still live');
+  assert.match($('sub-note').textContent, /subscribe again after it ends/);
+}
+
+{
+  // A verify failure after Razorpay took the payment is terminal: no retry prompt, no sign-in,
+  // no second checkout, buttons stay locked (review B4 P2).
+  const {$, doc, calls} = await mountDashboard({hash: '#billing', routes: {
+    'POST /api/billing/verify': () => { throw new TypeError('network down'); }}});
+  FakeRazorpay.instances.length = 0;
+  doc.querySelector('[data-topup="credits_5"]').click();
+  await settle();
+  await FakeRazorpay.instances[0].options.handler({razorpay_payment_id: 'pay_TEST7654321', razorpay_order_id: 'order_TEST123456', razorpay_signature: 'ab'.repeat(32)});
+  await settle();
+  assert.match($('billing-error').textContent, /could not confirm the payment/);
+  assert.match($('billing-error').textContent, /Payment ID: pay_TEST7654321/);
+  assert.doesNotMatch($('billing-error').textContent, /try again/i);
+  assert.equal($('billing-error').querySelector('button'), null, 'no retry button');
+  assert.ok(doc.querySelectorAll('[data-topup]').every(button => button.disabled), 'buttons stay locked');
+  doc.querySelector('[data-topup="credits_20"]').click();
+  await settle();
+  assert.equal(calls.filter(call => call.path === '/api/billing/topup').length, 1, 'no second checkout');
+  assert.equal($('dash-gate').hidden, true);
 }
 
 {
@@ -584,14 +630,16 @@ async function mountPricing({profile = null, routes = {}, hostname = 'zero-x.liv
   await settle();
   assert.equal(auth.calls.modal.length, 1);
   assert.ok(!calls.some(call => call.path === '/api/billing/checkout'));
-  const pending = JSON.parse(win.sessionStorage.getItem(PENDING_CHECKOUT_KEY));
+  // The intent is kept in localStorage so it survives sign-in reloads and new magic-link tabs (review B4 P2).
+  assert.equal(win.sessionStorage.getItem(PENDING_CHECKOUT_KEY), null);
+  const pending = JSON.parse(win.localStorage.getItem(PENDING_CHECKOUT_KEY));
   assert.deepEqual({kind: pending.kind, id: pending.id, currency: pending.currency}, {kind: 'plan', id: 'pro', currency: 'INR'});
   // Signing in resumes the checkout, verifies and redirects to billing.
   FakeRazorpay.instances.length = 0;
   auth.profile = PROFILE;
   auth.emit('SIGNED_IN');
   await settle();
-  assert.equal(win.sessionStorage.getItem(PENDING_CHECKOUT_KEY), null);
+  assert.equal(win.localStorage.getItem(PENDING_CHECKOUT_KEY), null, 'removed once Razorpay opens');
   const checkoutCall = calls.find(call => call.path === '/api/billing/checkout');
   assert.deepEqual(checkoutCall.body, {plan: 'pro', currency: 'INR'});
   assert.equal(checkoutCall.headers.Authorization, 'Bearer sb-access-token');
@@ -761,6 +809,97 @@ async function loadAuth({hostname, config, session = makeStorage(), sdk = true})
   assert.equal(injected[0].crossOrigin, 'anonymous');
   injected[0].onerror();
   await assert.rejects(pending, /Supabase JS SDK did not load/);
+}
+
+{
+  // Review B4 P2: signed-out Upgrade, then sign-in through the REAL zerox-auth.js dev flow, which
+  // reloads the page. The abandoned document must not start a checkout; the reloaded page resumes.
+  const session = makeStorage();
+  const local = makeStorage({'zx-currency': 'USD'});
+  const devConfig = {provider: 'dev', configured: true, dev: true, providers: ['dev']};
+  const real = await loadAuth({hostname: '127.0.0.1', config: devConfig, session});
+  await real.auth.init();
+  const doc = parseDocument(read('pricing.html'));
+  const win = makeWindow({hostname: '127.0.0.1', auth: real.auth, session, local});
+  win.Razorpay = FakeRazorpay;
+  const first = makeFetch({'GET /api/plans': plansPayload, 'POST /api/billing/checkout': () => new Promise(() => {})});
+  const page = createPricingPage({doc, win, auth: real.auth, fetchImpl: first.fetchImpl, now: () => NOW});
+  await page.init();
+  await settle();
+  doc.querySelector('[data-upgrade="pro"]').click();
+  await settle();
+  assert.ok(local.getItem(PENDING_CHECKOUT_KEY), 'the intent is stored before sign-in');
+  const modal = real.doc.querySelector('[data-zerox-auth-modal="true"]');
+  modal.querySelector('#zerox-auth-dev-email').value = 'dev@example.com';
+  modal.querySelector('[data-auth-dev-wrap="true"]').dispatchEvent(makeEvent('submit', {cancelable: true}));
+  await settle();
+  assert.equal(real.window.location.reloads, 1, 'zerox-auth reloads after dev sign-in');
+  assert.equal(real.auth.isNavigating(), true);
+  assert.equal(first.calls.filter(call => call.path === '/api/billing/checkout').length, 0, 'the unloading page starts no checkout');
+  assert.ok(local.getItem(PENDING_CHECKOUT_KEY), 'the intent survives the reload');
+  // The reloaded page (same storage) resumes the checkout once.
+  FakeRazorpay.instances.length = 0;
+  const doc2 = parseDocument(read('pricing.html'));
+  const win2 = makeWindow({hostname: '127.0.0.1', auth: real.auth, session, local});
+  win2.Razorpay = FakeRazorpay;
+  const second = makeFetch({'GET /api/plans': plansPayload,
+    'POST /api/billing/checkout': {provider: 'razorpay', key_id: 'rzp_test_AbCdEf123456', subscription_id: 'sub_TEST12345', name: 'Zero-X'}});
+  const page2 = createPricingPage({doc: doc2, win: win2, auth: real.auth, fetchImpl: second.fetchImpl, now: () => NOW});
+  // init() resumes into checkout, which stays pending while the Razorpay window is open.
+  page2.init();
+  await settle();
+  assert.equal(second.calls.filter(call => call.path === '/api/billing/checkout').length, 1, 'the reloaded page resumed checkout');
+  assert.equal(FakeRazorpay.instances.length, 1, 'Razorpay opened');
+  assert.equal(local.getItem(PENDING_CHECKOUT_KEY), null, 'consumed once Razorpay opened');
+  // A magic link opens a new tab: localStorage carries the intent there (sessionStorage would not).
+  local.setItem(PENDING_CHECKOUT_KEY, JSON.stringify({kind: 'plan', id: 'max', currency: 'INR', created: NOW}));
+  FakeRazorpay.instances.length = 0;
+  const tab = makeWindow({hostname: '127.0.0.1', auth: real.auth, session: makeStorage({'zx-dev-token': session.getItem('zx-dev-token')}), local});
+  tab.Razorpay = FakeRazorpay;
+  const third = makeFetch({'GET /api/plans': plansPayload,
+    'POST /api/billing/checkout': call => ({provider: 'razorpay', key_id: 'rzp_test_AbCdEf123456', subscription_id: 'sub_TEST54321', notes: {plan: call.body.plan}})});
+  createPricingPage({doc: parseDocument(read('pricing.html')), win: tab, auth: real.auth, fetchImpl: third.fetchImpl, now: () => NOW}).init(); // stays pending with Razorpay open
+  await settle();
+  assert.deepEqual(third.calls.find(call => call.path === '/api/billing/checkout').body, {plan: 'max', currency: 'INR'});
+}
+
+{
+  // Review B4 P2: after Razorpay reports success, a failed verify (network, 502, 401) is terminal.
+  for (const [label, verify] of [['network', () => { throw new TypeError('offline'); }],
+    ['502', apiError(502, 'upstream_error', 'Bad gateway')], ['401', apiError(401, 'invalid_session', 'Session expired')]]) {
+    const t = await mountPricing({profile: PROFILE, routes: {'POST /api/billing/verify': verify}});
+    FakeRazorpay.instances.length = 0;
+    t.doc.querySelector('[data-upgrade="pro"]').click();
+    await settle();
+    await FakeRazorpay.instances[0].options.handler({razorpay_payment_id: 'pay_TEST1234567', razorpay_subscription_id: 'sub_TEST12345', razorpay_signature: 'cd'.repeat(32)});
+    await settle();
+    const message = t.$('pricing-error').textContent;
+    assert.match(message, /could not confirm the payment/, label);
+    assert.match(message, /Payment ID: pay_TEST1234567/, label);
+    assert.doesNotMatch(message, /try again|sign-in has expired/i, label);
+    assert.equal(t.$('pricing-error').querySelector('a').getAttribute('href'), 'https://dashboard.zero-x.live/#billing', label);
+    assert.equal(t.auth.calls.modal.length, 0, `${label}: no sign-in prompt`);
+    assert.equal(t.win.localStorage.getItem(PENDING_CHECKOUT_KEY), null, `${label}: no checkout re-queued`);
+    assert.ok(t.doc.querySelectorAll('[data-upgrade], [data-topup]').every(button => button.disabled), `${label}: buttons stay locked`);
+    t.doc.querySelector('[data-upgrade="max"]').click();
+    await settle();
+    assert.equal(t.calls.filter(call => call.path === '/api/billing/checkout').length, 1, `${label}: no second checkout`);
+  }
+
+  // Review B4 P2: a signed-in Free account cannot open a top-up checkout.
+  const free = await mountPricing({profile: PROFILE, routes: {'GET /api/account': accountPayload({plan: {id: 'free', name: 'Free'}, subscription: null})}});
+  free.doc.querySelector('[data-topup="credits_5"]').click();
+  await settle();
+  assert.ok(!free.calls.some(call => call.path === '/api/billing/topup'), 'no order for Free accounts');
+  assert.match(free.$('pricing-error').textContent, /need an active Pro or Max plan/);
+  assert.equal(free.$('pricing-error').querySelector('a').getAttribute('href'), 'https://zero-x.live/pricing#plans');
+  // The server-side refusal is handled the same way.
+  const refused = await mountPricing({profile: PROFILE, routes: {'GET /api/account': accountPayload(),
+    'POST /api/billing/topup': apiError(403, 'upgrade_required', 'Credit top-ups are available on the Pro and Max plans. Upgrade first.')}});
+  refused.doc.querySelector('[data-topup="credits_5"]').click();
+  await settle();
+  assert.match(refused.$('pricing-error').textContent, /Pro and Max plans/);
+  assert.equal(refused.$('pricing-error').querySelector('a').getAttribute('href'), 'https://zero-x.live/pricing#plans');
 }
 
 console.log('PASS: dashboard gate, contract-driven overview, hash tabs and keyboard, usage chart/table/pagination, key create-once/copy/revoke-confirm, billing cancel/top-up/verify, sessions, sign-out dev-token cleanup, 401/500 recovery, pricing currency/hydration/checkout/409/503/forged payloads, Neuron CLI tabs and models, zerox-auth dev identity and pinned SDK; untrusted data never reached innerHTML');

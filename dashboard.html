@@ -233,14 +233,15 @@ neuron -p "Run the tests and summarise failures"</code></pre></div>
               <button class="zx-btn" type="button" data-topup="credits_5">Add $5 credit</button>
               <button class="zx-btn" type="button" data-topup="credits_20">Add $20 credit</button>
             </div>
+            <p id="topup-note" class="zx-help zx-mt" hidden></p>
           </article>
         </div>
         <h3 class="zx-mt-lg">Payment history</h3>
         <div class="zx-table-wrap">
           <table class="zx-table">
             <caption class="zx-visually-hidden">Payments, newest first</caption>
-            <thead><tr><th scope="col">Date</th><th scope="col">Item</th><th scope="col" class="zx-num">Amount</th><th scope="col">Status</th><th scope="col">Invoice</th></tr></thead>
-            <tbody id="payments-list"><tr><td colspan="5" class="zx-empty">Loading payments…</td></tr></tbody>
+            <thead><tr><th scope="col">Date</th><th scope="col">Item</th><th scope="col" class="zx-num">Amount</th><th scope="col">Status</th><th scope="col">Payment ID</th><th scope="col">Invoice</th></tr></thead>
+            <tbody id="payments-list"><tr><td colspan="6" class="zx-empty">Loading payments…</td></tr></tbody>
           </table>
         </div>
         <p class="zx-help zx-mt">See the <a href="https://zero-x.live/refund" data-site-path="/refund">cancellation and refund policy</a>. Billing questions: <a href="mailto:support@zero-x.live">support@zero-x.live</a>.</p>

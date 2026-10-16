@@ -1,7 +1,7 @@
 // Pricing page: static plan catalog (contract §1), currency toggle, hydration from GET /api/plans,
 // and upgrade/top-up buttons that run the Razorpay checkout in billing-checkout.js.
 import {
-  ApiError, SUPPORT_EMAIL, apiFetch, dashboardUrl, describeError, normalizeCurrency, startSubscription, startTopup,
+  ApiError, SUPPORT_EMAIL, apiFetch, dashboardUrl, describeError, normalizeCurrency, siteUrl, startSubscription, startTopup,
 } from './billing-checkout.js';
 
 /** Mirrors PLATFORM_CONTRACT.md §1 and the GET /api/plans shape; used until the API responds. */
@@ -194,6 +194,7 @@ export function createPricingPage({ doc = globalThis.document, win = globalThis.
   const errorEl = doc.getElementById('pricing-error');
   let catalog = PLAN_CATALOG;
   let busy = false;
+  let locked = false; // set once a payment could not be confirmed
   let currency = defaultCurrency({
     stored: storageGet(local, CURRENCY_STORAGE_KEY),
     timeZone: (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return ''; } })(),
@@ -282,7 +283,7 @@ export function createPricingPage({ doc = globalThis.document, win = globalThis.
   function setBusy(value) {
     busy = value;
     for (const button of all('[data-upgrade], [data-topup]')) {
-      button.disabled = value;
+      button.disabled = value || locked;
       if (value) button.setAttribute('aria-busy', 'true');
       else button.removeAttribute('aria-busy');
     }
@@ -295,8 +296,13 @@ export function createPricingPage({ doc = globalThis.document, win = globalThis.
     return client.getProfile();
   }
 
+  // The checkout intent lives in localStorage (15-minute TTL) so it survives zerox-auth's reload
+  // after dev or SMS sign-in and reaches the new tab an email magic link opens. It is removed
+  // once Razorpay opens or the checkout ends with an error, never merely because sign-in fired.
+  const clearPending = () => { storageRemove(local, PENDING_CHECKOUT_KEY); storageRemove(session, PENDING_CHECKOUT_KEY); };
+
   async function requireSignIn(intent, planName) {
-    storageSet(session, PENDING_CHECKOUT_KEY, JSON.stringify({ ...intent, currency, created: now() }));
+    storageSet(local, PENDING_CHECKOUT_KEY, JSON.stringify({ ...intent, currency, created: now() }));
     setStatus('Sign in to continue to checkout.');
     await getAuth().openAuthModal({
       title: 'Sign in to continue',
@@ -307,7 +313,18 @@ export function createPricingPage({ doc = globalThis.document, win = globalThis.
   function handleFailure(error, intent, planName) {
     const host = win && win.location ? win.location.hostname : '';
     setStatus('');
+    if (!(error && error.code === 'invalid_session')) clearPending();
+    if (error && error.code === 'payment_unverified') {
+      // Razorpay already took the payment: no retry, no new checkout, buttons stay locked.
+      locked = true;
+      setError(describeError(error), { href: dashboardUrl('#billing', host), label: 'Open billing' });
+      return;
+    }
     if (error && error.code === 'checkout_dismissed') { setStatus(describeError(error)); return; }
+    if (error && (error.code === 'topup_requires_plan' || error.code === 'upgrade_required')) {
+      setError(describeError(error), { href: siteUrl('/pricing#plans', host), label: 'Compare plans' });
+      return;
+    }
     if (error && error.code === 'already_subscribed') {
       setError(describeError(error), { href: dashboardUrl('#billing', host), label: 'Open billing' });
       return;
@@ -324,8 +341,18 @@ export function createPricingPage({ doc = globalThis.document, win = globalThis.
     setError(describeError(error));
   }
 
+  // Credits are spent only on paid pools, so top-ups need a plan with the paid tier.
+  async function requirePaidPlan() {
+    const account = await apiFetch('/api/account', { auth: getAuth(), fetchImpl, timeoutMs: 8000 });
+    const planId = account && account.plan && typeof account.plan.id === 'string' ? account.plan.id : 'free';
+    const plan = findPlan(catalog, planId);
+    if (!plan || !Array.isArray(plan.tiers) || !plan.tiers.includes('paid')) {
+      throw new ApiError('Credit top-ups need an active Pro or Max plan.', { code: 'topup_requires_plan' });
+    }
+  }
+
   async function checkout(intent) {
-    if (busy) return;
+    if (busy || locked) return;
     const plan = intent.kind === 'plan' ? findPlan(catalog, intent.id) : null;
     const pack = intent.kind === 'topup' ? findTopup(catalog, intent.id) : null;
     if (!plan && !pack) return;
@@ -341,10 +368,12 @@ export function createPricingPage({ doc = globalThis.document, win = globalThis.
         await requireSignIn(intent, planName);
         return;
       }
-      storageRemove(session, PENDING_CHECKOUT_KEY);
-      const deps = { auth: getAuth(), fetchImpl, win, doc, onStatus: setStatus };
+      const deps = { auth: getAuth(), fetchImpl, win, doc, onStatus: setStatus, onOpen: clearPending };
       if (plan) await startSubscription({ plan: plan.id, currency, ...deps });
-      else await startTopup({ pack: pack.id, currency, ...deps });
+      else {
+        await requirePaidPlan();
+        await startTopup({ pack: pack.id, currency, ...deps });
+      }
       setStatus('Payment confirmed. Opening your dashboard…');
       win.location.assign(dashboardUrl('#billing', win.location.hostname));
     } catch (error) {
@@ -355,13 +384,12 @@ export function createPricingPage({ doc = globalThis.document, win = globalThis.
   }
 
   async function resumePending() {
-    const pending = readPendingCheckout(session, now());
+    const pending = readPendingCheckout(local, now()) || readPendingCheckout(session, now());
     if (!pending) return false;
     let profile = null;
     try { profile = await signedInProfile(); }
     catch { return false; }
     if (!profile) return false;
-    storageRemove(session, PENDING_CHECKOUT_KEY);
     currency = pending.currency;
     render();
     await checkout({ kind: pending.kind, id: pending.id });
@@ -374,7 +402,13 @@ export function createPricingPage({ doc = globalThis.document, win = globalThis.
     for (const button of all('[data-topup]')) button.addEventListener('click', () => checkout({ kind: 'topup', id: button.dataset.topup }));
     const client = getAuth();
     if (client && typeof client.onAuthStateChange === 'function') {
-      client.onAuthStateChange(({ event }) => { if (event === 'SIGNED_IN') resumePending().catch(() => {}); });
+      // zerox-auth reloads (or navigates) right after dev and SMS sign-in: the reloaded page
+      // resumes from storage in init(), so this document must not start a checkout it abandons.
+      client.onAuthStateChange(change => {
+        const navigating = Boolean(change && change.navigating) ||
+          (typeof client.isNavigating === 'function' && client.isNavigating());
+        if (change && change.event === 'SIGNED_IN' && !navigating) resumePending().catch(() => {});
+      });
     }
   }
 
