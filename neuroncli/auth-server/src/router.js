@@ -1,87 +1,129 @@
 import { globalHealthTracker, HealthState } from './provider-health.js';
+import {
+  AUTO_MODEL_ID, loadPlanPolicies, offeredEntries, planPolicy, poolKey, poolVerdicts, resolveModelId,
+} from './catalog.js';
+
+export { loadPlanPolicies, planPolicy };
+
+// A pool is only worth trying when it leaves room for a useful answer.
+export const MIN_OUTPUT_TOKENS = 1024;
+const TIER_RANK = { free: 0, byok: 0, paid: 1 };
+
+// Largest max_tokens a pool can take for this prompt (0 = does not fit). Bounded by the
+// model's output limit, the context window and the pool's tokens-per-minute budget
+// (Groq's free org counts prompt + max_tokens against 8K TPM).
+export function fitMaxTokens(entry, pool, promptTokens, requestedMaxTokens) {
+  const requested = Math.min(requestedMaxTokens, entry.max_output_tokens);
+  let room = entry.context_window - promptTokens;
+  if (pool.limits?.tpm) room = Math.min(room, pool.limits.tpm - promptTokens);
+  const allowed = Math.min(requested, room);
+  return allowed >= 1 && allowed >= Math.min(requested, MIN_OUTPUT_TOKENS) ? allowed : 0;
+}
+
+function failure(error, extra = {}) {
+  return { ok: false, error, ...extra };
+}
 
 /**
- * RoutingEngine - Deterministic capability-aware model and provider router with failover for auto routes.
+ * RoutingEngine - plan-, region-, size- and health-aware candidate selection.
+ * Returns ordered (model, pool) candidates; the chat handler reserves capacity and
+ * fails over through them in order.
  */
 export class RoutingEngine {
   constructor(healthTracker = globalHealthTracker) {
     this.healthTracker = healthTracker;
   }
 
-  selectCandidates({ requestedModel, needsTools = false, catalog = [], allowFailover = true }) {
-    if (!catalog.length) {
-      return { primary: null, fallbacks: [], error: 'model_not_found' };
-    }
-
-    const isAuto = ['auto', 'default'].includes(requestedModel);
-
-    if (isAuto) {
-      // Filter models that support tools if tools are needed
-      const eligible = catalog.filter(m => {
-        if (needsTools && !m.tools) return false;
-        return true;
-      });
-
-      if (!eligible.length) {
-        return { primary: null, fallbacks: [], error: 'capability_unsupported' };
+  route({ env = {}, requestedModel, needsTools = false, promptTokens, maxTokens, tiers = ['free'],
+    country = null, ownedCatalog = null, now = Date.now() }) {
+    if (ownedCatalog) return this.routeOwned({ requestedModel, needsTools, maxTokens, ownedCatalog });
+    const resolved = resolveModelId(requestedModel);
+    if (!resolved) return failure('model_not_found');
+    const auto = resolved === AUTO_MODEL_ID;
+    const offered = offeredEntries(env);
+    let entries;
+    if (auto) {
+      entries = offered.filter(entry => entry.auto_rank != null && entry.supports_tools)
+        .sort((left, right) => left.auto_rank - right.auto_rank);
+    } else {
+      const entry = offered.find(item => item.id === resolved);
+      if (!entry) return failure('model_not_found');
+      if (needsTools && !entry.supports_tools) {
+        return failure('invalid_request', { message: 'This model does not support tools; choose a tool-capable model.' });
       }
+      entries = [entry];
+    }
 
-      // Rank eligible models based on health and priority
-      const ranked = this.rankCandidates(eligible);
-      if (!ranked.length) {
-        return { primary: null, fallbacks: [], error: 'all_providers_unavailable' };
+    const evaluated = [];
+    for (const entry of entries) {
+      for (const verdict of poolVerdicts(env, entry, tiers, country)) {
+        const key = poolKey(entry, verdict.pool);
+        const fit = fitMaxTokens(entry, verdict.pool, promptTokens, maxTokens);
+        evaluated.push({ ...verdict, entry, key, fits: fit > 0, maxTokens: fit,
+          healthy: this.healthTracker.isAvailable(key, now) });
       }
-
-      const primary = ranked[0];
-      const fallbacks = allowFailover ? ranked.slice(1) : [];
-      return { primary, fallbacks, error: null };
     }
-
-    // Specific model requested - do not silently fall back to a different model.
-    // Normalize OpenAI transport prefix (e.g., openai/gemini/gemini-2.5-flash -> gemini/gemini-2.5-flash).
-    const cleanRequested = (requestedModel || '').replace(/^openai\//, '');
-    const specific = catalog.find(m =>
-      m.id === requestedModel ||
-      m.id === cleanRequested ||
-      m.upstream === cleanRequested ||
-      m.upstream === requestedModel ||
-      (m.id.includes('/') && m.id.split('/')[1] === cleanRequested)
-    );
-    if (!specific) {
-      return { primary: null, fallbacks: [], error: 'model_not_found' };
+    const usable = evaluated.filter(item => item.configured && item.inPlan && item.region && item.fits && item.healthy)
+      // Stable sort: free pools first, then paid; within a tier keep quality/pool order.
+      .sort((left, right) => TIER_RANK[left.pool.tier] - TIER_RANK[right.pool.tier]);
+    if (usable.length) {
+      return {
+        ok: true, auto, model: auto ? AUTO_MODEL_ID : entries[0].id,
+        candidates: usable.map(({ entry, pool, key, maxTokens: max }) => ({ entry, pool, key, maxTokens: max })),
+      };
     }
-
-    if (needsTools && !specific.tools) {
-      return { primary: null, fallbacks: [], error: 'capability_unsupported' };
-    }
-
-    return { primary: specific, fallbacks: [], error: null };
+    return this.explain(evaluated, auto, now);
   }
 
-  rankCandidates(candidates) {
-    return [...candidates].sort((a, b) => {
-      const aAvail = this.healthTracker.isAvailable(a.provider) ? 1 : 0;
-      const bAvail = this.healthTracker.isAvailable(b.provider) ? 1 : 0;
-      if (aAvail !== bAvail) return bAvail - aAvail;
+  explain(evaluated, auto, now) {
+    const configured = evaluated.filter(item => item.configured);
+    if (!configured.length) {
+      return auto
+        ? failure('service_unavailable', { message: 'No model is configured on this gateway.' })
+        : failure('model_not_found', { message: 'This model is not available on this deployment.' });
+    }
+    const unhealthy = configured.filter(item => item.inPlan && item.region && item.fits && !item.healthy);
+    if (unhealthy.length) {
+      const waits = unhealthy.map(item => this.healthTracker.cooldownRemainingMs(item.key, now));
+      const retryAfterSeconds = Math.max(1, Math.ceil(Math.min(...waits) / 1000));
+      const limited = unhealthy.some(item => this.healthTracker.getRecord(item.key).status === HealthState.RATE_LIMITED);
+      return failure(limited ? 'capacity_exhausted' : 'upstream_error', { retryAfterSeconds });
+    }
+    const locked = configured.filter(item => item.fits && !(item.inPlan && item.region));
+    if (locked.some(item => !item.inPlan && item.region)) {
+      const regional = configured.some(item => item.inPlan && !item.region);
+      return failure('upgrade_required', regional
+        ? { message: 'The free tier of this model is not available in your region. Upgrade to use paid capacity.' }
+        : {});
+    }
+    if (locked.length) return failure('region_unavailable');
+    return failure('context_length_exceeded');
+  }
 
-      const aRec = this.healthTracker.getRecord(a.provider);
-      const bRec = this.healthTracker.getRecord(b.provider);
-
-      // Prefer HEALTHY over DEGRADED
-      const stateScore = state => (state === HealthState.HEALTHY ? 2 : state === HealthState.DEGRADED ? 1 : 0);
-      const aScore = stateScore(aRec.status);
-      const bScore = stateScore(bRec.status);
-      if (aScore !== bScore) return bScore - aScore;
-
-      // Prefer tool-capable models
-      if (a.tools !== b.tools) return (b.tools ? 1 : 0) - (a.tools ? 1 : 0);
-
-      // Deterministic priority: Cloudflare first, then others in catalog order
-      if (a.provider === 'cloudflare' && b.provider !== 'cloudflare') return -1;
-      if (b.provider === 'cloudflare' && a.provider !== 'cloudflare') return 1;
-
-      return 0;
-    });
+  // Sessions using the caller's own OpenRouter key (BYOK): exact ids only, no budgets.
+  routeOwned({ requestedModel, needsTools, maxTokens, ownedCatalog }) {
+    const value = typeof requestedModel === 'string' ? requestedModel.trim() : '';
+    const bare = value.toLowerCase().startsWith('openai/') ? value.slice('openai/'.length) : value;
+    const eligible = ownedCatalog.filter(entry => !needsTools || entry.supports_tools);
+    const auto = [value, bare].some(id => id === AUTO_MODEL_ID || id === 'default');
+    let entries;
+    if (auto) {
+      entries = eligible.slice(0, 2);
+      if (!entries.length) return failure(ownedCatalog.length ? 'invalid_request' : 'model_not_found',
+        ownedCatalog.length ? { message: 'None of your OpenRouter models support tools.' } : {});
+    } else {
+      const entry = ownedCatalog.find(item => item.id === value) || ownedCatalog.find(item => item.id === bare);
+      if (!entry) return failure('model_not_found');
+      if (needsTools && !entry.supports_tools) {
+        return failure('invalid_request', { message: 'This model does not support tools; choose a tool-capable model.' });
+      }
+      entries = [entry];
+    }
+    return {
+      ok: true, auto, model: auto ? AUTO_MODEL_ID : entries[0].id,
+      candidates: entries.map(entry => ({ entry, pool: entry.pools[0], key: null,
+        maxTokens: Math.min(maxTokens, entry.max_output_tokens) })),
+    };
   }
 }
 
