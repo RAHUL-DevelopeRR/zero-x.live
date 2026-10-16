@@ -116,6 +116,13 @@ try {
     'void functions yield no rows');
   assert.deepEqual(await rpcRows(env, 'zerox_session_get', { p_key: 'c'.repeat(64) }), [{ value: 'v' }],
     'single-column TABLE functions yield objects, as with PostgREST');
+  // zerox_session_rearm only rewrites a record that still exists (review P3, integration).
+  assert.deepEqual(await rpc(env, 'zerox_session_rearm', { p_key: 'c'.repeat(64), p_value: 'v2', p_ttl: 120 }), { rearmed: true });
+  assert.deepEqual(await rpcRows(env, 'zerox_session_get', { p_key: 'c'.repeat(64) }), [{ value: 'v2' }]);
+  await rpc(env, 'zerox_session_delete', { p_key: 'c'.repeat(64) });
+  assert.deepEqual(await rpc(env, 'zerox_session_rearm', { p_key: 'c'.repeat(64), p_value: 'v3', p_ttl: 120 }), { rearmed: false });
+  assert.deepEqual(await rpcRows(env, 'zerox_session_get', { p_key: 'c'.repeat(64) }), [], 'a deleted session is never recreated');
+  await assert.rejects(rpc(env, 'zerox_session_rearm', { p_key: 'c'.repeat(64), p_value: 'v', p_ttl: 604801 }), /Invalid session TTL/);
   assert.equal(await rpc(env, 'zerox_subscription_effective_plan', { p_user_id: randomUUID() }), null,
     'a NULL scalar result yields no row');
   assert.equal(await rpc(env, 'zerox_subscription_grants_plan', { p_status: 'active',
@@ -380,6 +387,69 @@ try {
   assert.equal((await account(refundUser)).daily_requests, 2, 'errors (not refunded) keep the request counted');
   ok('refund path returns request and tokens to user and pool counters, error path keeps the request');
 
+  // ---------------------------------------------------------------- failed_upstream (review P2, integration)
+  // An attempt that reached the model (tool_use_failed, timeouts) keeps its request and processed
+  // tokens in the shared pool; the user is refunded while refunds are left for the day (a tenth of
+  // the plan's daily requests, at least 5), then such attempts count like errors.
+  await clockHeadroom(20);
+  const drainUser = await newUser('free');
+  const drainPool = { rpm: 1000, rpd: 1000, tpm: null, tpd: null };
+  const failUpstream = async (overrides = {}) => {
+    const reservation = await reserve(drainUser, { p_model: 'drain/model', p_pool: drainPool, p_tokens: 500 });
+    assert.equal(reservation.status, 'ok');
+    return settle(reservation.reservation_id, { p_status: 'failed_upstream', p_prompt_tokens: 40, p_completion_tokens: 0,
+      p_error_code: 'model_error', ...overrides });
+  };
+  for (let i = 0; i < 10; i++) assert.equal((await failUpstream()).status, 'settled');
+  let drained = await account(drainUser);
+  assert.deepEqual([drained.daily_requests, drained.daily_tokens_used, drained.upstream_refunds, drained.total_requests], [0, 0, 10, 0],
+    'within the allowance (10 on Free) the user is refunded in full');
+  for (const bucket of ['minute', 'day']) {
+    const row = await poolRow('drain/model', 'free', bucket);
+    assert.deepEqual([row.requests, row.tokens], [10, 400], `the ${bucket} pool keeps every request and its prompt tokens`);
+  }
+  const refundedEvents = await rpcRows(env, 'zerox_usage_events', { p_user_id: drainUser, p_limit: 20 });
+  assert.ok(refundedEvents.every(event => event.status === 'refunded' && event.prompt_tokens === 0 && event.error_code === 'model_error'));
+  await sql("UPDATE public.zerox_reservations SET created_at = now() - interval '2 minutes' WHERE user_id = $1", [drainUser]); // rpm 10
+  await failUpstream();
+  drained = await account(drainUser);
+  assert.deepEqual([drained.daily_requests, drained.daily_tokens_used, drained.upstream_refunds], [1, 40, 10],
+    'past the allowance the attempt counts like an error');
+  const [counted] = await rpcRows(env, 'zerox_usage_events', { p_user_id: drainUser, p_limit: 1 });
+  assert.deepEqual([counted.status, counted.prompt_tokens], ['error', 40]);
+  assert.equal((await poolRow('drain/model', 'free', 'day')).requests, 11);
+  const [drainDaily] = await sql('SELECT * FROM public.zerox_usage_daily WHERE user_id = $1', [drainUser]);
+  assert.deepEqual([drainDaily.requests, drainDaily.errors, drainDaily.prompt_tokens], [1, 11, 40]);
+  // A plain refund still returns the pool's request (the upstream did not count it).
+  const rejected = await reserve(drainUser, { p_model: 'drain/model', p_pool: drainPool, p_tokens: 500 });
+  await settle(rejected.reservation_id, { p_status: 'refunded', p_prompt_tokens: 0, p_completion_tokens: 0, p_error_code: 'upstream_error' });
+  assert.equal((await poolRow('drain/model', 'free', 'day')).requests, 11);
+  // The allowance is per UTC day and per plan (Pro: 200).
+  await sql('UPDATE public.zerox_accounts SET upstream_refund_day = $2::date WHERE clerk_id = $1', [drainUser, utcDay(-1)]);
+  await failUpstream();
+  assert.deepEqual([(await account(drainUser)).upstream_refunds, (await account(drainUser)).daily_requests], [1, 1], 'a new day starts a new allowance');
+  // A reservation from the previous UTC day settled after midnight is not counted against (and
+  // never resets) the current day's allowance.
+  const lateAttempt = await reserve(drainUser, { p_model: 'drain/model', p_pool: drainPool, p_tokens: 500 });
+  await sql('UPDATE public.zerox_reservations SET usage_day = $2::date WHERE id = $1', [lateAttempt.reservation_id, utcDay(-1)]);
+  await settle(lateAttempt.reservation_id, { p_status: 'failed_upstream', p_prompt_tokens: 40, p_completion_tokens: 0 });
+  const [afterLate] = await sql('SELECT upstream_refunds, upstream_refund_day = $2::date AS today FROM public.zerox_accounts WHERE clerk_id = $1',
+    [drainUser, todayUtc]);
+  assert.deepEqual(afterLate, { upstream_refunds: 1, today: true }, 'a late settle from the previous day keeps the refund count of the current day');
+  const proDrain = await newUser('pro');
+  await sql('UPDATE public.zerox_accounts SET upstream_refunds = 199, upstream_refund_day = $2::date WHERE clerk_id = $1', [proDrain, todayUtc]);
+  const proAttempt = await reserve(proDrain, { p_model: 'drain/pro', p_tokens: 500 });
+  await settle(proAttempt.reservation_id, { p_status: 'failed_upstream', p_prompt_tokens: 40, p_completion_tokens: 0 });
+  assert.deepEqual([(await account(proDrain)).daily_requests, (await account(proDrain)).upstream_refunds], [0, 200]);
+  // Paid pools: a refunded failed_upstream attempt bills nothing; past the allowance it is billed.
+  const paidDrain = await newUser('pro', { credits: 100000 });
+  await sql('UPDATE public.zerox_accounts SET upstream_refunds = 200, upstream_refund_day = $2::date WHERE clerk_id = $1', [paidDrain, todayUtc]);
+  const paidAttempt = await reserve(paidDrain, { p_model: 'drain/paid', p_tier: 'paid', p_cost_microusd: 500, p_tokens: 500 });
+  assert.deepEqual(await settle(paidAttempt.reservation_id, { p_status: 'failed_upstream', p_prompt_tokens: 40, p_completion_tokens: 0, p_cost_microusd: 30 }),
+    { status: 'settled', credit_balance_microusd: 99970 });
+  await assert.rejects(settle(paidAttempt.reservation_id, { p_status: 'partial' }), /invalid_settlement/);
+  ok('failed_upstream keeps the pool share, refunds the user within a daily allowance (a tenth of daily requests, min 5), then counts');
+
   // ---------------------------------------------------------------- shared pool budgets
   await clockHeadroom();
   const poolUsers = [await newUser('max'), await newUser('max'), await newUser('max', { credits: 1000000 })];
@@ -540,8 +610,27 @@ try {
   await assert.rejects(upsert({ p_plan: 'free' }), /invalid_plan/);
   await assert.rejects(upsert({ p_status: 'mystery' }), /invalid_subscription_status/);
   await assert.rejects(upsert({ p_user_id: randomUUID() }), /account_not_found/);
-  // Upgrade to max through a second subscription, then end the first immediately.
-  await upsert({ p_provider_subscription_id: 'sub_TEST2', p_plan: 'max', p_status: 'active', p_current_period_end: periodEnd });
+  // Review P2 (integration): a second subscription that becomes live while another one is live
+  // (two checkouts paid in parallel) is a duplicate. It is revoked and never entitles. This used to
+  // be modelled as an upgrade path; the gateway never creates one (checkout answers 409).
+  const duplicateSub = await upsert({ p_provider_subscription_id: 'sub_DUP1', p_plan: 'max', p_status: 'active', p_current_period_end: periodEnd });
+  assert.equal(duplicateSub.revoked_reason, 'duplicate');
+  assert.ok(duplicateSub.revoked_at);
+  assert.equal((await account(subscriber)).plan, 'pro', 'a duplicate never entitles, even for a higher plan');
+  assert.equal((await rpc(env, 'zerox_billing_get', { p_user_id: subscriber })).subscription.provider_subscription_id, 'sub_TEST1',
+    'Billing shows the entitled subscription');
+  assert.equal((await upsert({ p_provider_subscription_id: 'sub_DUP1', p_plan: 'max', p_status: 'active', p_current_period_end: periodEnd })).revoked_reason,
+    'duplicate', 'later events keep the revocation');
+  await upsert({ p_provider_subscription_id: 'sub_DUP1', p_plan: 'max', p_status: 'cancelled', p_current_period_end: periodEnd });
+  assert.equal((await account(subscriber)).plan, 'pro', 'a cancelled duplicate with paid time left grants nothing');
+  const subscriptionList = await rpcRows(env, 'zerox_billing_subscriptions', { p_user_id: subscriber });
+  assert.deepEqual(subscriptionList.map(row => [row.provider_subscription_id, row.status, row.revoked_reason]), [['sub_TEST1', 'active', null]],
+    'zerox_billing_subscriptions lists the subscriptions that have not ended');
+  // Upgrade to max once pro is cancelled (its paid period still running), then end pro.
+  await upsert({ p_status: 'cancelled', p_current_period_end: periodEnd });
+  assert.equal((await account(subscriber)).plan, 'pro', 'the cancelled pro keeps its plan until the period ends');
+  const upgraded = await upsert({ p_provider_subscription_id: 'sub_TEST2', p_plan: 'max', p_status: 'active', p_current_period_end: periodEnd });
+  assert.equal(upgraded.revoked_reason, null, 'a subscription after the previous one ended is no duplicate');
   assert.equal((await account(subscriber)).plan, 'max', 'highest entitling subscription wins');
   await upsert({ p_status: 'cancelled', p_current_period_end: new Date(Date.now() - 1000).toISOString() });
   assert.equal((await account(subscriber)).plan, 'max', 'ending the cheaper subscription keeps max');
@@ -572,7 +661,55 @@ try {
   assert.equal((await account(subscriber)).plan, 'pro');
   await upsert({ p_provider_subscription_id: 'sub_TEST3', p_plan: 'pro', p_status: 'halted', p_current_period_end: new Date(Date.now() - 60000).toISOString() });
   assert.equal((await account(subscriber)).plan, 'free', 'halted after period end reverts to free immediately');
-  ok('subscription upsert: plan grant on authenticated/active, upgrade, cancel at period end, expiry downgrade, ended subscriptions frozen');
+  ok('subscription upsert: plan grant on authenticated/active, duplicates revoked, upgrade, cancel at period end, expiry downgrade, ended subscriptions frozen');
+
+  // ---------------------------------------------------------------- checkout guard, revocation (review P2/P3, integration)
+  const shopper = await newUser('free');
+  const recordCheckout = (id, plan = 'pro', planId = 'plan_ProInr') => rpc(env, 'zerox_billing_record_checkout', {
+    p_user_id: shopper, p_provider: 'razorpay', p_provider_subscription_id: id, p_plan: plan, p_raw: { id, plan_id: planId } });
+  assert.deepEqual(await recordCheckout('sub_SHOP1'), { recorded: true, blocking_subscription_id: 'sub_SHOP1', blocking_status: 'created',
+    blocking_plan_id: 'plan_ProInr' });
+  assert.deepEqual(await recordCheckout('sub_SHOP1'), { recorded: true, blocking_subscription_id: 'sub_SHOP1', blocking_status: 'created',
+    blocking_plan_id: 'plan_ProInr' }, 'recording the same checkout again is idempotent');
+  assert.deepEqual(await recordCheckout('sub_SHOP2', 'max', 'plan_MaxUsd'), { recorded: false, blocking_subscription_id: 'sub_SHOP1',
+    blocking_status: 'created', blocking_plan_id: 'plan_ProInr' }, 'an unpaid checkout from the last day blocks a parallel one');
+  assert.equal(await rpc(env, 'zerox_subscription_by_provider_id', { p_provider: 'razorpay', p_provider_subscription_id: 'sub_SHOP2' }), null);
+  assert.equal((await account(shopper)).plan, 'free', 'a recorded checkout grants nothing');
+  assert.equal((await rpc(env, 'zerox_billing_get', { p_user_id: shopper })).subscription.status, 'created', 'Billing shows the open checkout');
+  await sql("UPDATE public.zerox_subscriptions SET created_at = now() - interval '25 hours' WHERE provider_subscription_id = 'sub_SHOP1'");
+  assert.equal((await rpc(env, 'zerox_billing_get', { p_user_id: shopper })).subscription, null, 'an abandoned checkout disappears after a day');
+  assert.equal((await recordCheckout('sub_SHOP2', 'max', 'plan_MaxUsd')).recorded, true, 'and no longer blocks');
+  await rpc(env, 'zerox_billing_upsert_subscription', { p_user_id: shopper, p_provider: 'razorpay', p_provider_subscription_id: 'sub_SHOP2',
+    p_plan: 'max', p_status: 'active', p_current_period_start: null, p_current_period_end: periodEnd, p_cancel_at_period_end: null, p_raw: null });
+  assert.equal((await account(shopper)).plan, 'max');
+  assert.deepEqual(await recordCheckout('sub_SHOP3'), { recorded: false, blocking_subscription_id: 'sub_SHOP2', blocking_status: 'active',
+    blocking_plan_id: 'plan_MaxUsd' }, 'a live subscription blocks every checkout');
+  const shopPayment = await rpc(env, 'zerox_billing_record_payment', { p_user_id: shopper, p_provider: 'razorpay', p_provider_payment_id: 'pay_SHOP2',
+    p_kind: 'subscription', p_amount_minor: 4000, p_currency: 'USD', p_status: 'captured', p_invoice_url: null,
+    p_raw: { id: 'pay_SHOP2', subscription_id: 'sub_SHOP2' } });
+  assert.equal(shopPayment.raw.subscription_id, 'sub_SHOP2');
+  const refundedPayment = await rpc(env, 'zerox_billing_record_payment', { p_user_id: shopper, p_provider: 'razorpay', p_provider_payment_id: 'pay_SHOP2',
+    p_kind: 'subscription', p_amount_minor: 4000, p_currency: 'USD', p_status: 'refunded', p_invoice_url: null, p_raw: { id: 'pay_SHOP2', status: 'refunded' } });
+  assert.deepEqual(refundedPayment.raw, { id: 'pay_SHOP2', status: 'refunded', subscription_id: 'sub_SHOP2' }, 'raw objects are merged');
+  assert.equal((await rpcRows(env, 'zerox_billing_subscriptions', { p_user_id: shopper })).find(row => row.provider_subscription_id === 'sub_SHOP2').payments, 1);
+  await rpc(env, 'zerox_credit_grant', { p_user_id: shopper, p_delta_microusd: 35000000, p_reason: 'subscription_max', p_ref: 'pay_SHOP2' });
+  assert.deepEqual(await rpc(env, 'zerox_payment_by_provider_id', { p_provider: 'razorpay', p_provider_payment_id: 'pay_SHOP2' }), {
+    id: shopPayment.id, user_id: shopper, kind: 'subscription', amount_minor: 4000, currency: 'USD', status: 'refunded',
+    subscription_id: 'sub_SHOP2', granted_microusd: 35000000, granted_reason: 'subscription_max' });
+  assert.equal(await rpc(env, 'zerox_payment_by_provider_id', { p_provider: 'razorpay', p_provider_payment_id: 'pay_UNKNOWN' }), null);
+  const revokedSub = await rpc(env, 'zerox_billing_revoke_subscription', { p_provider: 'razorpay', p_provider_subscription_id: 'sub_SHOP2', p_reason: 'refunded' });
+  assert.equal(revokedSub.revoked_reason, 'refunded');
+  assert.equal((await account(shopper)).plan, 'free', 'a refunded subscription stops entitling at once');
+  await rpc(env, 'zerox_billing_upsert_subscription', { p_user_id: shopper, p_provider: 'razorpay', p_provider_subscription_id: 'sub_SHOP2',
+    p_plan: 'max', p_status: 'cancelled', p_current_period_start: null, p_current_period_end: periodEnd, p_cancel_at_period_end: false, p_raw: null });
+  assert.equal((await account(shopper)).plan, 'free', 'not even when Razorpay reports paid time left');
+  assert.equal((await rpc(env, 'zerox_billing_revoke_subscription', { p_provider: 'razorpay', p_provider_subscription_id: 'sub_SHOP2',
+    p_reason: 'duplicate' })).revoked_reason, 'refunded', 'the first revocation is kept');
+  assert.equal(await rpc(env, 'zerox_billing_revoke_subscription', { p_provider: 'razorpay', p_provider_subscription_id: 'sub_NOPE', p_reason: 'refunded' }), null);
+  await assert.rejects(rpc(env, 'zerox_billing_revoke_subscription', { p_provider: 'razorpay', p_provider_subscription_id: 'sub_SHOP2', p_reason: 'whim' }),
+    /invalid_revoke_reason/);
+  await assert.rejects(recordCheckout('sub_SHOP4', 'free'), /invalid_plan/);
+  ok('checkout guard: one unpaid checkout or live subscription per account; revoked subscriptions never entitle; payment lookup and raw merge');
 
   // ---------------------------------------------------------------- subscription grants are bounded in time
   const hoursAgo = hours => new Date(Date.now() - hours * 3600000).toISOString();
@@ -713,13 +850,32 @@ try {
   await assert.rejects(rpc(env, 'zerox_credit_grant', { p_user_id: randomUUID(), p_delta_microusd: 1, p_reason: 'topup', p_ref: 'nobody' }), /account_not_found/);
   const claim = args => rpc(env, 'zerox_webhook_claim', { p_provider: 'razorpay', p_event_id: 'evt_TEST1',
     p_event_type: 'subscription.charged', p_payload_sha256: sha('{"event":"subscription.charged"}'), ...args });
-  assert.deepEqual(await claim(), { claimed: true });
-  assert.deepEqual(await claim(), { claimed: false }, 'webhook deliveries are deduplicated');
-  assert.deepEqual(await claim({ p_provider: 'stripe' }), { claimed: true }, 'event ids are scoped per provider');
+  const complete = (provider = 'razorpay') => rpc(env, 'zerox_webhook_complete', { p_provider: provider, p_event_id: 'evt_TEST1' });
+  const leaseOf = async () => (await sql(`SELECT status, attempts, lease_expires_at > now() AS live, processed_at IS NOT NULL AS done
+    FROM public.zerox_webhook_events WHERE provider = 'razorpay' AND event_id = 'evt_TEST1'`))[0];
+  assert.deepEqual(await claim(), { claimed: true, in_progress: false });
+  assert.deepEqual(await leaseOf(), { status: 'processing', attempts: 1, live: true, done: false });
+  assert.deepEqual(await claim(), { claimed: false, in_progress: true }, 'a delivery being processed is not claimed twice');
+  assert.deepEqual(await complete(), { completed: true });
+  assert.deepEqual(await leaseOf(), { status: 'processed', attempts: 1, live: null, done: true });
+  assert.deepEqual(await claim(), { claimed: false, in_progress: false }, 'processed deliveries are deduplicated');
+  assert.deepEqual(await claim({ p_provider: 'stripe' }), { claimed: true, in_progress: false }, 'event ids are scoped per provider');
   assert.deepEqual(await rpc(env, 'zerox_webhook_release', { p_provider: 'razorpay', p_event_id: 'evt_TEST1' }), { released: true });
-  assert.deepEqual(await claim(), { claimed: true }, 'a released claim can be processed again');
+  assert.deepEqual(await claim(), { claimed: true, in_progress: false }, 'a released claim can be processed again');
+  // Review P3 (integration): a claim held by an invocation that died (CPU or wall-time limit,
+  // eviction) is claimed again once its lease expires, so Razorpay's retry is processed.
+  await sql("UPDATE public.zerox_webhook_events SET lease_expires_at = now() - interval '1 second' WHERE provider = 'razorpay' AND event_id = 'evt_TEST1'");
+  assert.deepEqual(await claim({ p_lease_seconds: 300 }), { claimed: true, in_progress: false }, 'an expired lease is claimed again');
+  const renewed = await leaseOf();
+  assert.deepEqual([renewed.status, renewed.attempts, renewed.live], ['processing', 2, true]);
+  assert.ok((await sql("SELECT lease_expires_at > now() + interval '200 seconds' AS long FROM public.zerox_webhook_events WHERE provider = 'razorpay' AND event_id = 'evt_TEST1'"))[0].long);
+  await complete();
+  await sql("UPDATE public.zerox_webhook_events SET lease_expires_at = now() - interval '1 second' WHERE provider = 'razorpay' AND event_id = 'evt_TEST1'");
+  assert.deepEqual(await claim(), { claimed: false, in_progress: false }, 'a processed delivery is never claimed again');
+  assert.deepEqual(await rpc(env, 'zerox_webhook_complete', { p_provider: 'razorpay', p_event_id: 'evt_NEVER' }), { completed: false });
   await assert.rejects(claim({ p_event_id: 'evt_2', p_payload_sha256: 'xyz' }), /invalid_payload_sha256/);
-  ok('payments idempotent with forward-only status, credit grants idempotent with clamp, webhook claim dedupe and release');
+  await assert.rejects(claim({ p_event_id: 'evt_3', p_lease_seconds: 5 }), /invalid_lease/);
+  ok('payments idempotent with forward-only status, credit grants idempotent with clamp, webhook claims are leases (dedupe, release, expiry, complete)');
 
   // ---------------------------------------------------------------- usage series, by model, events
   const statsUser = await newUser('max', { credits: 10000000 });
@@ -780,7 +936,13 @@ try {
   assert.equal(admin.users.total, counts.total);
   assert.equal(admin.users.suspended, counts.suspended);
   assert.equal(Object.values(admin.users.by_plan).reduce((sum, value) => sum + value, 0), counts.total);
-  await upsert({ p_provider_subscription_id: 'sub_TEST4', p_plan: 'max', p_status: 'active', p_current_period_end: periodEnd });
+  // The subscriber's halted sub_TEST3 is still live (Razorpay can resume it): a subscription activated
+  // meanwhile is a duplicate and adds no revenue. Once sub_TEST3 is cancelled a new one counts.
+  const haltedDuplicate = await upsert({ p_provider_subscription_id: 'sub_TEST4', p_plan: 'max', p_status: 'active', p_current_period_end: periodEnd });
+  assert.equal(haltedDuplicate.revoked_reason, 'duplicate');
+  assert.deepEqual((await rpc(env, 'zerox_admin_overview', {})).overview.revenue, admin.revenue, 'a revoked duplicate is not revenue');
+  await upsert({ p_provider_subscription_id: 'sub_TEST3', p_plan: 'pro', p_status: 'cancelled', p_current_period_end: new Date(Date.now() - 60000).toISOString() });
+  await upsert({ p_provider_subscription_id: 'sub_TEST5', p_plan: 'max', p_status: 'active', p_current_period_end: periodEnd });
   const { overview: adminWithRevenue } = await rpc(env, 'zerox_admin_overview', {});
   assert.equal(adminWithRevenue.revenue.active_subscriptions, admin.revenue.active_subscriptions + 1);
   assert.equal(adminWithRevenue.revenue.mrr_usd_estimate, admin.revenue.mrr_usd_estimate + 40);
@@ -880,7 +1042,10 @@ try {
     'zerox_api_key_list', 'zerox_api_key_revoke', 'zerox_api_key_verify', 'zerox_billing_upsert_subscription',
     'zerox_billing_record_payment', 'zerox_credit_grant', 'zerox_webhook_claim', 'zerox_billing_get',
     'zerox_subscription_by_provider_id', 'zerox_apply_subscription_expiry', 'zerox_session_index_add',
-    'zerox_session_index_list', 'zerox_session_index_revoke_all', 'zerox_admin_overview'];
+    'zerox_session_index_list', 'zerox_session_index_revoke_all', 'zerox_admin_overview',
+    // v1.1 extensions (contract section 6)
+    'zerox_webhook_release', 'zerox_webhook_complete', 'zerox_billing_subscriptions', 'zerox_billing_record_checkout',
+    'zerox_billing_revoke_subscription', 'zerox_payment_by_provider_id', 'zerox_session_index_remove', 'zerox_session_rearm'];
   for (const name of contractRpcs) assert.ok(functions.some(row => row.proname === name), `${name} exists`);
   for (const row of functions) {
     assert.equal(row.prosecdef, false, `${row.signature} is SECURITY INVOKER`);

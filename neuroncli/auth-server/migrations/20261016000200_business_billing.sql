@@ -72,12 +72,13 @@ END;
 $$;
 
 -- The paid plan a user's subscriptions entitle them to right now (highest price), or NULL.
+-- Revoked subscriptions (duplicates, refunded payments) never entitle.
 CREATE FUNCTION public.zerox_subscription_effective_plan(p_user_id uuid)
 RETURNS text
 LANGUAGE sql STABLE SECURITY INVOKER SET search_path = '' AS $$
   SELECT s.plan FROM public.zerox_subscriptions AS s
   JOIN public.zerox_plan_policy AS p ON p.plan = s.plan
-  WHERE s.user_id = p_user_id
+  WHERE s.user_id = p_user_id AND s.revoked_at IS NULL
     AND public.zerox_subscription_grants_plan(s.status, s.current_period_end, s.cancel_at_period_end, s.updated_at)
   ORDER BY p.price_usd DESC, s.updated_at DESC
   LIMIT 1;
@@ -160,6 +161,9 @@ $$;
 -- zerox_subscription_grants_plan for the exact bounds). Once a subscription has ended
 -- (cancelled, completed, expired) its plan is fixed and late or replayed non-ending webhooks
 -- are ignored, so out-of-order deliveries cannot resurrect or re-plan it.
+-- A subscription that becomes live (authenticated, active, pending) while the same user already
+-- has another live, unrevoked one is a duplicate (two checkouts paid in parallel): it is revoked
+-- with reason 'duplicate' so it never entitles, and the gateway cancels and refunds it.
 CREATE FUNCTION public.zerox_billing_upsert_subscription(p_user_id uuid, p_provider text,
   p_provider_subscription_id text, p_plan text, p_status text, p_current_period_start timestamptz,
   p_current_period_end timestamptz, p_cancel_at_period_end boolean, p_raw jsonb)
@@ -168,7 +172,9 @@ LANGUAGE plpgsql SECURITY INVOKER SET search_path = '' AS $$
 #variable_conflict use_column
 DECLARE
   v_subscription public.zerox_subscriptions;
+  v_previous text;
   v_ended constant text[] := ARRAY['cancelled', 'completed', 'expired'];
+  v_live constant text[] := ARRAY['authenticated', 'active', 'pending', 'halted', 'paused'];
 BEGIN
   IF p_provider IS NULL OR p_provider !~ '^[a-z][a-z0-9_]{1,31}$' THEN RAISE EXCEPTION 'invalid_provider'; END IF;
   IF p_provider_subscription_id IS NULL OR length(p_provider_subscription_id) NOT BETWEEN 1 AND 100 THEN
@@ -192,6 +198,7 @@ BEGIN
     SELECT * INTO v_subscription FROM public.zerox_subscriptions AS s
       WHERE s.provider = p_provider AND s.provider_subscription_id = p_provider_subscription_id FOR UPDATE;
     IF v_subscription.user_id <> p_user_id THEN RAISE EXCEPTION 'subscription_owner_mismatch'; END IF;
+    v_previous := v_subscription.status;
     -- An ended subscription accepts only further ending updates, and never changes plan.
     IF NOT (v_subscription.status = ANY (v_ended)) OR p_status = ANY (v_ended) THEN
       UPDATE public.zerox_subscriptions AS s SET
@@ -206,7 +213,100 @@ BEGIN
     END IF;
   END IF;
 
+  -- The account row lock above serializes this check across concurrent upserts.
+  IF v_subscription.revoked_at IS NULL
+      AND v_subscription.status IN ('authenticated', 'active', 'pending')
+      AND (v_previous IS NULL OR NOT (v_previous = ANY (v_live)))
+      AND EXISTS (SELECT 1 FROM public.zerox_subscriptions AS o
+        WHERE o.user_id = p_user_id AND o.id <> v_subscription.id AND o.revoked_at IS NULL
+          AND o.status = ANY (v_live)) THEN
+    UPDATE public.zerox_subscriptions AS s SET revoked_at = now(), revoked_reason = 'duplicate', updated_at = now()
+      WHERE s.id = v_subscription.id
+      RETURNING * INTO v_subscription;
+  END IF;
+
   PERFORM public.zerox_reconcile_subscription_plan(p_user_id);
+  RETURN NEXT v_subscription;
+END;
+$$;
+
+-- Every subscription of a user that has not ended, newest first, with the provider plan id and
+-- the number of payments recorded for it that did not fail (the checkout and cancel flows).
+CREATE FUNCTION public.zerox_billing_subscriptions(p_user_id uuid)
+RETURNS TABLE (id uuid, provider text, provider_subscription_id text, plan text, status text,
+  current_period_start timestamptz, current_period_end timestamptz, cancel_at_period_end boolean,
+  revoked_at timestamptz, revoked_reason text, provider_plan_id text, payments bigint,
+  created_at timestamptz, updated_at timestamptz)
+LANGUAGE sql STABLE SECURITY INVOKER SET search_path = '' AS $$
+  SELECT s.id, s.provider, s.provider_subscription_id, s.plan, s.status, s.current_period_start,
+    s.current_period_end, s.cancel_at_period_end, s.revoked_at, s.revoked_reason, s.raw ->> 'plan_id',
+    (SELECT count(*) FROM public.zerox_payments AS p
+      WHERE p.user_id = s.user_id AND p.provider = s.provider AND p.kind = 'subscription'
+        AND p.status <> 'failed' AND p.raw ->> 'subscription_id' = s.provider_subscription_id),
+    s.created_at, s.updated_at
+  FROM public.zerox_subscriptions AS s
+  WHERE s.user_id = p_user_id AND s.status NOT IN ('cancelled', 'completed', 'expired')
+  ORDER BY s.created_at DESC, s.id
+  LIMIT 50;
+$$;
+
+-- Records a checkout's new provider subscription as 'created', unless the user already has a
+-- live, unrevoked subscription or another unpaid checkout from the last 24 hours. The account row
+-- lock makes this atomic across parallel checkouts; the blocking subscription is returned so the
+-- gateway can reuse it (same provider plan) or refuse.
+CREATE FUNCTION public.zerox_billing_record_checkout(p_user_id uuid, p_provider text,
+  p_provider_subscription_id text, p_plan text, p_raw jsonb)
+RETURNS TABLE (recorded boolean, blocking_subscription_id text, blocking_status text, blocking_plan_id text)
+LANGUAGE plpgsql SECURITY INVOKER SET search_path = '' AS $$
+#variable_conflict use_column
+DECLARE
+  v_other public.zerox_subscriptions;
+BEGIN
+  IF p_provider IS NULL OR p_provider !~ '^[a-z][a-z0-9_]{1,31}$' THEN RAISE EXCEPTION 'invalid_provider'; END IF;
+  IF p_provider_subscription_id IS NULL OR length(p_provider_subscription_id) NOT BETWEEN 1 AND 100 THEN
+    RAISE EXCEPTION 'invalid_subscription_id';
+  END IF;
+  IF p_plan IS NULL OR p_plan NOT IN ('pro', 'max') THEN RAISE EXCEPTION 'invalid_plan: %', p_plan; END IF;
+  PERFORM 1 FROM public.zerox_accounts AS a WHERE a.clerk_id = p_user_id FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'account_not_found'; END IF;
+  SELECT * INTO v_other FROM public.zerox_subscriptions AS s
+    WHERE s.user_id = p_user_id AND s.provider_subscription_id <> p_provider_subscription_id
+      AND s.revoked_at IS NULL
+      AND (s.status IN ('authenticated', 'active', 'pending', 'halted', 'paused')
+        OR (s.status = 'created' AND s.created_at > now() - interval '24 hours'))
+    ORDER BY (s.status = 'created'), s.created_at
+    LIMIT 1;
+  IF FOUND THEN
+    RETURN QUERY SELECT false, v_other.provider_subscription_id, v_other.status, v_other.raw ->> 'plan_id';
+    RETURN;
+  END IF;
+  INSERT INTO public.zerox_subscriptions (user_id, provider, provider_subscription_id, plan, status, raw)
+    VALUES (p_user_id, p_provider, p_provider_subscription_id, p_plan, 'created', p_raw)
+    ON CONFLICT (provider, provider_subscription_id) DO NOTHING;
+  RETURN QUERY SELECT true, p_provider_subscription_id, 'created'::text, p_raw ->> 'plan_id';
+END;
+$$;
+
+-- Ends a subscription's entitlement for good (reason 'refunded' after a full refund, or
+-- 'duplicate'); an existing revocation is kept. Returns the row, or nothing when it is unknown.
+CREATE FUNCTION public.zerox_billing_revoke_subscription(p_provider text, p_provider_subscription_id text,
+  p_reason text)
+RETURNS SETOF public.zerox_subscriptions
+LANGUAGE plpgsql SECURITY INVOKER SET search_path = '' AS $$
+#variable_conflict use_column
+DECLARE
+  v_subscription public.zerox_subscriptions;
+BEGIN
+  IF p_reason IS NULL OR p_reason NOT IN ('duplicate', 'refunded') THEN RAISE EXCEPTION 'invalid_revoke_reason'; END IF;
+  SELECT * INTO v_subscription FROM public.zerox_subscriptions AS s
+    WHERE s.provider = p_provider AND s.provider_subscription_id = p_provider_subscription_id;
+  IF NOT FOUND THEN RETURN; END IF;
+  PERFORM 1 FROM public.zerox_accounts AS a WHERE a.clerk_id = v_subscription.user_id FOR UPDATE;
+  UPDATE public.zerox_subscriptions AS s SET revoked_at = coalesce(s.revoked_at, now()),
+    revoked_reason = coalesce(s.revoked_reason, p_reason), updated_at = now()
+    WHERE s.id = v_subscription.id
+    RETURNING * INTO v_subscription;
+  PERFORM public.zerox_reconcile_subscription_plan(v_subscription.user_id);
   RETURN NEXT v_subscription;
 END;
 $$;
@@ -248,7 +348,8 @@ LANGUAGE sql STABLE SECURITY INVOKER SET search_path = '' AS $$
 $$;
 
 -- Records a payment once per (provider, provider payment id). Repeated calls only move the
--- status forward (created < authorized < failed < captured < refunded) and fill missing data.
+-- status forward (created < authorized < failed < captured < refunded), fill missing data and
+-- merge p_raw into the stored raw object (so its subscription_id is kept).
 CREATE FUNCTION public.zerox_billing_record_payment(p_user_id uuid, p_provider text,
   p_provider_payment_id text, p_kind text, p_amount_minor bigint, p_currency text, p_status text,
   p_invoice_url text, p_raw jsonb)
@@ -286,12 +387,29 @@ BEGIN
     UPDATE public.zerox_payments AS p SET
       status = CASE WHEN array_position(v_ranks, p_status) > array_position(v_ranks, p.status)
         THEN p_status ELSE p.status END,
-      invoice_url = coalesce(p_invoice_url, p.invoice_url), raw = coalesce(p_raw, p.raw), updated_at = now()
+      invoice_url = coalesce(p_invoice_url, p.invoice_url),
+      raw = CASE WHEN jsonb_typeof(p.raw) = 'object' AND jsonb_typeof(p_raw) = 'object' THEN p.raw || p_raw
+        ELSE coalesce(p_raw, p.raw) END,
+      updated_at = now()
       WHERE p.id = v_payment.id
       RETURNING * INTO v_payment;
   END IF;
   RETURN NEXT v_payment;
 END;
+$$;
+
+-- A recorded payment with its owner, the subscription it paid for (raw subscription_id) and the
+-- credits granted for it (the ledger row whose ref is the payment id). Used by refund handling.
+CREATE FUNCTION public.zerox_payment_by_provider_id(p_provider text, p_provider_payment_id text)
+RETURNS TABLE (id uuid, user_id uuid, kind text, amount_minor bigint, currency text, status text,
+  subscription_id text, granted_microusd bigint, granted_reason text)
+LANGUAGE sql STABLE SECURITY INVOKER SET search_path = '' AS $$
+  SELECT p.id, p.user_id, p.kind, p.amount_minor, p.currency, p.status, p.raw ->> 'subscription_id',
+    coalesce(l.delta_microusd, 0), l.reason
+  FROM public.zerox_payments AS p
+  LEFT JOIN public.zerox_credit_ledger AS l
+    ON l.ref = p.provider_payment_id AND l.user_id = p.user_id AND l.delta_microusd > 0
+  WHERE p.provider = p_provider AND p.provider_payment_id = p_provider_payment_id;
 $$;
 
 -- Applies a credit delta once per ref (payment id, invoice id, ...). Negative deltas clamp
@@ -333,14 +451,20 @@ BEGIN
 END;
 $$;
 
--- Insert-if-absent claim used to process each provider webhook delivery exactly once.
+-- Claims a provider webhook delivery for processing, once. The claim is a lease: it stays
+-- 'processing' until zerox_webhook_complete marks it processed, and a claim whose lease
+-- (p_lease_seconds, default 120) expired is claimed again, so an invocation that died mid-way
+-- never turns Razorpay's retries into duplicates. in_progress is true while another invocation
+-- holds a live lease (answer non-2xx so the provider retries later).
 CREATE FUNCTION public.zerox_webhook_claim(p_provider text, p_event_id text, p_event_type text,
-  p_payload_sha256 text)
-RETURNS TABLE (claimed boolean)
+  p_payload_sha256 text, p_lease_seconds integer DEFAULT 120)
+RETURNS TABLE (claimed boolean, in_progress boolean)
 LANGUAGE plpgsql SECURITY INVOKER SET search_path = '' AS $$
 #variable_conflict use_column
 DECLARE
   v_rows bigint;
+  v_lease interval;
+  v_status text;
 BEGIN
   IF p_provider IS NULL OR p_provider !~ '^[a-z][a-z0-9_]{1,31}$' THEN RAISE EXCEPTION 'invalid_provider'; END IF;
   IF p_event_id IS NULL OR length(p_event_id) NOT BETWEEN 1 AND 200 THEN RAISE EXCEPTION 'invalid_event_id'; END IF;
@@ -348,9 +472,34 @@ BEGIN
   IF p_payload_sha256 IS NOT NULL AND p_payload_sha256 !~ '^[a-f0-9]{64}$' THEN
     RAISE EXCEPTION 'invalid_payload_sha256';
   END IF;
-  INSERT INTO public.zerox_webhook_events (provider, event_id, event_type, payload_sha256)
-    VALUES (p_provider, p_event_id, coalesce(p_event_type, ''), p_payload_sha256)
-    ON CONFLICT (provider, event_id) DO NOTHING;
+  IF p_lease_seconds IS NULL OR p_lease_seconds NOT BETWEEN 10 AND 3600 THEN RAISE EXCEPTION 'invalid_lease'; END IF;
+  v_lease := p_lease_seconds * interval '1 second';
+  INSERT INTO public.zerox_webhook_events AS w (provider, event_id, event_type, payload_sha256, status, lease_expires_at)
+    VALUES (p_provider, p_event_id, coalesce(p_event_type, ''), p_payload_sha256, 'processing', now() + v_lease)
+    ON CONFLICT (provider, event_id) DO UPDATE SET lease_expires_at = now() + v_lease, attempts = w.attempts + 1,
+      payload_sha256 = coalesce(EXCLUDED.payload_sha256, w.payload_sha256)
+      WHERE w.status = 'processing' AND (w.lease_expires_at IS NULL OR w.lease_expires_at <= now());
+  GET DIAGNOSTICS v_rows = ROW_COUNT;
+  IF v_rows > 0 THEN
+    RETURN QUERY SELECT true, false;
+    RETURN;
+  END IF;
+  SELECT w.status INTO v_status FROM public.zerox_webhook_events AS w
+    WHERE w.provider = p_provider AND w.event_id = p_event_id;
+  RETURN QUERY SELECT false, coalesce(v_status, 'processing') = 'processing';
+END;
+$$;
+
+-- Marks a claimed delivery processed; later deliveries of the same event are duplicates.
+CREATE FUNCTION public.zerox_webhook_complete(p_provider text, p_event_id text)
+RETURNS TABLE (completed boolean)
+LANGUAGE plpgsql SECURITY INVOKER SET search_path = '' AS $$
+#variable_conflict use_column
+DECLARE
+  v_rows bigint;
+BEGIN
+  UPDATE public.zerox_webhook_events AS w SET status = 'processed', processed_at = now(), lease_expires_at = NULL
+    WHERE w.provider = p_provider AND w.event_id = p_event_id;
   GET DIAGNOSTICS v_rows = ROW_COUNT;
   RETURN QUERY SELECT v_rows > 0;
 END;
@@ -394,11 +543,16 @@ REVOKE ALL ON FUNCTION
   public.zerox_billing_plan_target(uuid),
   public.zerox_reconcile_subscription_plan(uuid),
   public.zerox_billing_upsert_subscription(uuid, text, text, text, text, timestamptz, timestamptz, boolean, jsonb),
+  public.zerox_billing_subscriptions(uuid),
+  public.zerox_billing_record_checkout(uuid, text, text, text, jsonb),
+  public.zerox_billing_revoke_subscription(text, text, text),
   public.zerox_apply_subscription_expiry(),
   public.zerox_subscription_by_provider_id(text, text),
   public.zerox_billing_record_payment(uuid, text, text, text, bigint, text, text, text, jsonb),
+  public.zerox_payment_by_provider_id(text, text),
   public.zerox_credit_grant(uuid, bigint, text, text),
-  public.zerox_webhook_claim(text, text, text, text),
+  public.zerox_webhook_claim(text, text, text, text, integer),
+  public.zerox_webhook_complete(text, text),
   public.zerox_webhook_release(text, text),
   public.zerox_billing_get(uuid)
   FROM PUBLIC, anon, authenticated;
@@ -411,11 +565,16 @@ GRANT EXECUTE ON FUNCTION
   public.zerox_billing_plan_target(uuid),
   public.zerox_reconcile_subscription_plan(uuid),
   public.zerox_billing_upsert_subscription(uuid, text, text, text, text, timestamptz, timestamptz, boolean, jsonb),
+  public.zerox_billing_subscriptions(uuid),
+  public.zerox_billing_record_checkout(uuid, text, text, text, jsonb),
+  public.zerox_billing_revoke_subscription(text, text, text),
   public.zerox_apply_subscription_expiry(),
   public.zerox_subscription_by_provider_id(text, text),
   public.zerox_billing_record_payment(uuid, text, text, text, bigint, text, text, text, jsonb),
+  public.zerox_payment_by_provider_id(text, text),
   public.zerox_credit_grant(uuid, bigint, text, text),
-  public.zerox_webhook_claim(text, text, text, text),
+  public.zerox_webhook_claim(text, text, text, text, integer),
+  public.zerox_webhook_complete(text, text),
   public.zerox_webhook_release(text, text),
   public.zerox_billing_get(uuid)
   TO service_role;

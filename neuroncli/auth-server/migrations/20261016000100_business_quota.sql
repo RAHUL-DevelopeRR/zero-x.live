@@ -167,8 +167,16 @@ END;
 $$;
 
 -- Idempotently settles a reservation: reconciles user and pool token counters with actual
--- usage, refunds the request on p_status = 'refunded', bills paid-tier credits (clamped at 0,
--- shortfall recorded in the ledger) and records the usage event and daily rollup.
+-- usage, bills paid-tier credits (clamped at 0, shortfall recorded in the ledger) and records the
+-- usage event and daily rollup. p_status:
+-- * ok, error: the request counts against the user and the shared pool.
+-- * refunded: the upstream did not count the attempt (429, 5xx, network or auth failures), so the
+--   request is returned to the user and to the pool.
+-- * failed_upstream: the attempt reached the model (model errors such as tool_use_failed,
+--   first-byte or idle timeouts). The pool keeps the request and the processed tokens, as the
+--   upstream's own limits do. The user gets the request (and tokens) back while they have
+--   refunds left for the day (a tenth of the plan's daily requests, at least 5); after that the
+--   attempt counts like an error. The usage event records the effective outcome (refunded/error).
 CREATE FUNCTION public.zerox_settle_v2(p_reservation_id uuid, p_prompt_tokens bigint,
   p_completion_tokens bigint, p_cost_microusd bigint, p_status text, p_latency_ms integer,
   p_provider text, p_upstream_model text, p_error_code text)
@@ -181,12 +189,21 @@ DECLARE
   v_prompt bigint := coalesce(p_prompt_tokens, 0);
   v_completion bigint := coalesce(p_completion_tokens, 0);
   v_delta bigint;
+  v_user_delta bigint;
+  v_user_prompt bigint;
+  v_user_completion bigint;
   v_refund integer;
+  v_pool_refund integer;
+  v_effective text;
+  v_account public.zerox_accounts;
+  v_allowance bigint;
+  v_refunds_used bigint := 0;
+  v_count_refund boolean := false;
   v_cost bigint := 0;
   v_charged bigint;
 BEGIN
-  IF p_status IS NULL OR p_status NOT IN ('ok', 'error', 'refunded') THEN
-    RAISE EXCEPTION 'invalid_settlement: p_status must be ok, error or refunded';
+  IF p_status IS NULL OR p_status NOT IN ('ok', 'error', 'refunded', 'failed_upstream') THEN
+    RAISE EXCEPTION 'invalid_settlement: p_status must be ok, error, refunded or failed_upstream';
   END IF;
   IF v_prompt < 0 OR v_completion < 0 OR coalesce(p_cost_microusd, 0) < 0 OR coalesce(p_latency_ms, 0) < 0 THEN
     RAISE EXCEPTION 'invalid_settlement: token, cost and latency values must be nonnegative';
@@ -204,18 +221,42 @@ BEGIN
   END IF;
 
   v_delta := v_prompt + v_completion - v_reservation.reserved_tokens;
-  v_refund := CASE WHEN p_status = 'refunded' THEN 1 ELSE 0 END;
-  IF v_reservation.tier = 'paid' AND p_status <> 'refunded' THEN v_cost := coalesce(p_cost_microusd, 0); END IF;
+  SELECT * INTO v_account FROM public.zerox_accounts AS a WHERE a.clerk_id = v_reservation.user_id FOR UPDATE;
+  v_effective := p_status;
+  IF p_status = 'failed_upstream' THEN
+    SELECT greatest(5, pp.daily_requests / 10) INTO v_allowance FROM public.zerox_plan_policy AS pp
+      WHERE pp.plan IN (v_reservation.plan, 'free') ORDER BY (pp.plan = v_reservation.plan) DESC LIMIT 1;
+    IF v_account.upstream_refund_day = v_reservation.usage_day THEN v_refunds_used := v_account.upstream_refunds; END IF;
+    v_effective := CASE WHEN v_refunds_used < coalesce(v_allowance, 5) THEN 'refunded' ELSE 'error' END;
+  END IF;
+  v_refund := CASE WHEN v_effective = 'refunded' THEN 1 ELSE 0 END;
+  v_pool_refund := CASE WHEN p_status = 'refunded' THEN 1 ELSE 0 END;
+  -- The allowance counter belongs to the latest UTC day: a late settle of an earlier day's
+  -- reservation (across midnight) is not counted, and never resets the current day's count.
+  v_count_refund := p_status = 'failed_upstream' AND v_refund = 1
+    AND (v_account.upstream_refund_day IS NULL OR v_account.upstream_refund_day <= v_reservation.usage_day);
+  -- A refunded failed_upstream attempt costs the user nothing; the pool still counts it.
+  IF p_status = 'failed_upstream' AND v_refund = 1 THEN
+    v_user_delta := -v_reservation.reserved_tokens;
+    v_user_prompt := 0;
+    v_user_completion := 0;
+  ELSE
+    v_user_delta := v_delta;
+    v_user_prompt := v_prompt;
+    v_user_completion := v_completion;
+  END IF;
+  IF v_reservation.tier = 'paid' AND v_effective <> 'refunded' THEN v_cost := coalesce(p_cost_microusd, 0); END IF;
 
-  SELECT least(v_cost, a.credit_balance_microusd) INTO v_charged
-    FROM public.zerox_accounts AS a WHERE a.clerk_id = v_reservation.user_id FOR UPDATE;
+  v_charged := least(v_cost, v_account.credit_balance_microusd);
   UPDATE public.zerox_accounts AS a SET
     daily_tokens_used = CASE WHEN a.last_usage_reset = v_reservation.usage_day
-      THEN greatest(0, a.daily_tokens_used + v_delta) ELSE a.daily_tokens_used END,
+      THEN greatest(0, a.daily_tokens_used + v_user_delta) ELSE a.daily_tokens_used END,
     daily_requests = CASE WHEN a.last_usage_reset = v_reservation.usage_day
       THEN greatest(0, a.daily_requests - v_refund) ELSE a.daily_requests END,
-    total_tokens_used = greatest(0, a.total_tokens_used + v_delta),
+    total_tokens_used = greatest(0, a.total_tokens_used + v_user_delta),
     total_requests = greatest(0, a.total_requests - v_refund),
+    upstream_refunds = CASE WHEN v_count_refund THEN v_refunds_used + 1 ELSE a.upstream_refunds END,
+    upstream_refund_day = CASE WHEN v_count_refund THEN v_reservation.usage_day ELSE a.upstream_refund_day END,
     credit_balance_microusd = a.credit_balance_microusd - v_charged,
     updated_at = now()
     WHERE a.clerk_id = v_reservation.user_id
@@ -229,11 +270,11 @@ BEGIN
   END IF;
 
   UPDATE public.zerox_pool_usage AS pu SET tokens = greatest(0, pu.tokens + v_delta),
-    requests = greatest(0, pu.requests - v_refund), updated_at = now()
+    requests = greatest(0, pu.requests - v_pool_refund), updated_at = now()
     WHERE pu.model = v_reservation.model AND pu.tier = v_reservation.tier
       AND pu.bucket = 'minute' AND pu.bucket_start = v_reservation.pool_minute;
   UPDATE public.zerox_pool_usage AS pu SET tokens = greatest(0, pu.tokens + v_delta),
-    requests = greatest(0, pu.requests - v_refund), updated_at = now()
+    requests = greatest(0, pu.requests - v_pool_refund), updated_at = now()
     WHERE pu.model = v_reservation.model AND pu.tier = v_reservation.tier
       AND pu.bucket = 'day' AND pu.bucket_start = v_reservation.pool_day;
 
@@ -242,13 +283,13 @@ BEGIN
     error_code, usage_day)
     VALUES (v_reservation.user_id, v_reservation.id, v_reservation.request_id, v_reservation.model,
       left(coalesce(p_provider, ''), 100), left(coalesce(p_upstream_model, ''), 200), v_reservation.tier,
-      p_status, v_prompt, v_completion, v_cost, p_latency_ms, left(p_error_code, 100),
+      v_effective, v_user_prompt, v_user_completion, v_cost, p_latency_ms, left(p_error_code, 100),
       v_reservation.usage_day)
     ON CONFLICT (reservation_id) DO NOTHING;
   INSERT INTO public.zerox_usage_daily AS d (user_id, day, model, requests, errors, prompt_tokens,
     completion_tokens, cost_microusd)
     VALUES (v_reservation.user_id, v_reservation.usage_day, v_reservation.model, 1 - v_refund,
-      CASE WHEN p_status = 'ok' THEN 0 ELSE 1 END, v_prompt, v_completion, v_cost)
+      CASE WHEN p_status = 'ok' THEN 0 ELSE 1 END, v_user_prompt, v_user_completion, v_cost)
     ON CONFLICT (user_id, day, model) DO UPDATE SET requests = d.requests + EXCLUDED.requests,
       errors = d.errors + EXCLUDED.errors, prompt_tokens = d.prompt_tokens + EXCLUDED.prompt_tokens,
       completion_tokens = d.completion_tokens + EXCLUDED.completion_tokens,
@@ -332,15 +373,18 @@ LANGUAGE sql STABLE SECURITY INVOKER SET search_path = '' AS $$
     ELSE false END, false);
 $$;
 
--- The subscription shown to the user: the best entitling one, otherwise the latest.
+-- The subscription shown to the user: the best entitling one, otherwise the latest. Revoked
+-- subscriptions (duplicates, refunds) come last, and an unpaid checkout ('created') is shown for
+-- 24 hours only.
 CREATE FUNCTION public.zerox_current_subscription(p_user_id uuid)
 RETURNS SETOF public.zerox_subscriptions
 LANGUAGE sql STABLE SECURITY INVOKER SET search_path = '' AS $$
   SELECT s.* FROM public.zerox_subscriptions AS s
   LEFT JOIN public.zerox_plan_policy AS p ON p.plan = s.plan
-  WHERE s.user_id = p_user_id
-  ORDER BY public.zerox_subscription_grants_plan(s.status, s.current_period_end, s.cancel_at_period_end,
-      s.updated_at) DESC,
+  WHERE s.user_id = p_user_id AND (s.status <> 'created' OR s.created_at > now() - interval '24 hours')
+  ORDER BY (s.revoked_at IS NULL) DESC,
+    (s.revoked_at IS NULL AND public.zerox_subscription_grants_plan(s.status, s.current_period_end,
+      s.cancel_at_period_end, s.updated_at)) DESC,
     CASE WHEN public.zerox_subscription_grants_plan(s.status, s.current_period_end, s.cancel_at_period_end,
       s.updated_at) THEN p.price_usd END DESC NULLS LAST,
     s.updated_at DESC, s.created_at DESC

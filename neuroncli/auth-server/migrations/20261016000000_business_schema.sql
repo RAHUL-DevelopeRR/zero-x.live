@@ -75,7 +75,11 @@ ALTER TABLE public.zerox_accounts
   ADD COLUMN country text CHECK (country ~ '^[A-Z]{2}$'),
   ADD COLUMN plan_source text NOT NULL DEFAULT 'default'
     CHECK (plan_source IN ('default', 'subscription', 'manual')),
-  ADD COLUMN manual_plan text CHECK (manual_plan IN ('pro', 'max', 'ultrawork'));
+  ADD COLUMN manual_plan text CHECK (manual_plan IN ('pro', 'max', 'ultrawork')),
+  ADD COLUMN upstream_refunds integer NOT NULL DEFAULT 0 CHECK (upstream_refunds >= 0),
+  ADD COLUMN upstream_refund_day date;
+COMMENT ON COLUMN public.zerox_accounts.upstream_refunds IS
+  'Failed upstream attempts that reached the model (model errors, timeouts) refunded to the user on upstream_refund_day; zerox_settle_v2 caps them per day.';
 COMMENT ON COLUMN public.zerox_accounts.plan_source IS
   'Who set plan: default (free), subscription (billing) or manual (operator grant).';
 COMMENT ON COLUMN public.zerox_accounts.manual_plan IS
@@ -99,7 +103,7 @@ CREATE TABLE public.zerox_reservations (
   pool_minute timestamptz NOT NULL,
   pool_day timestamptz NOT NULL,
   status text NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'settled', 'released')),
-  outcome text CHECK (outcome IN ('ok', 'error', 'refunded')),
+  outcome text CHECK (outcome IN ('ok', 'error', 'refunded', 'failed_upstream')),
   prompt_tokens bigint CHECK (prompt_tokens >= 0),
   completion_tokens bigint CHECK (completion_tokens >= 0),
   cost_microusd bigint CHECK (cost_microusd >= 0),
@@ -187,10 +191,15 @@ CREATE TABLE public.zerox_subscriptions (
   current_period_start timestamptz,
   current_period_end timestamptz,
   cancel_at_period_end boolean NOT NULL DEFAULT false,
+  -- Set when the subscription must never entitle again: a duplicate (a second subscription that
+  -- became live while another one was) or a fully refunded payment. Never cleared.
+  revoked_at timestamptz,
+  revoked_reason text CHECK (revoked_reason IN ('duplicate', 'refunded')),
   raw jsonb,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (provider, provider_subscription_id)
+  UNIQUE (provider, provider_subscription_id),
+  CHECK ((revoked_at IS NULL) = (revoked_reason IS NULL))
 );
 CREATE INDEX zerox_subscriptions_user_idx ON public.zerox_subscriptions (user_id, updated_at DESC);
 CREATE INDEX zerox_subscriptions_status_idx ON public.zerox_subscriptions (status, current_period_end);
@@ -230,6 +239,12 @@ CREATE TABLE public.zerox_webhook_events (
   event_type text NOT NULL DEFAULT '' CHECK (length(event_type) <= 100),
   payload_sha256 text CHECK (payload_sha256 ~ '^[a-f0-9]{64}$'),
   received_at timestamptz NOT NULL DEFAULT now(),
+  -- A claim is a lease: 'processing' until zerox_webhook_complete, and claimable again once
+  -- lease_expires_at has passed (the invocation that held it died before finishing).
+  status text NOT NULL DEFAULT 'processing' CHECK (status IN ('processing', 'processed')),
+  lease_expires_at timestamptz,
+  attempts integer NOT NULL DEFAULT 1 CHECK (attempts >= 1),
+  processed_at timestamptz,
   PRIMARY KEY (provider, event_id)
 );
 CREATE INDEX zerox_webhook_events_received_idx ON public.zerox_webhook_events (received_at);

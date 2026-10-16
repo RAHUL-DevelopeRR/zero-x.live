@@ -55,6 +55,26 @@ BEGIN
 END;
 $$;
 
+-- Extension to the contract: rewrites a stored session record only while it still exists, so
+-- re-arming a session that was read just before a sign-out or revoke-all deleted it can never
+-- bring it back (zerox_session_put would recreate it).
+CREATE FUNCTION public.zerox_session_rearm(p_key text, p_value text, p_ttl integer)
+RETURNS TABLE (rearmed boolean)
+LANGUAGE plpgsql SECURITY INVOKER SET search_path = '' AS $$
+#variable_conflict use_column
+DECLARE
+  v_rows bigint;
+BEGIN
+  IF p_key IS NULL OR p_key !~ '^[a-f0-9]{64}$' THEN RAISE EXCEPTION 'Invalid session key'; END IF;
+  IF p_ttl IS NULL OR p_ttl < 1 OR p_ttl > 604800 THEN RAISE EXCEPTION 'Invalid session TTL'; END IF;
+  IF p_value IS NULL THEN RAISE EXCEPTION 'Missing session value'; END IF;
+  UPDATE public.gateway_session_store AS stored SET value = p_value, expires_at = now() + p_ttl * interval '1 second'
+    WHERE stored.key = p_key AND stored.expires_at > now();
+  GET DIAGNOSTICS v_rows = ROW_COUNT;
+  RETURN QUERY SELECT v_rows > 0;
+END;
+$$;
+
 -- Operator dashboard snapshot. Pool limits and health come from the gateway catalog; the
 -- database contributes today's per-pool counters.
 CREATE FUNCTION public.zerox_admin_overview()
@@ -70,7 +90,7 @@ LANGUAGE sql STABLE SECURITY INVOKER SET search_path = '' AS $$
   entitled AS (
     SELECT s.plan, p.price_usd FROM public.zerox_subscriptions AS s
     JOIN public.zerox_plan_policy AS p ON p.plan = s.plan
-    WHERE s.status IN ('authenticated', 'active')
+    WHERE s.status IN ('authenticated', 'active') AND s.revoked_at IS NULL
       AND public.zerox_subscription_grants_plan(s.status, s.current_period_end, s.cancel_at_period_end, s.updated_at)
   ),
   today_usage AS (
@@ -118,6 +138,7 @@ REVOKE ALL ON FUNCTION
   public.zerox_session_index_list(uuid),
   public.zerox_session_index_revoke_all(uuid),
   public.zerox_session_index_remove(text),
+  public.zerox_session_rearm(text, text, integer),
   public.zerox_admin_overview()
   FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION
@@ -125,6 +146,7 @@ GRANT EXECUTE ON FUNCTION
   public.zerox_session_index_list(uuid),
   public.zerox_session_index_revoke_all(uuid),
   public.zerox_session_index_remove(text),
+  public.zerox_session_rearm(text, text, integer),
   public.zerox_admin_overview()
   TO service_role;
 
