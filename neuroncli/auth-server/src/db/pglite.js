@@ -158,6 +158,21 @@ function buildCall(name, overload, args) {
   };
 }
 
+// Creates the auth.users row of a local dev identity (see provisionDevIdentity in
+// src/account-store.js). The PGlite bootstrap stands in for Supabase Auth, so this runs with the
+// bootstrap's privileges, not as service_role. Idempotent; a different user already holding
+// the e-mail address is an error rather than being taken over.
+export async function pgliteProvisionAuthUser(env, userId, email) {
+  const handle = await getPgliteHandle(env);
+  try {
+    await handle.db.query('INSERT INTO auth.users (id, email) VALUES ($1, $2) ON CONFLICT DO NOTHING', [userId, email]);
+    const { rows } = await handle.db.query('SELECT 1 FROM auth.users WHERE id = $1', [userId]);
+    if (!rows.length) throw new AccountDatabaseError('The dev identity e-mail address belongs to another local user');
+  } catch (error) {
+    throw databaseError(error);
+  }
+}
+
 // Calls public.<name>(arg => value, ...) as service_role and returns every row (PostgREST shape).
 export async function pgliteRpcRows(env, name, args = {}) {
   if (typeof name !== 'string' || !FUNCTION_NAME.test(name)) {

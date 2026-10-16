@@ -93,6 +93,24 @@ export async function rpcRows(env, name, args) {
   return postgrestRows(env, name, args);
 }
 
+// Local development only. Supabase Auth owns auth.users, which zerox_accounts and
+// zerox_session_index reference; the PGlite database has no Auth service, so the auth.users row
+// of a local dev identity (dev_ token, DEV_AUTH_ENABLED on a loopback Node server) is created
+// here. On every other driver this does nothing: production accounts always come from Supabase
+// Auth, and dev identities cannot sign in there. Returns true when the row was provisioned.
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export async function provisionDevIdentity(env, userId, email) {
+  if (databaseDriver(env) !== 'pglite') return false;
+  const refusal = localDatabaseRefusal(env);
+  if (refusal) throw new AccountDatabaseError(refusal);
+  if (!UUID.test(String(userId)) || typeof email !== 'string' || !email.includes('@') || email.length > 255) {
+    throw new AccountDatabaseError('Invalid local dev identity');
+  }
+  const { pgliteProvisionAuthUser } = await loadPgliteDriver();
+  await pgliteProvisionAuthUser(env, userId, email);
+  return true;
+}
+
 // Calls a Postgres function and returns its first row (or null).
 export async function rpc(env, name, args) {
   const rows = await rpcRows(env, name, args);

@@ -930,16 +930,22 @@ try {
   globalThis.fetch = async url => { throw new Error(`network disabled in check-business-db: ${url}`); };
   try {
     const { default: app } = await import('./src/index.js');
+    // Anonymous /health is trimmed to {status, service, version} (WP-B3), so the database
+    // configuration is read with the operator token.
+    const ADMIN = 'check-business-db-operator-token-0123456789';
+    const operator = { headers: { Authorization: `Bearer ${ADMIN}` } };
     const gatewayEnv = { DATABASE_DRIVER: 'pglite', GROQ_API_KEY: 'gsk_check_only', GROQ_MODELS: 'openai/gpt-oss-120b',
-      GROQ_TOOL_MODELS: 'openai/gpt-oss-120b' };
-    const health = await (await app.request('https://zero-x.live/health', {}, gatewayEnv)).json();
+      GROQ_TOOL_MODELS: 'openai/gpt-oss-120b', GATEWAY_ADMIN_TOKEN: ADMIN };
+    const anonymousHealth = await (await app.request('https://zero-x.live/health', {}, gatewayEnv)).json();
+    assert.equal(anonymousHealth.database_configured, undefined, 'anonymous callers do not see the configuration');
+    const health = await (await app.request('https://zero-x.live/health', operator, gatewayEnv)).json();
     assert.equal(health.database_configured, true);
     const ready = await app.request('https://zero-x.live/ready', {}, gatewayEnv);
     assert.equal(ready.status, 200, 'plan policies and the session store load through DATABASE_DRIVER=pglite');
     assert.deepEqual(await ready.json(), { ready: true });
     for (const misconfigured of [{ NODE_ENV: 'production' }, { AUTH_HOST: '0.0.0.0' }]) {
       const exposedEnv = { ...gatewayEnv, ...misconfigured };
-      const exposedHealth = await (await app.request('https://zero-x.live/health', {}, exposedEnv)).json();
+      const exposedHealth = await (await app.request('https://zero-x.live/health', operator, exposedEnv)).json();
       assert.equal(exposedHealth.database_configured, false, `${JSON.stringify(misconfigured)} does not count as a configured database`);
       assert.equal((await app.request('https://zero-x.live/ready', {}, exposedEnv)).status, 503, 'and the gateway does not report ready');
     }
@@ -1024,6 +1030,8 @@ try {
     assert.match(seeded.stdout, /applied migrations: /);
     const userId = seeded.stdout.match(/user: ([0-9a-f-]{36}) dev@example\.test plan=pro credits_usd=5\r?\n/)?.[1];
     assert.ok(userId, seeded.stdout);
+    const { devUserId } = await import('./src/auth-context.js');
+    assert.equal(userId, await devUserId('dev@example.test'), 'the seeded user is the local dev identity of that e-mail address');
     const again = spawnSync(node, seedArgs, { cwd: root, encoding: 'utf8' });
     assert.equal(again.status, 0, again.stderr);
     assert.match(again.stdout, /migrations: up to date/);

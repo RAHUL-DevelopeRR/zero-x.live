@@ -7,10 +7,13 @@
 //   node scripts/dev-db.mjs --data-dir D:/neuron-build/zerox-db --email dev@example.test --plan pro --credits-usd 5
 //
 // Then run the gateway with DATABASE_DRIVER=pglite PGLITE_DATA_DIR=<same directory>.
+// The seeded user has the id of the local dev identity for that e-mail address, so signing in
+// with dev_<base64url(email)> (DEV_AUTH_ENABLED=true) uses the seeded plan and credits.
 import { randomUUID } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
-import { rpc } from '../src/account-store.js';
+import { provisionDevIdentity, rpc } from '../src/account-store.js';
+import { devUserId } from '../src/auth-context.js';
 import { closeAllPglite, getPgliteHandle } from '../src/db/pglite.js';
 
 const PLANS = new Set(['free', 'pro', 'max', 'ultrawork']);
@@ -22,9 +25,11 @@ function usage(message) {
   process.exit(2);
 }
 
-export async function seedDevUser(env, db, { email, name = '', plan, creditsUsd }) {
-  const user = (await db.query(`INSERT INTO auth.users (email) VALUES ($1)
-    ON CONFLICT (email) DO UPDATE SET email = EXCLUDED.email RETURNING id`, [email])).rows[0];
+export async function seedDevUser(env, db, { email: rawEmail, name = '', plan, creditsUsd }) {
+  // Same normalisation as the dev token (src/auth-context.js devEmailFromToken).
+  const email = rawEmail.trim().toLowerCase();
+  const user = { id: await devUserId(email) };
+  await provisionDevIdentity(env, user.id, email);
   await rpc(env, 'zerox_sync_account', { p_user_id: user.id, p_profile: { email, name } });
   if (plan) {
     // An operator grant: plan_source 'manual' (manual_plan only holds a grant a subscription overrides).
