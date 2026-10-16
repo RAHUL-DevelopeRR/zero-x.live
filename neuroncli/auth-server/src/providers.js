@@ -1,5 +1,6 @@
 import { CloudflareWorkersAIAdapter } from './cloudflare-adapter.js';
 import { OpenAICompatibleAdapter } from './provider-adapter.js';
+import { toolCallSignature } from './provider-request.js';
 import { FailureKind, failureKindForStatus } from './provider-health.js';
 import {
   AUTO_MODEL_ID, catalogEntry, catalogWarnings, isHosted, isEnabled, listModelsForCaller, offeredEntries,
@@ -314,11 +315,16 @@ function argumentsText(value) {
   return typeof value === 'string' ? value : JSON.stringify(value ?? {});
 }
 
-function normalizeCalls(calls = []) {
+// `onToolSignature({id, name, signature})` receives Gemini thought signatures, which are not
+// forwarded to clients (see provider-request.js).
+function normalizeCalls(calls = [], onToolSignature = null) {
   return calls.filter(call => call && typeof call === 'object').map(call => {
     const fn = call.function || { name: call.name, arguments: call.arguments };
+    const id = typeof call.id === 'string' && call.id ? call.id : newCallId();
+    const signature = toolCallSignature(call);
+    if (signature && onToolSignature) onToolSignature({ id, name: fn.name, signature });
     return {
-      id: typeof call.id === 'string' && call.id ? call.id : newCallId(),
+      id,
       type: 'function',
       function: { name: fn.name, arguments: argumentsText(fn.arguments) },
     };
@@ -334,9 +340,10 @@ function normalizeReasoning(target) {
   return target;
 }
 
-function normalizeChoice(choice, position) {
+function normalizeChoice(choice, position, onToolSignature) {
   const message = normalizeReasoning({ role: 'assistant', ...(choice?.message || {}) });
-  const calls = Array.isArray(message.tool_calls) ? normalizeCalls(message.tool_calls) : [];
+  delete message.extra_content;
+  const calls = Array.isArray(message.tool_calls) ? normalizeCalls(message.tool_calls, onToolSignature) : [];
   if (calls.length) message.tool_calls = calls;
   else delete message.tool_calls;
   if (message.content === undefined) message.content = calls.length ? null : '';
@@ -345,11 +352,11 @@ function normalizeChoice(choice, position) {
   return { index: Number.isInteger(choice?.index) ? choice.index : position, message, finish_reason: finish };
 }
 
-export function normalizeCompletion(result, model, messages, tools) {
+export function normalizeCompletion(result, model, messages, tools, { onToolSignature = null } = {}) {
   if (!result || typeof result !== 'object') throw new Error('Provider returned an invalid completion');
   const created = Math.floor(Date.now() / 1000);
   if (Array.isArray(result.choices)) {
-    const choices = result.choices.map(normalizeChoice);
+    const choices = result.choices.map((choice, position) => normalizeChoice(choice, position, onToolSignature));
     const outputBytes = choices.reduce((sum, choice) => sum + utf8Bytes(choice.message.content || '') +
       utf8Bytes(choice.message.reasoning_content || '') + utf8Bytes(choice.message.tool_calls || ''), 0);
     const promptTokens = estimatePromptTokens(messages, tools);
@@ -393,7 +400,8 @@ export function normalizeCompletion(result, model, messages, tools) {
   };
 }
 
-export async function requestCompletion(env, session, entry, body, signal, pool) {
+// `request` carries per-request shaping context for the adapter ({ signatureFor }).
+export async function requestCompletion(env, session, entry, body, signal, pool, request = {}) {
   const adapter = ADAPTERS[entry.provider];
   if (!adapter) {
     throw new Error(`Unsupported provider: ${entry.provider}`);
@@ -401,7 +409,7 @@ export async function requestCompletion(env, session, entry, body, signal, pool)
   if (entry.provider === 'cloudflare') {
     return adapter.chatCompletion(env, session, entry, body, signal, normalizeCompletion);
   }
-  return adapter.chatCompletion(env, session, entry, body, signal, pool || entry.pools?.[0] || null);
+  return adapter.chatCompletion(env, session, entry, body, signal, pool || entry.pools?.[0] || null, request);
 }
 
 // ── Upstream failure classification ──
@@ -449,17 +457,81 @@ export function parseUpstreamError(source) {
   const error = isObject(root.error) ? root.error : root;
   const details = Array.isArray(error.details) ? error.details.filter(isObject) : [];
   const workers = Array.isArray(root.errors) ? root.errors.find(isObject) : null;
+  const violations = details.flatMap(item => Array.isArray(item.violations) ? item.violations.filter(isObject) : []);
   return {
     code: typeof error.code === 'string' ? error.code.toLowerCase() : null,
     numericCode: Number.isInteger(error.code) ? error.code : null,
     rpcStatus: typeof error.status === 'string' ? error.status.toUpperCase() : null,
+    type: typeof error.type === 'string' ? error.type : null,
     reasons: details.map(item => item.reason).filter(reason => typeof reason === 'string').map(reason => reason.toUpperCase()),
     retryDelaySeconds: details.map(item => durationSeconds(item.retryDelay)).find(Boolean) ?? null,
-    dailyQuota: details.some(item => Array.isArray(item.violations) &&
-      item.violations.some(violation => /perday/i.test(String(violation?.quotaId ?? '')))),
+    dailyQuota: violations.some(violation => /perday/i.test(String(violation.quotaId ?? ''))),
+    // google.rpc.QuotaFailure: which quota tripped and its value (e.g. input tokens per minute).
+    quotas: violations.map(violation => ({ id: violation.quotaId, value: violation.quotaValue }))
+      .filter(quota => typeof quota.id === 'string'),
     workersCode: Number.isInteger(workers?.code) ? workers.code : null,
     message: typeof error.message === 'string' ? error.message : typeof source === 'string' && !isObject(value) ? source : '',
   };
+}
+
+// Patterns of credentials that an upstream message might echo back (keys, bearer tokens, JWTs,
+// gateway credentials, key query parameters) and long opaque blobs (thought signatures).
+const SECRET_PATTERNS = [
+  /AIza[0-9A-Za-z_-]{20,}/g,
+  /\b(?:sk-or-v1|sk-ant|sk-proj|sk|gsk|nvapi|xai|rk|pk)[-_][A-Za-z0-9_-]{16,}/g,
+  /\b(?:ses|nzx|dev)_[A-Za-z0-9_-]{16,}/g,
+  /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*/g,
+  /\bBearer\s+[^\s"',]+/gi,
+];
+const KEY_PARAM = /([?&](?:key|api_key|apikey|token|access_token|signature)=)[^&\s"'<>]+/gi;
+const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+/g;
+const BLOB = /[A-Za-z0-9+/=]{40,}/g;
+// Quoted spans in a provider message are kept only when they look like a field path or an
+// identifier ('messages.3', `default_api:read_file`); anything else may quote the prompt.
+const QUOTED = /"(?:[^"\\]|\\.)*"|(?<![A-Za-z0-9])'(?:[^'\\]|\\.)*'(?![A-Za-z0-9])|`[^`]*`/g;
+const IDENTIFIER = /^[A-Za-z0-9_.:[\]/$#@-]{1,64}$/;
+export const UPSTREAM_MESSAGE_LIMIT = 300;
+
+/**
+ * Operator-safe excerpt of an upstream error message: credentials (`secrets` are the key values
+ * in use, matched exactly), e-mail addresses, opaque blobs and quoted text that may echo the
+ * prompt are replaced, whitespace is collapsed and the result is cut to 300 characters.
+ */
+export function redactProviderMessage(message, { secrets = [] } = {}) {
+  let text = typeof message === 'string' ? message : '';
+  for (const secret of secrets) {
+    if (typeof secret === 'string' && secret.length >= 8) text = text.split(secret).join('[redacted]');
+  }
+  for (const pattern of SECRET_PATTERNS) text = text.replace(pattern, '[redacted]');
+  text = text.replace(KEY_PARAM, '$1[redacted]')
+    .replace(QUOTED, span => IDENTIFIER.test(span.slice(1, -1)) ? span : `${span[0]}[redacted]${span.at(-1)}`)
+    .replace(EMAIL, '[email]')
+    .replace(BLOB, blob => /\d/.test(blob) && /[A-Za-z]/.test(blob) ? '[redacted]' : blob)
+    .replace(/\s+/g, ' ').trim();
+  return text.length > UPSTREAM_MESSAGE_LIMIT ? `${text.slice(0, UPSTREAM_MESSAGE_LIMIT - 1)}…` : text;
+}
+
+/**
+ * Structured, sanitized summary of an upstream error for operator logs: HTTP status, the
+ * provider's error code/status/type, google.rpc reasons and quota violations, the retry delay
+ * and a redacted message excerpt. Never includes request bodies or keys; clients never see it.
+ */
+export function upstreamErrorSummary(status, body = '', { secrets = [] } = {}) {
+  const info = parseUpstreamError(body);
+  const summary = { status: Number.isInteger(status) ? status : null };
+  const code = info.code ?? info.numericCode ?? info.workersCode;
+  if (code !== null && code !== undefined) summary.provider_code = typeof code === 'string' ? code.slice(0, 64) : code;
+  if (info.rpcStatus) summary.provider_status = info.rpcStatus.slice(0, 64);
+  if (info.type) summary.provider_type = info.type.slice(0, 64);
+  if (info.reasons.length) summary.reasons = info.reasons.slice(0, 5).map(reason => reason.slice(0, 64));
+  if (info.quotas.length) {
+    summary.quotas = info.quotas.slice(0, 3).map(quota => ({ id: quota.id.slice(0, 120),
+      ...(quota.value !== undefined && quota.value !== null ? { value: String(quota.value).slice(0, 32) } : {}) }));
+  }
+  if (info.retryDelaySeconds) summary.retry_delay_seconds = info.retryDelaySeconds;
+  const message = redactProviderMessage(info.message, { secrets });
+  if (message) summary.message = message;
+  return summary;
 }
 
 function secondsUntilUtcMidnight(now = Date.now()) {
@@ -558,10 +630,12 @@ export class UpstreamStreamError extends Error {
     super('Upstream provider reported a streaming error');
     this.name = 'UpstreamStreamError';
     const status = Number(error?.status_code);
-    const classified = classifyUpstreamFailure(Number.isInteger(status) ? status : null,
-      isObject(error) ? { error } : {}, null, fallbackKind);
+    const body = isObject(error) ? { error } : {};
+    const classified = classifyUpstreamFailure(Number.isInteger(status) ? status : null, body, null, fallbackKind);
     this.kind = classified.kind;
     this.retryAfterSeconds = classified.retryAfterSeconds;
+    // Sanitized for operator logs (no raw provider text is kept on the error).
+    this.summary = upstreamErrorSummary(Number.isInteger(status) ? status : null, body);
   }
 }
 
@@ -712,7 +786,7 @@ function parseEvent(data) {
  * Resolves { ok:false, status, headers, bodyText } for HTTP errors and
  * { ok:true, json | stream } on success; throws timeout/abort/protocol errors.
  */
-export async function startCompletion(env, session, entry, pool, payload, { clientSignal, timeouts = streamTimeouts(env) } = {}) {
+export async function startCompletion(env, session, entry, pool, payload, { clientSignal, timeouts = streamTimeouts(env), request = {} } = {}) {
   const controller = new AbortController();
   const signal = clientSignal ? AbortSignal.any([clientSignal, controller.signal]) : controller.signal;
   const started = Date.now();
@@ -725,7 +799,7 @@ export async function startCompletion(env, session, entry, pool, payload, { clie
   };
   const phase = payload.stream ? 'first_byte' : 'response';
   const guard = promise => guarded(promise, { deadline, phase, signal, controller });
-  const response = await guard(requestCompletion(env, session, entry, payload, signal, pool));
+  const response = await guard(requestCompletion(env, session, entry, payload, signal, pool, request));
   try {
     if (!response.ok) {
       const bodyText = await guard(readBounded(response)).catch(() => '');
@@ -754,7 +828,9 @@ export async function startCompletion(env, session, entry, pool, payload, { clie
 }
 
 function toolState(state, choiceIndex) {
-  if (!state.tools.has(choiceIndex)) state.tools.set(choiceIndex, { ids: new Map(), next: 0, last: -1, seen: new Set() });
+  if (!state.tools.has(choiceIndex)) {
+    state.tools.set(choiceIndex, { ids: new Map(), next: 0, last: -1, seen: new Set(), callIds: new Map(), names: new Map() });
+  }
   return state.tools.get(choiceIndex);
 }
 
@@ -782,12 +858,22 @@ function normalizeToolDeltas(calls, state, choiceIndex) {
     if (id || first) {
       delta.id = id || newCallId();
       delta.type = 'function';
+      tracker.callIds.set(index, delta.id);
     }
     const fnDelta = {};
-    if (fn.name !== undefined && fn.name !== null) fnDelta.name = fn.name;
+    if (fn.name !== undefined && fn.name !== null) {
+      fnDelta.name = fn.name;
+      tracker.names.set(index, fn.name);
+    }
     if (fn.arguments !== undefined && fn.arguments !== null) fnDelta.arguments = argumentsText(fn.arguments);
     else if (first) fnDelta.arguments = '';
     delta.function = fnDelta;
+    // Gemini's thought signature stays in the gateway (provider-request.js); clients get the
+    // plain OpenAI delta and the signature is restored when the call comes back in the history.
+    const signature = toolCallSignature(call);
+    if (signature && state.onToolSignature) {
+      state.onToolSignature({ id: tracker.callIds.get(index), name: tracker.names.get(index), signature });
+    }
     return delta;
   });
 }
@@ -810,6 +896,7 @@ function normalizeStreamValue(value, state) {
     const choices = value.choices.filter(choice => choice && typeof choice === 'object').map((choice, position) => {
       const index = Number.isInteger(choice.index) ? choice.index : position;
       const delta = normalizeReasoning({ ...(choice.delta || {}) });
+      delete delta.extra_content;
       if (Array.isArray(delta.tool_calls) && delta.tool_calls.length) {
         delta.tool_calls = normalizeToolDeltas(delta.tool_calls, state, index);
         state.toolChoices.add(index);
@@ -848,12 +935,13 @@ function normalizeStreamValue(value, state) {
  * between upstream chunks, normalizes chunks and calls onFinish exactly once with
  * { status:'ok'|'error', usage, outputBytes, errorCode, kind } before the final event.
  */
-export function createCompletionStream({ reader, first, model, controller, clientSignal, timeouts, onFinish, requestId, env }) {
+export function createCompletionStream({ reader, first, model, controller, clientSignal, timeouts, onFinish, requestId, env,
+  onToolSignature = null }) {
   const encoder = new TextEncoder();
   const state = {
     id: `chatcmpl-${crypto.randomUUID()}`, created: Math.floor(Date.now() / 1000), model,
     tools: new Map(), toolChoices: new Set(), usage: null, usageForwarded: false, outputBytes: 0,
-    sawFinish: false, sawDone: false, pendingToolFinish: false,
+    sawFinish: false, sawDone: false, pendingToolFinish: false, onToolSignature,
   };
   let queue = [];
   let done = false;
@@ -927,7 +1015,8 @@ export function createCompletionStream({ reader, first, model, controller, clien
         await reader.cancel();
         await finish({ status: 'error', kind: client ? FailureKind.ABORTED : error.kind || FailureKind.SERVER,
           phase: timeout ? error.phase : null, retryAfterSeconds: error.retryAfterSeconds ?? null,
-          errorCode: client ? 'client_disconnected' : timeout ? 'upstream_timeout' : 'upstream_error' });
+          errorCode: client ? 'client_disconnected' : timeout ? 'upstream_timeout' : 'upstream_error',
+          upstream: error.summary ?? null });
         if (client) {
           try { stream.error(error); } catch { /* consumer already closed */ }
           return;

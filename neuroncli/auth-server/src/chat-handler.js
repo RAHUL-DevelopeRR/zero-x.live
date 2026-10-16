@@ -1,8 +1,9 @@
 import { errorResponse, newRequestId } from './errors.js';
 import {
   buildUpstreamPayload, classifyUpstreamFailure, createCompletionStream, isOwnedSession, normalizeCompletion,
-  ownedCatalog, startCompletion, streamTimeouts,
+  ownedCatalog, startCompletion, streamTimeouts, upstreamErrorSummary,
 } from './providers.js';
+import { globalSignatureCache } from './provider-request.js';
 import { globalRouter } from './router.js';
 import { FailureKind, globalHealthTracker } from './provider-health.js';
 import { callerCountry, loadPlanPolicies, planPolicy } from './catalog.js';
@@ -123,7 +124,8 @@ function finalError({ failures, exhausted, paidDenied }) {
   };
 }
 
-export function createChatHandler({ validateSession, setSession, getSession, planLimits, router = globalRouter, healthTracker = globalHealthTracker }) {
+export function createChatHandler({ validateSession, setSession, getSession, planLimits, router = globalRouter,
+  healthTracker = globalHealthTracker, signatureCache = globalSignatureCache }) {
   return async c => {
     const requestId = newRequestId();
     const env = c.env || {};
@@ -236,25 +238,47 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
     const timeouts = streamTimeouts(env);
     const clientSignal = c.req.raw.signal;
 
+    // Gemini thought signatures are kept per caller and upstream model (provider-request.js):
+    // recorded from responses, restored into the next turn's history.
+    const signatureHooks = entry => {
+      if (entry.provider !== 'gemini') return { request: {}, onToolSignature: null };
+      const scope = { caller, model: entry.upstream_model };
+      return {
+        request: { signatureFor: call => signatureCache.lookup({ ...scope, id: call.id, name: call.function?.name }) },
+        onToolSignature: ({ id, name, signature }) => signatureCache.remember({ ...scope, id, name, signature }),
+      };
+    };
+    // Operator diagnostics (warn): a sanitized summary of the provider's error, never the
+    // request body or a key. Clients only get the masked contract errors.
+    const logUpstreamDetail = (log, kind, upstream) => {
+      if (upstream) console.warn('Neuron upstream error detail', { ...log, kind, upstream });
+    };
+
     const attempt = async (candidate, reservation) => {
       const { entry, pool, key } = candidate;
       const payload = buildUpstreamPayload(entry, body, candidate.maxTokens);
       const startedAt = Date.now();
       const log = { provider: entry.provider, model: entry.upstream_model, tier: pool.tier, request_id: requestId };
+      const { request, onToolSignature } = signatureHooks(entry);
+      const secrets = [pool.key_var ? env[pool.key_var] : null, session.openrouter_key];
       let started;
       try {
-        started = await startCompletion(env, session, entry, pool, payload, { clientSignal, timeouts });
+        started = await startCompletion(env, session, entry, pool, payload, { clientSignal, timeouts, request });
       } catch (error) {
         const kind = clientSignal?.aborted ? FailureKind.ABORTED : error?.kind || FailureKind.SERVER;
         const latencyMs = Date.now() - startedAt;
         recordFailure(key, kind, error?.retryAfterSeconds, latencyMs, error?.phase ?? null);
-        if (kind !== FailureKind.ABORTED) console.error('Neuron upstream request failed', { ...log, kind });
+        if (kind !== FailureKind.ABORTED) {
+          console.error('Neuron upstream request failed', { ...log, kind });
+          logUpstreamDetail(log, kind, error?.summary);
+        }
         return { ok: false, kind, retryAfterSeconds: error?.retryAfterSeconds ?? null, latencyMs, errorCode: ERROR_CODES_BY_KIND[kind] };
       }
       if (!started.ok) {
         const failure = classifyUpstreamFailure(started.status, started.bodyText, started.headers);
         recordFailure(key, failure.kind, failure.retryAfterSeconds, started.latencyMs);
         console.error('Neuron upstream rejected request', { ...log, status: started.status, kind: failure.kind });
+        logUpstreamDetail(log, failure.kind, upstreamErrorSummary(started.status, started.bodyText, { secrets }));
         return { ok: false, ...failure, latencyMs: started.latencyMs, errorCode: ERROR_CODES_BY_KIND[failure.kind] };
       }
       const responseHeaders = { ...headers, 'x-neuron-model': entry.id, 'Cache-Control': 'no-store' };
@@ -262,7 +286,7 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
       if (!payload.stream) {
         let completion;
         try {
-          completion = normalizeCompletion(started.json, entry.id, body.messages, body.tools);
+          completion = normalizeCompletion(started.json, entry.id, body.messages, body.tools, { onToolSignature });
         } catch {
           recordFailure(key, FailureKind.SERVER, null, started.latencyMs);
           console.error('Neuron upstream returned an invalid completion', log);
@@ -276,10 +300,14 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
       if (key) healthTracker.recordSuccess(key, { latencyMs: started.latencyMs });
       const stream = createCompletionStream({
         ...started.stream, model: entry.id, controller: started.controller, clientSignal, timeouts, requestId, env,
+        onToolSignature,
         onFinish: async outcome => {
           if (outcome.status !== 'ok') {
             recordFailure(key, outcome.kind, outcome.retryAfterSeconds, Date.now() - startedAt, outcome.phase ?? null);
-            if (outcome.kind !== FailureKind.ABORTED) console.error('Neuron stream interrupted', { ...log, kind: outcome.kind });
+            if (outcome.kind !== FailureKind.ABORTED) {
+              console.error('Neuron stream interrupted', { ...log, kind: outcome.kind });
+              logUpstreamDetail(log, outcome.kind, outcome.upstream);
+            }
           }
           await finishAttempt(info, outcome);
         },

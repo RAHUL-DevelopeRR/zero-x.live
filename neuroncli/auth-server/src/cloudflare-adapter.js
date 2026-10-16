@@ -1,4 +1,5 @@
 import { ProviderAdapter } from './provider-adapter.js';
+import { normalizeProviderRequest } from './provider-request.js';
 
 // Workers AI binding errors are thrown as plain Errors whose message starts with the platform
 // error code (e.g. "3036: Account limited: ..."). Only that leading code is read (the rest can
@@ -37,7 +38,8 @@ export class CloudflareWorkersAIAdapter extends ProviderAdapter {
 
   requestBody(payload) {
     const body = {};
-    for (const name of WORKERS_AI_PARAMS) if (payload[name] !== undefined) body[name] = payload[name];
+    const normalized = normalizeProviderRequest(this.id, payload);
+    for (const name of WORKERS_AI_PARAMS) if (normalized[name] !== undefined) body[name] = normalized[name];
     // Workers AI takes bare function definitions instead of OpenAI tool wrappers.
     if (body.tools) body.tools = body.tools.map(tool => tool.function);
     return body;

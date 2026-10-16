@@ -1,4 +1,6 @@
-﻿/**
+﻿import { normalizeProviderRequest } from './provider-request.js';
+
+/**
  * ProviderAdapter - Common interface for upstream AI model providers.
  */
 export class ProviderAdapter {
@@ -214,13 +216,18 @@ export class OpenAICompatibleAdapter extends ProviderAdapter {
     }
   }
 
-  async chatCompletion(env, session, entry, payload, signal, pool = null) {
+  // `request.signatureFor` restores Gemini thought signatures (see provider-request.js).
+  async chatCompletion(env, session, entry, payload, signal, pool = null, request = {}) {
     let url = `${this.getBaseUrl(env)}/chat/completions`;
     if (this.id === 'azure') {
       url = `${env.AZURE_OPENAI_ENDPOINT.replace(/\/$/, '')}/models/chat/completions?api-version=${encodeURIComponent(env.AZURE_API_VERSION || '2024-05-01-preview')}`;
     }
     const key = this.getApiKey(env, session, pool);
-    const body = { ...payload, model: entry.upstream_model || entry.upstream || entry.id };
+    // Messages and tool calls in the subset this upstream accepts (provider-request.js).
+    const body = {
+      ...normalizeProviderRequest(this.id, payload, { signatureFor: request.signatureFor }),
+      model: entry.upstream_model || entry.upstream || entry.id,
+    };
     if (payload.stream) {
       // Usage is required for settlement; OpenAI-compatible upstreams send it on request.
       body.stream_options = { ...(payload.stream_options || {}), include_usage: true };
