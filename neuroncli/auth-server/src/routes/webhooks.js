@@ -6,7 +6,7 @@ import {
   fetchOrder, fetchSubscription, isoFromUnix, razorpayConfigured, subscriptionStatus, verifyWebhookSignature, webhookConfigured,
 } from '../billing/razorpay.js';
 import {
-  grantCredits, paymentSummary, planFromSubscription, priceFor, PROVIDER, recordPayment, subscriptionSummary, upsertSubscription, userIdFrom,
+  creditReason, grantCredits, paymentSummary, planFromSubscription, priceFor, PROVIDER, recordPayment, subscriptionSummary, upsertSubscription, userIdFrom,
 } from './billing.js';
 
 export const MAX_WEBHOOK_BYTES = 256 * 1024;
@@ -64,7 +64,7 @@ async function handleSubscriptionEvent(env, type, payload) {
     await recordPayment(env, { userId, paymentId: payment.id, kind: 'subscription', amount: payment.amount,
       currency: payment.currency, status: payment.status || 'captured', raw: paymentSummary(payment) });
     if ((payment.status || 'captured') === 'captured' && plan.monthly_credit_microusd > 0) {
-      await grantCredits(env, { userId, microusd: plan.monthly_credit_microusd, reason: `subscription:${plan.id}`, ref: payment.id });
+      await grantCredits(env, { userId, microusd: plan.monthly_credit_microusd, reason: creditReason.subscription(plan), ref: payment.id });
     }
   }
   return 'processed';
@@ -94,7 +94,7 @@ async function handleTopupEvent(env, type, payload) {
   const status = type === 'payment.failed' ? 'failed' : payment.status || 'captured';
   await recordPayment(env, { userId, paymentId: payment.id, kind: 'topup', amount: payment.amount, currency, status, raw: paymentSummary(payment) });
   if (status === 'captured') {
-    await grantCredits(env, { userId, microusd: pack.credit_microusd, reason: `topup:${pack.id}`, ref: payment.id });
+    await grantCredits(env, { userId, microusd: pack.credit_microusd, reason: creditReason.topup(pack), ref: payment.id });
   }
   return 'processed';
 }

@@ -1,4 +1,7 @@
 import { loadPlanCatalog, TOPUP_PACKS } from '../plan-policy.js';
+import { callerCountry, listModelsForCaller, loadPlanPolicies, planPolicy } from '../catalog.js';
+import { isOwnedSession, listModelsForSession } from '../providers.js';
+import { sessionTiers } from '../capacity.js';
 
 export const microusdToUsd = value => {
   const micro = Number(value);
@@ -32,29 +35,16 @@ export function registerPlanRoutes(api) {
   });
 }
 
-// GET /v1/models: delegates to WP-B2's listModelsForCaller(env, {plan, country}) when
-// src/catalog.js provides it, otherwise uses the legacy provider catalogue.
-// The import sits inside try/await so bundlers treat a missing module as optional.
-async function importCatalog() {
-  try { return await import('../catalog.js'); }
-  catch { return null; }
-}
-let catalogModule;
-export function loadCatalogModule() {
-  catalogModule ||= importCatalog();
-  return catalogModule;
-}
-
-export function callerCountry(c) {
-  const country = c.req.raw.cf?.country || c.req.header('cf-ipcountry') || '';
-  return /^[A-Z]{2}$/.test(country) ? country : null;
-}
-
-export async function v1ModelsPayload(c, session, { catalog, legacy }) {
-  if (typeof catalog?.listModelsForCaller === 'function') {
-    const result = await catalog.listModelsForCaller(c.env, { plan: session?.plan || 'free', country: callerCountry(c), session });
-    if (Array.isArray(result)) return { object: 'list', data: result };
-    if (Array.isArray(result?.data)) return { object: 'list', ...result };
-  }
-  return { object: 'list', data: await legacy() };
+// GET /v1/models (contract §3.2): every offered model with availability computed for the
+// caller's plan (anonymous = free) and country. Database plan tiers apply (loaded first, 60 s
+// cache); paid tiers count only for sessions with an account ledger, exactly as routing does.
+// The country comes from Cloudflare (CF-IPCountry only with TRUST_CF_IPCOUNTRY=true). Sessions
+// on the caller's own OpenRouter key (BYOK) list their own models.
+export async function v1ModelsPayload(c, session = {}) {
+  const env = c.env || {};
+  const country = callerCountry(c.req.raw, env);
+  if (isOwnedSession(session)) return listModelsForSession(env, { session, country });
+  const plan = session?.plan || 'free';
+  const policy = planPolicy(env, plan, await loadPlanPolicies(env));
+  return listModelsForCaller(env, { plan, country, tiers: sessionTiers(env, session, policy) });
 }

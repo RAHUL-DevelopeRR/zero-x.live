@@ -2,6 +2,9 @@ import assert from 'node:assert/strict';
 import app from './src/index.js';
 import { estimatePromptTokens, modelCatalog } from './src/providers.js';
 import { globalHealthTracker } from './src/provider-health.js';
+import { planPolicyRows } from './contract-rows.mjs';
+
+const B1_POLICY_ROWS = await planPolicyRows();
 
 const store = new Map();
 const day = new Date().toISOString().slice(0, 10);
@@ -29,11 +32,15 @@ assert.equal(estimatePromptTokens(messages, tools), Math.ceil(bytes(messages) / 
 const originalFetch = globalThis.fetch;
 try {
   assert.equal((await request('/v1/chat/completions', { model: 'auto', messages }, 'pkce_bad')).status, 401);
-  const empty = await app.request('https://zero-x.live/v1/models', {}, {});
-  assert.deepEqual((await empty.json()).data, []);
+  // Contract §3.2: /v1/models lists every offered model (plus `auto`) with availability for the
+  // caller, so an unconfigured gateway lists them as not_configured rather than returning [].
+  // (The old expectation of an empty list predates the contract.)
+  const empty = (await (await app.request('https://zero-x.live/v1/models', {}, {})).json()).data;
+  assert.equal(empty[0].id, 'auto');
+  assert.ok(empty.length > 1 && empty.every(model => model.available === false && model.unavailable_reason === 'not_configured'));
   const models = (await (await request('/v1/models')).json()).data;
-  assert.ok(models.some(model => model.id === '@cf/meta/llama-3.3-70b-instruct-fp8-fast' && model.capabilities.tools));
-  assert.ok(models.some(model => model.id === 'groq/openai/gpt-oss-120b' && model.owned_by === 'groq'));
+  assert.ok(models.some(model => model.id === '@cf/meta/llama-3.3-70b-instruct-fp8-fast' && model.capabilities.tools && model.available));
+  assert.ok(models.some(model => model.id === 'groq/openai/gpt-oss-120b' && model.owned_by === 'groq' && model.available));
   assert.ok(!models.some(model => model.owned_by === 'openrouter'), 'the operator OpenRouter key is not resold');
   assert.ok(!models.some(model => model.id.includes('llama-3.3-70b-versatile')), 'unverified *_MODELS ids are ignored');
   assert.ok(!models.some(model => model.id === 'gpt-5.4-pro'));
@@ -109,8 +116,12 @@ try {
     ['nvidia/openai/gpt-oss-20b', 'https://integrate.api.nvidia.com/v1/chat/completions', 'openai/gpt-oss-20b'],
   ]) {
     globalThis.fetch = async (actualUrl, options) => { assert.equal(actualUrl, url); assert.equal(JSON.parse(options.body).model, upstream); return Response.json({ choices: [], usage: { total_tokens: 2 } }); };
-    assert.equal((await request('/v1/chat/completions', { model, messages })).status, 200);
+    // app.request carries no caller country: free Gemini fails closed unless local
+    // development opts in with ALLOW_UNKNOWN_COUNTRY (Groq/NVIDIA are not geo-restricted).
+    assert.equal((await request('/v1/chat/completions', { model, messages }, 'ses_test', { ...env, ALLOW_UNKNOWN_COUNTRY: 'true' })).status, 200);
   }
+  assert.equal((await request('/v1/chat/completions', { model: 'gemini/gemini-2.5-flash', messages })).status, 403,
+    'an unknown caller country never reaches the geo-restricted free Gemini pool');
   globalThis.fetch = async () => new Response('sensitive provider diagnostic owned-key', { status: 429, headers: { 'Retry-After': '15' } });
   response = await request('/v1/chat/completions', { model: 'groq/openai/gpt-oss-120b', messages });
   assert.equal(response.status, 503);
@@ -159,7 +170,7 @@ try {
     if (url.includes('/rest/v1/rpc/')) {
       const rpc = url.split('/').at(-1); const args = JSON.parse(options.body); rpcCalls.push([rpc, args]);
       if (rpc === 'zerox_get_account') return Response.json([{ clerk_id: accountId, plan: 'free', daily_requests: 1, daily_tokens_used: 5000, last_usage_reset: day }]);
-      if (rpc === 'zerox_plan_policies_v2') return Response.json([{ plan: 'free', name: 'Free', tiers: ['free'] }]);
+      if (rpc === 'zerox_plan_policies_v2') return Response.json(B1_POLICY_ROWS);
       if (rpc === 'zerox_reserve_v2') return Response.json([allowReserve
         ? { status: 'ok', reservation_id: 'res-1', plan: 'free', remaining_requests: 98, remaining_tokens: 490000 }
         : { status: 'user_daily_tokens', resets_at: `${day}T23:59:59Z` }]);

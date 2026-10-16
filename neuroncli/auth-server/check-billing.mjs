@@ -11,6 +11,10 @@ import {
   checkoutSignatureMessage, constantTimeEqual, hmacSha256, razorpayBase, toHex, verifyCheckoutSignature, verifySignature, verifyWebhookSignature,
 } from './src/billing/razorpay.js';
 import { bootstrapPlans, planSql } from './scripts/razorpay-bootstrap.mjs';
+import { B1_CREDIT_REASON, planPolicyRows } from './contract-rows.mjs';
+
+// zerox_plan_policies_v2 rows as WP-B1 returns them.
+const B1_POLICY_ROWS = await planPolicyRows();
 
 const SUPABASE_URL = 'https://billing.supabase.test';
 const SECRET = 'sb_secret_billing_test';
@@ -141,10 +145,12 @@ function payOrder(orderId, { amount, currency, status = 'captured' } = {}) {
 
 // ── 3. Stubbed PostgREST with billing semantics from contract §4 ──
 const db = { accounts: new Map(), subscriptions: new Map(), payments: new Map(), grants: new Map(), claims: new Map(), calls: [], fail: new Set(), policiesV2: [] };
-const policyRows = withIds => ['free', 'pro', 'max'].map(plan => ({
-  plan, name: plan[0].toUpperCase() + plan.slice(1), monthly_credit_microusd: { free: 0, pro: 8000000, max: 35000000 }[plan],
-  ...(withIds && plan !== 'free' ? { razorpay_plan_id_inr: PLAN_IDS[plan].INR, razorpay_plan_id_usd: PLAN_IDS[plan].USD } : {}),
+const policyRows = withIds => B1_POLICY_ROWS.map(row => ({ ...row,
+  ...(withIds && PLAN_IDS[row.plan] ? { razorpay_plan_id_inr: PLAN_IDS[row.plan].INR, razorpay_plan_id_usd: PLAN_IDS[row.plan].USD } : {}),
 }));
+// Mirrors WP-B1's RAISE EXCEPTION checks so a stub never accepts what the real SQL rejects.
+const raise = message => Object.assign(new Error(message), { raise: message });
+const PAYMENT_STATUSES = ['created', 'authorized', 'captured', 'failed', 'refunded'];
 const ACTIVE = ['authenticated', 'active'];
 const ENDED = ['cancelled', 'completed', 'expired'];
 const rpc = {
@@ -169,7 +175,9 @@ const rpc = {
   zerox_billing_upsert_subscription: args => {
     const row = { ...(db.subscriptions.get(args.p_provider_subscription_id) || { id: crypto.randomUUID() }), user_id: args.p_user_id, provider: args.p_provider,
       provider_subscription_id: args.p_provider_subscription_id, plan: args.p_plan, status: args.p_status, current_period_start: args.p_current_period_start,
-      current_period_end: args.p_current_period_end, cancel_at_period_end: args.p_cancel_at_period_end, raw: args.p_raw };
+      current_period_end: args.p_current_period_end,
+      cancel_at_period_end: args.p_cancel_at_period_end ?? db.subscriptions.get(args.p_provider_subscription_id)?.cancel_at_period_end ?? false,
+      raw: args.p_raw };
     db.subscriptions.delete(args.p_provider_subscription_id);
     db.subscriptions.set(args.p_provider_subscription_id, row);
     const account = db.accounts.get(args.p_user_id);
@@ -178,6 +186,7 @@ const rpc = {
     return [row];
   },
   zerox_billing_record_payment: args => {
+    if (!PAYMENT_STATUSES.includes(args.p_status)) throw raise(`invalid_payment_status: ${args.p_status}`);
     const existing = db.payments.get(args.p_provider_payment_id);
     const row = { ...(existing || { id: crypto.randomUUID(), created_at: new Date().toISOString() }), user_id: args.p_user_id, provider: args.p_provider,
       provider_payment_id: args.p_provider_payment_id, kind: args.p_kind, amount_minor: args.p_amount_minor, currency: args.p_currency,
@@ -186,6 +195,8 @@ const rpc = {
     return [row];
   },
   zerox_credit_grant: ({ p_user_id, p_delta_microusd, p_reason, p_ref }) => {
+    if (typeof p_reason !== 'string' || !B1_CREDIT_REASON.test(p_reason)) throw raise('invalid_credit_reason');
+    if (typeof p_ref !== 'string' || !p_ref || p_ref.length > 200 || /^usage:/i.test(p_ref)) throw raise('invalid_credit_ref');
     const account = db.accounts.get(p_user_id);
     if (db.grants.has(p_ref)) return [{ granted: false, balance_microusd: account.credit_balance_microusd }];
     db.grants.set(p_ref, { user_id: p_user_id, delta: p_delta_microusd, reason: p_reason });
@@ -214,7 +225,11 @@ const router = async (input, init = {}) => {
     db.calls.push({ name, args });
     if (db.fail.has(name)) return new Response('down', { status: 503 });
     if (!rpc[name]) return Response.json({ message: `missing ${name}` }, { status: 404 });
-    return Response.json(rpc[name](args));
+    try { return Response.json(rpc[name](args)); }
+    catch (error) {
+      if (error.raise) return Response.json({ code: 'P0001', message: error.raise }, { status: 400 });
+      throw error;
+    }
   }
   if (url === `${SUPABASE_URL}/auth/v1/user`) {
     const user = identities.get(init.headers.Authorization.replace(/^Bearer /, ''));
@@ -338,6 +353,12 @@ try {
   assert.deepEqual(billing.body.payments.find(entry => entry.id === payment.id), { id: payment.id, kind: 'subscription', amount_minor: 89900, currency: 'INR',
     status: 'captured', created_at: storedPayment.created_at, invoice_url: null });
 
+  // Suspended accounts cannot start purchases (review B3 P3).
+  accountOf(other).suspended = true;
+  expectError(await call('/api/billing/checkout', { token: 'billing-token-other', body: { plan: 'pro', currency: 'INR' } }), 403, 'account_suspended');
+  expectError(await call('/api/billing/topup', { token: 'billing-token-other', body: { pack: 'credits_5', currency: 'INR' } }), 403, 'account_suspended');
+  accountOf(other).suspended = false;
+
   // ── 7. Top-ups: paid plans only, order amount from the pack price, credits once per payment ──
   expectError(await call('/api/billing/topup', { token: 'billing-token-other', body: { pack: 'credits_5', currency: 'INR' } }), 403, 'upgrade_required');
   expectError(await call('/api/billing/topup', { body: { pack: 'credits_7', currency: 'INR' } }), 400, 'invalid_request');
@@ -361,7 +382,7 @@ try {
   assert.equal(toppedUp.body.status, 'ok');
   assert.equal(accountOf(buyer).credit_balance_microusd - balanceBefore, 5000000);
   assert.equal(toppedUp.body.account.credits.balance_usd, 5);
-  assert.deepEqual(db.grants.get(topupPayment.id), { user_id: buyer.id, delta: 5000000, reason: 'topup:credits_5' }, 'ref = payment id');
+  assert.deepEqual(db.grants.get(topupPayment.id), { user_id: buyer.id, delta: 5000000, reason: 'topup_credits_5' }, 'ref = payment id');
   await orderVerify(order.id, topupPayment.id);
   assert.equal(accountOf(buyer).credit_balance_microusd - balanceBefore, 5000000, 'verifying twice never grants twice');
   const tamperedOrder = (await call('/api/billing/topup', { body: { pack: 'credits_5', currency: 'INR' } })).body.order_id;
@@ -389,7 +410,7 @@ try {
   const eventId = rid('evt');
   assert.deepEqual((await webhook(charged, { raw: rawCharged, eventId })).body, { received: true });
   assert.equal(accountOf(buyer).credit_balance_microusd - creditsBefore, 8000000, 'subscription.charged grants the monthly credits');
-  assert.equal(db.grants.get(charge.id).reason, 'subscription:pro');
+  assert.equal(db.grants.get(charge.id).reason, 'subscription_pro');
   assert.equal(db.payments.get(charge.id).kind, 'subscription');
   assert.deepEqual((await webhook(charged, { raw: rawCharged, eventId })).body, { received: true, duplicate: true });
   assert.deepEqual((await webhook(charged, { raw: rawCharged })).body, { received: true }, 'a new event id for the same payment is processed');
@@ -432,6 +453,14 @@ try {
   assert.equal(accountOf(buyer).plan, 'pro', 'access continues until the period ends');
   assert.equal((await call('/api/billing/cancel')).body.status, 'cancel_scheduled', 'cancel is idempotent');
   assert.equal(rzp.requests.filter(entry => entry.path.endsWith('/cancel')).length, 1);
+  // Re-running verify (another tab, a retried redirect) keeps the scheduled cancellation
+  // while Razorpay still reports the subscription as active (review B3 P3).
+  assert.equal((await subscriptionVerify(payment.id)).body.status, 'ok');
+  assert.equal(db.subscriptions.get(subscriptionId).cancel_at_period_end, true, 'verify does not clear cancel_at_period_end');
+  assert.equal(db.calls.filter(entry => entry.name === 'zerox_billing_upsert_subscription').at(-1).args.p_cancel_at_period_end, null,
+    'verify leaves the stored flag to the database');
+  assert.equal((await call('/api/billing/cancel')).body.status, 'cancel_scheduled');
+  assert.equal(rzp.requests.filter(entry => entry.path.endsWith('/cancel')).length, 1, 'no second cancel call to Razorpay');
   await webhook(webhookEvent('subscription.charged', { subscription: subscriptionEntity(subscriptionId), payment: paySubscription(subscriptionId, { amount: 89900, currency: 'INR' }) }));
   assert.equal(db.subscriptions.get(subscriptionId).cancel_at_period_end, true, 'a scheduled cancellation survives later events');
   rzp.subscriptions.get(subscriptionId).status = 'cancelled';

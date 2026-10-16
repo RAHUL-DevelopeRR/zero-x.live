@@ -1,5 +1,5 @@
 import { rpc, rpcRows } from '../account-store.js';
-import { ApiError, INTERACTIVE_CREDENTIALS, withCaller } from '../auth-context.js';
+import { ApiError, INTERACTIVE_CREDENTIALS, requireActiveAccount, withCaller } from '../auth-context.js';
 import { sha256Hex } from '../session-store.js';
 
 export const MAX_ACTIVE_KEYS = 10;
@@ -7,11 +7,13 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 
 const base64url = bytes => btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
-// secret = 'nzx_' + base64url(32 random bytes); prefix = first 8 characters after 'nzx_';
+// secret = 'nzx_' + base64url(32 random bytes); prefix = 'nzx_' + the first 8 characters of the
+// random part (the display form zerox_api_key_create accepts: ^nzx_[A-Za-z0-9_-]{0,28}$);
 // only sha256(secret) (lowercase hex) is stored.
+export const KEY_PREFIX_LENGTH = 12;
 export async function generateApiKey() {
   const secret = 'nzx_' + base64url(crypto.getRandomValues(new Uint8Array(32)));
-  return { secret, prefix: secret.slice(4, 12), hash: await sha256Hex(secret) };
+  return { secret, prefix: secret.slice(0, KEY_PREFIX_LENGTH), hash: await sha256Hex(secret) };
 }
 
 const keyView = row => ({
@@ -50,6 +52,7 @@ export function registerKeyRoutes(api) {
       throw new ApiError(400, 'invalid_request', 'Send a JSON object such as {"name":"CI"}.');
     }
     const name = keyName(body);
+    await requireActiveAccount(c.env, caller);
     const existing = await rpcRows(c.env, 'zerox_api_key_list', { p_user_id: caller.user_id });
     if (existing.filter(row => row && !row.revoked_at).length >= MAX_ACTIVE_KEYS) throw tooManyKeys();
     const { secret, prefix, hash } = await generateApiKey();

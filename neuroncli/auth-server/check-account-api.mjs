@@ -10,6 +10,15 @@ import { devToken, devUserId, resolveCaller } from './src/auth-context.js';
 import { openSession, sealSession } from './src/session-store.js';
 import { runScheduledMaintenance } from './src/routes/admin.js';
 import { v1ModelsPayload } from './src/routes/plans.js';
+import { overviewPools } from './src/routes/admin.js';
+import { ProviderHealthTracker, FailureKind } from './src/provider-health.js';
+import { B1_KEY_PREFIX, planPolicyRows } from './contract-rows.mjs';
+
+// zerox_plan_policies_v2 rows exactly as WP-B1 returns them; the account overview's policy
+// column is one of these rows (to_jsonb of zerox_plan_policies_v2).
+const B1_POLICY_ROWS = await planPolicyRows();
+const b1Policy = (plan, overrides = {}) => ({ ...(B1_POLICY_ROWS.find(row => row.plan === plan) ||
+  B1_POLICY_ROWS.find(row => row.plan === 'free')), ...overrides });
 
 const require = createRequire(import.meta.url);
 const SUPABASE_URL = 'https://accounts.supabase.test';
@@ -28,19 +37,18 @@ function fakeDatabase() {
   const sessionIndex = [];
   const calls = [];
   const usage = { series: [], byModel: [], events: [] };
-  const state = { accounts, keys, sessionIndex, calls, usage, policiesV2: [], fail: new Set(), store: new Map() };
+  const state = { accounts, keys, sessionIndex, calls, usage, policiesV2: [], policyOverrides: {}, fail: new Set(), store: new Map(), onRevokeAll: null };
   const raise = message => Object.assign(new Error(message), { raise: message });
-  const paid = plan => plan !== 'free';
-  const overview = account => [{
+  const overview = account => {
+    const policy = { ...b1Policy(account.plan), ...(state.policyOverrides[account.plan] || {}) };
+    return [{
     account,
-    policy: { plan: account.plan, name: account.plan === 'pro' ? 'Pro' : account.plan === 'max' ? 'Max' : 'Free',
-      daily_requests: paid(account.plan) ? 2000 : 100, daily_tokens: paid(account.plan) ? 10000000 : 500000,
-      rpm: paid(account.plan) ? 30 : 10, concurrency: paid(account.plan) ? 4 : 2,
-      monthly_credit_microusd: paid(account.plan) ? 8000000 : 0 },
-    credits: { balance_microusd: account.credit_balance_microusd ?? 0 },
+    policy,
+    credits: { balance_microusd: account.credit_balance_microusd ?? 0, monthly_grant_microusd: policy.monthly_credit_microusd },
     subscription: account.subscription ?? null,
     usage_today: { requests: account.daily_requests, tokens: account.daily_tokens_used, resets_at: `${dayOffset(1)}T00:00:00.000Z` },
   }];
+  };
   const rpc = {
     zerox_sync_account: ({ p_user_id, p_profile, p_plan }) => {
       const existing = accounts.get(p_user_id);
@@ -59,6 +67,11 @@ function fakeDatabase() {
     zerox_plan_policies_v2: () => state.policiesV2,
     zerox_account_overview: ({ p_user_id }) => accounts.has(p_user_id) ? overview(accounts.get(p_user_id)) : [],
     zerox_api_key_create: ({ p_user_id, p_name, p_prefix, p_hash }) => {
+      // WP-B1 argument checks (zerox_api_key_create).
+      if (typeof p_name !== 'string' || p_name.trim().length < 1 || p_name.trim().length > 64) throw raise('invalid_key_name');
+      if (typeof p_prefix !== 'string' || !B1_KEY_PREFIX.test(p_prefix)) throw raise('invalid_key_prefix');
+      if (typeof p_hash !== 'string' || !/^[a-f0-9]{64}$/.test(p_hash)) throw raise('invalid_key_hash');
+      if (!accounts.has(p_user_id)) throw raise('account_not_found');
       if (keys.filter(key => key.user_id === p_user_id && !key.revoked_at).length >= 10) throw raise('too_many_keys');
       const key = { id: crypto.randomUUID(), user_id: p_user_id, name: p_name, prefix: p_prefix, hash: p_hash,
         created_at: new Date().toISOString(), last_used_at: null, revoked_at: null };
@@ -79,18 +92,27 @@ function fakeDatabase() {
     },
     zerox_usage_series: ({ p_from, p_to }) => usage.series.filter(row => row.day.slice(0, 10) >= p_from && row.day.slice(0, 10) <= p_to),
     zerox_usage_by_model: () => usage.byModel,
+    // WP-B1 clamps p_limit to 1..200.
     zerox_usage_events: ({ p_limit, p_before }) => usage.events
-      .filter(event => p_before === null || event.id < p_before).sort((left, right) => right.id - left.id).slice(0, p_limit),
+      .filter(event => p_before === null || event.id < p_before).sort((left, right) => right.id - left.id)
+      .slice(0, Math.min(Math.max(p_limit ?? 50, 1), 200)),
     zerox_session_index_add: ({ p_user_id, p_token_hash, p_expires_at }) => {
       sessionIndex.push({ user_id: p_user_id, token_hash: p_token_hash, expires_at: p_expires_at, revoked: false });
       return [{ token_hash: p_token_hash }];
     },
     zerox_session_index_list: ({ p_user_id }) => sessionIndex.filter(entry => entry.user_id === p_user_id && !entry.revoked)
       .map(({ token_hash, expires_at }) => ({ token_hash, expires_at })),
+    // WP-B1 returns one row per removed index entry: RETURNS TABLE (token_hash text).
     zerox_session_index_revoke_all: ({ p_user_id }) => {
-      let revoked = 0;
-      for (const entry of sessionIndex) if (entry.user_id === p_user_id && !entry.revoked) { entry.revoked = true; revoked++; }
-      return [{ revoked }];
+      state.onRevokeAll?.(p_user_id);
+      const removed = [];
+      for (const entry of sessionIndex) if (entry.user_id === p_user_id && !entry.revoked) { entry.revoked = true; removed.push({ token_hash: entry.token_hash }); }
+      return removed;
+    },
+    zerox_session_index_remove: ({ p_token_hash }) => {
+      const entry = sessionIndex.find(item => item.token_hash === p_token_hash && !item.revoked);
+      if (entry) entry.revoked = true;
+      return [{ removed: Boolean(entry) }];
     },
     zerox_session_get: ({ p_key }) => state.store.has(p_key) ? [{ value: state.store.get(p_key) }] : [],
     zerox_session_put: ({ p_key, p_value, p_ttl }) => { assert.ok(p_ttl >= 1 && p_ttl <= 604800); state.store.set(p_key, p_value); return []; },
@@ -241,6 +263,21 @@ try {
   kv.records.set(expiredLegacy, JSON.stringify({ created: Date.now() - 25 * 3600000, user_id: userA.id, account_backed: true }));
   assertOpenAIError(await json(await request('/auth/session', { token: expiredLegacy })), 401, 'invalid_session');
   assert.ok(!kv.records.has(expiredLegacy), 'expired legacy session removed');
+  // Without SESSIONS_KV the Postgres store caps each write at 7 days: a session in use is
+  // re-armed with its remaining lifetime at most once a day (review B3 P3).
+  const dbStoreEnv = { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_test', SUPABASE_SECRET_KEY: SECRET };
+  const dbStoredToken = 'ses_databaseStoredSession0123456789';
+  const dbStoreKey = sha256(sha256(dbStoredToken));
+  db.store.set(dbStoreKey, JSON.stringify({ created: Date.now() - 3 * DAY, expires: Date.now() + 27 * DAY, account_backed: true,
+    user_id: userA.id, plan: 'free' }));
+  const sessionPuts = () => db.calls.filter(call => call.name === 'zerox_session_put');
+  const putsBefore = sessionPuts().length;
+  assert.equal((await request('/auth/session', { token: dbStoredToken, bindings: dbStoreEnv })).status, 200);
+  assert.equal(sessionPuts().length - putsBefore, 1, 'the session is rewritten on read');
+  assert.equal(sessionPuts().at(-1).args.p_ttl, 604800, 'with the longest TTL the store accepts');
+  assert.ok(JSON.parse(db.store.get(dbStoreKey)).rearmed_at > Date.now() - 60000);
+  assert.equal((await request('/auth/session', { token: dbStoredToken, bindings: dbStoreEnv })).status, 200);
+  assert.equal(sessionPuts().length - putsBefore, 1, 'at most once a day');
   // Account-less sessions are not accounts.
   const anonymous = 'ses_anonymousSession0123456789abcd';
   kv.records.set(sha256(anonymous), JSON.stringify({ created: Date.now(), expires: Date.now() + 3600000, plan: 'free' }));
@@ -250,7 +287,10 @@ try {
   const createdKey = await json(await request('/api/keys', { method: 'POST', token: 'supabase-token-user-a', body: { name: 'CI runner' } }));
   assert.equal(createdKey.status, 201);
   assert.match(createdKey.body.secret, /^nzx_[A-Za-z0-9_-]{43}$/);
-  assert.equal(createdKey.body.key.prefix, createdKey.body.secret.slice(4, 12));
+  // The prefix is the display form WP-B1 stores (^nzx_[A-Za-z0-9_-]{0,28}$): 'nzx_' + 8 characters.
+  assert.equal(createdKey.body.key.prefix, createdKey.body.secret.slice(0, 12));
+  assert.match(createdKey.body.key.prefix, B1_KEY_PREFIX);
+  assert.equal(db.keys.find(key => key.id === createdKey.body.key.id).prefix, createdKey.body.key.prefix);
   assert.equal(createdKey.body.key.name, 'CI runner');
   assert.deepEqual(Object.keys(createdKey.body.key).sort(), ['created_at', 'id', 'name', 'prefix']);
   assert.equal(createdKey.headers.get('cache-control'), 'no-store');
@@ -412,14 +452,14 @@ try {
   assert.equal(staticPlans.status, 200);
   checkPlans(staticPlans.body);
   assert.equal(staticPlans.headers.get('cache-control'), 'public, max-age=60');
-  db.policiesV2 = [
-    { plan: 'free', name: 'Free', price_usd_cents: 0, price_inr_paise: 0, daily_requests: 100, daily_tokens: 500000, rpm: 10, concurrency: 2, monthly_credit_microusd: 0, tiers: ['free'] },
-    { plan: 'pro', name: 'Pro', price_usd_cents: 1000, price_inr_paise: 89900, daily_requests: 2500, daily_tokens: '10000000', rpm: 30, concurrency: 4,
-      monthly_credit_microusd: 8000000, tiers: '{free,paid}', razorpay_plan_id_inr: 'plan_PROINR12345' },
-    { plan: 'ultrawork', name: 'Pro (legacy)', price_usd_cents: 1000, daily_requests: 2000, daily_tokens: 10000000 },
-  ];
+  // The seeded B1 rows reproduce the static catalogue exactly.
+  db.policiesV2 = B1_POLICY_ROWS;
+  checkPlans((await json(await request('/api/plans', { bindings: { ...env } }))).body);
+  // Edits in zerox_plan_policy reach /api/plans through B1's column names (review B3 P2).
+  db.policiesV2 = B1_POLICY_ROWS.map(row => row.plan === 'pro' ? { ...row, daily_requests: 2500, daily_tokens: '10000000',
+    rpm_limit: 99, concurrency_limit: 9, allowed_tiers: ['free'], razorpay_plan_id_inr: 'plan_PROINR12345' } : row);
   checkPlans((await json(await request('/api/plans', { bindings: { ...env } }))).body,
-    { pro: { limits: { daily_requests: 2500, daily_tokens: 10000000, rpm: 30, concurrency: 4 } } });
+    { pro: { limits: { daily_requests: 2500, daily_tokens: 10000000, rpm: 99, concurrency: 9 }, tiers: ['free'] } });
   db.fail.add('zerox_plan_policies_v2');
   checkPlans((await json(await request('/api/plans', { bindings: { ...env } }))).body);
   db.fail.delete('zerox_plan_policies_v2');
@@ -443,8 +483,15 @@ try {
   assert.deepEqual(account.body.plan, { id: 'pro', name: 'Pro' });
   assert.equal(account.body.credits.monthly_grant_usd, 8);
   assert.deepEqual(account.body.subscription, { status: 'active', current_period_end: '2026-11-16T00:00:00.000Z', cancel_at_period_end: false });
+  // The overview's policy column is a zerox_plan_policies_v2 row: rpm_limit and
+  // concurrency_limit edited in the database are what /api/account reports (review B3 P2).
+  db.policyOverrides.pro = { rpm_limit: 99, concurrency_limit: 9, daily_requests: 2100 };
+  account = await json(await request('/api/account', { token: sessionToken }));
+  assert.deepEqual(account.body.limits, { daily_requests: 2100, daily_tokens: 10000000, rpm: 99, concurrency: 9 });
+  db.policyOverrides = {};
   db.accounts.get(userA.id).suspended = true;
   assert.equal((await json(await request('/api/account', { token: sessionToken }))).body.flags.suspended, true);
+  assertOpenAIError(await json(await request('/api/keys', { method: 'POST', token: sessionToken, body: { name: 'blocked' } })), 403, 'account_suspended');
   db.accounts.get(userA.id).suspended = false;
   db.fail.add('zerox_account_overview');
   assertOpenAIError(await json(await request('/api/account', { token: sessionToken })), 503, 'service_unavailable');
@@ -502,6 +549,19 @@ try {
   assert.deepEqual(page.body.events.map(event => event.id), [1]);
   assert.equal(page.body.next_before, null);
   assert.equal((await json(await request('/api/usage/events', { token: sessionToken }))).body.events.length, 5, 'default limit 50');
+  // A full page at the 200-row maximum still reports the next page (review B3 P3).
+  const savedEvents = db.usage.events;
+  db.usage.events = Array.from({ length: 250 }, (_, index) => ({ ...savedEvents[0], id: index + 1, request_id: `req_many_${index}` }));
+  page = await json(await request('/api/usage/events?limit=200', { token: sessionToken }));
+  assert.equal(page.body.events.length, 200);
+  assert.equal(page.body.next_before, 51, 'limit=200 paginates');
+  page = await json(await request('/api/usage/events?limit=200&before=51', { token: sessionToken }));
+  assert.equal(page.body.events.length, 50);
+  assert.equal(page.body.next_before, null);
+  db.usage.events = Array.from({ length: 200 }, (_, index) => ({ ...savedEvents[0], id: index + 1 }));
+  assert.equal((await json(await request('/api/usage/events?limit=200', { token: sessionToken }))).body.next_before, null,
+    'exactly 200 events is one page');
+  db.usage.events = savedEvents;
   for (const query of ['limit=0', 'limit=201', 'limit=abc', 'before=-1', 'before=0', 'before=1e3']) {
     assertOpenAIError(await json(await request(`/api/usage/events?${query}`, { token: sessionToken })), 400, 'invalid_request');
   }
@@ -522,6 +582,23 @@ try {
   }
   assert.equal((await request('/auth/session', { token: bobSession.body.session_token })).status, 200, 'other users keep their sessions');
   assert.deepEqual((await json(await request('/api/sessions/revoke-all', { method: 'POST', token: 'supabase-token-user-a' }))).body, { revoked: 0 });
+  // A session indexed between zerox_session_index_list and zerox_session_index_revoke_all is
+  // revoked too: its hash comes back from revoke_all (review B3 P3).
+  const racing = await json(await request('/auth/cli/session', { method: 'POST', token: 'supabase-token-user-a', body: {} }));
+  const late = await json(await request('/auth/cli/session', { method: 'POST', token: 'supabase-token-user-a', body: {} }));
+  const lateHash = sha256(late.body.session_token);
+  const lateEntry = db.sessionIndex.find(entry => entry.token_hash === lateHash);
+  lateEntry.revoked = true; // hidden from the list call ...
+  db.onRevokeAll = () => { lateEntry.revoked = false; db.onRevokeAll = null; }; // ... indexed just before revoke_all
+  assert.deepEqual((await json(await request('/api/sessions/revoke-all', { method: 'POST', token: 'supabase-token-user-a' }))).body, { revoked: 2 });
+  for (const token of [racing.body.session_token, late.body.session_token]) {
+    assertOpenAIError(await json(await request('/auth/session', { token })), 401, 'invalid_session');
+  }
+  // Single sign-out removes the session's index entry.
+  const single = await json(await request('/auth/cli/session', { method: 'POST', token: 'supabase-token-user-a', body: {} }));
+  assert.equal((await request('/auth/session', { method: 'DELETE', token: single.body.session_token })).status, 200);
+  assert.ok(db.sessionIndex.filter(entry => entry.token_hash === sha256(single.body.session_token)).every(entry => entry.revoked),
+    'DELETE /auth/session calls zerox_session_index_remove');
 
   // ── 9. /health trimming, admin overview, scheduled maintenance ──
   const operatorEnv = { ...env, GATEWAY_ADMIN_TOKEN: OPERATOR };
@@ -540,6 +617,21 @@ try {
   assert.equal(overview.status, 200);
   assert.deepEqual(Object.keys(overview.body).sort(), ['pools', 'revenue', 'usage_today', 'users']);
   assert.equal(overview.headers.get('cache-control'), 'no-store');
+  // Contract §3.6 pools[]: database counters merged with the catalogue's limits and pool health (review B3 P3).
+  const tracker = new ProviderHealthTracker();
+  tracker.recordFailure('groq:openai/gpt-oss-120b:free', { kind: FailureKind.RATE_LIMITED, retryAfterSeconds: 30 });
+  const pools = overviewPools({ GROQ_API_KEY: 'g' }, [{ model: 'groq/openai/gpt-oss-120b', tier: 'free', requests_today: 7, tokens_today: 700,
+    requests_this_minute: 1, tokens_this_minute: 100 }, { model: 'retired/model', tier: 'free', requests_today: 2, tokens_today: 20 }], tracker);
+  const groqFree = pools.find(pool => pool.model === 'groq/openai/gpt-oss-120b' && pool.tier === 'free');
+  assert.deepEqual(groqFree.limits, { rpm: 30, rpd: 1000, tpm: 8000, tpd: 200000 });
+  assert.deepEqual([groqFree.requests_today, groqFree.tokens_today, groqFree.configured], [7, 700, true]);
+  assert.equal(groqFree.health.status, 'RATE_LIMITED');
+  assert.equal(groqFree.health.circuit_open, true);
+  assert.equal(pools.find(pool => pool.model === 'groq/openai/gpt-oss-120b' && pool.tier === 'paid').limits, null, 'paid pools have no shared budget');
+  assert.equal(pools.find(pool => pool.model === 'gemini/gemini-2.5-flash' && pool.tier === 'free').health.status, 'HEALTHY');
+  assert.ok(pools.every(pool => ['model', 'tier', 'requests_today', 'tokens_today', 'limits', 'health'].every(key => key in pool)));
+  assert.equal(pools.find(pool => pool.model === 'retired/model').requests_today, 2, 'counters of pools no longer offered stay visible');
+  assert.ok(Array.isArray(overview.body.pools) && overview.body.pools.some(pool => pool.limits), 'the route returns the merged pools');
   db.fail.add('zerox_admin_overview');
   assertOpenAIError(await json(await request('/admin/overview', { bindings: operatorEnv, token: OPERATOR })), 503, 'service_unavailable');
   db.fail.delete('zerox_admin_overview');
@@ -660,16 +752,37 @@ try {
   assert.equal(await (await request('/dashboard', { bindings: site, base: 'http://127.0.0.1:8787' })).text(), '/dashboard.html');
   assert.equal((await request('/dashboard', { bindings: site })).headers.get('location'), 'https://dashboard.zero-x.live/');
 
-  // ── 12. /v1/models delegates to WP-B2's listModelsForCaller when src/catalog.js provides it ──
-  const modelsContext = { env, req: { raw: { cf: { country: 'DE' } }, header: () => undefined } };
-  const seen = [];
-  const delegated = await v1ModelsPayload(modelsContext, { plan: 'pro' }, {
-    catalog: { listModelsForCaller: async (bindings, options) => { seen.push(options); return [{ id: 'auto', object: 'model' }]; } },
-    legacy: async () => { throw new Error('legacy catalogue must not be used'); },
-  });
-  assert.deepEqual(delegated, { object: 'list', data: [{ id: 'auto', object: 'model' }] });
-  assert.deepEqual({ plan: seen[0].plan, country: seen[0].country }, { plan: 'pro', country: 'DE' });
-  assert.deepEqual(await v1ModelsPayload(modelsContext, {}, { catalog: null, legacy: async () => [{ id: 'legacy' }] }), { object: 'list', data: [{ id: 'legacy' }] });
+  // ── 12. GET /v1/models: WP-B2's catalogue for the caller's plan (database tiers) and country ──
+  const modelsEnv = (extra = {}) => ({ ...env, GROQ_API_KEY: 'g', GEMINI_API_KEY: 'g', GEMINI_PAID_API_KEY: 'p', ...extra });
+  const modelsContext = (bindings, { country, headers } = {}) => {
+    const raw = new Request('https://zero-x.live/v1/models', { headers });
+    if (country) Object.defineProperty(raw, 'cf', { value: { country } });
+    return { env: bindings, req: { raw } };
+  };
+  const byId = payload => Object.fromEntries(payload.data.map(model => [model.id, model]));
+  db.policiesV2 = B1_POLICY_ROWS;
+  const pro = { plan: 'pro', account_backed: true, user_id: userA.id };
+  let models = byId(await v1ModelsPayload(modelsContext(modelsEnv(), { country: 'DE' }), pro));
+  assert.equal(models.auto.available, true);
+  assert.equal(models['gemini/gemini-2.5-flash'].available, true, 'Pro reaches the paid Gemini pool from the EEA');
+  assert.equal(models['gemini/gemini-3.5-flash'].unavailable_reason, 'region_unavailable');
+  assert.deepEqual(models['gemini/gemini-2.5-flash'].pricing, { input_per_mtok_usd: 0.375, output_per_mtok_usd: 3.125 });
+  models = byId(await v1ModelsPayload(modelsContext(modelsEnv(), { country: 'DE' }), {}));
+  assert.equal(models['gemini/gemini-2.5-flash'].unavailable_reason, 'upgrade_required', 'anonymous callers are on the free plan');
+  models = byId(await v1ModelsPayload(modelsContext(modelsEnv(), { country: 'DE' }), { plan: 'pro' }));
+  assert.equal(models['gemini/gemini-2.5-flash'].unavailable_reason, 'upgrade_required', 'paid tiers need an account ledger, as in routing');
+  db.policiesV2 = B1_POLICY_ROWS.map(row => row.plan === 'pro' ? { ...row, allowed_tiers: ['free'] } : row);
+  models = byId(await v1ModelsPayload(modelsContext(modelsEnv(), { country: 'DE' }), pro));
+  assert.equal(models['gemini/gemini-2.5-flash'].unavailable_reason, 'upgrade_required', 'database plan tiers apply');
+  db.policiesV2 = [];
+  const spoofed = byId(await v1ModelsPayload(modelsContext(modelsEnv(), { headers: { 'cf-ipcountry': 'US' } }), {}));
+  assert.equal(spoofed['gemini/gemini-3.5-flash'].unavailable_reason, 'region_unavailable', 'CF-IPCountry is not trusted by default');
+  const trusted = byId(await v1ModelsPayload(modelsContext(modelsEnv({ TRUST_CF_IPCOUNTRY: 'true' }), { headers: { 'cf-ipcountry': 'US' } }), {}));
+  assert.equal(trusted['gemini/gemini-3.5-flash'].available, true);
+  const routed = await json(await request('/v1/models', { bindings: modelsEnv({ ALLOW_ANONYMOUS_SESSIONS: 'true' }) }));
+  assert.equal(routed.body.object, 'list');
+  assert.equal(routed.body.data[0].id, 'auto');
+  assert.ok(routed.body.data.every(model => typeof model.available === 'boolean' && 'unavailable_reason' in model && 'pricing' in model));
 
   // ── 13. Node server: runtime marker, loopback-only dev identity, trusted client address ──
   const { runtimeEnv, start: startServer } = require('./server.js');

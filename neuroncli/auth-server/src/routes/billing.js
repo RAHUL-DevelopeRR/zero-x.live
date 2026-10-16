@@ -1,5 +1,5 @@
 import { rpc } from '../account-store.js';
-import { ApiError, INTERACTIVE_CREDENTIALS, withCaller } from '../auth-context.js';
+import { ApiError, INTERACTIVE_CREDENTIALS, requireActiveAccount, withCaller } from '../auth-context.js';
 import { loadPlanCatalog, normalizePlanId, PAID_PLAN_IDS, topupPack } from '../plan-policy.js';
 import {
   cancelSubscription, createOrder, createSubscription, fetchOrder, fetchPayment, fetchSubscription,
@@ -81,15 +81,27 @@ export const recordPayment = (env, { userId, paymentId, kind, amount, currency, 
     p_invoice_url: null, p_raw: raw,
   });
 
-export const upsertSubscription = (env, { userId, subscriptionId, plan, status, periodStart, periodEnd, cancelAtPeriodEnd, raw }) =>
+// cancelAtPeriodEnd null (or omitted) keeps the stored flag: zerox_billing_upsert_subscription
+// coalesces it, so a re-verified payment never clears a scheduled cancellation.
+export const upsertSubscription = (env, { userId, subscriptionId, plan, status, periodStart, periodEnd, cancelAtPeriodEnd = null, raw }) =>
   rpc(env, 'zerox_billing_upsert_subscription', {
     p_user_id: userId, p_provider: PROVIDER, p_provider_subscription_id: subscriptionId, p_plan: plan, p_status: status,
-    p_current_period_start: periodStart, p_current_period_end: periodEnd, p_cancel_at_period_end: cancelAtPeriodEnd === true, p_raw: raw,
+    p_current_period_start: periodStart, p_current_period_end: periodEnd,
+    p_cancel_at_period_end: cancelAtPeriodEnd === null ? null : cancelAtPeriodEnd === true, p_raw: raw,
   });
 
+// zerox_credit_grant reasons are ledger categories matching ^[a-z][a-z0-9_]{0,63}$ (WP-B1).
+export const CREDIT_REASON = /^[a-z][a-z0-9_]{0,63}$/;
+export const creditReason = {
+  topup: pack => `topup_${pack.id}`,
+  subscription: plan => `subscription_${plan.id}`,
+};
+
 // Idempotent on ref: the same payment id never grants twice.
-export const grantCredits = (env, { userId, microusd, reason, ref }) =>
-  rpc(env, 'zerox_credit_grant', { p_user_id: userId, p_delta_microusd: microusd, p_reason: reason, p_ref: ref });
+export const grantCredits = (env, { userId, microusd, reason, ref }) => {
+  if (!CREDIT_REASON.test(reason)) throw new Error(`Invalid credit reason ${String(reason).slice(0, 80)}`);
+  return rpc(env, 'zerox_credit_grant', { p_user_id: userId, p_delta_microusd: microusd, p_reason: reason, p_ref: ref });
+};
 
 async function billingState(env, userId) {
   const row = await rpc(env, 'zerox_billing_get', { p_user_id: userId });
@@ -129,6 +141,7 @@ async function checkout(c, caller) {
   if (!PAID_PLAN_IDS.includes(body.plan)) throw new ApiError(400, 'invalid_request', '`plan` must be pro or max.', { param: 'plan' });
   const currency = parseCurrency(body.currency);
   if (!razorpayConfigured(c.env)) throw billingNotConfigured();
+  await requireActiveAccount(c.env, caller);
   const plan = (await loadPlanCatalog(c.env)).plans.find(entry => entry.id === body.plan);
   const providerPlanId = currency === 'INR' ? plan?.razorpay_plan_id_inr : plan?.razorpay_plan_id_usd;
   if (!providerPlanId) throw billingNotConfigured();
@@ -155,7 +168,7 @@ async function topup(c, caller) {
   const currency = parseCurrency(body.currency);
   if (!razorpayConfigured(c.env)) throw billingNotConfigured();
   // Read the plan fresh: a subscription verified seconds ago must already allow top-ups.
-  const current = await rpc(c.env, 'zerox_get_account', { p_user_id: caller.user_id });
+  const current = await requireActiveAccount(c.env, caller);
   const plan = (await loadPlanCatalog(c.env)).plans.find(entry => entry.id === normalizePlanId(current?.plan ?? caller.plan));
   if (!plan?.tiers.includes('paid')) {
     // Credits are only spent on paid pools, which the Free plan cannot use.
@@ -196,7 +209,8 @@ async function verifySubscriptionPayment(env, caller, { paymentId, subscriptionI
   await upsertSubscription(env, {
     userId: caller.user_id, subscriptionId, plan: plan.id, status,
     periodStart: isoFromUnix(subscription.current_start), periodEnd: isoFromUnix(subscription.current_end),
-    cancelAtPeriodEnd: false, raw: subscriptionSummary(subscription),
+    // Keep a cancellation already scheduled from the dashboard (Razorpay still reports 'active').
+    cancelAtPeriodEnd: null, raw: subscriptionSummary(subscription),
   });
   // Monthly credits are granted by the subscription.charged webhook (once per payment id).
   return { pending: false };
@@ -219,7 +233,7 @@ async function verifyTopupPayment(env, caller, { paymentId, orderId }) {
     status: payment.status, raw: paymentSummary(payment) });
   // An authorized (not yet captured) payment is granted by the payment.captured webhook.
   if (payment.status !== 'captured') return { pending: true };
-  await grantCredits(env, { userId: caller.user_id, microusd: pack.credit_microusd, reason: `topup:${pack.id}`, ref: paymentId });
+  await grantCredits(env, { userId: caller.user_id, microusd: pack.credit_microusd, reason: creditReason.topup(pack), ref: paymentId });
   return { pending: false };
 }
 

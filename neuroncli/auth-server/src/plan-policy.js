@@ -87,9 +87,11 @@ const tierList = (value, fallback) => {
 };
 const razorpayPlanId = value => typeof value === 'string' && /^plan_[A-Za-z0-9]{6,40}$/.test(value) ? value : null;
 
-// Maps one zerox_plan_policies_v2 row onto its static entry, keeping the static value for
-// every column the row omits or provides in an invalid form.
-function catalogEntry(base, row) {
+// Maps one zerox_plan_policies_v2 row (WP-B1 columns: plan, name, price_usd_cents,
+// price_inr_paise, daily_requests, daily_tokens, rpm_limit, concurrency_limit, allowed_tiers,
+// monthly_credit_microusd, features, highlighted, razorpay_plan_id_inr/usd) onto its static
+// entry, keeping the static value for every column the row omits or provides in an invalid form.
+export function catalogEntry(base, row) {
   return {
     ...base,
     name: typeof row.name === 'string' && row.name.trim() ? row.name.trim() : base.name,
@@ -100,11 +102,11 @@ function catalogEntry(base, row) {
     limits: {
       daily_requests: integer(row.daily_requests, base.limits.daily_requests),
       daily_tokens: integer(row.daily_tokens, base.limits.daily_tokens),
-      rpm: integer(row.rpm ?? row.requests_per_minute, base.limits.rpm),
-      concurrency: integer(row.concurrency ?? row.max_concurrency, base.limits.concurrency),
+      rpm: integer(row.rpm_limit ?? row.rpm, base.limits.rpm),
+      concurrency: integer(row.concurrency_limit ?? row.concurrency, base.limits.concurrency),
     },
     monthly_credit_microusd: integer(row.monthly_credit_microusd, base.monthly_credit_microusd),
-    tiers: tierList(row.tiers, base.tiers),
+    tiers: tierList(row.allowed_tiers ?? row.tiers, base.tiers),
     features: Array.isArray(row.features) && row.features.length && row.features.every(item => typeof item === 'string')
       ? row.features : base.features,
     highlighted: typeof row.highlighted === 'boolean' ? row.highlighted : base.highlighted,

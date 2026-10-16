@@ -1,7 +1,9 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { accountRpc, databaseConfigured } from './account-store.js';
-import { modelCatalog, resolveModelCatalog, providerHealth, providerConfiguration, publicModel } from './providers.js';
+import { modelCatalog, resolveModelCatalog, providerHealth, providerConfiguration } from './providers.js';
+import { catalogWarnings } from './catalog.js';
+import { globalHealthTracker } from './provider-health.js';
 import { createChatHandler } from './chat-handler.js';
 import { loadPlanLimits } from './plan-policy.js';
 import { isOperator } from './operator-auth.js';
@@ -12,15 +14,15 @@ import {
 import {
   ApiError, bearerToken, claimsPlan, devAuthEnabled, devEmailFromToken, devRuntimeEnabled, devUserId, errorResponse,
   identityProfileFromUser, INVALID_SESSION, isLoopbackHost, loadCliSession, readIdentityConfig, resolveCaller,
-  SERVICE_UNAVAILABLE, SESSION_TOKEN_PATTERN, syncAccount, verifySupabaseToken,
+  SERVICE_UNAVAILABLE, SESSION_TOKEN_PATTERN, syncAccount, syncDevAccount, verifySupabaseToken,
 } from './auth-context.js';
 import { razorpayConfigured, webhookConfigured } from './billing/razorpay.js';
 import { registerAccountRoutes } from './routes/account.js';
 import { registerAdminRoutes, runScheduledMaintenance } from './routes/admin.js';
 import { registerBillingRoutes } from './routes/billing.js';
 import { registerKeyRoutes } from './routes/keys.js';
-import { loadCatalogModule, registerPlanRoutes, v1ModelsPayload } from './routes/plans.js';
-import { registerSessionIndex, registerSessionRoutes } from './routes/sessions.js';
+import { registerPlanRoutes, v1ModelsPayload } from './routes/plans.js';
+import { registerSessionIndex, registerSessionRoutes, unregisterSessionIndex } from './routes/sessions.js';
 import { registerWebhookRoutes } from './routes/webhooks.js';
 
 const SERVICE = 'neuroncli-gateway-worker';
@@ -262,7 +264,8 @@ async function loadUserRecord(c, userId) {
 
 async function syncUserRecord(c, auth) {
   // The profile comes only from the verified identity, never from the request body.
-  return syncAccount(c.env, auth.userId, identityProfileFromUser(auth.user), auth.kind === 'dev' ? 'free' : claimsPlan(auth.user));
+  if (auth.kind === 'dev') return syncDevAccount(c.env, auth.userId, auth.user.email);
+  return syncAccount(c.env, auth.userId, identityProfileFromUser(auth.user), claimsPlan(auth.user));
 }
 
 async function userResponse(c, user, fallbackUserId = "") {
@@ -617,6 +620,7 @@ api.delete('/auth/session', async c => {
   if (!SESSION_TOKEN_PATTERN.test(token)) return errorResponse(c, 401, 'invalid_session', 'Missing or invalid session token');
   // Revocation must remain available during an account database outage.
   await deleteSession(c, token);
+  await unregisterSessionIndex(c.env, token);
   return c.json({ status: 'signed_out' });
 });
 
@@ -689,16 +693,15 @@ api.get('/v1/models', async (c) => {
       session = valid.session;
     } catch { return sessionUnavailableResponse(c); }
   }
-  return c.json(await v1ModelsPayload(c, session, {
-    catalog: await loadCatalogModule(),
-    legacy: async () => (await resolveModelCatalog(c.env, session)).map(publicModel),
-  }));
+  return c.json(await v1ModelsPayload(c, session));
 });
 
 api.get('/v1/providers/health', async (c) => {
   if (!await isOperator(c)) return errorResponse(c, 401, 'invalid_session', 'Operator authentication required.');
   c.header('Cache-Control', 'no-store');
-  return c.json({ provider_configuration: providerConfiguration(c.env), providers: await providerHealth(c.env) });
+  // pools: per-pool circuit state of this isolate (provider:upstream_model:tier).
+  return c.json({ provider_configuration: providerConfiguration(c.env), providers: await providerHealth(c.env),
+    pools: globalHealthTracker.getSnapshot(), catalog_warnings: catalogWarnings(c.env) });
 });
 
 // Inference probes use the same authentication and quota accounting as a normal completion.

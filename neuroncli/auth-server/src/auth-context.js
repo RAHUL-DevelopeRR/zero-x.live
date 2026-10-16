@@ -1,6 +1,6 @@
-import { rpc } from './account-store.js';
+import { provisionDevIdentity, rpc } from './account-store.js';
 import { normalizePlanId } from './plan-policy.js';
-import { sha256Hex, readRecord, deleteRecord, openSession, sessionExpiry } from './session-store.js';
+import { sha256Hex, readRecord, deleteRecord, openSession, rearmRecord, sessionExpiry } from './session-store.js';
 
 // ── OpenAI-shaped errors (docs/PLATFORM_CONTRACT.md §3.3) ──
 export class ApiError extends Error {
@@ -49,6 +49,18 @@ export function sendApiError(c, error) {
 }
 
 export const invalidSession = () => new ApiError(401, 'invalid_session', INVALID_SESSION);
+
+// Suspended accounts keep read access (account, usage, billing history) but cannot start new
+// purchases or mint credentials; inference is refused by zerox_reserve_v2 itself. The account is
+// read fresh (the caller's synced account may be cached for 60 s) and returned.
+export async function requireActiveAccount(env, caller) {
+  const account = await database(() => rpc(env, 'zerox_get_account', { p_user_id: caller.user_id }));
+  if (!account) throw invalidSession();
+  if (caller?.suspended || account.suspended === true) {
+    throw new ApiError(403, 'account_suspended', 'This account is suspended. Contact support@zero-x.live.');
+  }
+  return account;
+}
 const unavailable = () => new ApiError(503, 'service_unavailable', SERVICE_UNAVAILABLE);
 
 async function database(call) {
@@ -205,11 +217,19 @@ export async function syncAccount(env, userId, profile, plan = 'free') {
   return rpc(env, 'zerox_sync_account', { p_user_id: userId, p_profile: profile, p_plan: plan });
 }
 
-async function cachedAccount(env, token, userId, profile, plan) {
+// Local dev identities have no Supabase Auth user: on the PGlite driver the auth.users row is
+// provisioned first (provisionDevIdentity is a no-op on every other driver).
+export async function syncDevAccount(env, userId, email, profile = devProfile(email)) {
+  await provisionDevIdentity(env, userId, email);
+  return syncAccount(env, userId, profile, 'free');
+}
+
+async function cachedAccount(env, token, userId, profile, plan, devEmail = null) {
   const key = await sha256Hex(`account\n${userId}\n${token}`);
   const cached = cacheGet(accountCache, key);
   if (cached) return cached;
-  const account = await database(() => syncAccount(env, userId, profile, plan));
+  const account = await database(() => devEmail
+    ? syncDevAccount(env, userId, devEmail, profile) : syncAccount(env, userId, profile, plan));
   if (!account) throw unavailable();
   cacheSet(accountCache, key, account);
   return account;
@@ -231,6 +251,8 @@ export async function loadCliSession(env, token) {
     await deleteRecord(env, token);
     return null;
   }
+  try { await rearmRecord(env, token, stored); }
+  catch (error) { console.warn('Session lifetime could not be extended', { message: error?.message }); }
   return openSession(env, token, stored);
 }
 
@@ -267,7 +289,7 @@ export async function resolveCaller(c, { allow = ALL_CREDENTIALS } = {}) {
     if (!email) throw invalidSession();
     const userId = await devUserId(email);
     const profile = devProfile(email);
-    const account = await cachedAccount(env, token, userId, profile, 'free');
+    const account = await cachedAccount(env, token, userId, profile, 'free', email);
     return callerFromAccount('dev', account, { user_id: userId, email, name: profile.name });
   }
 

@@ -93,6 +93,22 @@ export async function deleteRecord(env, key) {
   await Promise.all([store.delete(await sha256Hex(key)), store.delete(key)]);
 }
 
+// Without SESSIONS_KV the Postgres store caps each write at seven days, while CLI sessions
+// last CLI_SESSION_TTL_HOURS (720 h). A session still in use is therefore re-armed (rewritten
+// as stored, sealed fields included, with its remaining lifetime) at most once a day when it
+// is read; only a session left unused for seven days ends before its expires_at.
+const REARM_INTERVAL_MS = 24 * HOUR * 1000;
+export async function rearmRecord(env, key, record, now = Date.now()) {
+  if (env.SESSIONS_KV || !record || typeof record !== 'object') return false;
+  const last = Number(record.rearmed_at ?? record.created);
+  if (Number.isFinite(last) && now - last < REARM_INTERVAL_MS) return false;
+  const remaining = (sessionExpiry(env, record) - now) / 1000;
+  if (!(remaining > 60)) return false;
+  record.rearmed_at = now;
+  await writeRecord(env, key, record, remaining);
+  return true;
+}
+
 // Revoke-all only knows token hashes (from the session index).
 export async function deleteRecordByHash(env, hash) {
   if (!/^[0-9a-f]{64}$/.test(hash)) return;

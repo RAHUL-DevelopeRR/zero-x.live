@@ -1,4 +1,4 @@
-import { rpc, rpcRows } from '../account-store.js';
+import { databaseConfigured, rpc, rpcRows } from '../account-store.js';
 import { INTERACTIVE_CREDENTIALS, withCaller } from '../auth-context.js';
 import { deleteRecordByHash, sha256Hex } from '../session-store.js';
 
@@ -17,15 +17,29 @@ export async function registerSessionIndex(env, userId, token, expiresAt) {
 }
 
 const tokenHash = row => row?.token_hash ?? row?.p_token_hash ?? row?.hash;
+const validHashes = rows => rows.map(tokenHash).filter(hash => typeof hash === 'string' && /^[0-9a-f]{64}$/.test(hash));
 
-// Deletes every indexed CLI session record for the user, then clears the index.
+// Deletes every indexed CLI session record for the user and clears the index. The index is
+// listed first (so records go before their index rows), then zerox_session_index_revoke_all
+// removes the rows and returns their hashes; records of sessions indexed in between are
+// deleted too. Returns the number of distinct sessions revoked.
 export async function revokeAllSessions(env, userId) {
-  const rows = await rpcRows(env, 'zerox_session_index_list', { p_user_id: userId });
-  const hashes = [...new Set(rows.map(tokenHash).filter(hash => typeof hash === 'string' && /^[0-9a-f]{64}$/.test(hash)))];
-  await Promise.all(hashes.map(hash => deleteRecordByHash(env, hash)));
-  const result = await rpc(env, 'zerox_session_index_revoke_all', { p_user_id: userId });
-  const revoked = Number(result?.revoked);
-  return Number.isSafeInteger(revoked) && revoked >= 0 ? revoked : hashes.length;
+  const listed = new Set(validHashes(await rpcRows(env, 'zerox_session_index_list', { p_user_id: userId })));
+  await Promise.all([...listed].map(hash => deleteRecordByHash(env, hash)));
+  const removed = validHashes(await rpcRows(env, 'zerox_session_index_revoke_all', { p_user_id: userId }));
+  const late = removed.filter(hash => !listed.has(hash));
+  await Promise.all(late.map(hash => deleteRecordByHash(env, hash)));
+  return new Set([...listed, ...removed]).size;
+}
+
+// Single sign-out: drops the session's index row (best effort; the record itself is deleted).
+export async function unregisterSessionIndex(env, token) {
+  if (!databaseConfigured(env)) return;
+  try {
+    await rpc(env, 'zerox_session_index_remove', { p_token_hash: await sha256Hex(token) });
+  } catch (error) {
+    console.warn('Session index entry could not be removed', { message: error?.message });
+  }
 }
 
 export function registerSessionRoutes(api) {

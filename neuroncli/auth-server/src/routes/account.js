@@ -23,8 +23,14 @@ export async function accountPayload(env, caller) {
   const subscription = object(row.subscription);
   const planId = normalizePlanId(policy.plan ?? policy.id ?? account.plan ?? caller.plan);
   const plan = await planById(env, planId);
-  const limit = (name, ...aliases) => {
-    for (const key of [name, ...aliases]) if (Number.isSafeInteger(Number(policy[key])) && policy[key] !== null) return Number(policy[key]);
+  // policy is a zerox_plan_policies_v2 row (rpm_limit, concurrency_limit, ...); the catalogue
+  // value is used for a column the row lacks.
+  const limit = (name, ...columns) => {
+    for (const key of columns) {
+      if (policy[key] !== null && policy[key] !== undefined && policy[key] !== '' && Number.isSafeInteger(Number(policy[key]))) {
+        return Number(policy[key]);
+      }
+    }
     return plan.limits[name];
   };
   return {
@@ -36,10 +42,10 @@ export async function accountPayload(env, caller) {
     },
     plan: { id: planId, name: typeof policy.name === 'string' && policy.name ? policy.name : plan.name },
     limits: {
-      daily_requests: limit('daily_requests'),
-      daily_tokens: limit('daily_tokens'),
-      rpm: limit('rpm', 'requests_per_minute'),
-      concurrency: limit('concurrency', 'max_concurrency'),
+      daily_requests: limit('daily_requests', 'daily_requests'),
+      daily_tokens: limit('daily_tokens', 'daily_tokens'),
+      rpm: limit('rpm', 'rpm_limit', 'rpm'),
+      concurrency: limit('concurrency', 'concurrency_limit', 'concurrency'),
     },
     usage_today: {
       requests: count(usage.requests ?? account.daily_requests),
@@ -117,6 +123,9 @@ export async function usagePayload(env, userId, range) {
   return { from: range.from, to: range.to, series, by_model: byModel, totals: withCost(totals) };
 }
 
+// zerox_usage_events clamps p_limit to this many rows (WP-B1).
+export const EVENTS_PAGE_LIMIT = 200;
+
 function eventsQuery(query) {
   let limit = 50;
   if (query.limit !== undefined) {
@@ -159,10 +168,14 @@ export function registerAccountRoutes(api) {
 
   api.get('/api/usage/events', withCaller(ALL_CREDENTIALS, async (c, caller) => {
     const { limit, before } = eventsQuery({ limit: c.req.query('limit'), before: c.req.query('before') });
-    // One extra row tells whether another page exists.
-    const rows = (await rpcRows(c.env, 'zerox_usage_events', { p_user_id: caller.user_id, p_limit: limit + 1, p_before: before }))
-      .filter(row => row && row.id !== undefined && row.id !== null);
+    // One extra row tells whether another page exists. zerox_usage_events returns at most
+    // EVENTS_PAGE_LIMIT rows, so a full maximum page is followed by a one-row probe.
+    const fetchRows = async (pageLimit, cursor) => (await rpcRows(c.env, 'zerox_usage_events',
+      { p_user_id: caller.user_id, p_limit: pageLimit, p_before: cursor })).filter(row => row && row.id !== undefined && row.id !== null);
+    const rows = await fetchRows(Math.min(limit + 1, EVENTS_PAGE_LIMIT), before);
     const page = rows.slice(0, limit);
-    return c.json({ events: page.map(eventView), next_before: rows.length > limit ? page.at(-1).id : null });
+    let more = rows.length > limit;
+    if (!more && limit === EVENTS_PAGE_LIMIT && page.length === limit) more = (await fetchRows(1, page.at(-1).id)).length > 0;
+    return c.json({ events: page.map(eventView), next_before: more ? page.at(-1).id : null });
   }));
 }
