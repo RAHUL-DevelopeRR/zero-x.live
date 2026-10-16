@@ -1,7 +1,7 @@
 // Static checks for the business website pages (WP-B4) plus DOM-free unit tests of the pure helpers in
 // dashboard.js, pricing.js and billing-checkout.js. Browser behaviour lives in check-dashboard.mjs.
 import assert from 'node:assert/strict';
-import {existsSync, readFileSync, statSync} from 'node:fs';
+import {existsSync, readdirSync, readFileSync, statSync} from 'node:fs';
 // Site scripts load as ES modules whatever package.json lies above the checkout.
 import './site-modules.mjs';
 
@@ -179,6 +179,15 @@ for (const file of [...PUBLIC_PAGES, ...PRIVATE_PAGES, 'neuroncli/login/index.ht
   for (const script of tags(html, 'script')) if (script.src && script.src.includes('supabase-js')) {
     assert.match(script.src, /@supabase\/supabase-js@\d+\.\d+\.\d+\//, `${file}: supabase-js must be pinned to an exact version`);
     assert.match(script.integrity || '', /^sha384-/, `${file}: supabase-js needs SRI`);
+  }
+}
+// Every page of the site (not only the business pages above) pins supabase-js with SRI.
+const allHtml = readdirSync(root).filter(name => name.endsWith('.html'));
+for (const file of allHtml) {
+  for (const script of tags(read(file), 'script')) if (script.src && script.src.includes('supabase-js')) {
+    assert.match(script.src, /@supabase\/supabase-js@\d+\.\d+\.\d+\//, `${file}: supabase-js must be pinned to an exact version`);
+    assert.match(script.integrity || '', /^sha384-/, `${file}: supabase-js needs SRI`);
+    assert.equal(script.crossorigin, 'anonymous', `${file}: SRI needs crossorigin=anonymous`);
   }
 }
 assert.doesNotMatch(read('zx-tokens.css'), /@import|url\((?!\s*['"]?data:)/, 'zx-tokens.css loads nothing remote');
