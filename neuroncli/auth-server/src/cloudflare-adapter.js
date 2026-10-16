@@ -1,11 +1,16 @@
 import { ProviderAdapter } from './provider-adapter.js';
 
-const CF_DEFAULTS = ['@cf/meta/llama-3.3-70b-instruct-fp8-fast', '@cf/meta/llama-3.1-8b-instruct'];
-const CF_TOOL_MODELS = new Set([CF_DEFAULTS[0]]);
+// Workers AI accepts only these chat parameters (the rest are dropped upstream of here).
+const WORKERS_AI_PARAMS = ['messages', 'tools', 'max_tokens', 'stream', 'temperature', 'top_p', 'seed',
+  'presence_penalty', 'frequency_penalty'];
 
 export class CloudflareWorkersAIAdapter extends ProviderAdapter {
   constructor() {
     super('cloudflare');
+  }
+
+  capabilities() {
+    return { ...super.capabilities(), tools: true };
   }
 
   isConfigured(env, session = {}) {
@@ -17,47 +22,20 @@ export class CloudflareWorkersAIAdapter extends ProviderAdapter {
     return 'allowlist';
   }
 
-  parseModelIds(value, fallback = []) {
-    return value === undefined ? fallback : String(value).split(',').map(id => id.trim()).filter(Boolean);
-  }
-
-  listStaticModels(env, session = {}) {
-    if (!this.isConfigured(env, session)) return [];
-    const models = [];
-    const configuredModels = this.parseModelIds(env.CLOUDFLARE_MODELS, CF_DEFAULTS);
-    const toolModels = this.parseModelIds(env.CLOUDFLARE_TOOL_MODELS);
-    for (const id of configuredModels) {
-      if (!id.startsWith('@cf/') && !id.startsWith('@hf/')) continue;
-      models.push({
-        id,
-        upstream: id,
-        provider: 'cloudflare',
-        tools: CF_TOOL_MODELS.has(id) || toolModels.includes(id),
-        supports_streaming: true,
-        supports_parallel_tools: CF_TOOL_MODELS.has(id) || toolModels.includes(id),
-      });
-    }
-    return models;
-  }
-
-  async discoverModels(env, session = {}) {
-    return {
-      provider: 'cloudflare',
-      status: 'binding_configured',
-      discovery: false,
-      models: this.listStaticModels(env, session),
-    };
+  requestBody(payload) {
+    const body = {};
+    for (const name of WORKERS_AI_PARAMS) if (payload[name] !== undefined) body[name] = payload[name];
+    // Workers AI takes bare function definitions instead of OpenAI tool wrappers.
+    if (body.tools) body.tools = body.tools.map(tool => tool.function);
+    return body;
   }
 
   async chatCompletion(env, session, entry, payload, signal, normalizeCompletion) {
-    const body = { ...payload, model: entry.upstream || entry.id };
-    if (body.tools) {
-      body.tools = body.tools.map(tool => tool.function);
-    }
-    delete body.stream_options;
+    const model = entry.upstream_model || entry.upstream || entry.id;
+    const body = this.requestBody(payload);
 
     if (env.AI) {
-      const result = await env.AI.run(entry.id, body);
+      const result = await env.AI.run(model, body);
       if (payload.stream) {
         if (typeof result?.getReader !== 'function') {
           throw new Error('Workers AI did not return a stream');
@@ -68,7 +46,7 @@ export class CloudflareWorkersAIAdapter extends ProviderAdapter {
     }
 
     const response = await fetch(
-      `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(env.CLOUDFLARE_ACCOUNT_ID)}/ai/run/${entry.id}`,
+      `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(env.CLOUDFLARE_ACCOUNT_ID)}/ai/run/${model}`,
       {
         method: 'POST',
         headers: {
