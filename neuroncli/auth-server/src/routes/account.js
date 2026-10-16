@@ -10,6 +10,13 @@ const count = value => {
   return Number.isFinite(number) && number > 0 ? Math.round(number) : 0;
 };
 export const nextUtcMidnight = (now = Date.now()) => new Date((Math.floor(now / DAY_MS) + 1) * DAY_MS).toISOString();
+// Postgres jsonb renders timestamps as '2026-10-17T00:00:00+00:00'; the API always answers in
+// the ISO form the gateway's errors use ('2026-10-17T00:00:00.000Z').
+export const isoTime = value => {
+  if (typeof value !== 'string' || !value) return null;
+  const time = Date.parse(value);
+  return Number.isFinite(time) ? new Date(time).toISOString() : null;
+};
 
 // Builds the GET /api/account payload from zerox_account_overview (jsonb columns account,
 // policy, credits, subscription, usage_today), filling gaps from the plan catalogue.
@@ -50,7 +57,7 @@ export async function accountPayload(env, caller) {
     usage_today: {
       requests: count(usage.requests ?? account.daily_requests),
       tokens: count(usage.tokens ?? usage.tokens_used ?? account.daily_tokens_used),
-      resets_at: typeof usage.resets_at === 'string' ? usage.resets_at : nextUtcMidnight(),
+      resets_at: isoTime(usage.resets_at) ?? nextUtcMidnight(),
     },
     credits: {
       balance_usd: microusdToUsd(credits.balance_microusd ?? row.credit_balance_microusd ?? 0),
@@ -58,7 +65,7 @@ export async function accountPayload(env, caller) {
     },
     subscription: subscription ? {
       status: subscription.status ?? null,
-      current_period_end: subscription.current_period_end ?? null,
+      current_period_end: isoTime(subscription.current_period_end),
       cancel_at_period_end: subscription.cancel_at_period_end === true,
     } : null,
     flags: { suspended: caller.suspended === true || account.suspended === true || account.status === 'suspended' || row.suspended === true },
@@ -146,7 +153,7 @@ function eventsQuery(query) {
 
 const eventView = row => ({
   id: row.id,
-  created_at: row.created_at ?? null,
+  created_at: isoTime(row.created_at),
   model: row.model ?? null,
   provider: row.provider ?? null,
   tier: row.tier ?? null,

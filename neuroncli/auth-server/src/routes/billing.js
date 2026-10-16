@@ -5,7 +5,7 @@ import {
   cancelSubscription, createOrder, createSubscription, fetchOrder, fetchPayment, fetchSubscription,
   isoFromUnix, LIVE_SUBSCRIPTION_STATUSES, razorpayConfigured, RazorpayError, subscriptionStatus, verifyCheckoutSignature,
 } from '../billing/razorpay.js';
-import { accountPayload } from './account.js';
+import { accountPayload, isoTime } from './account.js';
 
 export const PROVIDER = 'razorpay';
 const MERCHANT_NAME = 'Zero-X';
@@ -115,7 +115,7 @@ const subscriptionView = subscription => subscription ? {
   id: subscription.provider_subscription_id ?? subscription.id ?? null,
   plan: subscription.plan ?? null,
   status: subscription.status ?? null,
-  current_period_end: subscription.current_period_end ?? null,
+  current_period_end: isoTime(subscription.current_period_end),
   cancel_at_period_end: subscription.cancel_at_period_end === true,
   provider: subscription.provider ?? PROVIDER,
 } : null;
@@ -126,7 +126,7 @@ const paymentView = payment => ({
   amount_minor: Number(payment.amount_minor) || 0,
   currency: payment.currency ?? null,
   status: payment.status ?? null,
-  created_at: payment.created_at ?? null,
+  created_at: isoTime(payment.created_at),
   invoice_url: payment.invoice_url ?? null,
 });
 
@@ -273,13 +273,13 @@ async function cancel(c, caller) {
     throw new ApiError(409, 'no_active_subscription', 'You do not have an active subscription to cancel.');
   }
   if (current.cancel_at_period_end === true) {
-    return c.json({ status: 'cancel_scheduled', current_period_end: current.current_period_end ?? null });
+    return c.json({ status: 'cancel_scheduled', current_period_end: isoTime(current.current_period_end) });
   }
   const subscriptionId = current.provider_subscription_id ?? current.id;
   if (!ID_PATTERNS.subscription.test(subscriptionId || '')) throw new Error('Stored subscription has no provider id');
   const updated = await provider(() => cancelSubscription(c.env, subscriptionId, true),
     'Could not schedule the cancellation. Your subscription is unchanged; please retry.');
-  const periodEnd = isoFromUnix(updated.current_end) ?? current.current_period_end ?? null;
+  const periodEnd = isoFromUnix(updated.current_end) ?? isoTime(current.current_period_end);
   await upsertSubscription(c.env, {
     userId: caller.user_id, subscriptionId, plan: current.plan,
     status: subscriptionStatus(updated.status) ?? current.status,
