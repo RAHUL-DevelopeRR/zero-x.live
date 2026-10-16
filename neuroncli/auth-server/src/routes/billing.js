@@ -1,9 +1,9 @@
-import { rpc } from '../account-store.js';
+import { rpc, rpcRows } from '../account-store.js';
 import { ApiError, INTERACTIVE_CREDENTIALS, requireActiveAccount, withCaller } from '../auth-context.js';
 import { loadPlanCatalog, normalizePlanId, PAID_PLAN_IDS, topupPack } from '../plan-policy.js';
 import {
-  cancelSubscription, createOrder, createSubscription, fetchOrder, fetchPayment, fetchSubscription,
-  isoFromUnix, LIVE_SUBSCRIPTION_STATUSES, razorpayConfigured, RazorpayError, subscriptionStatus, verifyCheckoutSignature,
+  cancelSubscription, createOrder, createSubscription, ENDED_SUBSCRIPTION_STATUSES, fetchOrder, fetchPayment, fetchSubscription,
+  isoFromUnix, LIVE_SUBSCRIPTION_STATUSES, razorpayConfigured, RazorpayError, refundPayment, subscriptionStatus, verifyCheckoutSignature,
 } from '../billing/razorpay.js';
 import { accountPayload, isoTime } from './account.js';
 
@@ -15,6 +15,9 @@ const ID_PATTERNS = {
   subscription: /^sub_[A-Za-z0-9]{6,40}$/,
   order: /^order_[A-Za-z0-9]{6,40}$/,
 };
+const PAYMENT_STATUSES = ['created', 'authorized', 'captured', 'failed', 'refunded'];
+// An unpaid checkout ('created' subscription) is reused or retired for this long.
+const OPEN_CHECKOUT_MS = 24 * 60 * 60 * 1000;
 const object = value => value && typeof value === 'object' && !Array.isArray(value) ? value : null;
 export const userIdFrom = value => typeof value === 'string' && UUID_PATTERN.test(value) ? value.toLowerCase() : null;
 const pricingUrl = env => env.PRICING_URL || 'https://zero-x.live/pricing';
@@ -66,6 +69,8 @@ export function paymentSummary(payment) {
   if (object(payment?.notes)) summary.notes = payment.notes;
   return summary;
 }
+// Subscription payments carry the subscription id, so a refund can find what it paid for.
+export const subscriptionPaymentRaw = (payment, subscriptionId) => ({ ...paymentSummary(payment), subscription_id: subscriptionId });
 export function subscriptionSummary(subscription) {
   const keep = ['id', 'entity', 'plan_id', 'status', 'current_start', 'current_end', 'ended_at', 'charge_at', 'start_at',
     'end_at', 'paid_count', 'total_count', 'remaining_count', 'customer_notify', 'created_at'];
@@ -130,35 +135,171 @@ const paymentView = payment => ({
   invoice_url: payment.invoice_url ?? null,
 });
 
-const liveSubscription = subscription => subscription && LIVE_SUBSCRIPTION_STATUSES.includes(subscription.status) ? subscription : null;
+// Every subscription of the user that has not ended (zerox_billing_subscriptions), newest first.
+const userSubscriptions = async (env, userId) =>
+  (await rpcRows(env, 'zerox_billing_subscriptions', { p_user_id: userId })).filter(row => !row.provider || row.provider === PROVIDER);
+const isLive = subscription => LIVE_SUBSCRIPTION_STATUSES.includes(subscription?.status);
+const isEnded = status => ENDED_SUBSCRIPTION_STATUSES.includes(status);
+// Unpaid checkouts that can still be paid in an open payment window.
+const openCheckouts = (subscriptions, now = Date.now()) => subscriptions.filter(entry => entry.status === 'created' && !entry.revoked_at &&
+  now - Date.parse(entry.created_at) < OPEN_CHECKOUT_MS && ID_PATTERNS.subscription.test(entry.provider_subscription_id || '')).slice(0, 5);
+// The status to store after asking Razorpay to end a subscription now.
+const endedStatus = status => isEnded(subscriptionStatus(status)) ? subscriptionStatus(status) : 'cancelled';
+
+const CHECKOUT_FAILED = 'Could not start checkout. No payment was taken; please retry.';
+const CANCEL_FAILED = 'Could not schedule the cancellation. Your subscription is unchanged; please retry.';
+const alreadySubscribed = subscription => new ApiError(409, 'already_subscribed',
+  `You already have a ${subscription?.plan || 'paid'} subscription (${subscription?.status || 'active'}). Manage it from your dashboard.`);
+const checkoutInProgress = () => new ApiError(409, 'checkout_in_progress',
+  'A checkout for your account is already in progress or its payment is being confirmed. Check Billing in your dashboard before paying again.');
+const duplicateSubscription = () => new ApiError(409, 'already_subscribed',
+  'This subscription duplicates another subscription or checkout on your account, so it was cancelled and its payment is being refunded to your original payment method.');
 
 function checkoutPrefill(caller) {
   return { email: caller.email || '', name: caller.name || '' };
+}
+
+// Ends a subscription at Razorpay now. A subscription that already ended (a retry after a
+// partial failure) is answered with its current state.
+export async function cancelImmediately(env, subscriptionId) {
+  try {
+    return await cancelSubscription(env, subscriptionId, false);
+  } catch (error) {
+    if (!(error instanceof RazorpayError)) throw error;
+    const latest = await fetchSubscription(env, subscriptionId);
+    if (isEnded(subscriptionStatus(latest.status))) return latest;
+    throw error;
+  }
+}
+
+// Records a subscription that Razorpay ended (or was asked to end) at once.
+export async function recordEnded(env, { userId, plan, remote }) {
+  await upsertSubscription(env, {
+    userId, subscriptionId: remote.id, plan, status: endedStatus(remote.status),
+    periodStart: isoFromUnix(remote.current_start), periodEnd: isoFromUnix(remote.current_end),
+    cancelAtPeriodEnd: false, raw: subscriptionSummary(remote),
+  });
+}
+
+async function cancelQuietly(env, subscriptionId) {
+  try {
+    await cancelImmediately(env, subscriptionId);
+  } catch (error) {
+    console.error('An unused Razorpay subscription could not be cancelled; cancel it in the Razorpay dashboard',
+      { subscription: subscriptionId, message: error?.message });
+  }
+}
+
+// Refunds a payment in full (idempotent: Razorpay never refunds more than was captured) and
+// records it as refunded. Payments that were never captured are only recorded.
+export async function refundInFull(env, { userId, kind, payment, subscriptionId = null, reason }) {
+  let latest = await fetchPayment(env, payment.id);
+  const fullyRefunded = entry => entry.status === 'refunded' || Number(entry.amount_refunded || 0) >= Number(entry.amount);
+  if (latest.status === 'captured' && !fullyRefunded(latest)) {
+    try {
+      await refundPayment(env, payment.id, { notes: { reason, ...(subscriptionId ? { subscription_id: subscriptionId } : {}) } });
+    } catch (error) {
+      if (!(error instanceof RazorpayError)) throw error;
+      if (!fullyRefunded(await fetchPayment(env, payment.id))) throw error;
+    }
+    latest = await fetchPayment(env, payment.id);
+  }
+  const status = fullyRefunded(latest) ? 'refunded' : PAYMENT_STATUSES.includes(latest.status) ? latest.status : null;
+  if (status) {
+    await recordPayment(env, { userId, paymentId: latest.id || payment.id, kind, amount: latest.amount, currency: latest.currency, status,
+      raw: subscriptionId ? subscriptionPaymentRaw(latest, subscriptionId) : paymentSummary(latest) });
+  }
+  if (status !== 'refunded') {
+    console.warn('A payment to refund was not captured; Razorpay releases uncaptured authorizations', { payment: payment.id });
+  }
+}
+
+// A duplicate subscription (revoked by zerox_billing_upsert_subscription because another one was
+// already live) never entitles: it is cancelled at Razorpay at once and its payment is refunded.
+export async function settleDuplicate(env, { userId, subscription, plan, payment = null }) {
+  const remote = isEnded(subscriptionStatus(subscription.status)) ? subscription : await cancelImmediately(env, subscription.id);
+  await recordEnded(env, { userId, plan: plan.id, remote: { ...subscription, ...remote, id: subscription.id } });
+  if (payment && /^pay_[A-Za-z0-9]{6,40}$/.test(payment.id || '')) {
+    await refundInFull(env, { userId, kind: 'subscription', payment, subscriptionId: subscription.id, reason: 'duplicate_subscription' });
+  }
+  console.warn('Duplicate Razorpay subscription cancelled and refunded', { subscription: subscription.id });
+}
+
+// Retires an unpaid checkout for another plan or currency: cancelled at Razorpay when it allows
+// that, otherwise revoked here as a duplicate, so that paying it later (a stale payment window)
+// is cancelled and refunded instead of entitling next to the new subscription.
+async function retireCheckout(env, userId, stored, remote) {
+  let ended = null;
+  try {
+    ended = await cancelImmediately(env, remote.id);
+  } catch (error) {
+    if (!(error instanceof RazorpayError)) throw error;
+    console.warn('Razorpay did not cancel an unpaid checkout; it is revoked instead', { subscription: remote.id, code: error.code });
+  }
+  if (ended) await recordEnded(env, { userId, plan: stored.plan, remote: { ...remote, ...ended, id: remote.id } });
+  else await rpc(env, 'zerox_billing_revoke_subscription', { p_provider: PROVIDER, p_provider_subscription_id: remote.id, p_reason: 'duplicate' });
 }
 
 async function checkout(c, caller) {
   const body = await jsonObject(c);
   if (!PAID_PLAN_IDS.includes(body.plan)) throw new ApiError(400, 'invalid_request', '`plan` must be pro or max.', { param: 'plan' });
   const currency = parseCurrency(body.currency);
-  if (!razorpayConfigured(c.env)) throw billingNotConfigured();
-  await requireActiveAccount(c.env, caller);
-  const plan = (await loadPlanCatalog(c.env)).plans.find(entry => entry.id === body.plan);
+  const env = c.env;
+  if (!razorpayConfigured(env)) throw billingNotConfigured();
+  await requireActiveAccount(env, caller);
+  const plan = (await loadPlanCatalog(env)).plans.find(entry => entry.id === body.plan);
   const providerPlanId = currency === 'INR' ? plan?.razorpay_plan_id_inr : plan?.razorpay_plan_id_usd;
   if (!providerPlanId) throw billingNotConfigured();
-  const current = liveSubscription((await billingState(c.env, caller.user_id)).subscription);
-  if (current) {
-    throw new ApiError(409, 'already_subscribed',
-      `You already have a ${current.plan || 'paid'} subscription (${current.status}). Manage it from your dashboard.`);
-  }
+  const subscriptions = await userSubscriptions(env, caller.user_id);
+  const live = subscriptions.find(entry => !entry.revoked_at && isLive(entry));
+  if (live) throw alreadySubscribed(live);
   const notes = { user_id: caller.user_id, plan: plan.id };
-  const subscription = await provider(() => createSubscription(c.env, {
-    plan_id: providerPlanId, total_count: 120, quantity: 1, customer_notify: 1, notes,
-  }), 'Could not start checkout. No payment was taken; please retry.');
-  if (!ID_PATTERNS.subscription.test(subscription.id || '')) throw new ApiError(502, 'payment_provider_error', 'Could not start checkout. Please retry.');
-  return c.json({
-    provider: PROVIDER, key_id: c.env.RAZORPAY_KEY_ID, subscription_id: subscription.id,
+  const respond = subscriptionId => c.json({
+    provider: PROVIDER, key_id: env.RAZORPAY_KEY_ID, subscription_id: subscriptionId,
     name: MERCHANT_NAME, description: `Neuron ${plan.name} plan, billed monthly`, prefill: checkoutPrefill(caller), notes,
   });
+  // An unpaid checkout (a second tab, a closed payment window) is reused for the same plan and
+  // currency and retired for any other one, so the account never holds two payable subscriptions.
+  for (const open of openCheckouts(subscriptions)) {
+    const remote = await provider(() => fetchSubscription(env, open.provider_subscription_id), CHECKOUT_FAILED);
+    const status = subscriptionStatus(remote.status);
+    if (status === 'created') {
+      if (remote.plan_id === providerPlanId && userIdFrom(remote.notes?.user_id) === caller.user_id) return respond(remote.id);
+      // A payment for it is being confirmed: never cancel a subscription the user may have paid.
+      if (Number(open.payments) > 0) throw checkoutInProgress();
+      await retireCheckout(env, caller.user_id, open, remote);
+    } else if (isEnded(status)) {
+      await recordEnded(env, { userId: caller.user_id, plan: open.plan, remote });
+    } else {
+      // Paid meanwhile: verify or the webhook records it.
+      throw checkoutInProgress();
+    }
+  }
+  const subscription = await provider(() => createSubscription(env, {
+    plan_id: providerPlanId, total_count: 120, quantity: 1, customer_notify: 1, notes,
+  }), CHECKOUT_FAILED);
+  if (!ID_PATTERNS.subscription.test(subscription.id || '')) throw new ApiError(502, 'payment_provider_error', 'Could not start checkout. Please retry.');
+  let recorded;
+  try {
+    recorded = await rpc(env, 'zerox_billing_record_checkout', {
+      p_user_id: caller.user_id, p_provider: PROVIDER, p_provider_subscription_id: subscription.id, p_plan: plan.id,
+      p_raw: subscriptionSummary(subscription),
+    });
+  } catch (error) {
+    await cancelQuietly(env, subscription.id);
+    throw error;
+  }
+  if (recorded?.recorded !== true) {
+    // A parallel checkout was recorded first: this subscription is retired and the other one is
+    // answered when it is for the same plan and currency.
+    await cancelQuietly(env, subscription.id);
+    const blocking = recorded?.blocking_subscription_id;
+    if (recorded?.blocking_status === 'created' && recorded.blocking_plan_id === providerPlanId && ID_PATTERNS.subscription.test(blocking || '')) {
+      return respond(blocking);
+    }
+    throw isLive({ status: recorded?.blocking_status }) ? alreadySubscribed({ status: recorded.blocking_status }) : checkoutInProgress();
+  }
+  return respond(subscription.id);
 }
 
 async function topup(c, caller) {
@@ -197,21 +338,36 @@ async function verifySubscriptionPayment(env, caller, { paymentId, subscriptionI
   const plan = planFromSubscription(plans, subscription);
   if (!plan) throw mismatch('This subscription is not for a Zero-X plan.');
   const status = subscriptionStatus(subscription.status);
+  const currency = String(payment.currency || '').toUpperCase();
+  const record = paymentStatus => recordPayment(env, { userId: caller.user_id, paymentId, kind: 'subscription', amount: payment.amount,
+    currency, status: paymentStatus, raw: subscriptionPaymentRaw(payment, subscriptionId) });
+  const duplicate = () => provider(() => settleDuplicate(env, { userId: caller.user_id, subscription, plan, payment }),
+    'Your account already has a subscription. This second one does not change your plan and will be cancelled and refunded shortly.');
+  const stored = await rpc(env, 'zerox_subscription_by_provider_id', { p_provider: PROVIDER, p_provider_subscription_id: subscriptionId });
+  if (stored?.revoked_reason === 'duplicate') {
+    await duplicate();
+    throw duplicateSubscription();
+  }
   if (!['authenticated', 'active'].includes(status) || !['captured', 'authorized'].includes(payment.status)) {
+    // Not confirmed yet. The attempt is recorded so Billing shows it and a new checkout never
+    // retires a subscription that may have been paid.
+    if (PAYMENT_STATUSES.includes(payment.status) && ['INR', 'USD'].includes(currency)) await record(payment.status);
     return { pending: true };
   }
-  const currency = String(payment.currency || '').toUpperCase();
   if (!['INR', 'USD'].includes(currency) || Number(payment.amount) !== priceFor(plan.price, currency)) {
     throw mismatch('The payment amount does not match the plan price.');
   }
-  await recordPayment(env, { userId: caller.user_id, paymentId, kind: 'subscription', amount: payment.amount, currency,
-    status: payment.status, raw: paymentSummary(payment) });
-  await upsertSubscription(env, {
+  await record(payment.status);
+  const row = await upsertSubscription(env, {
     userId: caller.user_id, subscriptionId, plan: plan.id, status,
     periodStart: isoFromUnix(subscription.current_start), periodEnd: isoFromUnix(subscription.current_end),
     // Keep a cancellation already scheduled from the dashboard (Razorpay still reports 'active').
     cancelAtPeriodEnd: null, raw: subscriptionSummary(subscription),
   });
+  if (row?.revoked_reason === 'duplicate') {
+    await duplicate();
+    throw duplicateSubscription();
+  }
   // Monthly credits are granted by the subscription.charged webhook (once per payment id).
   return { pending: false };
 }
@@ -266,26 +422,54 @@ async function verify(c, caller) {
   return c.json({ status: result.pending ? 'pending' : 'ok', account: await accountPayload(c.env, caller) });
 }
 
+// Cancels every live subscription of the user: entitled ones at the end of their paid period,
+// revoked duplicates at once, and unpaid checkouts are closed so an old payment window cannot
+// start a new subscription.
 async function cancel(c, caller) {
-  if (!razorpayConfigured(c.env)) throw billingNotConfigured();
-  const current = liveSubscription((await billingState(c.env, caller.user_id)).subscription);
-  if (!current || (current.provider && current.provider !== PROVIDER)) {
+  const env = c.env;
+  if (!razorpayConfigured(env)) throw billingNotConfigured();
+  const subscriptions = await userSubscriptions(env, caller.user_id);
+  const entitled = subscriptions.filter(entry => isLive(entry) && !entry.revoked_at);
+  const duplicates = subscriptions.filter(entry => isLive(entry) && entry.revoked_at);
+  if (!entitled.length && !duplicates.length) {
     throw new ApiError(409, 'no_active_subscription', 'You do not have an active subscription to cancel.');
   }
-  if (current.cancel_at_period_end === true) {
-    return c.json({ status: 'cancel_scheduled', current_period_end: isoTime(current.current_period_end) });
+  let periodEnd = null;
+  const later = value => (value && (!periodEnd || Date.parse(value) > Date.parse(periodEnd)) ? value : periodEnd);
+  for (const current of entitled) {
+    const subscriptionId = current.provider_subscription_id;
+    if (!ID_PATTERNS.subscription.test(subscriptionId || '')) throw new Error('Stored subscription has no provider id');
+    if (current.cancel_at_period_end === true) {
+      periodEnd = later(isoTime(current.current_period_end));
+      continue;
+    }
+    const updated = await provider(() => cancelSubscription(env, subscriptionId, true), CANCEL_FAILED);
+    const end = isoFromUnix(updated.current_end) ?? isoTime(current.current_period_end);
+    await upsertSubscription(env, {
+      userId: caller.user_id, subscriptionId, plan: current.plan,
+      status: subscriptionStatus(updated.status) ?? current.status,
+      periodStart: isoFromUnix(updated.current_start) ?? current.current_period_start ?? null,
+      periodEnd: end, cancelAtPeriodEnd: true, raw: subscriptionSummary(updated),
+    });
+    periodEnd = later(end);
   }
-  const subscriptionId = current.provider_subscription_id ?? current.id;
-  if (!ID_PATTERNS.subscription.test(subscriptionId || '')) throw new Error('Stored subscription has no provider id');
-  const updated = await provider(() => cancelSubscription(c.env, subscriptionId, true),
-    'Could not schedule the cancellation. Your subscription is unchanged; please retry.');
-  const periodEnd = isoFromUnix(updated.current_end) ?? isoTime(current.current_period_end);
-  await upsertSubscription(c.env, {
-    userId: caller.user_id, subscriptionId, plan: current.plan,
-    status: subscriptionStatus(updated.status) ?? current.status,
-    periodStart: isoFromUnix(updated.current_start) ?? current.current_period_start ?? null,
-    periodEnd, cancelAtPeriodEnd: true, raw: subscriptionSummary(updated),
-  });
+  for (const duplicate of duplicates) {
+    const subscriptionId = duplicate.provider_subscription_id;
+    if (!ID_PATTERNS.subscription.test(subscriptionId || '')) continue;
+    const ended = await provider(() => cancelImmediately(env, subscriptionId), CANCEL_FAILED);
+    await recordEnded(env, { userId: caller.user_id, plan: duplicate.plan, remote: { ...ended, id: subscriptionId } });
+  }
+  for (const open of openCheckouts(subscriptions)) {
+    // Best effort, and recorded only once Razorpay confirms: a subscription stored as ended
+    // ignores later activations, so one that might still be paid must stay 'created'.
+    try {
+      const ended = await cancelImmediately(env, open.provider_subscription_id);
+      await recordEnded(env, { userId: caller.user_id, plan: open.plan, remote: { ...ended, id: open.provider_subscription_id } });
+    } catch (error) {
+      console.error('An unpaid Razorpay checkout could not be cancelled', { subscription: open.provider_subscription_id, message: error?.message });
+    }
+  }
+  if (!entitled.length) throw new ApiError(409, 'no_active_subscription', 'You do not have an active subscription to cancel.');
   return c.json({ status: 'cancel_scheduled', current_period_end: periodEnd });
 }
 

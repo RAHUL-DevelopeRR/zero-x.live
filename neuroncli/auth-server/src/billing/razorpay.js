@@ -68,6 +68,9 @@ export const cancelSubscription = (env, id, atCycleEnd = true) =>
 export const createOrder = (env, body) => razorpayRequest(env, 'POST', '/orders', body);
 export const fetchOrder = (env, id) => razorpayRequest(env, 'GET', `/orders/${segment(id)}`);
 export const fetchPayment = (env, id) => razorpayRequest(env, 'GET', `/payments/${segment(id)}`);
+// Full refund at normal speed (https://razorpay.com/docs/api/refunds/create-normal/).
+export const refundPayment = (env, id, { notes } = {}) =>
+  razorpayRequest(env, 'POST', `/payments/${segment(id)}/refund`, { speed: 'normal', ...(notes ? { notes } : {}) });
 export const createPlan = (env, body) => razorpayRequest(env, 'POST', '/plans', body);
 export const listPlans = (env, { count = 100, skip = 0 } = {}) => razorpayRequest(env, 'GET', `/plans?count=${count}&skip=${skip}`);
 
@@ -126,6 +129,7 @@ export const SUBSCRIPTION_STATUSES = Object.freeze(['created', 'authenticated', 
   'cancelled', 'completed', 'expired', 'paused']);
 // Statuses that already entitle (or will soon entitle) the user, blocking a second checkout.
 export const LIVE_SUBSCRIPTION_STATUSES = Object.freeze(['authenticated', 'active', 'pending', 'halted', 'paused']);
+export const ENDED_SUBSCRIPTION_STATUSES = Object.freeze(['cancelled', 'completed', 'expired']);
 
 export function subscriptionStatus(value) {
   const status = String(value || '').toLowerCase();

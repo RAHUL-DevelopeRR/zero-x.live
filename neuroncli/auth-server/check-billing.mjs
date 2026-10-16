@@ -72,7 +72,8 @@ for (const unsafe of ['http://evil.example/v1', 'https://user:pass@api.example/v
 }
 
 // ── 2. Fake Razorpay API ──
-const rzp = { subscriptions: new Map(), orders: new Map(), payments: new Map(), plans: new Map(), requests: [], down: false };
+const rzp = { subscriptions: new Map(), orders: new Map(), payments: new Map(), plans: new Map(), refunds: [], requests: [], down: false, failCancel: false,
+  refuseCreatedCancel: false };
 const fakeRazorpay = createServer(async (req, res) => {
   const chunks = [];
   for await (const chunk of req) chunks.push(chunk);
@@ -97,6 +98,13 @@ const fakeRazorpay = createServer(async (req, res) => {
   if (resource === 'subscriptions' && id && action === 'cancel' && req.method === 'POST') {
     const subscription = rzp.subscriptions.get(id);
     if (!subscription) return notFound();
+    if (rzp.failCancel) return send(500, { error: { code: 'SERVER_ERROR', description: 'cancel failed' } });
+    if (rzp.refuseCreatedCancel && subscription.status === 'created') {
+      return send(400, { error: { code: 'BAD_REQUEST_ERROR', description: 'Subscription cannot be cancelled in created state' } });
+    }
+    if (['cancelled', 'completed', 'expired'].includes(subscription.status)) {
+      return send(400, { error: { code: 'BAD_REQUEST_ERROR', description: 'Subscription is not cancellable in cancelled status.' } });
+    }
     subscription.cancel_requested = body;
     if (body.cancel_at_cycle_end !== 1) subscription.status = 'cancelled';
     return send(200, subscription);
@@ -108,6 +116,19 @@ const fakeRazorpay = createServer(async (req, res) => {
     return send(200, order);
   }
   if (resource === 'orders' && id && req.method === 'GET') return rzp.orders.has(id) ? send(200, rzp.orders.get(id)) : notFound();
+  if (resource === 'payments' && id && action === 'refund' && req.method === 'POST') {
+    const payment = rzp.payments.get(id);
+    if (!payment) return notFound();
+    const amount = body.amount ?? payment.amount - (payment.amount_refunded || 0);
+    if (payment.status !== 'captured' || amount <= 0 || (payment.amount_refunded || 0) + amount > payment.amount) {
+      return send(400, { error: { code: 'BAD_REQUEST_ERROR', description: 'The refund amount provided is greater than amount captured' } });
+    }
+    const refund = { id: rid('rfnd'), entity: 'refund', amount, currency: payment.currency, payment_id: id, notes: body.notes, speed_requested: body.speed, status: 'processed' };
+    payment.amount_refunded = (payment.amount_refunded || 0) + amount;
+    if (payment.amount_refunded >= payment.amount) payment.status = 'refunded';
+    rzp.refunds.push(refund);
+    return send(200, refund);
+  }
   if (resource === 'payments' && id && req.method === 'GET') return rzp.payments.has(id) ? send(200, rzp.payments.get(id)) : notFound();
   if (resource === 'plans' && req.method === 'GET') {
     const items = [...rzp.plans.values()];
@@ -150,9 +171,28 @@ const policyRows = withIds => B1_POLICY_ROWS.map(row => ({ ...row,
 }));
 // Mirrors WP-B1's RAISE EXCEPTION checks so a stub never accepts what the real SQL rejects.
 const raise = message => Object.assign(new Error(message), { raise: message });
-const PAYMENT_STATUSES = ['created', 'authorized', 'captured', 'failed', 'refunded'];
+const PAYMENT_STATUSES = ['created', 'authorized', 'failed', 'captured', 'refunded']; // WP-B1 rank order
 const ACTIVE = ['authenticated', 'active'];
 const ENDED = ['cancelled', 'completed', 'expired'];
+const LIVE = ['authenticated', 'active', 'pending', 'halted', 'paused'];
+const PLAN_PRICE = { pro: 10, max: 40 };
+let touched = 0;
+const userSubscriptions = userId => [...db.subscriptions.values()].filter(row => row.user_id === userId);
+// zerox_current_subscription: unrevoked first, then entitling, then the most recently updated; unpaid
+// checkouts for 24 hours only.
+const currentSubscription = userId => userSubscriptions(userId)
+  .filter(row => row.status !== 'created' || Date.now() - Date.parse(row.created_at) < 86400000)
+  .sort((left, right) => (Boolean(left.revoked_at) - Boolean(right.revoked_at)) ||
+    ((LIVE.includes(right.status) && !right.revoked_at) - (LIVE.includes(left.status) && !left.revoked_at)) || right.touched - left.touched)[0] ?? null;
+// zerox_reconcile_subscription_plan, simplified: the best live, unrevoked subscription, else free.
+const reconcilePlan = userId => {
+  const account = db.accounts.get(userId);
+  if (!account) return;
+  const best = userSubscriptions(userId).filter(row => LIVE.includes(row.status) && !row.revoked_at)
+    .sort((left, right) => PLAN_PRICE[right.plan] - PLAN_PRICE[left.plan])[0];
+  if (best) account.plan = best.plan;
+  else if (userSubscriptions(userId).length) account.plan = 'free';
+};
 const rpc = {
   zerox_sync_account: ({ p_user_id, p_profile }) => {
     const row = db.accounts.get(p_user_id) || { clerk_id: p_user_id, plan: 'free', credit_balance_microusd: 0, daily_requests: 0, daily_tokens_used: 0 };
@@ -165,32 +205,78 @@ const rpc = {
   zerox_plan_policies_v2: () => db.policiesV2,
   zerox_account_overview: ({ p_user_id }) => {
     const account = db.accounts.get(p_user_id);
-    const subscription = [...db.subscriptions.values()].filter(row => row.user_id === p_user_id).at(-1) ?? null;
+    const subscription = currentSubscription(p_user_id);
     return account ? [{ account, policy: { plan: account.plan }, credits: { balance_microusd: account.credit_balance_microusd }, subscription, usage_today: {} }] : [];
   },
   zerox_billing_get: ({ p_user_id }) => [{
-    subscription: [...db.subscriptions.values()].filter(row => row.user_id === p_user_id).at(-1) ?? null,
+    subscription: currentSubscription(p_user_id),
     payments: [...db.payments.values()].filter(row => row.user_id === p_user_id),
   }],
   zerox_billing_upsert_subscription: args => {
-    const row = { ...(db.subscriptions.get(args.p_provider_subscription_id) || { id: crypto.randomUUID() }), user_id: args.p_user_id, provider: args.p_provider,
-      provider_subscription_id: args.p_provider_subscription_id, plan: args.p_plan, status: args.p_status, current_period_start: args.p_current_period_start,
-      current_period_end: args.p_current_period_end,
-      cancel_at_period_end: args.p_cancel_at_period_end ?? db.subscriptions.get(args.p_provider_subscription_id)?.cancel_at_period_end ?? false,
-      raw: args.p_raw };
-    db.subscriptions.delete(args.p_provider_subscription_id);
+    const existing = db.subscriptions.get(args.p_provider_subscription_id);
+    if (existing && existing.user_id !== args.p_user_id) throw raise('subscription_owner_mismatch');
+    // An ended subscription accepts only further ending updates.
+    if (existing && ENDED.includes(existing.status) && !ENDED.includes(args.p_status)) return [existing];
+    const row = { ...(existing || { id: crypto.randomUUID(), created_at: new Date().toISOString(), revoked_at: null, revoked_reason: null }),
+      user_id: args.p_user_id, provider: args.p_provider,
+      provider_subscription_id: args.p_provider_subscription_id, plan: existing && ENDED.includes(existing.status) ? existing.plan : args.p_plan,
+      status: args.p_status, current_period_start: args.p_current_period_start ?? existing?.current_period_start ?? null,
+      current_period_end: args.p_current_period_end ?? existing?.current_period_end ?? null,
+      cancel_at_period_end: args.p_cancel_at_period_end ?? existing?.cancel_at_period_end ?? false,
+      raw: args.p_raw ?? existing?.raw ?? null, touched: ++touched };
+    // A subscription becoming live while another unrevoked one is live is a duplicate.
+    if (!row.revoked_at && ['authenticated', 'active', 'pending'].includes(row.status) && !LIVE.includes(existing?.status) &&
+        userSubscriptions(args.p_user_id).some(other => other.id !== row.id && !other.revoked_at && LIVE.includes(other.status))) {
+      Object.assign(row, { revoked_at: new Date().toISOString(), revoked_reason: 'duplicate' });
+    }
     db.subscriptions.set(args.p_provider_subscription_id, row);
-    const account = db.accounts.get(args.p_user_id);
-    if (account && ACTIVE.includes(args.p_status)) account.plan = args.p_plan;
-    if (account && ENDED.includes(args.p_status)) account.plan = 'free';
+    reconcilePlan(args.p_user_id);
     return [row];
+  },
+  zerox_billing_subscriptions: ({ p_user_id }) => userSubscriptions(p_user_id).filter(row => !ENDED.includes(row.status))
+    .sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at) || right.touched - left.touched)
+    .map(row => ({ ...row, provider_plan_id: row.raw?.plan_id ?? null,
+      payments: [...db.payments.values()].filter(payment => payment.user_id === p_user_id && payment.kind === 'subscription' &&
+        payment.status !== 'failed' && payment.raw?.subscription_id === row.provider_subscription_id).length })),
+  zerox_billing_record_checkout: args => {
+    // db.checkoutRace simulates a parallel checkout recorded just before this one.
+    if (db.checkoutRace) { const race = db.checkoutRace; db.checkoutRace = null; race(args.p_user_id); }
+    const { p_user_id, p_provider, p_provider_subscription_id, p_plan, p_raw } = args;
+    const blocking = userSubscriptions(p_user_id).filter(row => row.provider_subscription_id !== p_provider_subscription_id && !row.revoked_at &&
+      (LIVE.includes(row.status) || (row.status === 'created' && Date.now() - Date.parse(row.created_at) < 86400000)))
+      .sort((left, right) => (left.status === 'created') - (right.status === 'created'))[0];
+    if (blocking) return [{ recorded: false, blocking_subscription_id: blocking.provider_subscription_id, blocking_status: blocking.status,
+      blocking_plan_id: blocking.raw?.plan_id ?? null }];
+    if (!db.subscriptions.has(p_provider_subscription_id)) {
+      db.subscriptions.set(p_provider_subscription_id, { id: crypto.randomUUID(), user_id: p_user_id, provider: p_provider,
+        provider_subscription_id: p_provider_subscription_id, plan: p_plan, status: 'created', current_period_start: null, current_period_end: null,
+        cancel_at_period_end: false, revoked_at: null, revoked_reason: null, raw: p_raw, created_at: new Date().toISOString(), touched: ++touched });
+    }
+    return [{ recorded: true, blocking_subscription_id: p_provider_subscription_id, blocking_status: 'created', blocking_plan_id: p_raw?.plan_id ?? null }];
+  },
+  zerox_billing_revoke_subscription: ({ p_provider_subscription_id, p_reason }) => {
+    const row = db.subscriptions.get(p_provider_subscription_id);
+    if (!row) return [];
+    if (!row.revoked_at) Object.assign(row, { revoked_at: new Date().toISOString(), revoked_reason: p_reason });
+    reconcilePlan(row.user_id);
+    return [row];
+  },
+  zerox_payment_by_provider_id: ({ p_provider_payment_id }) => {
+    const payment = db.payments.get(p_provider_payment_id);
+    if (!payment) return [];
+    const grant = db.grants.get(p_provider_payment_id);
+    return [{ id: payment.id, user_id: payment.user_id, kind: payment.kind, amount_minor: payment.amount_minor, currency: payment.currency,
+      status: payment.status, subscription_id: payment.raw?.subscription_id ?? null,
+      granted_microusd: grant && grant.delta > 0 && grant.user_id === payment.user_id ? grant.delta : 0, granted_reason: grant?.reason ?? null }];
   },
   zerox_billing_record_payment: args => {
     if (!PAYMENT_STATUSES.includes(args.p_status)) throw raise(`invalid_payment_status: ${args.p_status}`);
     const existing = db.payments.get(args.p_provider_payment_id);
+    // Status only moves forward; raw objects are merged (so the subscription id is kept).
+    const status = existing && PAYMENT_STATUSES.indexOf(existing.status) > PAYMENT_STATUSES.indexOf(args.p_status) ? existing.status : args.p_status;
     const row = { ...(existing || { id: crypto.randomUUID(), created_at: new Date().toISOString() }), user_id: args.p_user_id, provider: args.p_provider,
       provider_payment_id: args.p_provider_payment_id, kind: args.p_kind, amount_minor: args.p_amount_minor, currency: args.p_currency,
-      status: args.p_status, invoice_url: args.p_invoice_url, raw: args.p_raw };
+      status, invoice_url: args.p_invoice_url, raw: existing?.raw && args.p_raw ? { ...existing.raw, ...args.p_raw } : args.p_raw ?? existing?.raw ?? null };
     db.payments.set(args.p_provider_payment_id, row);
     return [row];
   },
@@ -199,16 +285,26 @@ const rpc = {
     if (typeof p_ref !== 'string' || !p_ref || p_ref.length > 200 || /^usage:/i.test(p_ref)) throw raise('invalid_credit_ref');
     const account = db.accounts.get(p_user_id);
     if (db.grants.has(p_ref)) return [{ granted: false, balance_microusd: account.credit_balance_microusd }];
-    db.grants.set(p_ref, { user_id: p_user_id, delta: p_delta_microusd, reason: p_reason });
-    account.credit_balance_microusd += p_delta_microusd;
+    // Negative deltas clamp the balance at zero (the shortfall is recorded).
+    const next = Math.max(0, account.credit_balance_microusd + p_delta_microusd);
+    db.grants.set(p_ref, { user_id: p_user_id, delta: next - account.credit_balance_microusd, reason: p_reason });
+    account.credit_balance_microusd = next;
     return [{ granted: true, balance_microusd: account.credit_balance_microusd }];
   },
-  zerox_webhook_claim: ({ p_provider, p_event_id, p_event_type, p_payload_sha256 }) => {
+  // Leases: 'processing' until completed, claimable again once the lease expired.
+  zerox_webhook_claim: ({ p_provider, p_event_id, p_event_type, p_payload_sha256, p_lease_seconds }) => {
     assert.equal(p_provider, 'razorpay');
     assert.match(p_payload_sha256, /^[0-9a-f]{64}$/);
-    if (db.claims.has(p_event_id)) return [{ claimed: false }];
-    db.claims.set(p_event_id, p_event_type);
-    return [{ claimed: true }];
+    assert.equal(p_lease_seconds, 120);
+    const claim = db.claims.get(p_event_id);
+    if (claim && (claim.status === 'processed' || claim.lease > Date.now())) return [{ claimed: false, in_progress: claim.status === 'processing' }];
+    db.claims.set(p_event_id, { type: p_event_type, status: 'processing', lease: Date.now() + p_lease_seconds * 1000, attempts: (claim?.attempts || 0) + 1 });
+    return [{ claimed: true, in_progress: false }];
+  },
+  zerox_webhook_complete: ({ p_event_id }) => {
+    const claim = db.claims.get(p_event_id);
+    if (claim) Object.assign(claim, { status: 'processed', lease: null });
+    return [{ completed: Boolean(claim) }];
   },
   zerox_webhook_release: ({ p_event_id }) => { db.claims.delete(p_event_id); return []; },
   zerox_subscription_by_provider_id: ({ p_provider_subscription_id }) => db.subscriptions.has(p_provider_subscription_id)
@@ -244,6 +340,10 @@ const buyer = { id: '33333333-3333-4333-8333-333333333333', email: 'buyer@exampl
 const other = { id: '44444444-4444-4444-8444-444444444444', email: 'other@example.test', user_metadata: { name: 'Other' } };
 identities.set('billing-token-buyer', buyer);
 identities.set('billing-token-other', other);
+const third = { id: '55555555-5555-4555-8555-555555555555', email: 'third@example.test', user_metadata: { name: 'Third' } };
+const dup = { id: '66666666-6666-4666-8666-666666666666', email: 'dup@example.test', user_metadata: { name: 'Two Tabs' } };
+identities.set('billing-token-third', third);
+identities.set('billing-token-dup', dup);
 const baseEnv = { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_test', SUPABASE_SECRET_KEY: SECRET, SESSIONS_KV: { get: async () => null, put: async () => {}, delete: async () => {} } };
 const billingEnv = { ...baseEnv, RAZORPAY_KEY_ID: KEY_ID, RAZORPAY_KEY_SECRET: KEY_SECRET, RAZORPAY_WEBHOOK_SECRET: WEBHOOK_SECRET, RAZORPAY_API_BASE };
 const call = async (path, { method = 'POST', token = 'billing-token-buyer', body, bindings = billingEnv } = {}) => {
@@ -338,12 +438,15 @@ try {
   assert.ok(!JSON.stringify(storedPayment.raw).includes('1111') && !JSON.stringify(storedPayment.raw).includes('buyer@example.test'),
     'card and contact details are not stored');
   assert.equal(db.grants.size, 0, 'monthly credits come from subscription.charged, not verify');
-  const pendingSubscription = (await call('/api/billing/checkout', { token: 'billing-token-other', body: { plan: 'pro', currency: 'INR' } })).body.subscription_id;
+  const pendingSubscription = (await call('/api/billing/checkout', { token: 'billing-token-third', body: { plan: 'pro', currency: 'INR' } })).body.subscription_id;
   const pendingPayment = { id: rid('pay'), amount: 89900, currency: 'INR', status: 'created' };
   rzp.payments.set(pendingPayment.id, pendingPayment);
-  const pending = await call('/api/billing/verify', { token: 'billing-token-other', body: { razorpay_payment_id: pendingPayment.id,
+  const pending = await call('/api/billing/verify', { token: 'billing-token-third', body: { razorpay_payment_id: pendingPayment.id,
     razorpay_subscription_id: pendingSubscription, razorpay_signature: hmac(KEY_SECRET, `${pendingPayment.id}|${pendingSubscription}`) } });
   assert.equal(pending.body.status, 'pending', 'unconfirmed subscriptions are not activated');
+  assert.equal(accountOf(third).plan, 'free');
+  assert.equal(db.payments.get(pendingPayment.id).status, 'created', 'the unconfirmed attempt is recorded for Billing');
+  assert.equal(db.payments.get(pendingPayment.id).raw.subscription_id, pendingSubscription);
   assert.equal(accountOf(other).plan, 'free');
 
   expectError(await call('/api/billing/checkout', { body: { plan: 'max', currency: 'USD' } }), 409, 'already_subscribed');
@@ -409,6 +512,7 @@ try {
   const creditsBefore = accountOf(buyer).credit_balance_microusd;
   const eventId = rid('evt');
   assert.deepEqual((await webhook(charged, { raw: rawCharged, eventId })).body, { received: true });
+  assert.equal(db.claims.get(eventId).status, 'processed', 'a processed delivery is marked complete');
   assert.equal(accountOf(buyer).credit_balance_microusd - creditsBefore, 8000000, 'subscription.charged grants the monthly credits');
   assert.equal(db.grants.get(charge.id).reason, 'subscription_pro');
   assert.equal(db.payments.get(charge.id).kind, 'subscription');
@@ -510,6 +614,205 @@ try {
   assert.deepEqual(noEventId.body, { received: true, ignored: true });
   assert.ok([...db.claims.keys()].some(key => key.startsWith('sha256:')), 'deliveries without an event id are deduplicated by payload hash');
 
+  // ── 8b. Review P3 (integration): webhook claims are leases ──
+  // A claim left 'processing' by an invocation that died is claimed again once its lease expires,
+  // instead of every retry being acknowledged as a duplicate (and, for subscription.charged, the
+  // monthly credits being lost).
+  const leaseCharge = paySubscription(maxSubscription, { amount: 4000, currency: 'USD' });
+  const leaseEvent = webhookEvent('subscription.charged', { subscription: { ...subscriptionEntity(maxSubscription), notes: { user_id: other.id } }, payment: leaseCharge });
+  const leaseId = rid('evt');
+  db.claims.set(leaseId, { type: 'subscription.charged', status: 'processing', lease: Date.now() + 60000, attempts: 1 });
+  const inFlight = await webhook(leaseEvent, { eventId: leaseId });
+  expectError(inFlight, 503, 'service_unavailable');
+  assert.equal(inFlight.body.error.retry_after_seconds, 120, 'a live lease asks Razorpay to retry later');
+  assert.ok(!db.grants.has(leaseCharge.id));
+  db.claims.get(leaseId).lease = Date.now() - 1000; // the invocation holding it died
+  assert.deepEqual((await webhook(leaseEvent, { eventId: leaseId })).body, { received: true }, 'an expired lease is claimed again');
+  assert.equal(db.grants.get(leaseCharge.id).delta, 35000000, 'the monthly credits are granted after all');
+  assert.deepEqual({ status: db.claims.get(leaseId).status, attempts: db.claims.get(leaseId).attempts }, { status: 'processed', attempts: 2 });
+  assert.deepEqual((await webhook(leaseEvent, { eventId: leaseId })).body, { received: true, duplicate: true });
+  // A failure to mark the claim processed does not fail the delivery (handlers are idempotent).
+  db.fail.add('zerox_webhook_complete');
+  assert.deepEqual((await webhook(webhookEvent('subscription.activated', { subscription: subscriptionEntity(maxSubscription) }))).body, { received: true });
+  db.fail.delete('zerox_webhook_complete');
+
+  // ── 8c. Review P2 (integration): one payable subscription per account ──
+  const dupCall = (path, body, method = 'POST') => call(path, { token: 'billing-token-dup', body, method });
+  const createdBefore = rzp.requests.filter(entry => entry.method === 'POST' && entry.path === '/v1/subscriptions').length;
+  const tabA = await dupCall('/api/billing/checkout', { plan: 'pro', currency: 'INR' });
+  const tabB = await dupCall('/api/billing/checkout', { plan: 'pro', currency: 'INR' });
+  assert.equal(tabA.status, 200);
+  assert.equal(tabB.body.subscription_id, tabA.body.subscription_id, 'a second tab reuses the unpaid checkout');
+  assert.equal(rzp.requests.filter(entry => entry.method === 'POST' && entry.path === '/v1/subscriptions').length - createdBefore, 1);
+  assert.equal(db.subscriptions.get(tabA.body.subscription_id).status, 'created', 'the checkout is recorded');
+  const switched = await dupCall('/api/billing/checkout', { plan: 'max', currency: 'USD' });
+  assert.notEqual(switched.body.subscription_id, tabA.body.subscription_id);
+  assert.deepEqual(rzp.subscriptions.get(tabA.body.subscription_id).cancel_requested, { cancel_at_cycle_end: 0 },
+    'an unpaid checkout for another plan is cancelled at Razorpay at once');
+  assert.equal(db.subscriptions.get(tabA.body.subscription_id).status, 'cancelled');
+  // A payment for the open checkout is being confirmed: it is never cancelled for another plan.
+  const maxId = switched.body.subscription_id;
+  const slowPayment = { id: rid('pay'), entity: 'payment', amount: 4000, currency: 'USD', status: 'created', created_at: now() };
+  rzp.payments.set(slowPayment.id, slowPayment);
+  const dupVerify = (subscriptionId, paymentId) => dupCall('/api/billing/verify', { razorpay_payment_id: paymentId,
+    razorpay_subscription_id: subscriptionId, razorpay_signature: hmac(KEY_SECRET, `${paymentId}|${subscriptionId}`) });
+  assert.equal((await dupVerify(maxId, slowPayment.id)).body.status, 'pending');
+  expectError(await dupCall('/api/billing/checkout', { plan: 'pro', currency: 'INR' }), 409, 'checkout_in_progress');
+  assert.equal(rzp.subscriptions.get(maxId).cancel_requested, undefined, 'a possibly paid checkout is not cancelled');
+  assert.equal((await dupCall('/api/billing/checkout', { plan: 'max', currency: 'USD' })).body.subscription_id, maxId, 'the same plan reuses it');
+  // Paid: the plan applies; any further checkout is refused.
+  const maxPayment = paySubscription(maxId, { amount: 4000, currency: 'USD' });
+  assert.equal((await dupVerify(maxId, maxPayment.id)).body.status, 'ok');
+  assert.equal(accountOf(dup).plan, 'max');
+  expectError(await dupCall('/api/billing/checkout', { plan: 'pro', currency: 'INR' }), 409, 'already_subscribed');
+  // Two checkouts that raced past the guard (or a subscription created elsewhere) and were both
+  // paid: the second activation is revoked, cancelled at Razorpay at once and refunded.
+  const rogue = { id: rid('sub'), entity: 'subscription', plan_id: PLAN_IDS.pro.INR, status: 'created', notes: { user_id: dup.id, plan: 'pro' }, created_at: now() };
+  rzp.subscriptions.set(rogue.id, rogue);
+  const roguePayment = paySubscription(rogue.id, { amount: 89900, currency: 'INR' });
+  const rogueVerify = await dupVerify(rogue.id, roguePayment.id);
+  expectError(rogueVerify, 409, 'already_subscribed');
+  assert.match(rogueVerify.body.error.message, /refunded/);
+  assert.equal(db.subscriptions.get(rogue.id).revoked_reason, 'duplicate');
+  assert.equal(db.subscriptions.get(rogue.id).status, 'cancelled');
+  assert.deepEqual(rzp.subscriptions.get(rogue.id).cancel_requested, { cancel_at_cycle_end: 0 }, 'cancelled now, not at the cycle end');
+  assert.deepEqual(rzp.refunds.filter(refund => refund.payment_id === roguePayment.id).map(refund => [refund.amount, refund.notes.reason]),
+    [[89900, 'duplicate_subscription']], 'its payment is refunded in full');
+  assert.equal(db.payments.get(roguePayment.id).status, 'refunded');
+  assert.equal(accountOf(dup).plan, 'max', 'the first subscription keeps the plan');
+  assert.equal((await dupCall('/api/billing', undefined, 'GET')).body.subscription.id, maxId, 'Billing shows the real subscription');
+  // Verify retried by the browser: no second refund, the same answer.
+  expectError(await dupVerify(rogue.id, roguePayment.id), 409, 'already_subscribed');
+  assert.equal(rzp.refunds.filter(refund => refund.payment_id === roguePayment.id).length, 1);
+  // The duplicate's charge webhook grants nothing and its charge is refunded.
+  const dupCredits = accountOf(dup).credit_balance_microusd;
+  const rogueCharge = paySubscription(rogue.id, { amount: 89900, currency: 'INR' });
+  await webhook(webhookEvent('subscription.charged', { subscription: subscriptionEntity(rogue.id), payment: rogueCharge }));
+  assert.equal(accountOf(dup).credit_balance_microusd, dupCredits, 'no credits for a duplicate');
+  assert.ok(!db.grants.has(rogueCharge.id));
+  assert.equal(rzp.payments.get(rogueCharge.id).status, 'refunded');
+  // Webhook-first activation (the browser never verified) is caught the same way.
+  const webhookRogue = { id: rid('sub'), entity: 'subscription', plan_id: PLAN_IDS.max.USD, status: 'created', notes: { user_id: dup.id, plan: 'max' }, created_at: now() };
+  rzp.subscriptions.set(webhookRogue.id, webhookRogue);
+  const webhookRogueCharge = paySubscription(webhookRogue.id, { amount: 4000, currency: 'USD' });
+  await webhook(webhookEvent('subscription.activated', { subscription: subscriptionEntity(webhookRogue.id) }));
+  assert.equal(db.subscriptions.get(webhookRogue.id).revoked_reason, 'duplicate');
+  assert.equal(rzp.subscriptions.get(webhookRogue.id).status, 'cancelled');
+  await webhook(webhookEvent('subscription.charged', { subscription: subscriptionEntity(webhookRogue.id), payment: webhookRogueCharge }));
+  assert.ok(!db.grants.has(webhookRogueCharge.id));
+  assert.equal(rzp.payments.get(webhookRogueCharge.id).status, 'refunded');
+  // A duplicate whose immediate cancellation failed stays live (but never entitles) until the
+  // dashboard's cancel ends it with every other live subscription.
+  const stuck = { id: rid('sub'), entity: 'subscription', plan_id: PLAN_IDS.pro.USD, status: 'created', notes: { user_id: dup.id, plan: 'pro' }, created_at: now() };
+  rzp.subscriptions.set(stuck.id, stuck);
+  const stuckPayment = paySubscription(stuck.id, { amount: 1000, currency: 'USD' });
+  rzp.failCancel = true;
+  expectError(await dupVerify(stuck.id, stuckPayment.id), 502, 'payment_provider_error');
+  rzp.failCancel = false;
+  assert.deepEqual([db.subscriptions.get(stuck.id).status, db.subscriptions.get(stuck.id).revoked_reason], ['active', 'duplicate']);
+  assert.equal(accountOf(dup).plan, 'max');
+  const cancelAll = await dupCall('/api/billing/cancel');
+  assert.equal(cancelAll.status, 200);
+  assert.equal(cancelAll.body.status, 'cancel_scheduled');
+  assert.equal(cancelAll.body.current_period_end, new Date(rzp.subscriptions.get(maxId).current_end * 1000).toISOString());
+  assert.deepEqual(rzp.subscriptions.get(maxId).cancel_requested, { cancel_at_cycle_end: 1 }, 'the entitled subscription ends with its period');
+  assert.deepEqual(rzp.subscriptions.get(stuck.id).cancel_requested, { cancel_at_cycle_end: 0 }, 'the live duplicate ends now');
+  assert.equal(db.subscriptions.get(stuck.id).status, 'cancelled');
+  const cancelsBefore = rzp.requests.filter(entry => entry.path.endsWith('/cancel')).length;
+  assert.equal((await dupCall('/api/billing/cancel')).body.status, 'cancel_scheduled');
+  assert.equal(rzp.requests.filter(entry => entry.path.endsWith('/cancel')).length, cancelsBefore, 'nothing left to cancel');
+  // Razorpay may keep an unpaid ('created') subscription open: the old checkout is then revoked
+  // here, so paying it from a stale payment window is cancelled and refunded, never entitling.
+  const switcher = { id: '88888888-8888-4888-8888-888888888888', email: 'switch@example.test', user_metadata: { name: 'Switch' } };
+  identities.set('billing-token-switch', switcher);
+  const switchCheckout = body => call('/api/billing/checkout', { token: 'billing-token-switch', body });
+  const firstChoice = (await switchCheckout({ plan: 'pro', currency: 'INR' })).body.subscription_id;
+  rzp.refuseCreatedCancel = true;
+  const secondChoice = await switchCheckout({ plan: 'max', currency: 'INR' });
+  rzp.refuseCreatedCancel = false;
+  assert.equal(secondChoice.status, 200, 'switching plans works even when Razorpay keeps the old checkout open');
+  assert.notEqual(secondChoice.body.subscription_id, firstChoice);
+  assert.equal(db.subscriptions.get(firstChoice).revoked_reason, 'duplicate');
+  assert.equal(db.subscriptions.get(firstChoice).status, 'created');
+  const stalePayment = paySubscription(firstChoice, { amount: 89900, currency: 'INR' });
+  expectError(await call('/api/billing/verify', { token: 'billing-token-switch', body: { razorpay_payment_id: stalePayment.id,
+    razorpay_subscription_id: firstChoice, razorpay_signature: hmac(KEY_SECRET, `${stalePayment.id}|${firstChoice}`) } }), 409, 'already_subscribed');
+  assert.equal(rzp.payments.get(stalePayment.id).status, 'refunded', 'the stale window payment is refunded');
+  assert.equal(rzp.subscriptions.get(firstChoice).status, 'cancelled');
+  assert.equal(accountOf(switcher).plan, 'free', 'and never entitles');
+  assert.equal((await switchCheckout({ plan: 'max', currency: 'INR' })).body.subscription_id, secondChoice.body.subscription_id,
+    'the new checkout is still offered');
+
+  // A parallel checkout recorded first (between this request's checks and its insert) wins: this
+  // request's Razorpay subscription is cancelled and the winner is answered for the same plan.
+  const racer = { id: '77777777-7777-4777-8777-777777777777', email: 'racer@example.test', user_metadata: { name: 'Racer' } };
+  identities.set('billing-token-racer', racer);
+  let winner = null;
+  db.checkoutRace = userId => {
+    winner = rid('sub');
+    rzp.subscriptions.set(winner, { id: winner, entity: 'subscription', plan_id: PLAN_IDS.pro.INR, status: 'created', notes: { user_id: userId, plan: 'pro' } });
+    db.subscriptions.set(winner, { id: crypto.randomUUID(), user_id: userId, provider: 'razorpay', provider_subscription_id: winner, plan: 'pro',
+      status: 'created', raw: { plan_id: PLAN_IDS.pro.INR }, created_at: new Date().toISOString(), revoked_at: null, revoked_reason: null, touched: ++touched });
+  };
+  const raced = await call('/api/billing/checkout', { token: 'billing-token-racer', body: { plan: 'pro', currency: 'INR' } });
+  assert.equal(raced.body.subscription_id, winner, 'the recorded checkout is answered');
+  const loser = rzp.requests.filter(entry => entry.method === 'POST' && entry.path === '/v1/subscriptions').at(-1);
+  assert.ok(loser);
+  assert.ok([...rzp.subscriptions.values()].some(entry => entry.notes?.user_id === racer.id && entry.id !== winner && entry.status === 'cancelled'),
+    'the losing Razorpay subscription is cancelled');
+
+  // ── 8d. Review P3 (integration): refunds take back what the payment bought ──
+  const refundEvent = (payment, amount) => webhookEvent('refund.processed', {
+    refund: { id: rid('rfnd'), entity: 'refund', amount, currency: payment.currency, payment_id: payment.id, status: 'processed' },
+    payment: rzp.payments.get(payment.id) });
+  accountOf(buyer).plan = 'pro';
+  const refundOrder = (await call('/api/billing/topup', { body: { pack: 'credits_20', currency: 'INR' } })).body.order_id;
+  const refundTopup = payOrder(refundOrder);
+  await orderVerify(refundOrder, refundTopup.id);
+  const toppedBalance = accountOf(buyer).credit_balance_microusd;
+  Object.assign(rzp.payments.get(refundTopup.id), { amount_refunded: 87450 });
+  const half = refundEvent(refundTopup, 87450);
+  assert.deepEqual((await webhook(half)).body, { received: true });
+  assert.equal(toppedBalance - accountOf(buyer).credit_balance_microusd, 10000000, 'a half refund takes back half the credits');
+  assert.equal(db.payments.get(refundTopup.id).status, 'captured', 'a partial refund keeps the payment captured');
+  await webhook(half);
+  assert.equal(toppedBalance - accountOf(buyer).credit_balance_microusd, 10000000, 'each refund is applied once');
+  Object.assign(rzp.payments.get(refundTopup.id), { amount_refunded: 174900, status: 'refunded' });
+  await webhook(refundEvent(refundTopup, 87450));
+  assert.equal(toppedBalance - accountOf(buyer).credit_balance_microusd, 20000000, 'the rest is taken back with the second refund');
+  assert.equal(db.payments.get(refundTopup.id).status, 'refunded');
+  // Spent credits cannot go negative: the balance clamps at zero and the shortfall is recorded.
+  accountOf(buyer).credit_balance_microusd = 1000000;
+  const spentOrder = (await call('/api/billing/topup', { body: { pack: 'credits_5', currency: 'INR' } })).body.order_id;
+  const spentTopup = payOrder(spentOrder);
+  await orderVerify(spentOrder, spentTopup.id);
+  accountOf(buyer).credit_balance_microusd = 2000000; // most of the $5 were used
+  Object.assign(rzp.payments.get(spentTopup.id), { amount_refunded: 44900, status: 'refunded' });
+  await webhook(refundEvent(spentTopup, 44900));
+  assert.equal(accountOf(buyer).credit_balance_microusd, 0);
+  // A full refund of a subscription payment ends the subscription (and its plan) at once.
+  const refundedSub = (await call('/api/billing/checkout', { token: 'billing-token-third', body: { plan: 'pro', currency: 'INR' } })).body.subscription_id;
+  const refundedPayment = paySubscription(refundedSub, { amount: 89900, currency: 'INR' });
+  assert.equal((await call('/api/billing/verify', { token: 'billing-token-third', body: { razorpay_payment_id: refundedPayment.id,
+    razorpay_subscription_id: refundedSub, razorpay_signature: hmac(KEY_SECRET, `${refundedPayment.id}|${refundedSub}`) } })).body.status, 'ok');
+  await webhook(webhookEvent('subscription.charged', { subscription: subscriptionEntity(refundedSub), payment: refundedPayment }));
+  assert.equal(accountOf(third).plan, 'pro');
+  assert.equal(accountOf(third).credit_balance_microusd, 8000000);
+  Object.assign(rzp.payments.get(refundedPayment.id), { amount_refunded: 89900, status: 'refunded' });
+  assert.deepEqual((await webhook(refundEvent(refundedPayment, 89900))).body, { received: true });
+  assert.equal(db.subscriptions.get(refundedSub).revoked_reason, 'refunded');
+  assert.deepEqual(rzp.subscriptions.get(refundedSub).cancel_requested, { cancel_at_cycle_end: 0 });
+  assert.equal(db.subscriptions.get(refundedSub).status, 'cancelled');
+  assert.equal(accountOf(third).plan, 'free', 'the refunded plan ends now, not at the period end');
+  assert.equal(accountOf(third).credit_balance_microusd, 0, 'the monthly credits of the refunded payment are taken back');
+  assert.equal(db.payments.get(refundedPayment.id).status, 'refunded');
+  assert.equal(db.payments.get(refundedPayment.id).raw.subscription_id, refundedSub, 'the subscription id survives later payment updates');
+  // Refunds for payments this gateway never recorded, and disputes, are left to the operator.
+  assert.deepEqual((await webhook(webhookEvent('refund.processed', { refund: { id: rid('rfnd'), amount: 100, payment_id: rid('pay') } }))).body,
+    { received: true, ignored: true });
+  assert.deepEqual((await webhook(webhookEvent('payment.dispute.created', { dispute: { id: 'disp_Test123456', payment_id: refundTopup.id } }))).body,
+    { received: true, ignored: true });
+
   // ── 9. scripts/razorpay-bootstrap.mjs ──
   const dryWithoutKeys = await bootstrapPlans({ env: {} });
   assert.deepEqual(dryWithoutKeys.map(row => [row.plan, row.currency, row.amount, row.action]), [
@@ -542,5 +845,6 @@ try {
   fakeRazorpay.close();
 }
 console.log('PASS: Razorpay signatures (positive/negative, constant-time), checkout/topup/verify/cancel against a fake Razorpay server, ' +
-  'raw-body webhook verification, duplicate events, credits once per payment, plan/status mapping, downgrade on cancellation, ' +
+  'raw-body webhook verification, duplicate events, leased webhook claims, credits once per payment, plan/status mapping, downgrade on ' +
+  'cancellation, one payable subscription per account (checkout reuse, duplicate cancel + refund, cancel-all), refund clawback, ' +
   'billing_not_configured and plan bootstrap');
