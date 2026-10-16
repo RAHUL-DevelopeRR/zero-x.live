@@ -27,8 +27,9 @@ export async function seedDevUser(env, db, { email, name = '', plan, creditsUsd 
     ON CONFLICT (email) DO UPDATE SET email = EXCLUDED.email RETURNING id`, [email])).rows[0];
   await rpc(env, 'zerox_sync_account', { p_user_id: user.id, p_profile: { email, name } });
   if (plan) {
+    // An operator grant: plan_source 'manual' (manual_plan only holds a grant a subscription overrides).
     await db.query(`UPDATE public.zerox_accounts SET plan = $2,
-      plan_source = CASE WHEN $2 = 'free' THEN 'default' ELSE 'manual' END, updated_at = now()
+      plan_source = CASE WHEN $2 = 'free' THEN 'default' ELSE 'manual' END, manual_plan = NULL, updated_at = now()
       WHERE clerk_id = $1`, [user.id, plan]);
   }
   if (creditsUsd) {

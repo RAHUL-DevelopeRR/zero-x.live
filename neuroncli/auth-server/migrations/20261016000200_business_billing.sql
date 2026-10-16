@@ -77,43 +77,89 @@ RETURNS text
 LANGUAGE sql STABLE SECURITY INVOKER SET search_path = '' AS $$
   SELECT s.plan FROM public.zerox_subscriptions AS s
   JOIN public.zerox_plan_policy AS p ON p.plan = s.plan
-  WHERE s.user_id = p_user_id AND public.zerox_subscription_grants_plan(s.status, s.current_period_end)
+  WHERE s.user_id = p_user_id
+    AND public.zerox_subscription_grants_plan(s.status, s.current_period_end, s.cancel_at_period_end, s.updated_at)
   ORDER BY p.price_usd DESC, s.updated_at DESC
   LIMIT 1;
 $$;
 
--- Brings one account's plan in line with its subscriptions. Only accounts whose plan came
--- from billing are downgraded; returns true when the plan changed.
+-- The plan, plan_source and manual_plan an account should have given its subscriptions:
+-- * an operator-granted plan (manual_plan, or the plan itself while it was not set by billing)
+--   is kept when it is priced higher than the best entitling subscription;
+-- * otherwise that subscription's plan applies and the operator plan is remembered in
+--   manual_plan, to be restored when billing ends;
+-- * a billing plan with neither an entitling subscription nor an operator plan reverts to free.
+-- Accounts with no subscription and no billing-managed plan are returned unchanged.
+CREATE FUNCTION public.zerox_billing_plan_target(p_user_id uuid)
+RETURNS TABLE (plan text, plan_source text, manual_plan text)
+LANGUAGE plpgsql STABLE SECURITY INVOKER SET search_path = '' AS $$
+#variable_conflict use_column
+DECLARE
+  v_account public.zerox_accounts;
+  v_subscription text;
+  v_manual text;
+  v_subscription_price numeric;
+  v_manual_price numeric;
+BEGIN
+  SELECT * INTO v_account FROM public.zerox_accounts AS a WHERE a.clerk_id = p_user_id;
+  IF NOT FOUND THEN RETURN; END IF;
+  v_subscription := public.zerox_subscription_effective_plan(p_user_id);
+  v_manual := CASE WHEN v_account.plan_source <> 'subscription' AND v_account.plan <> 'free'
+    THEN v_account.plan ELSE v_account.manual_plan END;
+  SELECT coalesce(max(pp.price_usd), 0) INTO v_subscription_price
+    FROM public.zerox_plan_policy AS pp WHERE pp.plan = v_subscription;
+  SELECT coalesce(max(pp.price_usd), 0) INTO v_manual_price
+    FROM public.zerox_plan_policy AS pp WHERE pp.plan = v_manual;
+  IF v_subscription IS NOT NULL AND (v_manual IS NULL OR v_subscription_price >= v_manual_price) THEN
+    RETURN QUERY SELECT v_subscription, 'subscription'::text, v_manual;
+  ELSIF v_manual IS NOT NULL THEN
+    RETURN QUERY SELECT v_manual, 'manual'::text, NULL::text;
+  ELSIF v_account.plan_source = 'subscription' THEN
+    RETURN QUERY SELECT 'free'::text, 'default'::text, NULL::text;
+  ELSE
+    RETURN QUERY SELECT v_account.plan, v_account.plan_source, v_account.manual_plan;
+  END IF;
+END;
+$$;
+
+-- Brings one account's plan in line with its subscriptions (see zerox_billing_plan_target).
+-- changed is true when the plan changed; downgraded when the new plan is priced lower.
 CREATE FUNCTION public.zerox_reconcile_subscription_plan(p_user_id uuid)
-RETURNS boolean
+RETURNS TABLE (previous_plan text, new_plan text, changed boolean, downgraded boolean)
 LANGUAGE plpgsql SECURITY INVOKER SET search_path = '' AS $$
 #variable_conflict use_column
 DECLARE
   v_account public.zerox_accounts;
-  v_plan text;
+  v_target record;
+  v_previous_price numeric;
+  v_new_price numeric;
 BEGIN
   SELECT * INTO v_account FROM public.zerox_accounts AS a WHERE a.clerk_id = p_user_id FOR UPDATE;
-  IF NOT FOUND THEN RETURN false; END IF;
-  v_plan := public.zerox_subscription_effective_plan(p_user_id);
-  IF v_plan IS NOT NULL THEN
-    IF v_account.plan = v_plan AND v_account.plan_source = 'subscription' THEN RETURN false; END IF;
-    UPDATE public.zerox_accounts AS a SET plan = v_plan, plan_source = 'subscription', updated_at = now()
-      WHERE a.clerk_id = p_user_id;
-    RETURN v_account.plan <> v_plan;
+  IF NOT FOUND THEN RETURN; END IF;
+  SELECT t.plan, t.plan_source, t.manual_plan INTO v_target FROM public.zerox_billing_plan_target(p_user_id) AS t;
+  IF (v_target.plan, v_target.plan_source, v_target.manual_plan)
+      IS NOT DISTINCT FROM (v_account.plan, v_account.plan_source, v_account.manual_plan) THEN
+    RETURN QUERY SELECT v_account.plan, v_account.plan, false, false;
+    RETURN;
   END IF;
-  IF v_account.plan_source = 'subscription' THEN
-    UPDATE public.zerox_accounts AS a SET plan = 'free', plan_source = 'default', updated_at = now()
-      WHERE a.clerk_id = p_user_id;
-    RETURN v_account.plan <> 'free';
-  END IF;
-  RETURN false;
+  UPDATE public.zerox_accounts AS a SET plan = v_target.plan, plan_source = v_target.plan_source,
+    manual_plan = v_target.manual_plan, updated_at = now()
+    WHERE a.clerk_id = p_user_id;
+  SELECT coalesce(max(pp.price_usd), 0) INTO v_previous_price
+    FROM public.zerox_plan_policy AS pp WHERE pp.plan = v_account.plan;
+  SELECT coalesce(max(pp.price_usd), 0) INTO v_new_price
+    FROM public.zerox_plan_policy AS pp WHERE pp.plan = v_target.plan;
+  RETURN QUERY SELECT v_account.plan, v_target.plan::text, v_account.plan <> v_target.plan,
+    v_new_price < v_previous_price;
 END;
 $$;
 
 -- Upserts a provider subscription (webhook or verify flow) and applies its plan: authenticated
 -- or active grants the plan; halted, paused, cancelled, completed and expired keep it until
--- current_period_end, after which the account reverts to free. Terminal statuses are sticky so
--- out-of-order webhooks cannot resurrect a cancelled subscription.
+-- current_period_end, after which the account reverts to its operator plan or free (see
+-- zerox_subscription_grants_plan for the exact bounds). Once a subscription has ended
+-- (cancelled, completed, expired) its plan is fixed and late or replayed non-ending webhooks
+-- are ignored, so out-of-order deliveries cannot resurrect or re-plan it.
 CREATE FUNCTION public.zerox_billing_upsert_subscription(p_user_id uuid, p_provider text,
   p_provider_subscription_id text, p_plan text, p_status text, p_current_period_start timestamptz,
   p_current_period_end timestamptz, p_cancel_at_period_end boolean, p_raw jsonb)
@@ -122,6 +168,7 @@ LANGUAGE plpgsql SECURITY INVOKER SET search_path = '' AS $$
 #variable_conflict use_column
 DECLARE
   v_subscription public.zerox_subscriptions;
+  v_ended constant text[] := ARRAY['cancelled', 'completed', 'expired'];
 BEGIN
   IF p_provider IS NULL OR p_provider !~ '^[a-z][a-z0-9_]{1,31}$' THEN RAISE EXCEPTION 'invalid_provider'; END IF;
   IF p_provider_subscription_id IS NULL OR length(p_provider_subscription_id) NOT BETWEEN 1 AND 100 THEN
@@ -145,15 +192,18 @@ BEGIN
     SELECT * INTO v_subscription FROM public.zerox_subscriptions AS s
       WHERE s.provider = p_provider AND s.provider_subscription_id = p_provider_subscription_id FOR UPDATE;
     IF v_subscription.user_id <> p_user_id THEN RAISE EXCEPTION 'subscription_owner_mismatch'; END IF;
-    UPDATE public.zerox_subscriptions AS s SET plan = p_plan,
-      status = CASE WHEN s.status IN ('cancelled', 'completed', 'expired')
-        AND p_status NOT IN ('cancelled', 'completed', 'expired') THEN s.status ELSE p_status END,
-      current_period_start = coalesce(p_current_period_start, s.current_period_start),
-      current_period_end = coalesce(p_current_period_end, s.current_period_end),
-      cancel_at_period_end = coalesce(p_cancel_at_period_end, s.cancel_at_period_end),
-      raw = coalesce(p_raw, s.raw), updated_at = now()
-      WHERE s.id = v_subscription.id
-      RETURNING * INTO v_subscription;
+    -- An ended subscription accepts only further ending updates, and never changes plan.
+    IF NOT (v_subscription.status = ANY (v_ended)) OR p_status = ANY (v_ended) THEN
+      UPDATE public.zerox_subscriptions AS s SET
+        plan = CASE WHEN s.status = ANY (v_ended) THEN s.plan ELSE p_plan END,
+        status = p_status,
+        current_period_start = coalesce(p_current_period_start, s.current_period_start),
+        current_period_end = coalesce(p_current_period_end, s.current_period_end),
+        cancel_at_period_end = coalesce(p_cancel_at_period_end, s.cancel_at_period_end),
+        raw = coalesce(p_raw, s.raw), updated_at = now()
+        WHERE s.id = v_subscription.id
+        RETURNING * INTO v_subscription;
+    END IF;
   END IF;
 
   PERFORM public.zerox_reconcile_subscription_plan(p_user_id);
@@ -161,24 +211,32 @@ BEGIN
 END;
 $$;
 
--- Downgrades accounts whose subscriptions no longer entitle them to their paid plan.
+-- Reconciles every billing-managed account whose plan no longer matches its subscriptions:
+-- lapsed grants after missed webhooks, ended billing periods and changed operator plans.
+-- downgraded counts moves to a lower-priced plan (or free); reconciled counts every plan change
+-- in either direction (an extension to the contract's {downgraded}).
 CREATE FUNCTION public.zerox_apply_subscription_expiry()
-RETURNS TABLE (downgraded bigint)
+RETURNS TABLE (downgraded bigint, reconciled bigint)
 LANGUAGE plpgsql SECURITY INVOKER SET search_path = '' AS $$
 #variable_conflict use_column
 DECLARE
   v_user uuid;
-  v_count bigint := 0;
+  v_result record;
+  v_downgraded bigint := 0;
+  v_reconciled bigint := 0;
 BEGIN
   FOR v_user IN
     SELECT a.clerk_id FROM public.zerox_accounts AS a
-    WHERE a.plan_source = 'subscription' AND a.plan <> 'free'
-      AND a.plan IS DISTINCT FROM public.zerox_subscription_effective_plan(a.clerk_id)
+    CROSS JOIN LATERAL public.zerox_billing_plan_target(a.clerk_id) AS t
+    WHERE a.plan_source = 'subscription'
+      AND (t.plan, t.plan_source, t.manual_plan) IS DISTINCT FROM (a.plan, a.plan_source, a.manual_plan)
     ORDER BY a.clerk_id
   LOOP
-    IF public.zerox_reconcile_subscription_plan(v_user) THEN v_count := v_count + 1; END IF;
+    SELECT r.changed, r.downgraded INTO v_result FROM public.zerox_reconcile_subscription_plan(v_user) AS r;
+    IF v_result.changed THEN v_reconciled := v_reconciled + 1; END IF;
+    IF v_result.downgraded THEN v_downgraded := v_downgraded + 1; END IF;
   END LOOP;
-  RETURN QUERY SELECT v_count;
+  RETURN QUERY SELECT v_downgraded, v_reconciled;
 END;
 $$;
 
@@ -237,7 +295,8 @@ END;
 $$;
 
 -- Applies a credit delta once per ref (payment id, invoice id, ...). Negative deltas clamp
--- the balance at zero and record the shortfall.
+-- the balance at zero and record the shortfall. Refs starting with 'usage:' are reserved for
+-- zerox_settle_v2 (one per reservation), so a grant can never block a settlement.
 CREATE FUNCTION public.zerox_credit_grant(p_user_id uuid, p_delta_microusd bigint, p_reason text, p_ref text)
 RETURNS TABLE (granted boolean, balance_microusd bigint)
 LANGUAGE plpgsql SECURITY INVOKER SET search_path = '' AS $$
@@ -252,6 +311,9 @@ BEGIN
   END IF;
   IF p_reason IS NULL OR p_reason !~ '^[a-z][a-z0-9_]{0,63}$' THEN RAISE EXCEPTION 'invalid_credit_reason'; END IF;
   IF p_ref IS NULL OR length(p_ref) NOT BETWEEN 1 AND 200 THEN RAISE EXCEPTION 'invalid_credit_ref'; END IF;
+  IF lower(p_ref) LIKE 'usage:%' THEN
+    RAISE EXCEPTION 'invalid_credit_ref: the usage: prefix is reserved for settlements';
+  END IF;
   SELECT a.credit_balance_microusd INTO v_balance FROM public.zerox_accounts AS a
     WHERE a.clerk_id = p_user_id FOR UPDATE;
   IF NOT FOUND THEN RAISE EXCEPTION 'account_not_found'; END IF;
@@ -329,6 +391,7 @@ REVOKE ALL ON FUNCTION
   public.zerox_api_key_revoke(uuid, uuid),
   public.zerox_api_key_verify(text),
   public.zerox_subscription_effective_plan(uuid),
+  public.zerox_billing_plan_target(uuid),
   public.zerox_reconcile_subscription_plan(uuid),
   public.zerox_billing_upsert_subscription(uuid, text, text, text, text, timestamptz, timestamptz, boolean, jsonb),
   public.zerox_apply_subscription_expiry(),
@@ -345,6 +408,7 @@ GRANT EXECUTE ON FUNCTION
   public.zerox_api_key_revoke(uuid, uuid),
   public.zerox_api_key_verify(text),
   public.zerox_subscription_effective_plan(uuid),
+  public.zerox_billing_plan_target(uuid),
   public.zerox_reconcile_subscription_plan(uuid),
   public.zerox_billing_upsert_subscription(uuid, text, text, text, text, timestamptz, timestamptz, boolean, jsonb),
   public.zerox_apply_subscription_expiry(),

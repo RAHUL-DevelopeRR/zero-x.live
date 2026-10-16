@@ -101,9 +101,13 @@ BEGIN
   END IF;
 
   IF v_status IS NULL THEN
-    SELECT count(*), coalesce(sum(r.reserved_cost_microusd) FILTER (WHERE r.tier = 'paid'), 0)
+    -- A concurrency slot is held for at most 10 minutes, but credits stay held by every active
+    -- paid reservation until it is settled or released (after 15 minutes), so a long-running
+    -- paid request cannot be spent twice.
+    SELECT count(*) FILTER (WHERE r.created_at > v_now - interval '10 minutes'),
+      coalesce(sum(r.reserved_cost_microusd) FILTER (WHERE r.tier = 'paid'), 0)
       INTO v_count, v_held FROM public.zerox_reservations AS r
-      WHERE r.user_id = p_user_id AND r.status = 'active' AND r.created_at > v_now - interval '10 minutes';
+      WHERE r.user_id = p_user_id AND r.status = 'active';
     IF v_count >= v_policy.concurrency_limit THEN
       v_status := 'user_concurrency';
       v_retry := 5;
@@ -304,13 +308,28 @@ LANGUAGE sql STABLE SECURITY INVOKER SET search_path = '' AS $$
   ORDER BY p.sort, p.plan;
 $$;
 
--- Whether a subscription still entitles its owner to the plan right now.
-CREATE FUNCTION public.zerox_subscription_grants_plan(p_status text, p_current_period_end timestamptz)
+-- Whether a subscription entitles its owner to the plan right now. Every grant is bounded in
+-- time so a lost webhook can never leave a paid plan in place indefinitely:
+-- * authenticated, active and pending (renewal charge failed, provider retrying) grant until
+--   current_period_end plus a 3 day grace window for late renewal webhooks and payment retries.
+--   Without a period end they grant for 3 days after the provider last updated the row. No grace
+--   applies when the subscription is set to cancel at period end, since it will not renew.
+-- * halted, paused, cancelled, completed and expired grant until current_period_end.
+-- * created grants nothing.
+-- zerox_apply_subscription_expiry downgrades accounts once their grants lapse.
+CREATE FUNCTION public.zerox_subscription_grants_plan(p_status text, p_current_period_end timestamptz,
+  p_cancel_at_period_end boolean, p_updated_at timestamptz)
 RETURNS boolean
 LANGUAGE sql STABLE SECURITY INVOKER SET search_path = '' AS $$
-  SELECT p_status IN ('authenticated', 'active', 'pending')
-    OR (p_status IN ('halted', 'paused', 'cancelled', 'completed', 'expired')
-        AND coalesce(p_current_period_end > now(), false));
+  SELECT coalesce(CASE
+    WHEN p_status IN ('authenticated', 'active', 'pending') AND p_current_period_end IS NOT NULL
+      THEN p_current_period_end
+        + CASE WHEN coalesce(p_cancel_at_period_end, false) THEN interval '0' ELSE interval '3 days' END > now()
+    WHEN p_status IN ('authenticated', 'active', 'pending')
+      THEN p_updated_at + interval '3 days' > now()
+    WHEN p_status IN ('halted', 'paused', 'cancelled', 'completed', 'expired')
+      THEN p_current_period_end > now()
+    ELSE false END, false);
 $$;
 
 -- The subscription shown to the user: the best entitling one, otherwise the latest.
@@ -320,9 +339,10 @@ LANGUAGE sql STABLE SECURITY INVOKER SET search_path = '' AS $$
   SELECT s.* FROM public.zerox_subscriptions AS s
   LEFT JOIN public.zerox_plan_policy AS p ON p.plan = s.plan
   WHERE s.user_id = p_user_id
-  ORDER BY public.zerox_subscription_grants_plan(s.status, s.current_period_end) DESC,
-    CASE WHEN public.zerox_subscription_grants_plan(s.status, s.current_period_end)
-      THEN p.price_usd END DESC NULLS LAST,
+  ORDER BY public.zerox_subscription_grants_plan(s.status, s.current_period_end, s.cancel_at_period_end,
+      s.updated_at) DESC,
+    CASE WHEN public.zerox_subscription_grants_plan(s.status, s.current_period_end, s.cancel_at_period_end,
+      s.updated_at) THEN p.price_usd END DESC NULLS LAST,
     s.updated_at DESC, s.created_at DESC
   LIMIT 1;
 $$;
@@ -410,7 +430,7 @@ REVOKE ALL ON FUNCTION
   public.zerox_settle_v2(uuid, bigint, bigint, bigint, text, integer, text, text, text),
   public.zerox_release_stale_reservations(),
   public.zerox_plan_policies_v2(),
-  public.zerox_subscription_grants_plan(text, timestamptz),
+  public.zerox_subscription_grants_plan(text, timestamptz, boolean, timestamptz),
   public.zerox_current_subscription(uuid),
   public.zerox_account_overview(uuid),
   public.zerox_usage_series(uuid, date, date),
@@ -422,7 +442,7 @@ GRANT EXECUTE ON FUNCTION
   public.zerox_settle_v2(uuid, bigint, bigint, bigint, text, integer, text, text, text),
   public.zerox_release_stale_reservations(),
   public.zerox_plan_policies_v2(),
-  public.zerox_subscription_grants_plan(text, timestamptz),
+  public.zerox_subscription_grants_plan(text, timestamptz, boolean, timestamptz),
   public.zerox_current_subscription(uuid),
   public.zerox_account_overview(uuid),
   public.zerox_usage_series(uuid, date, date),

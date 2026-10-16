@@ -65,10 +65,13 @@ LANGUAGE sql STABLE SECURITY INVOKER SET search_path = '' AS $$
       ((now() AT TIME ZONE 'UTC')::date::timestamp AT TIME ZONE 'UTC') AS day_start,
       date_trunc('minute', now(), 'UTC') AS minute_start
   ),
+  -- Recurring subscriptions whose grant has not lapsed (see zerox_subscription_grants_plan), so
+  -- subscriptions left 'active' by a missed webhook drop out of MRR with their plan.
   entitled AS (
     SELECT s.plan, p.price_usd FROM public.zerox_subscriptions AS s
     JOIN public.zerox_plan_policy AS p ON p.plan = s.plan
     WHERE s.status IN ('authenticated', 'active')
+      AND public.zerox_subscription_grants_plan(s.status, s.current_period_end, s.cancel_at_period_end, s.updated_at)
   ),
   today_usage AS (
     SELECT coalesce(sum(d.requests), 0) AS requests, coalesce(sum(d.errors), 0) AS errors,

@@ -74,7 +74,12 @@ ALTER TABLE public.zerox_accounts
   ADD COLUMN suspended boolean NOT NULL DEFAULT false,
   ADD COLUMN country text CHECK (country ~ '^[A-Z]{2}$'),
   ADD COLUMN plan_source text NOT NULL DEFAULT 'default'
-    CHECK (plan_source IN ('default', 'subscription', 'manual'));
+    CHECK (plan_source IN ('default', 'subscription', 'manual')),
+  ADD COLUMN manual_plan text CHECK (manual_plan IN ('pro', 'max', 'ultrawork'));
+COMMENT ON COLUMN public.zerox_accounts.plan_source IS
+  'Who set plan: default (free), subscription (billing) or manual (operator grant).';
+COMMENT ON COLUMN public.zerox_accounts.manual_plan IS
+  'Operator-granted plan remembered while a subscription priced at least as high overrides it; restored when billing ends. Set to NULL to withdraw the grant.';
 -- Paid plans that exist before billing were granted by an operator.
 UPDATE public.zerox_accounts SET plan_source = 'manual' WHERE plan <> 'free';
 CREATE INDEX zerox_accounts_plan_source_idx ON public.zerox_accounts (plan_source) WHERE plan_source = 'subscription';
@@ -102,7 +107,11 @@ CREATE TABLE public.zerox_reservations (
   settled_at timestamptz
 );
 CREATE INDEX zerox_reservations_user_created_idx ON public.zerox_reservations (user_id, created_at DESC);
+-- In-flight reservations per user (concurrency slots and credit holds).
+CREATE INDEX zerox_reservations_user_active_idx ON public.zerox_reservations (user_id, created_at) WHERE status = 'active';
+-- Stale release scans active rows by age; housekeeping deletes finished rows by age.
 CREATE INDEX zerox_reservations_active_idx ON public.zerox_reservations (created_at) WHERE status = 'active';
+CREATE INDEX zerox_reservations_finished_idx ON public.zerox_reservations (created_at) WHERE status <> 'active';
 CREATE INDEX zerox_reservations_request_idx ON public.zerox_reservations (request_id);
 
 CREATE TABLE public.zerox_pool_usage (
