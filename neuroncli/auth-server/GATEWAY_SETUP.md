@@ -140,7 +140,7 @@ Work through these in order; nothing in this repository does them for you.
    project key and store them as `GROQ_PAID_API_KEY` and `GEMINI_PAID_API_KEY`. Without them Pro
    and Max have no paid pool (credits cannot be spent). Check the real Gemini free-tier limits in
    AI Studio (or the `quotas` field of `Neuron upstream error detail` log lines) against
-   `POOL_LIMITS` in `src/catalog.js`; the free Gemini budget is 5 rpm / 100K tpm per model after
+   `POOL_LIMITS` in `src/catalog.js`; the free Gemini budget is 5 rpm / 120K tpm per model after
    the project was rate limited below its published limits on 2026-10-16.
 5. **Operator secrets.** Set `GATEWAY_ADMIN_TOKEN` (≥ 32 random characters) and
    `SESSION_ENCRYPTION_KEY` (`openssl rand -base64 32`) as GitHub Actions secrets.

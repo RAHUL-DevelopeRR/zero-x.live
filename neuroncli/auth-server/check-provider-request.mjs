@@ -665,16 +665,27 @@ try {
   });
 
   await test('free Gemini budgets stay below the observed upstream limit and still fit a Neuron request', () => {
-    assert.deepEqual({ ...POOL_LIMITS.gemini_free }, { rpm: 5, rpd: 250, tpm: 100000, tpd: 5000000 });
+    assert.deepEqual({ ...POOL_LIMITS.gemini_free }, { rpm: 5, rpd: 250, tpm: 120000, tpd: 5000000 });
     for (const id of ['gemini/gemini-2.5-flash', 'gemini/gemini-3.5-flash']) {
       const free = entry(id).pools.find(pool => pool.tier === 'free');
       assert.equal(free.limits, POOL_LIMITS.gemini_free);
       // The captured request with its full 71,891-character system prompt is ~23K tokens upstream.
       assert.equal(fitMaxTokens(entry(id), free, 23500, 8192), 8192);
-      assert.equal(fitMaxTokens(entry(id), free, 99500, 8192), 0, 'no room for a useful answer in the per-minute budget');
-      assert.deepEqual(reservationArgs({ session: { user_id: 'u' }, requestId: 'r', entry: entry(id), pool: free, promptTokens: 23500,
-        maxTokens: 8192 }).p_pool, { rpm: 5, rpd: 250, tpm: 100000, tpd: 5000000 });
+      assert.equal(fitMaxTokens(entry(id), free, 119500, 8192), 0, 'no room for a useful answer in the per-minute budget');
+      const args = reservationArgs({ session: { user_id: 'u' }, requestId: 'r', entry: entry(id), pool: free, promptTokens: 23500, maxTokens: 8192 });
+      assert.deepEqual(args.p_pool, { rpm: 5, rpd: 250, tpm: 120000, tpd: 5000000 });
+      // Sequential Neuron turns settle to ~25K each (prompt + a short answer): the fourth one in a
+      // minute still fits its 31.7K reservation, and no minute can pass more than 120K tokens upstream.
+      assert.ok(3 * 25000 + args.p_tokens <= free.limits.tpm && 4 * 25000 + args.p_tokens > free.limits.tpm);
+      assert.ok(free.limits.tpm < 125000, 'below the ~125K input tokens Google accepted before its 429');
     }
+    // A prompt that only the per-minute budget rules out is too large, not outside the plan.
+    const router = new RoutingEngine(new ProviderHealthTracker());
+    const tooLarge = router.route({ env: KEYS, requestedModel: 'gemini/gemini-2.5-flash', needsTools: true, promptTokens: 119500,
+      maxTokens: 8192, tiers: ['free'], country: 'US' });
+    assert.equal(tooLarge.error, 'context_length_exceeded');
+    assert.match(tooLarge.message, /too large for the free per-minute token budget \(120,000 tokens/);
+    assert.equal(tooLarge.upgrade, false, 'no paid Gemini key configured here');
     assert.ok(estimatePromptTokens(FIXTURE.messages, FIXTURE.tools) < 100000);
   });
 

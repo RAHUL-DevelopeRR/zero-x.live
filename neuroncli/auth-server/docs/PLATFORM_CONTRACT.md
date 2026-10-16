@@ -50,7 +50,7 @@ Each public model has one or more pools:
   supports_tools: true, supports_streaming: true,
   geo_block_free: ['EEA','GB','CH'],       // free pool unavailable for these caller countries
   pools: [
-    { tier: 'free', key_var: 'GEMINI_API_KEY', limits: { rpm: 5, rpd: 250, tpm: 100000, tpd: 5000000 } },
+    { tier: 'free', key_var: 'GEMINI_API_KEY', limits: { rpm: 5, rpd: 250, tpm: 120000, tpd: 5000000 } },
     { tier: 'paid', key_var: 'GEMINI_PAID_API_KEY',
       price: { input_microusd_per_mtok: 375000, output_microusd_per_mtok: 3125000 } },
   ],
@@ -110,7 +110,7 @@ credential (never an `nzx_` key). Session tokens are stored hashed (SHA-256) in 
 | HTTP | code | type | when |
 |------|------|------|------|
 | 400 | `invalid_request` | invalid_request_error | malformed body |
-| 400 | `context_length_exceeded` | invalid_request_error | no candidate fits the request |
+| 400 | `context_length_exceeded` | invalid_request_error | no candidate fits the request, including a prompt above the free per-minute token budget (`upgrade_url` when a paid pool would take it) |
 | 401 | `invalid_session` | authentication_error | missing/expired/revoked credential — message tells CLI users to run `neuron auth login` |
 | 402 | `insufficient_credits` | insufficient_quota | paid pool needed, credit balance too low (`upgrade_url`) |
 | 403 | `upgrade_required` | permission_error | model not in plan (`upgrade_url`) |
@@ -317,3 +317,9 @@ Sync the copy in `neuron-v2`; nothing here changes what the CLI sends or must ha
 - **Health probes.** `POST /v1/models/health` applies the caller's country (geo rules) exactly as
   `POST /v1/chat/completions` does.
 - **Errors (§3.3).** Additional code: `checkout_in_progress` (409).
+- **Free per-minute budgets (§2, §3.3).** The free Gemini pools budget rpm 5 / tpm 120K per model.
+  A prompt that the caller's free pools could take only without their per-minute token budget
+  (prompt plus `max_tokens` above it) answers `400 context_length_exceeded`, whose message names
+  the budget, with `upgrade_url` when a paid pool would take it, instead of
+  `403 upgrade_required` ("model not in plan"). Clients handle it like any other
+  `context_length_exceeded` (compact or shorten).

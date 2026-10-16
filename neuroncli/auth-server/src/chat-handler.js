@@ -172,7 +172,9 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
       console.error('Neuron routing failed', { name: error?.name, request_id: requestId });
       return fail('service_unavailable');
     }
-    if (!route.ok) return fail(route.error, { message: route.message, retryAfterSeconds: route.retryAfterSeconds });
+    if (!route.ok) {
+      return fail(route.error, { message: route.message, retryAfterSeconds: route.retryAfterSeconds, upgrade: route.upgrade });
+    }
 
     const setQuotaHeaders = (requests, tokens) => {
       if (isSet(requests) && Number.isFinite(Number(requests))) headers['x-neuron-quota-remaining-requests'] = String(requests);

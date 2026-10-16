@@ -345,14 +345,27 @@ try {
     const base = { env, requestedModel: 'auto', needsTools: true, maxTokens: 4096, tiers: ['free'], country: 'DE' };
     assert.deepEqual(ids(router.route({ ...base, promptTokens: 12000 })), ['@cf/meta/llama-3.3-70b-instruct-fp8-fast#free']);
     assert.equal(router.route({ ...base, promptTokens: 12000 }).candidates[0].maxTokens, 4096);
-    assert.equal(router.route({ ...base, env: KEYS, promptTokens: 12000 }).error, 'upgrade_required');
-    assert.equal(router.route({ ...base, env: { GROQ_API_KEY: 'g', GEMINI_API_KEY: 'g' }, promptTokens: 12000 }).error, 'region_unavailable');
+    // Groq free (the only free pool in DE without Workers AI) would take the model but not 12K
+    // within its 8K TPM: the request is too large for free capacity; paid capacity would take it.
+    const groqBound = router.route({ ...base, env: KEYS, promptTokens: 12000 });
+    assert.equal(groqBound.error, 'context_length_exceeded');
+    assert.match(groqBound.message, /free per-minute token budget \(8,000 tokens.*or upgrade for paid capacity/);
+    assert.equal(groqBound.upgrade, true);
+    const freeOnly = router.route({ ...base, env: { GROQ_API_KEY: 'g', GEMINI_API_KEY: 'g' }, promptTokens: 12000 });
+    assert.deepEqual([freeOnly.error, freeOnly.upgrade], ['context_length_exceeded', false], 'no paid pool configured');
+    assert.doesNotMatch(freeOnly.message, /upgrade/);
+    assert.equal(router.route({ ...base, env: { GEMINI_API_KEY: 'g' }, promptTokens: 12000 }).error, 'region_unavailable');
     assert.equal(router.route({ ...base, promptTokens: 2000000 }).error, 'context_length_exceeded');
     assert.equal(router.route({ ...base, country: 'US', promptTokens: 2000000 }).error, 'context_length_exceeded');
     assert.equal(ids(router.route({ ...base, country: 'US', promptTokens: 90000 }))[0], 'gemini/gemini-2.5-flash#free');
-    // The free Gemini budget (100K TPM, below the observed upstream limit) cannot take a 200K
-    // prompt; the paid pools (no per-minute token cap) can, so free callers are told to upgrade.
-    assert.equal(router.route({ ...base, country: 'US', promptTokens: 200000 }).error, 'upgrade_required');
+    // The free Gemini budget (120K TPM, below the observed upstream limit) cannot take a 200K
+    // prompt; the paid pools (no per-minute token cap) can. Free callers are told the request is
+    // too large for the free budget (with an upgrade link), not that the model is outside their plan.
+    const overBudget = router.route({ ...base, country: 'US', promptTokens: 200000 });
+    assert.equal(overBudget.error, 'context_length_exceeded');
+    assert.match(overBudget.message, /free per-minute token budget \(120,000 tokens/);
+    assert.equal(overBudget.upgrade, true);
+    assert.equal(ids(router.route({ ...base, country: 'US', promptTokens: 110000 }))[0], 'gemini/gemini-2.5-flash#free');
     assert.equal(ids(router.route({ ...base, country: 'US', promptTokens: 200000, tiers: ['free', 'paid'] }))[0], 'gemini/gemini-2.5-flash#paid');
     assert.equal(router.route({ ...base, env: {}, promptTokens: 10 }).error, 'service_unavailable');
   });
@@ -1131,6 +1144,24 @@ try {
     anonymous.addSession('ses_anon', { plan: 'pro' });
     reset({});
     await expectError(await anonymous.call({ ...KEYS }, { model: 'gemini/gemini-2.5-pro', messages }), 403, 'upgrade_required');
+  });
+
+  await test('a prompt above the free per-minute budget answers context_length_exceeded with an upgrade link', async () => {
+    const gw = gateway();
+    gw.addSession('ses_anon');
+    reset({});
+    const large = [{ role: 'user', content: 'word '.repeat(110000) }];
+    assert.ok(estimatePromptTokens(large) > 120000);
+    const error = await expectError(await gw.call({ ...KEYS }, { model: 'gemini/gemini-2.5-flash', messages: large, max_tokens: 4096 },
+      { country: 'US' }), 400, 'context_length_exceeded');
+    assert.match(error.message, /^This request is too large for the free per-minute token budget \(120,000 tokens/);
+    assert.equal(error.upgrade_url, 'https://zero-x.live/pricing');
+    assert.equal(error.type, 'invalid_request_error');
+    const noPaid = await expectError(await gw.call({ GEMINI_API_KEY: 'g' }, { model: 'gemini/gemini-2.5-flash', messages: large },
+      { country: 'US' }), 400, 'context_length_exceeded');
+    assert.equal(noPaid.upgrade_url, undefined, 'no upgrade link without paid capacity');
+    assert.doesNotMatch(noPaid.message, /upgrade/);
+    assert.equal(gw.session('ses_anon').requests, 0, 'refused before any reservation');
   });
 
   // ── OpenRouter ──

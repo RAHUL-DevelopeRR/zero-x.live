@@ -59,7 +59,10 @@ export class RoutingEngine {
       for (const verdict of poolVerdicts(env, entry, tiers, country)) {
         const key = poolKey(entry, verdict.pool);
         const fit = fitMaxTokens(entry, verdict.pool, promptTokens, maxTokens);
-        evaluated.push({ ...verdict, entry, key, fits: fit > 0, maxTokens: fit,
+        // Ruled out only by the pool's per-minute token budget, not by the context window.
+        const overBudget = fit === 0 && Boolean(verdict.pool.limits?.tpm) &&
+          fitMaxTokens(entry, { ...verdict.pool, limits: null }, promptTokens, maxTokens) > 0;
+        evaluated.push({ ...verdict, entry, key, fits: fit > 0, overBudget, maxTokens: fit,
           healthy: this.healthTracker.isAvailable(key, now) });
       }
     }
@@ -90,7 +93,19 @@ export class RoutingEngine {
       return failure(limited ? 'capacity_exhausted' : 'upstream_error', { retryAfterSeconds });
     }
     const locked = configured.filter(item => item.fits && !(item.inPlan && item.region));
-    if (locked.some(item => !item.inPlan && item.region)) {
+    const paidWouldFit = locked.some(item => !item.inPlan && item.region);
+    // The caller's own (free) pools would take the model but not a prompt this large within
+    // their per-minute token budget: the request is too large, the model is not outside the plan.
+    const overBudget = configured.filter(item => item.inPlan && item.region && item.overBudget);
+    if (overBudget.length) {
+      const budget = Math.max(...overBudget.map(item => item.pool.limits.tpm));
+      return failure('context_length_exceeded', {
+        upgrade: paidWouldFit,
+        message: `This request is too large for the free per-minute token budget (${budget.toLocaleString('en-US')} tokens, prompt plus max_tokens). ` +
+          `Shorten the conversation or lower max_tokens${paidWouldFit ? ', or upgrade for paid capacity' : ''}.`,
+      });
+    }
+    if (paidWouldFit) {
       const regional = configured.some(item => item.inPlan && !item.region);
       return failure('upgrade_required', regional
         ? { message: 'The free tier of this model is not available in your region. Upgrade to use paid capacity.' }

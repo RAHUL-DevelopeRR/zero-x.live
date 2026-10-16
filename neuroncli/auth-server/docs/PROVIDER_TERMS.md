@@ -6,7 +6,7 @@ This is an engineering summary, not legal advice; confirm with counsel before la
 | Provider | Free-tier limits (observed / documented) | Can a free key serve a paid multi-user product? | Gateway default |
 |----------|-------------------------------------------|-----------------------------------------------|-----------------|
 | Groq | Org-wide: gpt-oss-120b 30 RPM, 1K RPD, 8K TPM, 200K TPD (headers confirmed 1000 req/day, 8000 tok/min; 10.5K-token request → 413) | Services Agreement §3.1 allows End Users via Customer Applications; §6.3(c) bars resale without approval; AUP bans multi-account/org orchestration | Free pool for small prompts; paid plans use `GROQ_PAID_API_KEY` (Developer plan) |
-| Google Gemini API | Per project, shown only in AI Studio; Pro models have 0 free quota for this key; 2.5 Pro 404 for new users. Observed 2026-10-16: free 2.5 Flash answered 429 after 6 Neuron requests (~125K input tokens) within 16 s, well below the published 10 RPM / 250K TPM | Allowed for API clients, but "only Paid Services" for users in EEA/UK/CH; free-tier prompts may train and be human-reviewed | Free pool geo-blocked for EEA/GB/CH; free budget per model rpm 5, tpm 100K (rpd 250 / tpd 5M unverified); paid plans use `GEMINI_PAID_API_KEY` (billing-linked project) |
+| Google Gemini API | Per project, shown only in AI Studio; Pro models have 0 free quota for this key; 2.5 Pro 404 for new users. Observed 2026-10-16: free 2.5 Flash answered 429 after 6 Neuron requests (~125K input tokens) within 16 s, well below the published 10 RPM / 250K TPM | Allowed for API clients, but "only Paid Services" for users in EEA/UK/CH; free-tier prompts may train and be human-reviewed | Free pool geo-blocked for EEA/GB/CH; free budget per model rpm 5, tpm 120K (rpd 250 / tpd 5M unverified); paid plans use `GEMINI_PAID_API_KEY` (billing-linked project) |
 | NVIDIA API Catalog | ~40 RPM community-observed, no published table | Trial Terms §1.2/§1.4: trial and internal evaluation only, not production; §4.2 no making Generated Content available to others | `hosted=false` (`NVIDIA_HOSTED=true` for internal evaluation only) |
 | OpenRouter | Free models 20 RPM; 50 RPD (<$10 credits) or 1,000 RPD; this key is free tier (limit $0, 50/day) | Terms §7.4 bans "reselling API access to Models"; §7.3 bans extra accounts to bypass limits | BYOK only (user OAuth / own key); `OPENROUTER_HOSTED=true` re-enables operator key; send `provider.data_collection:'deny'` |
 | Cloudflare Workers AI | 10,000 Neurons/day free; $0.011 / 1K Neurons on Workers Paid | Customer responsible for End Users; no training on customer content | Free pool within allocation; paid overage only on Workers Paid |
@@ -28,11 +28,14 @@ Business consequences:
 
 The shared budgets in `POOL_LIMITS` (`src/catalog.js`) are enforced per model for all users by
 `zerox_reserve_v2` before any upstream call (each attempt reserves its prompt estimate plus
-`max_tokens`). They are set below what the upstreams were seen to accept:
+`max_tokens`, settled to the real usage when it ends). They are set below what the upstreams were
+seen to accept. A prompt that a caller's free pools could take only without their per-minute token
+budget answers `400 context_length_exceeded` (the message names the budget; `upgrade_url` when
+a paid pool would take it), not `upgrade_required`:
 
 | Pool | rpm | rpd | tpm | tpd | Basis |
 |------|-----|-----|-----|-----|-------|
-| `gemini_free` (2.5 Flash, 3.5 Flash; each model separately) | 5 | 250 | 100,000 | 5,000,000 | 2026-10-16: 429 after 6 requests / ~125K input tokens in 16 s on 2.5 Flash (published: 10 RPM, 250K TPM). rpd/tpd not observed yet. |
+| `gemini_free` (2.5 Flash, 3.5 Flash; each model separately) | 5 | 250 | 120,000 | 5,000,000 | 2026-10-16: 429 after 6 requests / ~125K input tokens in 16 s on 2.5 Flash (published: 10 RPM, 250K TPM). Google counts input tokens only; the reservation counts prompt plus `max_tokens`, so 120K never passes more than ~120K input tokens a minute and fits four sequential Neuron-sized requests (~23.5K prompt + 8K `max_tokens`, settled to ~25K each). rpd/tpd not observed yet. |
 | `groq_free` (each model) | 30 | 1,000 | 8,000 | 200,000 | Groq `x-ratelimit-*` headers. |
 
 When an upstream still answers 429, the pool is parked (per gateway isolate) for the delay the

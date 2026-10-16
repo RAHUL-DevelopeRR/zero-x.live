@@ -30,12 +30,15 @@ const GEMINI_FREE_GEO_BLOCK = Object.freeze(['EEA', 'GB', 'CH']);
 // x-ratelimit headers. Gemini free limits are shown only per project in AI Studio and are
 // tighter than the published 10 RPM / 250K TPM: on 2026-10-16 gemini-2.5-flash answered 429
 // after 6 requests (~125K input tokens) within 16 s, so the per-minute budget stays below that
-// (rpm 5, tpm 100K; rpd/tpd unverified). Upstream 429s still park a pool for the provider's
+// (rpm 5, tpm 120K; rpd/tpd unverified). Google counts input tokens only, while a reservation
+// counts the prompt plus max_tokens (settled to the real usage afterwards), so 120K never lets
+// more than ~120K input tokens per minute through and still fits four sequential Neuron-sized
+// requests (~23.5K prompt + 8K max_tokens). Upstream 429s still park a pool for the provider's
 // delay (provider-health.js). Workers AI pools are sized so both models together stay under
 // the 10,000 neurons/day free allocation, assuming at most ~15% of tokens are output tokens.
 export const POOL_LIMITS = Object.freeze({
   groq_free: Object.freeze({ rpm: 30, rpd: 1000, tpm: 8000, tpd: 200000 }),
-  gemini_free: Object.freeze({ rpm: 5, rpd: 250, tpm: 100000, tpd: 5000000 }),
+  gemini_free: Object.freeze({ rpm: 5, rpd: 250, tpm: 120000, tpd: 5000000 }),
   workers_llama_free: Object.freeze({ rpm: 20, rpd: 300, tpm: 60000, tpd: 120000 }),
   workers_gpt_oss_free: Object.freeze({ rpm: 20, rpd: 200, tpm: 60000, tpd: 90000 }),
   nvidia_trial: Object.freeze({ rpm: 20, rpd: 500, tpm: 100000, tpd: 1000000 }),

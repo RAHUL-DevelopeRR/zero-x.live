@@ -54,7 +54,8 @@ export function errorStatus(code) {
   return (ERROR_CODES[code] || ERROR_CODES.service_unavailable).status;
 }
 
-export function errorBody(code, { message, requestId = null, env, retryAfterSeconds, resetsAt, upgradeUrl } = {}) {
+// `upgrade` overrides whether the code carries an upgrade_url; `upgradeUrl` sets it explicitly.
+export function errorBody(code, { message, requestId = null, env, retryAfterSeconds, resetsAt, upgradeUrl, upgrade } = {}) {
   const spec = ERROR_CODES[code] || ERROR_CODES.service_unavailable;
   const error = {
     message: message || spec.message,
@@ -63,7 +64,7 @@ export function errorBody(code, { message, requestId = null, env, retryAfterSeco
     param: null,
     request_id: requestId,
   };
-  if (upgradeUrl !== undefined ? upgradeUrl : spec.upgrade) error.upgrade_url = upgradeUrl || pricingUrl(env);
+  if (upgradeUrl !== undefined ? upgradeUrl : upgrade ?? spec.upgrade) error.upgrade_url = upgradeUrl || pricingUrl(env);
   const retry = seconds(retryAfterSeconds);
   if (retry) error.retry_after_seconds = retry;
   const resets = resetsAt ? new Date(resetsAt) : null;
