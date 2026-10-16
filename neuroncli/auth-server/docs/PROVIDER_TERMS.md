@@ -41,7 +41,8 @@ upstream names: `Retry-After`, Groq's `x-ratelimit-reset-*` for the exhausted di
 (`QuotaFailure` quota ids containing `PerDay`); without a delay, 30 s. If the pool is rate
 limited again within 10 minutes after its cooldown ended, the backoff doubles each time (at
 least half the escalated backoff when the upstream names a shorter delay; at most 15 minutes for
-unnamed delays) until a request succeeds. 429s from requests already in flight do not escalate.
+unnamed delays, where it stays) until a request succeeds. 429s from requests already in flight do
+not escalate.
 The operator log line `Neuron upstream error detail` (warn) records the tripped quota
 (`quotas: [{id, value}]`) and the retry delay, so these limits can be checked against what
 Google enforces for the project.

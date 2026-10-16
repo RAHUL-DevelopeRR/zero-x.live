@@ -43,17 +43,22 @@ export function failureKindForStatus(status) {
   return FailureKind.SERVER;
 }
 
+// Strikes stop counting once the escalation is far past any cap (2^31 times the cooldown).
+const MAX_RATE_LIMIT_STRIKES = 32;
+
 const REQUEST_SCOPED = new Set([FailureKind.CONTEXT, FailureKind.INVALID, FailureKind.MODEL_ERROR, FailureKind.ABORTED]);
 
 /**
  * Circuit rules: 404 parks the pool for modelUnavailableMs and auth failures for
  * authCooldownMs. A 429 parks it for the upstream's retry delay (Retry-After, Groq's reset
  * headers, Gemini's RetryInfo, a per-day quota), or cooldownMs without one; when the pool is
- * rate limited again within rateLimitWindowMs of its last 429 after its cooldown ended, the
- * backoff doubles (up to rateLimitMaxBackoffMs, never below the upstream's delay), so a shared
- * free tier that is tighter than its published limits is probed less and less often. 429s that
- * arrive while the circuit is already open (requests sent before it opened) do not escalate.
- * A success resets the backoff. First-byte and idle timeouts open it for
+ * rate limited again within rateLimitWindowMs after its previous rate-limit cooldown ended, the
+ * backoff doubles (up to rateLimitMaxBackoffMs, never below the upstream's delay) and stays at
+ * the cap for as long as that keeps happening, so a shared free tier that is tighter than its
+ * published limits is probed less and less often. Recency is measured from the end of the
+ * cooldown, not from the previous 429, so a cooldown longer than the window cannot reset the
+ * escalation. 429s that arrive while the circuit is already open (requests sent before it
+ * opened) do not escalate. A success resets the backoff. First-byte and idle timeouts open it for
  * timeoutCooldownMs once timeoutThreshold distinct callers timed out within timeoutWindowMs:
  * a dead pool trips quickly, while one caller's long-thinking prompts (which a client can
  * provoke) cannot park a pool shared by everyone. 5xx, network errors and slow non-streaming
@@ -99,6 +104,8 @@ export class ProviderHealthTracker {
         circuit_open_until: 0,
         rate_limit_strikes: 0,
         last_rate_limited_at: null,
+        // End of the latest rate-limit cooldown (0 = none yet).
+        rate_limited_until: 0,
       };
       if (this.records.size >= 1000) this.records.delete(this.records.keys().next().value);
       this.records.set(key, rec);
@@ -159,8 +166,8 @@ export class ProviderHealthTracker {
       open(this.modelUnavailableMs);
     } else if (kind === FailureKind.RATE_LIMITED) {
       const alreadyOpen = rec.circuit_open_until > now;
-      const recent = rec.last_rate_limited_at !== null && now - rec.last_rate_limited_at < this.rateLimitWindowMs;
-      if (!alreadyOpen) rec.rate_limit_strikes = recent ? rec.rate_limit_strikes + 1 : 1;
+      const recent = rec.rate_limited_until > 0 && now - rec.rate_limited_until < this.rateLimitWindowMs;
+      if (!alreadyOpen) rec.rate_limit_strikes = recent ? Math.min(MAX_RATE_LIMIT_STRIKES, rec.rate_limit_strikes + 1) : 1;
       else rec.rate_limit_strikes = Math.max(1, rec.rate_limit_strikes);
       rec.last_rate_limited_at = now;
       rec.status = HealthState.RATE_LIMITED;
@@ -171,6 +178,7 @@ export class ProviderHealthTracker {
       const ms = hinted ? Math.max(hinted, rec.rate_limit_strikes > 1 ? backoff / 2 : 0) : backoff;
       const until = now + Math.min(this.maxCooldownMs, Math.max(1000, ms));
       rec.circuit_open_until = Math.max(rec.circuit_open_until, until);
+      rec.rate_limited_until = rec.circuit_open_until;
     } else if (kind === FailureKind.AUTH) {
       rec.status = HealthState.AUTH_FAILED;
       open(this.authCooldownMs);

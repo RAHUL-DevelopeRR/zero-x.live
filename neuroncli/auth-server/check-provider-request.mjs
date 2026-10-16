@@ -632,6 +632,38 @@ try {
     }
   });
 
+  await test('with the gateway defaults, a pool that keeps answering 429 stays at the 15-minute cap', () => {
+    const tracker = new ProviderHealthTracker();
+    const key = 'gemini:gemini-2.5-flash:free';
+    const realNow = Date.now;
+    let now = 1_000_000_000;
+    Date.now = () => now;
+    try {
+      const backoffs = [];
+      for (let i = 0; i < 9; i++) {
+        tracker.recordFailure(key, { kind: FailureKind.RATE_LIMITED });
+        const ms = tracker.cooldownRemainingMs(key, now);
+        backoffs.push(ms / 1000);
+        now += ms + 1000; // the first request after the circuit closes is limited again
+      }
+      assert.deepEqual(backoffs, [30, 60, 120, 240, 480, 900, 900, 900, 900]);
+      // Recency counts from the end of the cooldown: 10 minutes after it, the escalation is forgotten.
+      now += 600000;
+      tracker.recordFailure(key, { kind: FailureKind.RATE_LIMITED });
+      assert.equal(tracker.cooldownRemainingMs(key, now), 30000);
+      assert.equal(tracker.getRecord(key).rate_limit_strikes, 1);
+      // A long upstream delay (per-day quota) does not reset the escalation either.
+      tracker.reset(key);
+      tracker.recordFailure(key, { kind: FailureKind.RATE_LIMITED, retryAfterSeconds: 3600 });
+      now += tracker.cooldownRemainingMs(key, now) + 1000;
+      tracker.recordFailure(key, { kind: FailureKind.RATE_LIMITED });
+      assert.equal(tracker.getRecord(key).rate_limit_strikes, 2);
+      assert.equal(tracker.cooldownRemainingMs(key, now), 60000);
+    } finally {
+      Date.now = realNow;
+    }
+  });
+
   await test('free Gemini budgets stay below the observed upstream limit and still fit a Neuron request', () => {
     assert.deepEqual({ ...POOL_LIMITS.gemini_free }, { rpm: 5, rpd: 250, tpm: 100000, tpd: 5000000 });
     for (const id of ['gemini/gemini-2.5-flash', 'gemini/gemini-3.5-flash']) {
