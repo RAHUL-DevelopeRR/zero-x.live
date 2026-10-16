@@ -82,6 +82,12 @@ const ERROR_CODES_BY_KIND = {
   [FailureKind.ABORTED]: 'client_disconnected',
 };
 
+// Failures after the upstream ran the model (a model-side rejection such as tool_use_failed, a
+// first-byte, idle or response timeout). The upstream counted them against its own limits, so
+// they keep their share of the shared pool budget ('failed_upstream'); everything else (429,
+// 5xx, network and auth failures) is returned to the pool ('refunded').
+const GENERATED_KINDS = new Set([FailureKind.MODEL_ERROR, FailureKind.TIMEOUT]);
+
 function minimum(values) {
   const valid = values.map(Number).filter(value => Number.isFinite(value) && value > 0);
   return valid.length ? Math.min(...valid) : undefined;
@@ -220,9 +226,11 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
         await background(settleKv({ actualTokens: billed.total_tokens, refundRequest: false }));
       }
     };
-    // phase ('first_byte' | 'idle' | 'response') tells liveness timeouts from slow generations.
+    // phase ('first_byte' | 'idle' | 'response') tells liveness timeouts from slow generations;
+    // caller lets the tracker require timeouts from several callers before parking a shared pool.
+    const caller = session.user_id || String(token).slice(0, 16);
     const recordFailure = (key, kind, retryAfterSeconds, latencyMs, phase = null) => {
-      if (key) healthTracker.recordFailure(key, { kind, retryAfterSeconds: retryAfterSeconds || 0, latencyMs, phase });
+      if (key) healthTracker.recordFailure(key, { kind, retryAfterSeconds: retryAfterSeconds || 0, latencyMs, phase, caller });
     };
 
     const timeouts = streamTimeouts(env);
@@ -294,11 +302,17 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
     let reservations = 0;
     let attempts = 0;
     let freeAttempts = 0;
-    const releasePending = async (status, outcome = {}) => {
+    // Without an explicit status a failed attempt is settled by how it failed (see GENERATED_KINDS):
+    // the user gets the request back either way (within the daily refund allowance for
+    // failed_upstream), while the pool keeps attempts the upstream counted.
+    const releasePending = async (status = null, outcome = {}) => {
       if (!pending) return;
-      const { reservation, candidate, latencyMs = 0, errorCode = null } = pending;
+      const { reservation, candidate, latencyMs = 0, errorCode = null, kind = null } = pending;
       pending = null;
-      await settleDb(reservation, candidate, { status, latencyMs, errorCode, ...outcome }, false);
+      const generated = !status && GENERATED_KINDS.has(kind);
+      const settled = status || (generated ? 'failed_upstream' : 'refunded');
+      const usage = generated ? { prompt_tokens: promptTokens, completion_tokens: 0 } : undefined;
+      await settleDb(reservation, candidate, { status: settled, latencyMs, errorCode, usage, ...outcome }, false);
     };
 
     try {
@@ -308,9 +322,9 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
         if (candidate.pool.tier !== 'paid' && !paidDenied && freeAttempts >= freeAttemptLimit) continue;
         let reservation = null;
         if (ledger) {
-          // A failed attempt is refunded before failing over, so it never holds the caller's
+          // A failed attempt is settled before failing over, so it never holds the caller's
           // concurrency slot or counts as a second request.
-          await releasePending('refunded');
+          await releasePending();
           let row;
           try {
             row = await reserveCapacity(env, reservationArgs({ session, entry: candidate.entry, pool: candidate.pool,
@@ -340,7 +354,7 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
         current = null;
         if (result.ok) return result.response;
         failures.push(result);
-        if (reservation) pending = { reservation, candidate, latencyMs: result.latencyMs, errorCode: result.errorCode };
+        if (reservation) pending = { reservation, candidate, latencyMs: result.latencyMs, errorCode: result.errorCode, kind: result.kind };
         if (result.kind === FailureKind.ABORTED) break;
         // The same upstream model would reject the request again from another pool.
         if (result.kind === FailureKind.INVALID) skipModels.add(candidate.entry.id);
@@ -356,11 +370,12 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
     const final = finalError({ failures, exhausted, paidDenied });
     const aborted = failures.some(failure => failure.kind === FailureKind.ABORTED);
     // Requests the upstream rejected as invalid count against the caller; provider-side
-    // failures are refunded (contract §3.3: upstream_error refunds the request).
+    // failures are refunded (contract §3.3: upstream_error refunds the request, §6: within the
+    // daily allowance when the model ran).
     const clientSide = final.code === 'context_length_exceeded' || final.code === 'invalid_request';
     if (aborted) await releasePending('error', { usage: { prompt_tokens: promptTokens, completion_tokens: 0 } });
     else if (clientSide) await releasePending('error', { usage: { prompt_tokens: 0, completion_tokens: 0 } });
-    else await releasePending('refunded');
+    else await releasePending();
     await settleKv({ actualTokens: aborted ? promptTokens : 0, refundRequest: !aborted && !clientSide });
     return fail(final.code, final);
   };

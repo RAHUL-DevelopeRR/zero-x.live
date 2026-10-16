@@ -774,19 +774,45 @@ try {
     assert.equal(gw.tracker.getRecord('groq:openai/gpt-oss-120b:free').failed_attempts, 0);
   });
 
-  await test('first-byte timeouts open the circuit at once; slow non-streaming responses need three strikes', async () => {
+  // Review P3 (integration): a single caller's timeout (a long hidden thinking phase a client can
+  // provoke) used to park a shared pool for 30 s for every caller. Two distinct callers are needed.
+  await test('liveness timeouts open the circuit only after two distinct callers time out; slow responses need three strikes', async () => {
     const tracker = new ProviderHealthTracker();
-    tracker.recordFailure('a', { kind: FailureKind.TIMEOUT, phase: 'first_byte' });
-    assert.equal(tracker.isAvailable('a'), false);
+    tracker.recordFailure('a', { kind: FailureKind.TIMEOUT, phase: 'first_byte', caller: 'user-attacker' });
+    assert.equal(tracker.isAvailable('a'), true, 'one caller cannot park a shared pool');
+    tracker.recordFailure('a', { kind: FailureKind.TIMEOUT, phase: 'idle', caller: 'user-attacker' });
+    assert.equal(tracker.isAvailable('a'), true, 'not even with repeated long-thinking prompts');
+    assert.equal(tracker.getRecord('a').status, HealthState.DEGRADED);
+    tracker.recordFailure('a', { kind: FailureKind.TIMEOUT, phase: 'first_byte', caller: 'user-second' });
+    assert.equal(tracker.isAvailable('a'), false, 'a second caller timing out opens the circuit');
+    assert.equal(tracker.getRecord('a').status, HealthState.DOWN);
+    assert.ok(!JSON.stringify(tracker.getSnapshot()).includes('user-'), 'caller ids never reach health snapshots');
+    tracker.recordFailure('b', { kind: FailureKind.TIMEOUT, phase: 'first_byte' });
     tracker.recordFailure('b', { kind: FailureKind.TIMEOUT, phase: 'idle' });
-    assert.equal(tracker.isAvailable('b'), false);
+    assert.equal(tracker.isAvailable('b'), false, 'unknown callers count as distinct');
+    const windowed = new ProviderHealthTracker({ timeoutWindowMs: 40 });
+    windowed.recordFailure('w', { kind: FailureKind.TIMEOUT, phase: 'first_byte', caller: 'x' });
+    await new Promise(resolve => setTimeout(resolve, 70));
+    windowed.recordFailure('w', { kind: FailureKind.TIMEOUT, phase: 'first_byte', caller: 'y' });
+    assert.equal(windowed.isAvailable('w'), true, 'timeouts outside the window do not add up');
+    const healed = new ProviderHealthTracker();
+    healed.recordFailure('h', { kind: FailureKind.TIMEOUT, phase: 'first_byte', caller: 'x' });
+    healed.recordSuccess('h');
+    healed.recordFailure('h', { kind: FailureKind.TIMEOUT, phase: 'first_byte', caller: 'y' });
+    assert.equal(healed.isAvailable('h'), true, 'a success in between starts the count again');
     tracker.recordFailure('c', { kind: FailureKind.TIMEOUT, phase: 'response' });
     assert.equal(tracker.isAvailable('c'), true, 'a long generation is not a dead pool');
     const gw = gateway();
     gw.addSession('ses_anon', {});
+    gw.addSession('ses_other', {});
     reset({ groq: untilAborted });
-    await expectError(await gw.call({ ...KEYS, ...FAST }, { model: 'groq/openai/gpt-oss-120b', messages, stream: true }), 504, 'upstream_timeout');
-    assert.equal(gw.tracker.isAvailable('groq:openai/gpt-oss-120b:free'), false, 'the chat handler passes the timeout phase');
+    for (let i = 0; i < 2; i++) {
+      await expectError(await gw.call({ ...KEYS, ...FAST }, { model: 'groq/openai/gpt-oss-120b', messages, stream: true }), 504, 'upstream_timeout');
+    }
+    assert.equal(gw.tracker.isAvailable('groq:openai/gpt-oss-120b:free'), true, 'the same caller twice keeps the pool open');
+    await expectError(await gw.call({ ...KEYS, ...FAST }, { model: 'groq/openai/gpt-oss-120b', messages, stream: true }, { token: 'ses_other' }),
+      504, 'upstream_timeout');
+    assert.equal(gw.tracker.isAvailable('groq:openai/gpt-oss-120b:free'), false, 'the chat handler passes the timeout phase and the caller');
   });
 
   await test('Workers AI binding errors are rate limits and late streams are cancelled (review B2 P3)', async () => {
@@ -973,6 +999,42 @@ try {
     await expectError(await gw.call(accountEnv(), { model: 'groq/openai/gpt-oss-120b', messages }, { token: 'ses_pro' }), 502, 'upstream_error');
     assert.deepEqual(sequence.filter(item => item.startsWith('settle')), ['settle:res-free:refunded:upstream_error', 'settle:res-paid:refunded:upstream_error']);
     assert.deepEqual(gw.writes, [], 'no KV write after a DB reservation');
+  });
+
+  // Review P2 (integration): refunded attempts returned the shared pool budget even when the
+  // upstream ran the model, so tool_use_failed loops and timeouts drained the free pools unseen.
+  await test('attempts that reached the model settle as failed_upstream; upstream rejections stay full refunds', async () => {
+    const gw = accountGateway();
+    const settled = [];
+    const modelError = () => Response.json({ error: { code: 'tool_use_failed', message: 'Failed to call a function', type: 'invalid_request_error' } }, { status: 400 });
+    reset({ 'rpc:zerox_plan_policies_v2': policiesRpc,
+      'rpc:zerox_reserve_v2': call => Response.json([okReserve({ reservation_id: `res-${call.body.p_tier}-${settled.length}` })]),
+      'rpc:zerox_settle_v2': call => { settled.push(call.body); return Response.json([{ status: 'settled' }]); },
+      groq: modelError });
+    const prompt = estimatePromptTokens(messages, tools);
+    await expectError(await gw.call(accountEnv(), { model: 'groq/openai/gpt-oss-20b', messages, tools }, { token: 'ses_pro' }), 502, 'upstream_error');
+    assert.equal(settled.length, 1);
+    assert.deepEqual([settled[0].p_status, settled[0].p_error_code, settled[0].p_prompt_tokens, settled[0].p_completion_tokens],
+      ['failed_upstream', 'model_error', prompt, 0], 'a model-side rejection keeps its prompt in the pool budget');
+    settled.length = 0;
+    handlers.groq = untilAborted;
+    await expectError(await gw.call(accountEnv(FAST), { model: 'groq/openai/gpt-oss-20b', messages, stream: true }, { token: 'ses_pro' }), 504, 'upstream_timeout');
+    assert.deepEqual([settled[0].p_status, settled[0].p_error_code, settled[0].p_prompt_tokens],
+      ['failed_upstream', 'upstream_timeout', estimatePromptTokens(messages)], 'so does a first-byte timeout');
+    for (const status of [429, 500, 503]) {
+      settled.length = 0;
+      gw.tracker.reset(); // a 429 parks the pool
+      handlers.groq = () => new Response('busy', { status });
+      await gw.call(accountEnv(), { model: 'groq/openai/gpt-oss-20b', messages }, { token: 'ses_pro' });
+      assert.deepEqual([settled[0].p_status, settled[0].p_prompt_tokens], ['refunded', 0], `HTTP ${status} is refunded to the pool`);
+    }
+    // Failover: the failed free attempt keeps its pool share, the paid attempt is billed.
+    settled.length = 0;
+    gw.tracker.reset();
+    handlers.groq = call => call.headers.Authorization === 'Bearer groq-free-key' ? modelError() : completion({ content: 'paid' });
+    const failover = await gw.call(accountEnv(), { model: 'groq/openai/gpt-oss-120b', messages, tools }, { token: 'ses_pro' });
+    assert.equal(failover.status, 200);
+    assert.deepEqual(settled.map(entry => entry.p_status), ['failed_upstream', 'ok']);
   });
 
   await test('paid plans keep their last attempt for paid capacity (review B2 P3)', async () => {

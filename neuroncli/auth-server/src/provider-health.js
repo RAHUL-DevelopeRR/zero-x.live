@@ -47,16 +47,24 @@ const REQUEST_SCOPED = new Set([FailureKind.CONTEXT, FailureKind.INVALID, Failur
 
 /**
  * Circuit rules: 404 parks the pool for modelUnavailableMs, 429 for the upstream's retry
- * delay, auth failures for authCooldownMs, and a first-byte or idle timeout opens it for
- * timeoutCooldownMs at once (every caller would otherwise wait the full timeout). 5xx,
- * network errors and slow non-streaming responses open it after failureThreshold
- * consecutive failures, so one transient 503 does not park a pool shared by all users.
- * After a cooldown the next failure of a still-failing pool re-opens it immediately.
+ * delay and auth failures for authCooldownMs. First-byte and idle timeouts open it for
+ * timeoutCooldownMs once timeoutThreshold distinct callers timed out within timeoutWindowMs:
+ * a dead pool trips quickly, while one caller's long-thinking prompts (which a client can
+ * provoke) cannot park a pool shared by everyone. 5xx, network errors and slow non-streaming
+ * responses open it after failureThreshold consecutive failures, so one transient 503 does not
+ * park a shared pool either. After a cooldown the next failure of a still-failing pool re-opens
+ * it immediately.
  */
 export class ProviderHealthTracker {
   constructor({ failureThreshold = 3, cooldownMs = 30000, modelUnavailableMs = 600000,
-    authCooldownMs = 300000, timeoutCooldownMs = 30000, maxCooldownMs = 86400000 } = {}) {
+    authCooldownMs = 300000, timeoutCooldownMs = 30000, timeoutThreshold = 2, timeoutWindowMs = 60000,
+    maxCooldownMs = 86400000 } = {}) {
     this.records = new Map();
+    // Recent liveness timeouts per pool ({caller, at}); kept apart from the records so caller
+    // identities never appear in health snapshots.
+    this.timeouts = new Map();
+    this.timeoutThreshold = timeoutThreshold;
+    this.timeoutWindowMs = timeoutWindowMs;
     this.failureThreshold = failureThreshold;
     this.defaultCooldownMs = cooldownMs;
     this.modelUnavailableMs = modelUnavailableMs;
@@ -98,9 +106,20 @@ export class ProviderHealthTracker {
     return rec ? Math.max(0, rec.circuit_open_until - now) : 0;
   }
 
+  // Distinct callers with a liveness timeout on this pool within the window, this one included.
+  // An unknown caller counts as a new one.
+  timeoutCallers(key, caller, now) {
+    const recent = (this.timeouts.get(key) || []).filter(entry => now - entry.at < this.timeoutWindowMs);
+    recent.push({ caller: caller ?? Symbol('caller'), at: now });
+    if (!this.timeouts.has(key) && this.timeouts.size >= 1000) this.timeouts.delete(this.timeouts.keys().next().value);
+    this.timeouts.set(key, recent.slice(-50));
+    return new Set(recent.map(entry => entry.caller)).size;
+  }
+
   recordSuccess(key, { latencyMs = 0 } = {}) {
     const rec = this.getRecord(key);
     const now = Date.now();
+    this.timeouts.delete(key);
     rec.total_attempts++;
     rec.successful_attempts++;
     rec.consecutive_failures = 0;
@@ -112,7 +131,7 @@ export class ProviderHealthTracker {
     return rec;
   }
 
-  recordFailure(key, { kind = FailureKind.SERVER, latencyMs = 0, retryAfterSeconds = 0, phase = null } = {}) {
+  recordFailure(key, { kind = FailureKind.SERVER, latencyMs = 0, retryAfterSeconds = 0, phase = null, caller = null } = {}) {
     if (kind === FailureKind.ABORTED) return this.records.get(key) || null;
     const rec = this.getRecord(key);
     const now = Date.now();
@@ -135,8 +154,12 @@ export class ProviderHealthTracker {
       open(this.authCooldownMs);
     } else if (kind === FailureKind.TIMEOUT && LIVENESS_PHASES.has(phase)) {
       rec.consecutive_failures++;
-      rec.status = HealthState.DOWN;
-      open(this.timeoutCooldownMs);
+      if (this.timeoutCallers(key, caller, now) >= this.timeoutThreshold) {
+        rec.status = HealthState.DOWN;
+        open(this.timeoutCooldownMs);
+      } else {
+        rec.status = HealthState.DEGRADED;
+      }
     } else {
       rec.consecutive_failures++;
       if (rec.consecutive_failures >= this.failureThreshold) {
@@ -150,14 +173,14 @@ export class ProviderHealthTracker {
   }
 
   // Compatibility entry point: classifies by HTTP status unless `kind` is given.
-  recordAttempt(key, { success, status, latencyMs = 0, retryAfterSeconds = 0, kind, phase } = {}) {
+  recordAttempt(key, { success, status, latencyMs = 0, retryAfterSeconds = 0, kind, phase, caller } = {}) {
     if (success) return this.recordSuccess(key, { latencyMs });
-    return this.recordFailure(key, { kind: kind || failureKindForStatus(status), latencyMs, retryAfterSeconds, phase });
+    return this.recordFailure(key, { kind: kind || failureKindForStatus(status), latencyMs, retryAfterSeconds, phase, caller });
   }
 
   reset(key) {
-    if (key) this.records.delete(key);
-    else this.records.clear();
+    if (key) { this.records.delete(key); this.timeouts.delete(key); }
+    else { this.records.clear(); this.timeouts.clear(); }
   }
 
   getSnapshot() {
