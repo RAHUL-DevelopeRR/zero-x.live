@@ -6,77 +6,57 @@
     <title>NeuronCLI — Auth Callback</title>
     <link rel="icon" type="image/png" sizes="32x32" href="../../Assets/zerox-favicon-32.png">
     <meta name="referrer" content="no-referrer">
+    <link rel="stylesheet" href="/site-fonts.css">
+    <link rel="stylesheet" href="/zx-tokens.css">
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: 'Inter', -apple-system, 'Segoe UI', Roboto, sans-serif;
-            display: flex; justify-content: center; align-items: center;
-            min-height: 100vh;
-            background: #08070b;
-            color: #f0f0f0;
-        }
+        body { display: flex; justify-content: center; align-items: center; padding: 16px; }
         .card {
-            text-align: center; padding: 48px 40px;
-            background: rgba(255,255,255,0.03);
-            border: 1px solid rgba(255,255,255,0.06);
-            border-radius: 20px;
-            backdrop-filter: blur(20px);
-            max-width: 480px;
-            width: 90%;
+            text-align: center; padding: 40px 24px;
+            background: var(--zx-surface);
+            border: 1px solid var(--zx-border);
+            border-radius: var(--zx-radius-lg);
+            max-width: 480px; width: 100%;
         }
         .spinner {
             width: 36px; height: 36px; margin: 0 auto 20px;
-            border: 2px solid rgba(94,106,210,0.15);
-            border-top: 2px solid #5e6ad2;
+            border: 2px solid var(--zx-accent-soft);
+            border-top: 2px solid var(--zx-accent);
             border-radius: 50%;
             animation: spin 0.8s linear infinite;
         }
         @keyframes spin { to { transform: rotate(360deg); } }
-        @keyframes fade-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
-        h1 {
-            font-size: 1.5em; font-weight: 600; margin-bottom: 8px;
-            letter-spacing: -0.02em; animation: fade-in 0.4s ease;
+        h1 { font-size: 1.6rem; margin-bottom: 8px; }
+        p { color: var(--zx-muted); line-height: 1.7; overflow-wrap: anywhere; }
+        .success-icon, .error-icon {
+            width: 48px; height: 48px; margin: 0 auto 20px; border-radius: 50%;
+            display: flex; align-items: center; justify-content: center; font-size: 24px;
         }
-        p { color: #8a8a96; font-size: 0.95em; line-height: 1.7; }
-        .success-icon {
-            width: 48px; height: 48px; margin: 0 auto 20px;
-            border-radius: 50%; background: rgba(45,140,60,0.15);
-            display: flex; align-items: center; justify-content: center;
-            font-size: 24px; color: #2D8C3C;
-        }
-        .error-icon {
-            width: 48px; height: 48px; margin: 0 auto 20px;
-            border-radius: 50%; background: rgba(200,50,40,0.15);
-            display: flex; align-items: center; justify-content: center;
-            font-size: 24px; color: #C83228;
-        }
+        .success-icon { background: var(--zx-success-soft); color: var(--zx-success); }
+        .error-icon { background: var(--zx-danger-soft); color: var(--zx-danger); }
         .provider-badge {
-            display: inline-block; margin: 8px auto 16px;
-            padding: 4px 14px; border-radius: 20px;
-            font-size: 0.78em; font-weight: 500;
-            letter-spacing: 0.03em; text-transform: uppercase;
+            display: inline-block; margin: 8px auto 16px; padding: 4px 14px; border-radius: 999px;
+            font-size: 0.78em; font-weight: 600; letter-spacing: 0.03em; text-transform: uppercase;
         }
-        .provider-azure { background: rgba(0,120,212,0.15); color: #4fc3f7; border: 1px solid rgba(0,120,212,0.3); }
-        .provider-openrouter { background: rgba(168,85,247,0.15); color: #c084fc; border: 1px solid rgba(168,85,247,0.3); }
+        .provider-azure { background: var(--zx-accent-soft); color: var(--zx-accent-text); border: 1px solid var(--zx-accent); }
+        .provider-openrouter { background: var(--zx-purple-soft); color: var(--zx-purple); border: 1px solid var(--zx-purple); }
         .code-box {
-            background: rgba(0,0,0,0.4); border: 1px solid rgba(255,255,255,0.06);
-            border-radius: 8px; padding: 14px 16px; margin: 16px 0;
-            font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
-            font-size: 0.82em; word-break: break-all;
-            color: #F0A028; user-select: all;
+            background: var(--zx-code-bg); border: 1px solid var(--zx-border);
+            border-radius: var(--zx-radius-sm); padding: 14px 16px; margin: 16px 0;
+            font-family: var(--zx-font-mono); font-size: 0.82em; word-break: break-all;
+            color: var(--zx-heading); user-select: all;
         }
         .btn {
-            display: inline-block; margin-top: 16px; padding: 10px 24px;
-            background: #5e6ad2; color: #fff; border: none; border-radius: 8px;
-            font-size: 0.9em; font-weight: 500; cursor: pointer;
-            text-decoration: none; transition: background 0.2s;
+            display: inline-flex; align-items: center; justify-content: center; min-height: 44px;
+            margin-top: 16px; padding: 10px 24px; background: var(--zx-accent); color: var(--zx-on-accent);
+            border: none; border-radius: 999px; font: 600 0.95rem var(--zx-font-body); cursor: pointer; text-decoration: none;
         }
-        .btn:hover { background: #6b77e0; }
-        .meta { color: #555566; font-size: 0.78em; margin-top: 16px; }
+        .btn:hover { background: var(--zx-accent-h); }
+        .btn:focus-visible { outline: none; box-shadow: var(--zx-focus); }
+        .meta { color: var(--zx-faint); font-size: 0.78em; margin-top: 16px; }
         .steps { text-align: left; margin: 16px 0; padding-left: 20px; }
-        .steps li { color: #8a8a96; font-size: 0.88em; margin-bottom: 6px; }
-        .steps li.done { color: #2D8C3C; }
-        .steps li.active { color: #5e6ad2; }
+        .steps li { color: var(--zx-muted); font-size: 0.88em; margin-bottom: 6px; }
+        .steps li.done { color: var(--zx-success); }
+        .steps li.active { color: var(--zx-accent-text); }
     </style>
 </head>
 <body>
