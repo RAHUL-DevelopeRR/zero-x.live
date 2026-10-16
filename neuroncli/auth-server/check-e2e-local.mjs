@@ -76,6 +76,13 @@ const upstreamServer = createServer(async (request, response) => {
   upstream.calls.push({ provider, key: String(request.headers.authorization || '').replace(/^Bearer /, ''), model: body.model,
     stream: body.stream === true, tools: Array.isArray(body.tools) ? body.tools.length : 0, streamOptions: body.stream_options ?? null });
   if (!provider || !request.url.endsWith('/chat/completions')) { response.writeHead(404).end(); return; }
+  if (JSON.stringify(body.messages || []).includes('E2E_TOOL_USE_FAILED')) {
+    // Groq's answer when the generated tool call does not match the schema (after generation).
+    response.writeHead(400, { 'Content-Type': 'application/json' });
+    response.end(JSON.stringify({ error: { message: 'Failed to call a function. Please adjust your prompt.', type: 'invalid_request_error',
+      code: 'tool_use_failed' } }));
+    return;
+  }
   if (!body.stream) {
     response.writeHead(200, { 'Content-Type': 'application/json' });
     response.end(JSON.stringify({ id: 'up-1', object: 'chat.completion', choices: [{ index: 0,
@@ -102,7 +109,7 @@ const upstreamServer = createServer(async (request, response) => {
 });
 
 // ── Fake Razorpay (the REST calls src/billing/razorpay.js and the bootstrap script make) ──
-const rzp = { plans: [], subscriptions: new Map(), orders: new Map(), payments: new Map(), requests: [] };
+const rzp = { plans: [], subscriptions: new Map(), orders: new Map(), payments: new Map(), refunds: [], requests: [] };
 const rid = prefix => `${prefix}_${randomBytes(7).toString('hex')}`;
 const razorpayServer = createServer(async (request, response) => {
   const raw = await readBody(request);
@@ -132,7 +139,13 @@ const razorpayServer = createServer(async (request, response) => {
   if (resource === 'subscriptions' && id) {
     const subscription = rzp.subscriptions.get(id);
     if (!subscription) return notFound();
-    if (request.method === 'POST' && action === 'cancel') subscription.cancel_requested = body;
+    if (request.method === 'POST' && action === 'cancel') {
+      if (['cancelled', 'completed', 'expired'].includes(subscription.status)) {
+        return reply(400, { error: { code: 'BAD_REQUEST_ERROR', description: 'Subscription is not cancellable in cancelled status.' } });
+      }
+      subscription.cancel_requested = body;
+      if (body.cancel_at_cycle_end !== 1) subscription.status = 'cancelled';
+    }
     return reply(200, subscription);
   }
   if (resource === 'orders' && request.method === 'POST') {
@@ -142,6 +155,19 @@ const razorpayServer = createServer(async (request, response) => {
     return reply(200, order);
   }
   if (resource === 'orders' && id) return rzp.orders.has(id) ? reply(200, rzp.orders.get(id)) : notFound();
+  if (resource === 'payments' && id && action === 'refund' && request.method === 'POST') {
+    const payment = rzp.payments.get(id);
+    if (!payment) return notFound();
+    const amount = body.amount ?? payment.amount - (payment.amount_refunded || 0);
+    if (payment.status !== 'captured' || amount <= 0) {
+      return reply(400, { error: { code: 'BAD_REQUEST_ERROR', description: 'The payment has been fully refunded already' } });
+    }
+    payment.amount_refunded = (payment.amount_refunded || 0) + amount;
+    if (payment.amount_refunded >= payment.amount) payment.status = 'refunded';
+    const refund = { id: rid('rfnd'), entity: 'refund', amount, currency: payment.currency, payment_id: id, notes: body.notes, status: 'processed' };
+    rzp.refunds.push(refund);
+    return reply(200, refund);
+  }
   if (resource === 'payments' && id) return rzp.payments.has(id) ? reply(200, rzp.payments.get(id)) : notFound();
   return notFound();
 });
@@ -388,12 +414,34 @@ try {
   assert.equal(realCalls(), realBeforeCap, 'the cap is enforced before any upstream call');
   step('daily cap', `429 insufficient_quota, resets_at ${cap.resets_at}, upgrade_url ${cap.upgrade_url}, no upstream call`);
 
+  // ── 7b. A model-side failure is refunded to the caller but kept in the shared pool budget ──
+  // (review P2, integration: tool_use_failed and timeouts drained the free pools unseen)
+  if (!LIVE) {
+    const poolOf = async () => (await call('/admin/overview', { token: ADMIN })).body.pools
+      .find(pool => pool.model === 'groq/openai/gpt-oss-20b' && pool.tier === 'free')?.requests_today ?? 0;
+    const requestsBefore = (await call('/api/account', { token: ses })).body.usage_today.requests;
+    const poolBefore = await poolOf();
+    const modelError = expectError(await call('/v1/chat/completions', { method: 'POST', token: ses, body: { model: 'groq/openai/gpt-oss-20b', tools,
+      messages: [{ role: 'user', content: 'E2E_TOOL_USE_FAILED: call read_file with a number for path' }] } }), 502, 'upstream_error');
+    assert.equal(modelError.type, 'server_error');
+    assert.equal((await call('/api/account', { token: ses })).body.usage_today.requests, requestsBefore, 'the caller gets the request back');
+    assert.equal(await poolOf(), poolBefore + 1, 'the shared pool keeps the attempt the upstream counted');
+    const [refundedEvent] = (await call('/api/usage/events?limit=1', { token: ses })).body.events;
+    assert.deepEqual([refundedEvent.status, refundedEvent.prompt_tokens, refundedEvent.model], ['refunded', 0, 'groq/openai/gpt-oss-20b']);
+    step('model-side failure (tool_use_failed)', `502 upstream_error; usage_today.requests stays ${requestsBefore}; free pool requests_today ${poolBefore} -> ${poolBefore + 1}`);
+  }
+
   // ── 8. Pro checkout → signed verify → plan pro ──
   const checkout = await call('/api/billing/checkout', { method: 'POST', token: ses, body: { plan: 'pro', currency: 'INR' } });
   assert.equal(checkout.status, 200, redact(checkout.text));
   assert.equal(checkout.body.provider, 'razorpay');
   assert.equal(checkout.body.key_id, RAZORPAY_KEY_ID);
   const subscriptionId = checkout.body.subscription_id;
+  // A second tab reuses the unpaid checkout instead of creating a second subscription (review P2).
+  const secondTab = await call('/api/billing/checkout', { method: 'POST', token: ses, body: { plan: 'pro', currency: 'INR' } });
+  assert.equal(secondTab.status, 200, redact(secondTab.text));
+  assert.equal(secondTab.body.subscription_id, subscriptionId, 'one payable subscription per account');
+  assert.equal(rzp.requests.filter(entry => entry.method === 'POST' && entry.path === '/v1/subscriptions').length, 1);
   assert.equal(rzp.subscriptions.get(subscriptionId).notes.user_id, userId);
   assert.equal(rzp.subscriptions.get(subscriptionId).plan_id, plans.find(row => row.plan === 'pro' && row.currency === 'INR').id);
   const firstPayment = paySubscription(subscriptionId);
@@ -409,7 +457,8 @@ try {
   assert.equal(account.plan.id, 'pro');
   assert.equal(account.subscription.status, 'active');
   assert.equal((await models(ses))['gemini/gemini-2.5-pro'].available, true, 'Pro unlocks the paid pool');
-  step('Pro checkout -> verify', `subscription ${subscriptionId}, bad signature -> 400, signed verify -> plan pro; gemini-2.5-pro now available`);
+  expectError(await call('/api/billing/checkout', { method: 'POST', token: ses, body: { plan: 'max', currency: 'USD' } }), 409, 'already_subscribed');
+  step('Pro checkout -> verify', `subscription ${subscriptionId} (a second tab reuses it), bad signature -> 400, signed verify -> plan pro; gemini-2.5-pro now available; another checkout -> 409 already_subscribed`);
 
   // ── 9. subscription.charged grants the monthly credits exactly once ──
   const charged = { entity: 'event', event: 'subscription.charged', contains: ['subscription', 'payment'],
@@ -426,6 +475,32 @@ try {
   assert.deepEqual((await webhook(charged, 'evt_e2eCharged2')).body, { received: true }, 'a new delivery id is processed');
   assert.equal((await call('/api/account', { token: ses })).body.credits.balance_usd, 8, 'credits are granted once per payment');
   step('webhook subscription.charged', 'forged signature -> 400; valid HMAC -> $8 granted; replay -> duplicate; new event id for the same payment -> no second grant');
+
+  // ── 9b. A second subscription paid in parallel is cancelled at once and refunded (review P2) ──
+  const proInrPlan = plans.find(row => row.plan === 'pro' && row.currency === 'INR').id;
+  const rogue = { id: rid('sub'), entity: 'subscription', plan_id: proInrPlan, status: 'created', notes: { user_id: userId, plan: 'pro' },
+    current_start: null, current_end: null, created_at: Math.floor(Date.now() / 1000) };
+  rzp.subscriptions.set(rogue.id, rogue); // e.g. two checkouts that raced past the guard
+  const roguePayment = paySubscription(rogue.id);
+  const rogueVerify = expectError(await call('/api/billing/verify', { method: 'POST', token: ses, body: { razorpay_payment_id: roguePayment.id,
+    razorpay_subscription_id: rogue.id, razorpay_signature: hmac(RAZORPAY_KEY_SECRET, `${roguePayment.id}|${rogue.id}`) } }), 409, 'already_subscribed');
+  assert.match(rogueVerify.message, /refunded/);
+  assert.deepEqual(rzp.subscriptions.get(rogue.id).cancel_requested, { cancel_at_cycle_end: 0 }, 'cancelled now, not at the cycle end');
+  assert.equal(rzp.subscriptions.get(rogue.id).status, 'cancelled');
+  assert.deepEqual(rzp.refunds.map(refund => [refund.payment_id, refund.amount]), [[roguePayment.id, 89900]], 'refunded in full');
+  let billingState = (await call('/api/billing', { token: ses })).body;
+  assert.equal(billingState.subscription.id, subscriptionId, 'Billing shows the original subscription');
+  assert.equal(billingState.payments.find(payment => payment.id === roguePayment.id).status, 'refunded');
+  const rogueCharge = paySubscription(rogue.id);
+  const rogueCharged = await webhook({ entity: 'event', event: 'subscription.charged', contains: ['subscription', 'payment'],
+    payload: { subscription: { entity: rzp.subscriptions.get(rogue.id) }, payment: { entity: rogueCharge } }, created_at: Math.floor(Date.now() / 1000) },
+  'evt_e2eRogueCharged');
+  assert.equal(rogueCharged.status, 200, redact(rogueCharged.text));
+  account = (await call('/api/account', { token: ses })).body;
+  assert.equal(account.plan.id, 'pro');
+  assert.equal(account.credits.balance_usd, 8, 'the duplicate grants no credits');
+  assert.equal(rzp.payments.get(rogueCharge.id).status, 'refunded', 'its renewal charge is refunded too');
+  step('duplicate subscription', `second paid subscription ${rogue.id}: verify -> 409 already_subscribed, cancelled at once and refunded; its charge webhook grants nothing and is refunded; plan and credits unchanged`);
 
   // ── 10. A paid-pool request debits credits ──
   const paid = await call('/v1/chat/completions', { method: 'POST', token: ses,
@@ -457,8 +532,22 @@ try {
   account = (await call('/api/account', { token: ses })).body;
   assert.equal(Math.round(account.credits.balance_usd * 1e6), 13000000 - cost);
   const billing = (await call('/api/billing', { token: ses })).body;
-  assert.deepEqual(billing.payments.map(payment => payment.id).sort(), [firstPayment.id, topupPayment.id].sort());
-  step('top-up', `credits_5 order ${topup.body.order_id} -> verify -> +$5 (balance ${account.credits.balance_usd} USD); both payments listed`);
+  assert.deepEqual(billing.payments.map(payment => payment.id).sort(), [firstPayment.id, topupPayment.id, roguePayment.id, rogueCharge.id].sort());
+  step('top-up', `credits_5 order ${topup.body.order_id} -> verify -> +$5 (balance ${account.credits.balance_usd} USD); every payment listed`);
+
+  // ── 11b. refund.processed takes back the refunded credits (review P3, integration) ──
+  Object.assign(rzp.payments.get(topupPayment.id), { amount_refunded: 44900, status: 'refunded' });
+  const refundProcessed = { entity: 'event', event: 'refund.processed', contains: ['refund', 'payment'], payload: {
+    refund: { entity: { id: rid('rfnd'), entity: 'refund', amount: 44900, currency: 'INR', payment_id: topupPayment.id, status: 'processed' } },
+    payment: { entity: rzp.payments.get(topupPayment.id) } }, created_at: Math.floor(Date.now() / 1000) };
+  assert.deepEqual((await webhook(refundProcessed, 'evt_e2eRefund1')).body, { received: true });
+  account = (await call('/api/account', { token: ses })).body;
+  assert.equal(Math.round(account.credits.balance_usd * 1e6), 8000000 - cost, 'the $5 of the refunded top-up are taken back');
+  assert.deepEqual((await webhook(refundProcessed, 'evt_e2eRefund2')).body, { received: true });
+  assert.equal(Math.round((await call('/api/account', { token: ses })).body.credits.balance_usd * 1e6), 8000000 - cost, 'once');
+  billingState = (await call('/api/billing', { token: ses })).body;
+  assert.equal(billingState.payments.find(payment => payment.id === topupPayment.id).status, 'refunded');
+  step('refund webhook', `refund.processed for ${topupPayment.id}: payment refunded, $5 credits taken back once (balance ${account.credits.balance_usd} USD)`);
 
   // ── 12. Cancel → cancel_at_period_end ──
   const cancelled = await call('/api/billing/cancel', { method: 'POST', token: ses, body: {} });
@@ -612,4 +701,5 @@ if (failed) {
 }
 await writeFile(join(tmpdir(), `zerox-e2e-${LIVE ? 'live' : 'offline'}-steps.json`), JSON.stringify(steps, null, 2)).catch(() => {});
 console.log(`PASS: end-to-end ${LIVE ? '(live Groq/Gemini free pools)' : '(offline)'}: ${steps.length} steps — dev sign-in, CLI session, plan-aware ` +
-  'models, streamed tool calls, usage, API keys, daily cap, Pro checkout, charged webhook once, paid-pool credits, top-up, cancel, revoke-all, admin overview, static site and CSP');
+  'models, streamed tool calls, usage, API keys, daily cap, pool-kept model failures, Pro checkout (reused across tabs), charged webhook once, ' +
+  'duplicate subscription cancelled and refunded, paid-pool credits, top-up, refund clawback, cancel, revoke-all, admin overview, static site and CSP');
