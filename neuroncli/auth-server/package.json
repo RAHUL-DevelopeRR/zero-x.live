@@ -19,7 +19,10 @@
     "check:routing": "node check-routing-v2.mjs",
     "check:api": "node check-account-api.mjs && node check-billing.mjs",
     "check:web": "node check-pages.mjs && node check-dashboard.mjs",
-    "check:platform": "npm run check:business-db && npm run check:routing && npm run check:api && npm run check:web"
+    "check:platform": "npm run check:business-db && npm run check:routing && npm run check:api && npm run check:web && npm run check:e2e",
+    "check:e2e": "node check-e2e-local.mjs",
+    "check:e2e:live": "node check-e2e-local.mjs --live",
+    "db:dev": "node scripts/dev-db.mjs"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",

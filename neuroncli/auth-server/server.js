@@ -108,7 +108,8 @@ async function start() {
       } else res.destroy();
     }
   });
-  server.listen(port, host, () => console.log(`Neuron gateway listening on ${host}:${port}`));
+  // Logs the bound port, so AUTH_PORT=0 (any free port) can be discovered from stdout.
+  server.listen(port, host, () => console.log(`Neuron gateway listening on ${host}:${server.address().port}`));
   return server;
 }
 
