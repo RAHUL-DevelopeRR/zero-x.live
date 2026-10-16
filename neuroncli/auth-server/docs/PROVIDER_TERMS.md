@@ -76,6 +76,12 @@ details. Verified directly against the live endpoints with a captured Neuron 6.2
   calls. Schemas are therefore forwarded as sent. Parameters a provider rejects are dropped by
   `PROVIDER_PARAMS` in `src/providers.js` (e.g. penalties, `parallel_tool_calls` and `user` for
   Gemini).
+- **Known limitation: Gemini 3 through OpenRouter (BYOK).** The signature cache covers the direct
+  `gemini` provider only. OpenRouter carries Gemini thought signatures in `reasoning_details`,
+  which the gateway strips from responses and does not record or restore, so a BYOK tool loop on
+  an OpenRouter `google/gemini-3*` model may still get the missing-signature 400 on its second
+  tool turn. Not verified live. Until `reasoning_details` are kept per caller like the Gemini
+  signatures, use the hosted `gemini/gemini-3.5-flash` or another OpenRouter model for tool loops.
 
 Sources: console.groq.com/docs/rate-limits, console.groq.com/docs/legal/services-agreement,
 ai.google.dev/gemini-api/terms, ai.google.dev/gemini-api/docs/pricing,
