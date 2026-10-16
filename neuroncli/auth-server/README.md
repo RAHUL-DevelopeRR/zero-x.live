@@ -1,49 +1,110 @@
-# Neuron server
+# Zero-X gateway (Neuron server)
 
-This directory is the standalone server project. It provisions accounts and sessions, owns provider credentials, selects models and enforces allocation across every client session. Users sign in to Zero-X and receive a gateway token; they do not configure Groq, Bedrock or other provider keys.
+This directory is the Zero-X gateway: one Hono application that runs as a Cloudflare Worker
+(`wrangler.toml`, which also serves the website from the repository root) and as a Node server
+(`server.js`). It signs users in, issues CLI sessions and API keys, serves the OpenAI-compatible
+`/v1` API with server-side provider keys, enforces per-user quotas and shared upstream budgets in
+Postgres, and runs the paid plans (credits, Razorpay subscriptions and top-ups).
 
-Production currently runs on Cloudflare Workers, its AI binding, Supabase Auth/Postgres and Cloudflare KV. Cloudflare supplies the default coding model. Additional providers are operator-managed capacity, not prerequisites for user sign-in. The same API can run in a Node container with Postgres-backed sessions and an operator-configured HTTP provider.
+The source of truth for every route, error code, plan and RPC is
+[docs/PLATFORM_CONTRACT.md](docs/PLATFORM_CONTRACT.md). Upstream terms that constrain routing
+are summarised in [docs/PROVIDER_TERMS.md](docs/PROVIDER_TERMS.md). Configuration, the full
+environment/secret reference and the launch checklist are in [GATEWAY_SETUP.md](GATEWAY_SETUP.md).
 
-## Provisioning and policy
+## How it fits together
 
-First verified sign-in calls `zerox_sync_account`, creates the Free account and persists a gateway session. Existing accounts retain their assigned plan. Request bodies and editable identity metadata cannot change plans. `GET /auth/me` also provisions a missing verified account.
+- **Identity.** The website signs in with Supabase Auth. `POST /auth/cli/session` exchanges a
+  Supabase token for a `ses_` CLI session (720 h, stored under SHA-256 of the token).
+  `POST /api/keys` mints `nzx_` API keys for CI (only their hash is stored). On a loopback Node
+  server with `DEV_AUTH_ENABLED=true`, `dev_<base64url(email)>` tokens stand in for Supabase.
+- **Catalog and routing** (`src/catalog.js`, `src/router.js`, `src/chat-handler.js`). Only
+  live-verified models are hosted. A route is a (model, pool) pair: free pools first, then paid
+  pools for plans with the `paid` tier. Free Gemini is refused for EEA/GB/CH callers and for
+  callers whose country is unknown. Health is tracked per pool.
+- **Quota and credits** (`migrations/2026101600*`). Every upstream attempt is reserved with
+  `zerox_reserve_v2` (per-user daily caps, rpm, concurrency, credits and the shared pool budget,
+  atomically) and settled with `zerox_settle_v2` (real usage; refunded on provider failures).
+- **Billing** (`src/routes/billing.js`, `src/routes/webhooks.js`). Razorpay subscriptions
+  (Pro/Max, INR and USD) and credit top-ups; `subscription.charged` webhooks grant the monthly
+  credits once per payment.
+- **Website** (repository root). `pricing.html`, `dashboard.html`, the legal pages and the
+  checkout client (`billing-checkout.js`) talk to the same-origin `/api/*` routes.
 
-Postgres `zerox_plan_policy` is the authoritative allocation policy. The server returns remaining tokens, request limits and UTC reset information; clients do not allocate quotas. `zerox_reserve_usage` locks the account and reserves prompt/output capacity before inference. `zerox_settle_usage` reconciles reported usage afterward. Unknown or interrupted usage retains its reservation. Limits apply across devices and sessions. Operator policy edits affect enforcement immediately; displayed policy refreshes within 60 seconds.
+## Local development
 
-Change a plan's allocation through the private policy table, for example:
+Requirements: Node 22 or later (development uses Node 24) and `npm ci` in this directory.
+Nothing below needs Supabase, Razorpay or provider accounts.
 
-```sql
-UPDATE public.zerox_plan_policy
-SET daily_tokens = 256000, daily_requests = 2000
-WHERE plan = 'free';
-```
+1. **Database.** Create a local Postgres (PGlite) with every migration applied, and optionally
+   seed your dev identity with a plan and credits:
 
-Assign plans through an authorized administrative database operation. These tables and RPCs are restricted to `service_role`, with RLS enabled. Never put the secret key in a client. Prices in policy are descriptive; this server does not implement payments.
+   ```sh
+   npm run db:dev -- --data-dir D:/zerox-dev-db --email you@example.test --plan pro --credits-usd 5
+   ```
 
-## Operator deployment
+   PGlite allows one process per directory: stop the server before re-running `db:dev`. The
+   seeded user has the id of the dev identity for that address, so signing in as
+   `you@example.test` uses the seeded plan and credits. Without `--email` the dev identity is
+   created on first sign-in (its `auth.users` row is provisioned on the PGlite driver only).
 
-1. Apply the SQL files in `migrations/` in chronological order to the selected Supabase project.
-2. Configure Supabase Auth and its allowed Zero-X login redirects. Supply the project URL, public publishable key and private secret key to the server.
-3. For the existing website deployment, use `wrangler.toml`; it binds KV and Cloudflare AI. Provider keys are Worker secrets. For an independent API Worker, use `wrangler.api.toml`, set its identity variables and add the existing/new KV namespace binding, or use the Postgres session store automatically.
-4. Run `npm ci`, `npm test`, and `npm audit --omit=dev`, then deploy. Verify `/ready`, signed-in account allocation, streaming and a real model probe before routing clients to it.
+2. **Environment.** Copy `.dev.vars.example` to `.env` (server.js loads it with dotenv; or run
+   `node --env-file=.dev.vars server.js`; both files are gitignored) and set at least:
 
-The independent Worker config has no website assets or repository-wide static files. `npm run deploy:api` publishes it separately; set its domain and the client's `NEURON_API_BASE` when adopting it. The current website deployment retains its existing domain and login pages.
+   ```sh
+   AUTH_HOST=127.0.0.1
+   DATABASE_DRIVER=pglite
+   PGLITE_DATA_DIR=D:/zerox-dev-db
+   DEV_AUTH_ENABLED=true          # loopback Node server only
+   ALLOW_UNKNOWN_COUNTRY=true     # local only: Node has no caller country, free Gemini needs one
+   GROQ_API_KEY=...               # free pools you want to use locally
+   GEMINI_API_KEY=...
+   ```
 
-For a standalone Node process, copy `.env.example` to an untracked `.env`, supply operator configuration, and run `npm start`. `NEURON_API_ONLY=true` prevents website-asset serving. For containers:
+   For billing locally, use Razorpay test-mode keys (`rzp_test_...`) or point
+   `RAZORPAY_API_BASE` at a fake server, as `check-e2e-local.mjs` does.
 
-```sh
-docker build -t neuron-server .
-docker run --env-file .env -p 8787:8787 neuron-server
-```
+3. **Server.** `npm start` (or `node server.js`) listens on `127.0.0.1:8787` and serves the
+   website too. Open `http://127.0.0.1:8787/pricing` or `/dashboard`; the sign-in modal offers
+   the developer email form when `/auth/config` reports `provider: "dev"`. A CLI can use
+   `http://127.0.0.1:8787/v1` with a `ses_` token from `POST /auth/cli/session`
+   (`Authorization: Bearer dev_<base64url(email)>`). `NEURON_API_ONLY=true` serves the API only.
 
-Use a TLS reverse proxy for remote Node access. Sessions persist in Postgres when KV is absent; token keys are hashed before storage and records expire. Production does not fall back to in-memory sessions. `ALLOW_ANONYMOUS_SESSIONS=true` is an explicit development mode with local test allocations.
+4. **Checks.**
+
+   ```sh
+   npm test                 # check:server + check:database + check:platform (includes check:e2e)
+   npm run check:e2e        # end-to-end journey against the real server.js, fully offline
+   npm run check:e2e:live   # same journey; chat steps use the real Groq/Gemini free pools
+                            # (keys from .dev.vars, at most 10 calls)
+   node check-worker.mjs && node check-node-server.cjs && node check-auth-storage.mjs \
+     && node check-callback.mjs && node check-cli-login.mjs && node check-dashboard.mjs && node check-seo.mjs
+   ```
+
+   `check-e2e-local.mjs` starts `server.js` on a random port with a fresh PGlite directory under
+   `os.tmpdir()` (set `TMP`/`TEMP` to move it), a fake OpenAI-compatible upstream and a fake
+   Razorpay, and walks sign-in, models, streamed tool calls, usage, API keys, the daily cap,
+   checkout, the charged webhook, paid-pool credits, a top-up, cancellation, revoke-all, the
+   admin overview and a static-site/CSP smoke test. `e2e-upstream-shim.mjs` (preloaded only by
+   that test) refuses every non-loopback request. `check-seo.mjs --live` and
+   `npm run check:production` contact the live site.
 
 ## Operations
 
-`GET /health` is process/configuration liveness. `GET /ready` verifies quota policy, session storage and an available tool-capable catalog; it does not certify provider inference. `POST /v1/models/health` is an authenticated, quota-accounted real inference probe.
+- `GET /health` answers `{status, service, version}`; with `Authorization: Bearer
+  $GATEWAY_ADMIN_TOKEN` it adds the configuration flags. `GET /ready` checks plan policies,
+  session storage and the catalog.
+- `GET /admin/overview` (operator token) returns users, revenue, today's usage and every pool
+  with its counters, shared budget and circuit state. `GET /v1/providers/health` adds upstream
+  discovery, per-pool health and ignored `*_MODELS` entries.
+- The Worker cron (`*/10 * * * *`) releases stale reservations and applies subscription expiry.
+  A production Node deployment (PostgREST driver) must run the same jobs from its own scheduler:
+  `node -e "import('./src/routes/admin.js').then(m => m.runScheduledMaintenance(process.env))"`
+  every 10 minutes.
+- Plans live in `public.zerox_plan_policy` (`daily_requests`, `daily_tokens`, `rpm_limit`,
+  `concurrency_limit`, `allowed_tiers`, `monthly_credit_microusd`, prices and Razorpay plan
+  ids). Edits apply to enforcement immediately and to the gateway's cached view within 60 s.
+- Containers: `docker build -t neuron-server .` then `docker run --env-file .env -p 8787:8787
+  neuron-server`. Put a TLS proxy in front; never enable `DEV_AUTH_ENABLED` or the PGlite driver
+  there (both are refused outside loopback and under `NODE_ENV=production`).
 
-`GET /v1/providers/health` requires the operator's `GATEWAY_ADMIN_TOKEN` (at least 32 characters), not a user session. It reports missing credentials, catalog health and configuration for operators only. Supply it using `wrangler secret put GATEWAY_ADMIN_TOKEN` or the container's secret store. Provider rejection details remain in server logs; user responses contain service availability and allocation messages.
-
-See [PROVIDERS.md](PROVIDERS.md) for all six provider configurations. Missing optional credentials remove those models from the catalog. Operators are responsible for provider access, capacity and billing; users receive the service's included models. No architecture can manufacture provider credentials or guarantee unlimited capacity.
-
-Database checks use an isolated PGlite install: set `PGLITE_ENTRY` to its `dist/index.js` and run `npm run check:database`.
+See [PROVIDERS.md](PROVIDERS.md) for upstream adapters and operator health probes.

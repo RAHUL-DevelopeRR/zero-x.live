@@ -1,6 +1,6 @@
 # Neuron × Zero-X platform contract
 
-Status: v1 (2026-10-16). This document is the source of truth shared by the Neuron CLI
+Status: v1.1 (2026-10-16; v1.1 amendments in section 6). This document is the source of truth shared by the Neuron CLI
 (`RAHUL-DevelopeRR/neuron-v2`) and the Zero-X gateway + website
 (`RAHUL-DevelopeRR/zero-x.live`, `neuroncli/auth-server`). A copy lives in both repos;
 change both together.
@@ -143,7 +143,7 @@ credential (never an `nzx_` key). Session tokens are stored hashed (SHA-256) in 
   request_id}], next_before}`
 - `GET /api/keys` → `{keys:[{id, name, prefix, created_at, last_used_at, revoked_at}]}`
 - `POST /api/keys {name}` → `201 {key:{id,name,prefix,created_at}, secret:'nzx_…'}` (secret
-  shown once; max 10 active keys)
+  shown once; max 10 active keys; `prefix` = `'nzx_'` + the first 8 characters of the key body)
 - `DELETE /api/keys/:id` → `{status:'revoked'}`
 - `POST /api/sessions/revoke-all` → `{revoked:<n>}` (signs out all CLI sessions)
 
@@ -193,23 +193,25 @@ All called through `rpc(env, name, args)` / `rpcRows(env, name, args)` in
 | `zerox_reserve_v2` | `p_user_id uuid, p_request_id text, p_model text, p_tier text, p_tokens bigint, p_cost_microusd bigint, p_pool jsonb` (`{rpm,rpd,tpm,tpd}` or null) | `{status, reservation_id, plan, remaining_requests, remaining_tokens, credit_balance_microusd, resets_at, retry_after_seconds}`; status ∈ `ok, no_account, suspended, upgrade_required, user_daily_requests, user_daily_tokens, user_rpm, user_concurrency, insufficient_credits, pool_exhausted` |
 | `zerox_settle_v2` | `p_reservation_id uuid, p_prompt_tokens bigint, p_completion_tokens bigint, p_cost_microusd bigint, p_status text ('ok','error','refunded'), p_latency_ms int, p_provider text, p_upstream_model text, p_error_code text` | `{status:'settled'|'already_settled'|'not_found', credit_balance_microusd}` |
 | `zerox_release_stale_reservations` | — | `{released}` |
-| `zerox_plan_policies_v2` | — | one row per plan with all policy columns |
+| `zerox_plan_policies_v2` | — | one row per plan: `plan, name, price_usd, price_usd_cents, price_inr_paise, daily_requests, daily_tokens, rpm_limit, concurrency_limit, allowed_tiers text[], monthly_credit_microusd, features, sort, public, highlighted, razorpay_plan_id_inr, razorpay_plan_id_usd` |
 | `zerox_account_overview` | `p_user_id` | account + policy + credits + subscription + today usage (jsonb columns) |
 | `zerox_usage_series` | `p_user_id, p_from date, p_to date` | rows `{day, requests, prompt_tokens, completion_tokens, cost_microusd}` |
 | `zerox_usage_by_model` | `p_user_id, p_from, p_to` | rows `{model, requests, prompt_tokens, completion_tokens, cost_microusd}` |
 | `zerox_usage_events` | `p_user_id, p_limit int, p_before bigint` | rows of `zerox_usage_events` |
-| `zerox_api_key_create` | `p_user_id, p_name, p_prefix, p_hash` | `{id, name, prefix, created_at}` (raises `too_many_keys`) |
+| `zerox_api_key_create` | `p_user_id, p_name, p_prefix, p_hash` (`p_prefix` ~ `^nzx_[A-Za-z0-9_-]{0,28}$`, `p_hash` = lowercase hex SHA-256 of the secret) | `{id, name, prefix, created_at}` (raises `too_many_keys`) |
 | `zerox_api_key_list` | `p_user_id` | rows |
 | `zerox_api_key_revoke` | `p_user_id, p_key_id uuid` | `{revoked boolean}` |
 | `zerox_api_key_verify` | `p_hash` | `{key_id, user_id}` or no row |
 | `zerox_billing_upsert_subscription` | `p_user_id, p_provider, p_provider_subscription_id, p_plan, p_status, p_current_period_start timestamptz, p_current_period_end timestamptz, p_cancel_at_period_end boolean, p_raw jsonb` | subscription row; sets account plan when status ∈ (authenticated, active), reverts to free when ended |
 | `zerox_billing_record_payment` | `p_user_id, p_provider, p_provider_payment_id, p_kind, p_amount_minor bigint, p_currency, p_status, p_invoice_url, p_raw jsonb` | payment row (idempotent on provider+payment id) |
-| `zerox_credit_grant` | `p_user_id, p_delta_microusd bigint, p_reason text, p_ref text` | `{granted boolean, balance_microusd}` (idempotent on ref) |
+| `zerox_credit_grant` | `p_user_id, p_delta_microusd bigint, p_reason text` (~ `^[a-z][a-z0-9_]{0,63}$`, e.g. `topup_credits_5`, `subscription_pro`), `p_ref text` (unique; the `usage:` prefix is reserved) | `{granted boolean, balance_microusd}` (idempotent on ref) |
 | `zerox_webhook_claim` | `p_provider, p_event_id, p_event_type, p_payload_sha256` | `{claimed boolean}` |
+| `zerox_webhook_release` | `p_provider, p_event_id` | `{released boolean}` (drop a claim whose processing failed so the retry is processed) |
 | `zerox_billing_get` | `p_user_id` | `{subscription jsonb, payments jsonb}` |
 | `zerox_subscription_by_provider_id` | `p_provider, p_provider_subscription_id` | subscription row incl. `user_id` |
-| `zerox_apply_subscription_expiry` | — | `{downgraded}` |
-| `zerox_session_index_add/list/revoke_all` | `p_user_id, p_token_hash, p_expires_at` | session index for revoke-all |
+| `zerox_apply_subscription_expiry` | — | `{downgraded, reconciled}` |
+| `zerox_session_index_add/list/revoke_all` | `p_user_id, p_token_hash, p_expires_at` | session index for revoke-all; `revoke_all` returns one `{token_hash}` row per removed entry |
+| `zerox_session_index_remove` | `p_token_hash` | `{removed boolean}` (single sign-out) |
 | `zerox_admin_overview` | — | `{overview jsonb}` |
 
 Legacy RPCs (`zerox_reserve_usage`, `zerox_settle_usage`, …) remain for rollback.
@@ -227,3 +229,38 @@ Legacy RPCs (`zerox_reserve_usage`, `zerox_settle_usage`, …) remain for rollba
   `capacity_exhausted`, `upstream_*` at most 2 times honoring `Retry-After`, printing progress.
 - `/usage` calls `GET /api/account`; `/upgrade` opens `upgrade_url`; `/login`, `/logout` run
   the gateway login flow.
+
+## 6. v1.1 amendments (integration of the business platform, 2026-10-16)
+
+Resolved while integrating the gateway, database, API and website packages; the side the
+database or this contract already enforced won. Sync the copy in `neuron-v2`.
+
+- **Plans (§1).** Credit top-ups need a plan whose tiers include `paid`; Free accounts get
+  `403 upgrade_required` from `POST /api/billing/topup`. Plan rows are read through the
+  `zerox_plan_policies_v2` column names (`rpm_limit`, `concurrency_limit`, `allowed_tiers`).
+- **Geo rule (§2).** Free Gemini pools are refused when the caller's country is in EEA/GB/CH,
+  is a Cloudflare unknown jurisdiction (`T1`, `XX`) or is not known at all (Node without
+  `TRUST_CF_IPCOUNTRY`). `ALLOW_UNKNOWN_COUNTRY=true` exists for local development only.
+- **Dev identity (§3.1).** `dev_` tokens create their account on the PGlite driver, which
+  provisions the identity's `auth.users` row; on PostgREST they cannot (no Supabase Auth user).
+- **Models (§3.2).** `data[]` lists every offered model, unconfigured ones with
+  `available:false, unavailable_reason:'not_configured'`. Paid tiers count only for sessions
+  backed by an account ledger, exactly as routing does.
+- **Errors (§3.3).** `param` is `null` or names the offending field. Additional codes:
+  `model_not_found` (404), `service_unavailable` (503), `api_key_not_allowed` (403),
+  `too_many_keys` (409), `not_found` (404), `billing_not_configured` (503),
+  `already_subscribed` (409), `no_active_subscription` (409), `invalid_signature` (400),
+  `payment_mismatch` (400/403), `payment_failed` (402), `payment_provider_error` (502); suspended
+  accounts also get `403 account_suspended` from checkout, top-up and key creation. An upstream
+  429 is reported as `503 capacity_exhausted` (shared pool) with `retry_after_seconds`. Upstream
+  timeouts count bytes, SSE comments included; the first data event is due within the first-byte
+  plus idle budgets. Timestamps (`resets_at`, `current_period_end`, `created_at`) are ISO 8601 UTC
+  as produced by `toISOString()`.
+- **Account (§3.4).** `GET /api/usage/events` accepts `limit` 1–200.
+- **Billing (§3.5).** `POST /api/billing/verify` answers `{status:'pending', account}` while
+  Razorpay has not confirmed the payment, and never clears a scheduled cancellation. Ledger
+  reasons are `topup_<pack>` and `subscription_<plan>` with the Razorpay payment id as `ref`.
+- **Admin (§3.6).** `pools[]` items also carry `provider`, `configured`, `requests_this_minute`
+  and `tokens_this_minute`; `limits` is `null` for pools without a shared budget (paid pools);
+  `health` is `{status, circuit_open, cooldown_remaining_ms, last_failure_kind}` for the serving
+  isolate.
