@@ -28,13 +28,11 @@ custom_domain = true
 
 [vars]
 
-GROQ_MODELS = "openai/gpt-oss-120b,openai/gpt-oss-20b,qwen/qwen3.8-27b"
-GROQ_TOOL_MODELS = "openai/gpt-oss-120b,openai/gpt-oss-20b,qwen/qwen3.8-27b"
+# The hosted model list is the verified catalog in src/catalog.js (docs/PLATFORM_CONTRACT.md
+# section 2). GROQ_MODELS / GEMINI_MODELS / CLOUDFLARE_MODELS / NVIDIA_MODELS can only narrow it
+# (unknown ids are ignored and reported on /v1/providers/health); *_TOOL_MODELS are no longer read.
+# OPENROUTER_MODELS is the allowlist for users' own OpenRouter keys (BYOK).
 OPENROUTER_MODELS = "cohere/north-mini-code:free"
-GEMINI_MODELS = "gemini-2.5-flash"
-GEMINI_TOOL_MODELS = "gemini-2.5-flash"
-NVIDIA_MODELS = "meta/llama-3.2-11b-vision-instruct"
-NVIDIA_TOOL_MODELS = "meta/llama-3.2-11b-vision-instruct"
 SUPABASE_URL = "https://norrtosjwcossxrhhtvd.supabase.co"
 # Public browser key. OAuth, SMTP, SMS and service-role secrets stay outside this repository.
 SUPABASE_PUBLISHABLE_KEY = "sb_publishable_Fgrm-Cfyj3w0xAfepK-CFg_SpUydF2T"

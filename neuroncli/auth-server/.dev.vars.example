@@ -8,6 +8,8 @@ AUTH_HOST=127.0.0.1                 # bind address; the dev identity only works 
 AUTH_PORT=8787
 NEURON_API_ONLY=false               # true = API only, no website assets
 # DATABASE_DRIVER=pglite            # in-process Postgres for local development (account store)
+# PGLITE_DATA_DIR=D:/zerox-dev-db   # on-disk PGlite directory (in memory when unset); see npm run db:dev
+# ALLOW_LOCAL_DATABASE=true         # lets pglite serve a non-loopback AUTH_HOST (never in production)
 
 # ── Local dev identity (Node server only; NEVER set in wrangler files or production) ──
 # When true and the request Host is 127.0.0.1/localhost, /auth/config reports provider "dev"
@@ -42,16 +44,21 @@ RAZORPAY_WEBHOOK_SECRET=            # SECRET: webhook signing secret from the Ra
 # RAZORPAY_API_BASE=http://127.0.0.1:9999/v1   # tests only: fake Razorpay server
 
 # ── Upstream providers (free pools) ──
+# The verified catalog (src/catalog.js) decides which models are hosted. GROQ_MODELS,
+# GEMINI_MODELS, CLOUDFLARE_MODELS and NVIDIA_MODELS may only narrow it (comma-separated catalog
+# ids); leave them unset. *_TOOL_MODELS are no longer read.
 GROQ_API_KEY=                       # SECRET
-GROQ_MODELS=openai/gpt-oss-120b,openai/gpt-oss-20b,qwen/qwen3.8-27b
-GROQ_TOOL_MODELS=openai/gpt-oss-120b,openai/gpt-oss-20b,qwen/qwen3.8-27b
 GEMINI_API_KEY=                     # SECRET (free tier is geo-blocked for EEA/GB/CH callers)
-GEMINI_MODELS=gemini-2.5-flash
-GEMINI_TOOL_MODELS=gemini-2.5-flash
 CLOUDFLARE_ACCOUNT_ID=              # Node only; the Worker uses its AI binding
 CLOUDFLARE_API_TOKEN=               # SECRET, Node only
-CLOUDFLARE_MODELS=
-CLOUDFLARE_TOOL_MODELS=
+# CLOUDFLARE_PAID=true              # adds the paid Workers AI pools (Workers Paid accounts only)
+# Caller country: Workers use request.cf.country. On a Node origin reachable only through
+# Cloudflare set TRUST_CF_IPCOUNTRY=true. Free Gemini pools are refused when the country is
+# unknown unless ALLOW_UNKNOWN_COUNTRY=true (local development only, never in production).
+# TRUST_CF_IPCOUNTRY=true
+# ALLOW_UNKNOWN_COUNTRY=true
+# UPSTREAM_TTFB_TIMEOUT_MS=45000    # first byte; UPSTREAM_IDLE_TIMEOUT_MS=90000 between bytes
+# ROUTER_MAX_ATTEMPTS=3             # upstream attempts per request (one is kept for paid pools)
 
 # ── Upstream providers (paid pools, used by paid plans) ──
 GROQ_PAID_API_KEY=                  # SECRET: Groq Developer plan key
@@ -60,8 +67,6 @@ GEMINI_PAID_API_KEY=                # SECRET: billing-linked Gemini project key
 # ── Not hosted by default (docs/PROVIDER_TERMS.md) ──
 NVIDIA_HOSTED=false                 # true only for internal evaluation (trial terms)
 NVIDIA_API_KEY=                     # SECRET
-NVIDIA_MODELS=meta/llama-3.2-11b-vision-instruct
-NVIDIA_TOOL_MODELS=meta/llama-3.2-11b-vision-instruct
 OPENROUTER_HOSTED=false             # true re-enables the operator key (otherwise BYOK only)
 OPENROUTER_API_KEY=                 # SECRET
 OPENROUTER_MODELS=cohere/north-mini-code:free
