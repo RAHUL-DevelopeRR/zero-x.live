@@ -17,7 +17,10 @@ import { FailureKind, HealthState, ProviderHealthTracker } from './src/provider-
 import { POOL_LIMITS, catalogEntry } from './src/catalog.js';
 import { reservationArgs } from './src/capacity.js';
 import { estimatePromptTokens } from './src/pricing.js';
-import { ADAPTERS, buildUpstreamPayload, redactProviderMessage, upstreamErrorSummary, UPSTREAM_MESSAGE_LIMIT } from './src/providers.js';
+import {
+  ADAPTERS, buildUpstreamPayload, classifyUpstreamFailure, parseTruncatedJson, redactProviderMessage, upstreamErrorSummary,
+  UPSTREAM_MESSAGE_LIMIT,
+} from './src/providers.js';
 import {
   GEMINI_SIGNATURE_PLACEHOLDER, ThoughtSignatureCache, errorToolContent, normalizeProviderRequest,
 } from './src/provider-request.js';
@@ -498,7 +501,75 @@ try {
     assert.ok(!JSON.stringify(logs).includes('SECRET MODEL OUTPUT'));
   });
 
+  await test('a >16 KB rejection (Groq tool_use_failed writing a large file) never logs the cut-off model output', async () => {
+    const gw = gateway();
+    gw.addSession('ses_alice_0000000000000000');
+    const file = 'DB_PASSWORD=Sup3r-S3cret-Value and the private notes of the user: ' + 'lorem ipsum dolor sit amet '.repeat(900);
+    const body = JSON.stringify({ error: { message: "Failed to call a function. Please adjust your prompt. See 'failed_generation' for more details.",
+      type: 'invalid_request_error', code: 'tool_use_failed',
+      failed_generation: '<function=write_file>{"path":"notes.txt","content":"' + file + '"}</function>' } });
+    assert.ok(body.length > 16384, 'the body is cut by readBounded');
+    reset({ groq: () => new Response(body, { status: 400, headers: { 'Content-Type': 'application/json' } }) });
+    const request = { model: 'groq/openai/gpt-oss-120b', stream: false, max_tokens: 1024, messages: [{ role: 'user', content: 'write notes' }],
+      tools: [{ type: 'function', function: { name: 'write_file', parameters: { type: 'object',
+        properties: { path: { type: 'string' }, content: { type: 'string' } } } } }] };
+    const { result: response, logs } = await captureLogs(() => gw.call(request));
+    const serialized = JSON.stringify(logs);
+    for (const leaked of ['Sup3r-S3cret-Value', 'private notes', 'lorem ipsum', 'notes.txt', '<function=write_file>']) {
+      assert.ok(!serialized.includes(leaked), 'logs never contain ' + leaked);
+    }
+    const [, detail] = logs.warn.find(([text]) => text === 'Neuron upstream error detail');
+    // The complete fields before the cut still classify it: a model-side failure, not the caller's.
+    assert.equal(detail.kind, FailureKind.MODEL_ERROR);
+    assert.deepEqual(detail.upstream, { status: 400, provider_code: 'tool_use_failed', provider_type: 'invalid_request_error',
+      message: "Failed to call a function. Please adjust your prompt. See 'failed_generation' for more details.", truncated: true });
+    assert.equal(response.status, 502);
+    const error = (await response.json()).error;
+    assert.equal(error.code, 'upstream_error');
+    assert.ok(!JSON.stringify(error).includes('Sup3r'));
+
+    // Streamed requests read the same bounded body when the upstream rejects before streaming.
+    const streamed = await captureLogs(async () => (await gw.call({ ...request, stream: true })).text());
+    assert.ok(!JSON.stringify(streamed.logs).includes('Sup3r-S3cret-Value'));
+    assert.equal(streamed.logs.warn.find(([text]) => text === 'Neuron upstream error detail')[1].upstream.truncated, true);
+  });
+
   // ── Diagnostics helpers ──
+  await test('cut-off JSON error bodies keep only their complete fields; raw JSON text is never the message', () => {
+    assert.deepEqual(parseTruncatedJson('{"error":{"message":"m","code":"tool_use_failed","failed_generation":"secret, \\"quoted\\" and cut'),
+      { error: { message: 'm', code: 'tool_use_failed' } });
+    assert.deepEqual(parseTruncatedJson('[{"error":{"code":400,"message":"a, b","status":"INVALID_ARGUMENT","details":[{"reason":"X"},{"rea'),
+      [{ error: { code: 400, message: 'a, b', status: 'INVALID_ARGUMENT', details: [{ reason: 'X' }] } }]);
+    assert.deepEqual(parseTruncatedJson('{"error":{"code":400,"message":"cut'), { error: { code: 400 } });
+    assert.equal(parseTruncatedJson('{"error":{"message":"Some prompt words here and more'), undefined);
+    assert.equal(parseTruncatedJson('{"a":1]'), undefined);
+    assert.equal(parseTruncatedJson('not json'), undefined);
+    // A cut-off message is dropped rather than logged (the prompt words were in it).
+    assert.deepEqual(upstreamErrorSummary(400, '{"error":{"message":"Some prompt words here and more'), { status: 400, truncated: true });
+    assert.deepEqual(upstreamErrorSummary(400, '{"error":{"code":"context_length_exceeded","message":"Please reduce the length, the user said'),
+      { status: 400, provider_code: 'context_length_exceeded', truncated: true });
+    assert.equal(classifyUpstreamFailure(400, '{"error":{"message":"x","code":"tool_use_failed","failed_generation":"cut').kind, FailureKind.MODEL_ERROR);
+    // A JSON body that is complete but not an error object is not echoed either.
+    assert.deepEqual(upstreamErrorSummary(400, '["the user prompt"]'), { status: 400 });
+  });
+
+  await test('diagnostics read FastAPI, RFC 7807, string and Workers AI error bodies', () => {
+    assert.deepEqual(upstreamErrorSummary(422, '{"detail":"Input should be a valid string for messages.3.content"}'),
+      { status: 422, message: 'Input should be a valid string for messages.3.content' });
+    assert.deepEqual(upstreamErrorSummary(422, JSON.stringify({ detail: [{ type: 'string_type', loc: ['body', 'messages', 3, 'content'],
+      msg: 'Input should be a valid string', input: { secret: 'the user prompt' } }] })),
+    { status: 422, message: 'body.messages.3.content: Input should be a valid string' });
+    assert.deepEqual(upstreamErrorSummary(422, JSON.stringify({ detail: [{ loc: ['body', 'the user prompt'], msg: 'Field required' }] })),
+      { status: 422, message: 'Field required' }, 'a location that is not a field path is left out');
+    assert.deepEqual(upstreamErrorSummary(422, JSON.stringify({ type: 'about:blank', title: 'Unprocessable Entity', status: 422 })),
+      { status: 422, provider_type: 'about:blank', message: 'Unprocessable Entity' });
+    assert.deepEqual(upstreamErrorSummary(404, '{"error":"model not found"}'), { status: 404, message: 'model not found' });
+    assert.deepEqual(upstreamErrorSummary(429, '{"errors":[{"code":3036,"message":"You have used up your daily free allocation"}],"success":false}'),
+      { status: 429, provider_code: 3036, message: 'You have used up your daily free allocation' });
+    assert.deepEqual(upstreamErrorSummary(502, '<html><head><title>502 Bad Gateway</title></head></html>'),
+      { status: 502, message: '<html><head><title>502 Bad Gateway</title></head></html>' });
+  });
+
   await test('redaction keeps field paths and identifiers, removes keys, e-mails, blobs and quoted prompt text', () => {
     assert.equal(redactProviderMessage("'messages.3' : for 'role:tool' the following must be satisfied[('messages.3' : property 'is_error' is unsupported)]"),
       "'messages.3' : for 'role:tool' the following must be satisfied[('messages.3' : property 'is_error' is unsupported)]");
@@ -511,6 +582,13 @@ try {
     assert.equal(redactProviderMessage(' a \n\n b '), 'a b');
     assert.equal(redactProviderMessage('y'.repeat(1000)).length, UPSTREAM_MESSAGE_LIMIT);
     assert.equal(redactProviderMessage(undefined), '');
+    // Quotes that are never closed (a cut-off body) are redacted to the end of the text.
+    assert.equal(redactProviderMessage("Unterminated quote: 'this is a very long prompt fragment that never closes"), "Unterminated quote: '[redacted]");
+    assert.equal(redactProviderMessage('bad "a b" then "the user prompt, cut'), 'bad "[redacted]" then "[redacted]');
+    assert.equal(redactProviderMessage('field "messages.3" then `run the deploy'), 'field "messages.3" then `[redacted]');
+    assert.equal(redactProviderMessage('value "cut with an escaped quote \\"'), 'value "[redacted]');
+    assert.equal(redactProviderMessage('{"error":{"message":"Some prompt words'), '{"error":{"message":"[redacted]');
+    assert.equal(redactProviderMessage("can't and won't stay"), "can't and won't stay");
     assert.deepEqual(upstreamErrorSummary(401, '{"error":{"message":"Invalid API Key","type":"invalid_request_error","code":"invalid_api_key"}}'),
       { status: 401, provider_code: 'invalid_api_key', provider_type: 'invalid_request_error', message: 'Invalid API Key' });
     assert.deepEqual(upstreamErrorSummary(500, 'not json'), { status: 500, message: 'not json' });

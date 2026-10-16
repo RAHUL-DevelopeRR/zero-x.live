@@ -446,11 +446,96 @@ export const WORKERS_AI_ERRORS = Object.freeze({
 
 const isObject = value => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 
-// Structured fields of an upstream error body (JSON text or a parsed error object).
+/**
+ * Parses the complete part of a JSON error body that readBounded cut off: the text after the
+ * last complete value is dropped (so a cut-off string, such as Groq's `failed_generation` with
+ * the model's output, never survives) and the open objects and arrays are closed. Returns
+ * undefined when nothing complete can be recovered.
+ */
+export function parseTruncatedJson(text) {
+  if (typeof text !== 'string') return undefined;
+  const stack = [];
+  let expectKey = false;
+  let inString = false;
+  let stringIsKey = false;
+  let cut = -1;
+  let closers = '';
+  const mark = position => { cut = position; closers = stack.slice().reverse().join(''); };
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (ch === '\\') i++;
+      else if (ch === '"') {
+        inString = false;
+        if (!stringIsKey) mark(i + 1);
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      stringIsKey = expectKey && stack.at(-1) === '}';
+    } else if (ch === '{' || ch === '[') {
+      stack.push(ch === '{' ? '}' : ']');
+      expectKey = ch === '{';
+    } else if (ch === '}' || ch === ']') {
+      if (stack.pop() !== ch) return undefined;
+      expectKey = false;
+      mark(i + 1);
+    } else if (ch === ',') {
+      mark(i);
+      expectKey = stack.at(-1) === '}';
+    } else if (ch === ':') {
+      expectKey = false;
+    }
+  }
+  if (cut < 0) return undefined;
+  try { return JSON.parse(text.slice(0, cut) + closers); } catch { return undefined; }
+}
+
+// The error text of a parsed error body: error.message (OpenAI, Gemini), a string `error`,
+// FastAPI's `detail` (a string, or validation entries with `loc` and `msg`; their `input`
+// echoes the request and is never read), Workers AI's errors[0].message or an RFC 7807 `title`.
+function errorMessage(root, error, workers) {
+  const sources = error === root ? [root] : [error, root];
+  for (const value of sources) if (typeof value.message === 'string') return value.message;
+  if (typeof root.error === 'string') return root.error;
+  if (typeof workers?.message === 'string') return workers.message;
+  for (const value of sources) {
+    if (typeof value.detail === 'string') return value.detail;
+    const entry = Array.isArray(value.detail) ? value.detail.find(item => isObject(item) && typeof item.msg === 'string') : null;
+    if (entry) {
+      const path = Array.isArray(entry.loc) && entry.loc.length && entry.loc.every(part => Number.isInteger(part) ||
+        (typeof part === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(part)));
+      return path ? `${entry.loc.join('.')}: ${entry.msg}` : entry.msg;
+    }
+  }
+  for (const value of sources) if (typeof value.title === 'string') return value.title;
+  return '';
+}
+
+/**
+ * Structured fields of an upstream error body (JSON text or a parsed error object). A body that
+ * looks like JSON but does not parse (in practice: cut off at 16 KB by readBounded) is read up to
+ * its last complete value and flagged `truncated`; a body that is not JSON at all (plain text,
+ * HTML) becomes the message, which redactProviderMessage sanitizes. Raw JSON text is never used
+ * as the message.
+ */
 export function parseUpstreamError(source) {
   let value = source;
+  let text = '';
+  let truncated = false;
   if (typeof source === 'string') {
-    try { value = JSON.parse(source); } catch { value = null; }
+    try {
+      value = JSON.parse(source);
+    } catch {
+      value = undefined;
+      if (/^\s*[[{]/.test(source)) {
+        truncated = true;
+        value = parseTruncatedJson(source);
+      } else {
+        text = source;
+      }
+    }
   }
   if (Array.isArray(value)) value = value[0]; // Gemini wraps errors in an array
   const root = isObject(value) ? value : {};
@@ -470,7 +555,8 @@ export function parseUpstreamError(source) {
     quotas: violations.map(violation => ({ id: violation.quotaId, value: violation.quotaValue }))
       .filter(quota => typeof quota.id === 'string'),
     workersCode: Number.isInteger(workers?.code) ? workers.code : null,
-    message: typeof error.message === 'string' ? error.message : typeof source === 'string' && !isObject(value) ? source : '',
+    message: errorMessage(root, error, workers) || text,
+    truncated,
   };
 }
 
@@ -487,8 +573,10 @@ const KEY_PARAM = /([?&](?:key|api_key|apikey|token|access_token|signature)=)[^&
 const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+/g;
 const BLOB = /[A-Za-z0-9+/=]{40,}/g;
 // Quoted spans in a provider message are kept only when they look like a field path or an
-// identifier ('messages.3', `default_api:read_file`); anything else may quote the prompt.
-const QUOTED = /"(?:[^"\\]|\\.)*"|(?<![A-Za-z0-9])'(?:[^'\\]|\\.)*'(?![A-Za-z0-9])|`[^`]*`/g;
+// identifier ('messages.3', `default_api:read_file`); anything else may quote the prompt. A
+// quote that is never closed (a cut-off body) is redacted up to the end of the text.
+const QUOTED = /"(?:[^"\\]|\\[\s\S])*(?:"|$)|(?<![A-Za-z0-9])'(?:[^'\\]|\\[\s\S])*(?:'(?![A-Za-z0-9])|$)|`[^`]*(?:`|$)/g;
+const CLOSED_QUOTE = { '"': /^"(?:[^"\\]|\\[\s\S])*"$/, "'": /^'(?:[^'\\]|\\[\s\S])*'$/, '`': /^`[^`]*`$/ };
 const IDENTIFIER = /^[A-Za-z0-9_.:[\]/$#@-]{1,64}$/;
 export const UPSTREAM_MESSAGE_LIMIT = 300;
 
@@ -504,7 +592,11 @@ export function redactProviderMessage(message, { secrets = [] } = {}) {
   }
   for (const pattern of SECRET_PATTERNS) text = text.replace(pattern, '[redacted]');
   text = text.replace(KEY_PARAM, '$1[redacted]')
-    .replace(QUOTED, span => IDENTIFIER.test(span.slice(1, -1)) ? span : `${span[0]}[redacted]${span.at(-1)}`)
+    .replace(QUOTED, span => {
+      const quote = span[0];
+      if (!CLOSED_QUOTE[quote].test(span)) return `${quote}[redacted]`;
+      return IDENTIFIER.test(span.slice(1, -1)) ? span : `${quote}[redacted]${quote}`;
+    })
     .replace(EMAIL, '[email]')
     .replace(BLOB, blob => /\d/.test(blob) && /[A-Za-z]/.test(blob) ? '[redacted]' : blob)
     .replace(/\s+/g, ' ').trim();
@@ -531,6 +623,7 @@ export function upstreamErrorSummary(status, body = '', { secrets = [] } = {}) {
   if (info.retryDelaySeconds) summary.retry_delay_seconds = info.retryDelaySeconds;
   const message = redactProviderMessage(info.message, { secrets });
   if (message) summary.message = message;
+  if (info.truncated) summary.truncated = true;
   return summary;
 }
 

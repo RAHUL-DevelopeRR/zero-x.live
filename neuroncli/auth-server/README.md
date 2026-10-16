@@ -109,7 +109,9 @@ Nothing below needs Supabase, Razorpay or provider accounts.
 - Upstream rejections are logged as `Neuron upstream rejected request` (error) plus `Neuron
   upstream error detail` (warn): a sanitized summary with the provider's error code/status,
   quota violations, retry delay and a redacted excerpt of its message (GATEWAY_SETUP.md,
-  "Upstream pools and routing"). Search the logs by the response's `x-request-id`.
+  "Upstream pools and routing"). An error body cut off at 16 KB is read up to its last complete
+  field (`truncated: true`); its raw text is never logged. Search the logs by the response's
+  `x-request-id`.
 - The Worker cron (`*/10 * * * *`) releases stale reservations and applies subscription expiry.
   A production Node deployment (PostgREST driver) must run the same jobs from its own scheduler:
   `node -e "import('./src/routes/admin.js').then(m => m.runScheduledMaintenance(process.env))"`
