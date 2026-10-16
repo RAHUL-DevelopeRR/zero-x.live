@@ -1,9 +1,15 @@
 [
   {"file":"index.html","url":"https://zero-x.live/"},
+  {"file":"neuron-cli.html","url":"https://zero-x.live/neuron-cli"},
+  {"file":"pricing.html","url":"https://zero-x.live/pricing"},
+  {"file":"docs.html","url":"https://zero-x.live/docs"},
   {"file":"neuron.html","url":"https://neuron.zero-x.live/"},
   {"file":"about.html","url":"https://zero-x.live/about"},
   {"file":"privacy.html","url":"https://zero-x.live/privacy"},
   {"file":"terms.html","url":"https://zero-x.live/terms"},
+  {"file":"contact.html","url":"https://zero-x.live/contact"},
+  {"file":"refund.html","url":"https://zero-x.live/refund"},
+  {"file":"shipping.html","url":"https://zero-x.live/shipping"},
   {"file":"find-files-by-content.html","url":"https://zero-x.live/find-files-by-content"},
   {"file":"wheres-that-file.html","url":"https://zero-x.live/wheres-that-file","video":{"thumbnail":"https://zero-x.live/Assets/neucockpit-film-poster.webp","title":"Where’s That File? | NeuCockpit by Zero-X","description":"A 15-second film showing illustrative semantic file search and local AI summary in NeuCockpit.","content":"https://zero-x.live/videos/neucockpit-wheres-that-file.mp4","published":"2026-10-01T16:09:34Z","duration":15}}
 ]

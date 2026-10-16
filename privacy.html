@@ -3,54 +3,150 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Privacy Policy | Zero-X NeuCockpit</title>
-  <meta name="description" content="How Zero-X NeuCockpit handles sign-in information, account records, website sessions and cloud AI requests.">
+  <title>Privacy Policy | Zero-X</title>
+  <meta name="description" content="How Zero-X handles accounts, usage records, payments and the prompts Neuron CLI sends to model providers such as Groq, Google Gemini API and Cloudflare Workers AI.">
+  <meta name="robots" content="index,follow,max-image-preview:large">
   <link rel="canonical" href="https://zero-x.live/privacy">
+  <meta name="theme-color" content="#0A0A0C">
+  <link rel="icon" type="image/png" sizes="32x32" href="/Assets/zerox-favicon-32.png">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="Zero-X">
-  <meta property="og:title" content="Privacy Policy | Zero-X NeuCockpit">
-  <meta property="og:description" content="How Zero-X NeuCockpit handles sign-in information, account records, website sessions and cloud AI requests.">
+  <meta property="og:title" content="Privacy Policy | Zero-X">
+  <meta property="og:description" content="Accounts, usage records, payments, and which model providers receive your prompts.">
   <meta property="og:url" content="https://zero-x.live/privacy">
   <meta property="og:image" content="https://zero-x.live/Assets/zerox-favicon-centered.png">
-  <meta property="og:image:alt" content="NeuCockpit by Zero-X">
+  <meta property="og:image:alt" content="Zero-X logo">
   <meta name="twitter:card" content="summary">
-  <meta name="twitter:title" content="Privacy Policy | Zero-X NeuCockpit">
-  <meta name="twitter:description" content="How Zero-X NeuCockpit handles sign-in information, account records, website sessions and cloud AI requests.">
+  <meta name="twitter:title" content="Privacy Policy | Zero-X">
+  <meta name="twitter:description" content="Accounts, usage records, payments, and which model providers receive your prompts.">
   <meta name="twitter:image" content="https://zero-x.live/Assets/zerox-favicon-centered.png">
-  <meta name="twitter:image:alt" content="NeuCockpit by Zero-X">
-  <meta name="robots" content="index,follow,max-image-preview:large">
+  <meta name="twitter:image:alt" content="Zero-X logo">
+  <link rel="stylesheet" href="/site-fonts.css">
+  <link rel="stylesheet" href="/zx-tokens.css">
   <script type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Zero-X","item":"https://zero-x.live/"},{"@type":"ListItem","position":2,"name":"Privacy Policy","item":"https://zero-x.live/privacy"}]}</script>
-  <link rel="icon" href="/Assets/zerox-favicon-centered.png">
-  <link rel="stylesheet" href="/legal.css">
 </head>
 <body>
-  <a class="skip" href="#main">Skip to content</a>
-  <header><a href="https://zero-x.live/"><img src="/Assets/zerox-favicon-centered.png" width="40" height="40" alt="">Zero-X</a><nav aria-label="Legal pages"><a href="https://zero-x.live/terms">Terms</a><a href="https://neuron.zero-x.live/">NeuCockpit</a></nav></header>
-  <main id="main">
-    <nav aria-label="Breadcrumb"><a href="https://zero-x.live/">Zero-X</a> / Privacy Policy</nav>
+  <a class="zx-skip" href="#main">Skip to content</a>
+  <header class="zx-header">
+    <div class="zx-container zx-header__inner">
+      <a class="zx-brand" href="/"><img src="/Assets/zerox-favicon-32.png" width="28" height="28" alt="">Zero-X</a>
+      <nav class="zx-nav" aria-label="Main">
+        <a href="/neuron-cli">Neuron CLI</a>
+        <a href="/pricing">Pricing</a>
+        <a href="/docs">Docs</a>
+        <a class="zx-btn zx-btn--sm" href="https://dashboard.zero-x.live/">Dashboard</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main" class="zx-container zx-legal zx-section--tight">
+    <nav class="zx-breadcrumb" aria-label="Breadcrumb"><a href="/">Zero-X</a> / Privacy Policy</nav>
     <h1>Privacy Policy</h1>
-    <p class="updated">Effective date: 3 October 2026.</p>
-    <p>This policy covers the Zero-X website, account dashboard and connected cloud authentication services for NeuCockpit and NeuronCLI.</p>
-    <h2>Who to contact</h2>
-    <p>For privacy questions, account corrections or deletion requests, email <a href="mailto:rahultech72216@gmail.com">rahultech72216@gmail.com</a>. Zero-X's contact address is 6/2, N. Pugalur, Karur 639113, Tamil Nadu, India.</p>
-    <h2>Information used for sign-in</h2>
-    <p>Signing in with Google gives Zero-X your account identifier and basic profile information, including your email address, name and profile image when available. This information identifies your account and displays your profile in the dashboard. The Google sign-in integration does not request access to Gmail, Drive, Calendar or your contacts.</p>
-    <p>Email sign-in is handled by Supabase Auth. If you choose another sign-in provider, it supplies the identity and profile information covered by its consent screen. Zero-X does not receive your Google or GitHub password.</p>
-    <h2>Account records and browser storage</h2>
-    <p>Supabase stores authentication records and Zero-X account profiles. Account records include an identifier, profile fields, plan, request and token counters, and account activity timestamps. These records support sign-in, the dashboard and usage limits.</p>
-    <p>The website stores authentication tokens in secure cookies shared across Zero-X subdomains so you can stay signed in. The cookie lifetime is up to 30 days; token validity is controlled separately by the authentication service. Signing out clears the website's authentication cookies. Some product interfaces also use browser storage for local preferences.</p>
-    <p>Cloud API sessions can include an account identifier, machine fingerprint, selected provider, plan and usage counters. The configured cloud session lifetime is 24 hours. Account records do not currently have an automatic deletion schedule; contact Zero-X to request deletion.</p>
-    <h2>Local files and cloud AI</h2>
-    <p>Website sign-in does not grant Zero-X access to your computer's folders. NeuCockpit's local search and local AI features process the documents you select on your computer. Cloud AI features have a different data flow: messages and any document text included in a request are transmitted to the selected cloud service. Check the selected mode before submitting private material.</p>
-    <p>The cloud gateway can route requests to Microsoft Azure AI or Cloudflare AI. Optional OpenRouter authorization connects to OpenRouter. These services process submitted requests under their own policies. Google profile data is used for account functionality; it is not part of the cloud AI request payload constructed by the gateway.</p>
-    <h2>Service providers</h2>
-    <p>Cloudflare hosts the website and API and stores temporary cloud sessions. Supabase provides authentication and the account database. Google and GitHub provide optional sign-in. Website pages can load fonts or scripts from Google Fonts, Fontshare and jsDelivr, which receive the network information needed to serve those resources. Cloudflare also supplies a website performance analytics beacon that sends page and browser performance information to Cloudflare. Our infrastructure providers may process technical connection information, such as IP addresses, for delivery, reliability and security.</p>
-    <p>These providers may process information outside India. Their policies govern their own services. Relevant policies: <a href="https://supabase.com/privacy">Supabase</a>, <a href="https://www.cloudflare.com/privacypolicy/">Cloudflare</a>, <a href="https://policies.google.com/privacy">Google</a>, <a href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement">GitHub</a> and <a href="https://privacy.microsoft.com/en-us/privacystatement">Microsoft</a>.</p>
-    <h2>Your choices</h2>
-    <p>You can sign out, clear browser storage and revoke Zero-X's connection in your sign-in provider's account settings. Revoking Google access does not itself delete the existing Zero-X account record. Request account access, correction or deletion by email; Zero-X will need to verify that the request comes from the account owner. Do not send passwords, access tokens or private documents with your request.</p>
-    <h2>Changes</h2>
-    <p>Updates to this policy will be published here with a revised effective date. Questions about a change can be sent to the contact email above.</p>
+    <p class="zx-updated">Effective date: 16 October 2026. Replaces the policy dated 3 October 2026.</p>
+    <p>This policy covers the Zero-X website (zero-x.live and its subdomains), the account dashboard, the Zero-X gateway used by Neuron CLI, paid plans and the cloud features of NeuCockpit. Zero-X, 6/2, N. Pugalur, Karur 639113, Tamil Nadu, India, decides how this information is used.</p>
+
+    <h2 id="summary">Summary</h2>
+    <ul>
+      <li>We keep the account, usage and payment records needed to run the service and bill you.</li>
+      <li>When you use Neuron CLI through Zero-X, the content of each request is sent to the model provider that serves it. The gateway is designed not to store prompt or response text.</li>
+      <li>Free tiers of some providers may use prompts to improve their models and may let humans review them. Do not send secrets or code you are not allowed to share on the Free plan.</li>
+      <li>We do not sell personal data and do not use your prompts or code to train models.</li>
+    </ul>
+
+    <h2 id="collect">Information we collect</h2>
+    <h3>Account</h3>
+    <p>When you sign in with Google, GitHub, Microsoft, an email link or an SMS code, we receive an account identifier and the profile information that method provides: email address, name and profile image when available, or your phone number for SMS. The Google sign-in integration does not request access to Gmail, Drive, Calendar or your contacts, and Google profile data is used only for account features; it is never added to model requests. We never receive your sign-in provider password.</p>
+    <h3>Usage records</h3>
+    <p>For every gateway request we record the time, model, provider, pool (free or paid), status, prompt and completion token counts, credit cost, latency and a request ID, plus daily counters for your plan limits. These records power the dashboard, enforce limits, settle credits and help resolve billing questions.</p>
+    <h3>CLI sessions and API keys</h3>
+    <p>Neuron CLI sessions and API keys are stored as SHA-256 hashes with their name, prefix, creation time and last-used time. We cannot recover a full key after it is shown to you once.</p>
+    <h3>Payments</h3>
+    <p>Razorpay processes payments. We receive Razorpay customer, subscription and payment IDs, the plan, amount, currency, status and invoice links. Card, UPI and bank details are entered on Razorpay's checkout and are not received or stored by Zero-X.</p>
+    <h3>Technical information</h3>
+    <p>Our hosting provider processes IP addresses, approximate country, browser and device information to deliver the site, prevent abuse and enforce rate limits. The caller's country also decides whether some free model pools can be used (see below). Cloudflare's performance analytics beacon on some pages reports page and browser performance information to Cloudflare.</p>
+    <h3>Support messages</h3>
+    <p>If you email us, we keep the conversation to answer you and to handle refunds, disputes or legal requests.</p>
+
+    <h2 id="prompts">Prompts, code and model responses</h2>
+    <p>Neuron CLI runs on your computer and decides which file contents, command output and messages to include in each request. Those requests travel to the Zero-X gateway, which forwards them to an upstream model provider and returns the response. The gateway records the usage metadata listed above; it is not designed to store the text of prompts or responses in our database or application logs.</p>
+    <p>The upstream provider processes the request under its own terms. <strong>Free tiers may use prompts and responses to improve their models and may allow human review.</strong> Paid plans can route requests to paid provider tiers when free capacity is unavailable. If you connect your own provider key directly in Neuron, those requests do not pass through Zero-X at all.</p>
+    <p>NeuCockpit's local search and local AI features process the documents you choose on your own computer. Its optional cloud AI features send the message and any included document text through the same gateway.</p>
+
+    <h2 id="processors">Service providers that may receive your data</h2>
+    <div class="zx-table-wrap">
+      <table class="zx-table">
+        <caption>Providers process data under their own privacy policies and may do so outside India.</caption>
+        <thead><tr><th scope="col">Provider</th><th scope="col">What it receives</th><th scope="col">Notes</th></tr></thead>
+        <tbody>
+          <tr><th scope="row"><a href="https://groq.com/privacy-policy/">Groq</a></th><td>Prompts and responses for Groq-hosted models</td><td>Free and paid tiers.</td></tr>
+          <tr><th scope="row"><a href="https://ai.google.dev/gemini-api/terms">Google Gemini API</a></th><td>Prompts and responses for Gemini models</td><td>On the free tier Google may use prompts and responses to improve its products and human reviewers may read them. The free pool is not used for callers in the EEA, the UK or Switzerland.</td></tr>
+          <tr><th scope="row"><a href="https://www.cloudflare.com/privacypolicy/">Cloudflare</a></th><td>Prompts and responses for Workers AI models; website and API traffic; temporary session data</td><td>Hosts the website and gateway and runs Workers AI models.</td></tr>
+          <tr><th scope="row"><a href="https://openrouter.ai/privacy">OpenRouter</a></th><td>Prompts and responses</td><td>Only when you connect your own OpenRouter account. Requests then follow your OpenRouter settings; the gateway asks OpenRouter not to allow data collection.</td></tr>
+          <tr><th scope="row"><a href="https://www.nvidia.com/en-us/about-nvidia/privacy-policy/">NVIDIA API Catalog</a></th><td>Prompts and responses</td><td>Evaluation only. Not used to serve customer requests; Zero-X may enable it for internal testing.</td></tr>
+          <tr><th scope="row"><a href="https://supabase.com/privacy">Supabase</a></th><td>Account, usage, session, API key hash and billing records</td><td>Authentication and account database.</td></tr>
+          <tr><th scope="row"><a href="https://razorpay.com/privacy/">Razorpay</a></th><td>Payment details, email, name and phone you enter at checkout</td><td>Payment processing, subscriptions, receipts and refunds.</td></tr>
+          <tr><th scope="row">Google, GitHub, Microsoft</th><td>Sign-in requests</td><td>Only the sign-in method you choose.</td></tr>
+          <tr><th scope="row">Google Fonts, Fontshare, jsDelivr</th><td>IP address and browser information</td><td>Serve fonts and the authentication script on website pages.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="use">How we use information</h2>
+    <p>We use the information above to provide and secure the service, authenticate you, enforce plan limits and fair use, bill subscriptions and credits, answer support requests, prevent fraud and abuse, and meet legal obligations. We process it to perform our contract with you, with your consent where the law requires it, and for legitimate uses such as security. We do not sell personal data or use it for advertising.</p>
+
+    <h2 id="retention">How long we keep it</h2>
+    <ul>
+      <li><strong>Account, usage and key records:</strong> while your account exists. After a verified deletion request we delete them within 30 days.</li>
+      <li><strong>Payment records:</strong> for as long as Indian tax and accounting law requires, even after account deletion.</li>
+      <li><strong>CLI sessions:</strong> expire after 30 days or when you sign out or use "Sign out all CLI sessions". API keys last until you revoke them.</li>
+      <li><strong>Browser sign-in cookies:</strong> up to 30 days; signing out clears them.</li>
+      <li><strong>Upstream providers:</strong> keep request data according to their own policies, for example for abuse monitoring.</li>
+    </ul>
+
+    <h2 id="rights">Your rights</h2>
+    <p>You can ask to access, correct, complete, update or delete your personal data, withdraw consent, and nominate someone to exercise your rights if you cannot. Residents of the EU, the UK and other regions have similar rights under their laws, including objecting to processing and data portability. Email <a href="mailto:support@zero-x.live">support@zero-x.live</a> from your account address; we may ask you to confirm your identity and will respond within 30 days. You can also sign out, revoke sessions and keys in the dashboard, and remove Zero-X from your sign-in provider's connected apps.</p>
+
+    <h2 id="grievance">Grievance officer</h2>
+    <p>For complaints about how we handle your data, contact the Zero-X grievance officer at <a href="mailto:support@zero-x.live">support@zero-x.live</a> or 6/2, N. Pugalur, Karur 639113, Tamil Nadu, India. We acknowledge complaints within 2 business days and aim to resolve them within 30 days. If you are not satisfied, you may complain to the Data Protection Board of India or your local data protection authority.</p>
+
+    <h2 id="age">Minimum age</h2>
+    <p>Zero-X services are for people aged 18 or over. We do not knowingly collect data from anyone under 18; if you believe a minor has created an account, contact us and we will delete it.</p>
+
+    <h2 id="security">Security</h2>
+    <p>Provider API keys stay on the gateway and are never sent to Neuron CLI or the website. Sessions and API keys are stored as hashes, traffic uses HTTPS, and database access is limited to the gateway's service role. No system is perfectly secure; tell us at <a href="mailto:support@zero-x.live">support@zero-x.live</a> if you find a vulnerability.</p>
+
+    <h2 id="changes">Changes</h2>
+    <p>We will publish updates here with a new effective date and, for significant changes, notify signed-in users by email or in the dashboard.</p>
   </main>
-  <footer><a href="https://zero-x.live/">Zero-X home</a><a href="https://zero-x.live/terms">Terms of Service</a></footer>
+
+  <footer class="zx-footer">
+    <div class="zx-container zx-footer__grid">
+      <div>
+        <a class="zx-brand" href="/">Zero-X</a>
+        <p>Neuron CLI and NeuCockpit. Built in Tamil Nadu, India.</p>
+      </div>
+      <nav aria-label="Product">
+        <h2>Product</h2>
+        <a href="/neuron-cli">Neuron CLI</a>
+        <a href="/pricing">Pricing</a>
+        <a href="/docs">Docs</a>
+        <a href="https://dashboard.zero-x.live/">Dashboard</a>
+      </nav>
+      <nav aria-label="Company">
+        <h2>Company</h2>
+        <a href="/about">About</a>
+        <a href="/contact">Contact</a>
+        <a href="https://neuron.zero-x.live/">NeuCockpit</a>
+      </nav>
+      <nav aria-label="Legal">
+        <h2>Legal</h2>
+        <a href="/terms">Terms of Service</a>
+        <a href="/privacy" aria-current="page">Privacy Policy</a>
+        <a href="/refund">Cancellation and refunds</a>
+        <a href="/shipping">Shipping and delivery</a>
+      </nav>
+    </div>
+    <p class="zx-container zx-footer__legal">© 2026 Zero-X · <a href="mailto:support@zero-x.live">support@zero-x.live</a></p>
+  </footer>
 </body>
 </html>

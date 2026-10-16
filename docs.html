@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Docs | Neuron CLI and Zero-X API</title>
+  <meta name="description" content="Neuron CLI documentation: quickstart, commands, configuration, the OpenAI-compatible Zero-X API (/v1/models, /v1/chat/completions), error codes, limits, API keys and billing.">
+  <meta name="robots" content="index,follow,max-image-preview:large">
+  <link rel="canonical" href="https://zero-x.live/docs">
+  <meta name="theme-color" content="#0A0A0C">
+  <link rel="icon" type="image/png" sizes="32x32" href="/Assets/zerox-favicon-32.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/Assets/zerox-apple-touch-icon.png">
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="Zero-X">
+  <meta property="og:title" content="Neuron CLI and Zero-X API documentation">
+  <meta property="og:description" content="Install and configure Neuron CLI, call the OpenAI-compatible Zero-X API, and handle limits and error codes.">
+  <meta property="og:url" content="https://zero-x.live/docs">
+  <meta property="og:image" content="https://zero-x.live/Assets/zerox-favicon-centered.png">
+  <meta property="og:image:alt" content="Zero-X logo">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="Neuron CLI and Zero-X API documentation">
+  <meta name="twitter:description" content="Quickstart, commands, configuration, API reference, error codes, limits and billing.">
+  <meta name="twitter:image" content="https://zero-x.live/Assets/zerox-favicon-centered.png">
+  <meta name="twitter:image:alt" content="Zero-X logo">
+  <link rel="stylesheet" href="/site-fonts.css">
+  <link rel="stylesheet" href="/zx-tokens.css">
+  <script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"TechArticle","@id":"https://zero-x.live/docs#article","headline":"Neuron CLI and Zero-X API documentation","url":"https://zero-x.live/docs","about":{"@id":"https://zero-x.live/neuron-cli#software"},"publisher":{"@id":"https://zero-x.live/#organization"},"inLanguage":"en"},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Zero-X","item":"https://zero-x.live/"},{"@type":"ListItem","position":2,"name":"Docs","item":"https://zero-x.live/docs"}]}]}</script>
+</head>
+<body>
+  <a class="zx-skip" href="#main">Skip to content</a>
+  <header class="zx-header">
+    <div class="zx-container zx-header__inner">
+      <a class="zx-brand" href="/"><img src="/Assets/zerox-favicon-32.png" width="28" height="28" alt="">Zero-X</a>
+      <nav class="zx-nav" aria-label="Main">
+        <a href="/neuron-cli">Neuron CLI</a>
+        <a href="/pricing">Pricing</a>
+        <a href="/docs" aria-current="page">Docs</a>
+        <a class="zx-btn zx-btn--sm" href="https://dashboard.zero-x.live/">Dashboard</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main" class="zx-container">
+    <div class="zx-hero">
+      <nav class="zx-breadcrumb" aria-label="Breadcrumb"><a href="/">Zero-X</a> / Docs</nav>
+      <h1>Neuron CLI and Zero-X API docs</h1>
+      <p class="zx-lead">Everything you need to install Neuron, sign in, configure it, and call the OpenAI-compatible gateway directly.</p>
+    </div>
+    <div class="zx-docs">
+      <nav class="zx-toc" aria-label="On this page">
+        <ol>
+          <li><a href="#quickstart">Quickstart</a></li>
+          <li><a href="#cli">CLI commands</a></li>
+          <li><a href="#configuration">Configuration</a></li>
+          <li><a href="#api">API reference</a></li>
+          <li><a href="#errors">Error codes</a></li>
+          <li><a href="#limits">Limits</a></li>
+          <li><a href="#api-keys">API keys</a></li>
+          <li><a href="#billing">Billing FAQ</a></li>
+        </ol>
+      </nav>
+      <article>
+        <section id="quickstart" aria-labelledby="quickstart-title">
+          <h2 id="quickstart-title">Quickstart</h2>
+          <ol>
+            <li>Install: <code>npm install -g @zero-x.live/neuron</code> (or <code>python -m pip install neuroncli</code>).</li>
+            <li>Sign in: <code>neuron auth login</code> opens the browser; sign in and choose <strong>Connect this account</strong>.</li>
+            <li>Run <code>neuron</code> inside a project and review the trust prompt.</li>
+          </ol>
+          <div class="zx-code"><pre><code>npm install -g @zero-x.live/neuron
+neuron auth login
+cd path/to/project
+neuron</code></pre></div>
+          <p>Check the result with <code>neuron auth status</code>. If something fails, run <code>/doctor</code> inside Neuron.</p>
+        </section>
+
+        <section id="cli" aria-labelledby="cli-title">
+          <h2 id="cli-title">CLI commands</h2>
+          <div class="zx-table-wrap">
+            <table class="zx-table">
+              <caption>Shell commands</caption>
+              <thead><tr><th scope="col">Command</th><th scope="col">What it does</th></tr></thead>
+              <tbody>
+                <tr><th scope="row"><code>neuron</code></th><td>Start an interactive session in the current directory.</td></tr>
+                <tr><th scope="row"><code>neuron -p "prompt"</code></th><td>Run one prompt and exit (scripts and CI).</td></tr>
+                <tr><th scope="row"><code>neuron --resume</code></th><td>Resume a saved session.</td></tr>
+                <tr><th scope="row"><code>neuron --model &lt;id&gt;</code></th><td>Start with a specific model, for example <code>auto</code> or <code>gemini/gemini-2.5-flash</code>.</td></tr>
+                <tr><th scope="row"><code>neuron --permission-mode &lt;mode&gt;</code></th><td><code>read-only</code>, <code>workspace-write</code> or <code>danger-full-access</code>.</td></tr>
+                <tr><th scope="row"><code>neuron auth login</code></th><td>Sign in through the browser and store an encrypted gateway session.</td></tr>
+                <tr><th scope="row"><code>neuron auth status</code></th><td>Show which credential Neuron will use.</td></tr>
+                <tr><th scope="row"><code>neuron auth logout</code></th><td>Revoke and delete the local session.</td></tr>
+                <tr><th scope="row"><code>neuron --version</code>, <code>neuron --help</code></th><td>Version and all flags.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="zx-table-wrap zx-mt">
+            <table class="zx-table">
+              <caption>Slash commands inside a session</caption>
+              <thead><tr><th scope="col">Command</th><th scope="col">What it does</th></tr></thead>
+              <tbody>
+                <tr><th scope="row"><code>/help</code></th><td>List commands.</td></tr>
+                <tr><th scope="row"><code>/status</code></th><td>Current model, permission mode and session.</td></tr>
+                <tr><th scope="row"><code>/model</code></th><td>Show or switch the model; the list comes from the gateway catalog.</td></tr>
+                <tr><th scope="row"><code>/permissions</code></th><td>Show or switch the permission mode.</td></tr>
+                <tr><th scope="row"><code>/usage</code></th><td>Your plan, today's usage and limits.</td></tr>
+                <tr><th scope="row"><code>/cost</code></th><td>Token usage for this session.</td></tr>
+                <tr><th scope="row"><code>/compact</code></th><td>Summarise history to shrink the prompt.</td></tr>
+                <tr><th scope="row"><code>/clear</code></th><td>Start a fresh session.</td></tr>
+                <tr><th scope="row"><code>/resume</code>, <code>/session</code></th><td>Load, list, fork or delete saved sessions.</td></tr>
+                <tr><th scope="row"><code>/diff</code>, <code>/commit</code></th><td>Show workspace changes; write a commit message and commit.</td></tr>
+                <tr><th scope="row"><code>/mcp</code></th><td>Inspect configured MCP servers.</td></tr>
+                <tr><th scope="row"><code>/agents</code>, <code>/skills</code></th><td>List subagents and skills.</td></tr>
+                <tr><th scope="row"><code>/doctor</code></th><td>Diagnose setup and connectivity.</td></tr>
+                <tr><th scope="row"><code>/login</code>, <code>/logout</code></th><td>Run the gateway sign-in or sign-out flow.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="configuration" aria-labelledby="configuration-title">
+          <h2 id="configuration-title">Configuration</h2>
+          <h3>Environment variables</h3>
+          <div class="zx-table-wrap">
+            <table class="zx-table">
+              <thead><tr><th scope="col">Variable</th><th scope="col">Purpose</th></tr></thead>
+              <tbody>
+                <tr><th scope="row"><code>NEURON_TOKEN</code></th><td>Credential for headless runs: an API key (<code>nzx_…</code>) or a CLI session (<code>ses_…</code>). Overrides the stored login.</td></tr>
+                <tr><th scope="row"><code>NEURON_API_BASE</code></th><td>Gateway base URL. Default <code>https://zero-x.live/v1</code>.</td></tr>
+                <tr><th scope="row"><code>NEURON_MODEL</code></th><td>Default model ID.</td></tr>
+                <tr><th scope="row"><code>NEURON_CONFIG_HOME</code></th><td>User config directory. Default <code>~/.neuron</code>.</td></tr>
+                <tr><th scope="row"><code>OPENAI_API_KEY</code>, <code>OPENAI_BASE_URL</code></th><td>Bring your own OpenAI-compatible provider. Used when you choose that provider or are not signed in to Zero-X.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <h3 class="zx-mt-lg">Files</h3>
+          <div class="zx-table-wrap">
+            <table class="zx-table">
+              <thead><tr><th scope="col">Path</th><th scope="col">Scope</th></tr></thead>
+              <tbody>
+                <tr><th scope="row"><code>~/.neuron/settings.json</code></th><td>User settings for every project.</td></tr>
+                <tr><th scope="row"><code>.neuron.json</code>, <code>.neuron/settings.json</code></th><td>Project settings, safe to commit.</td></tr>
+                <tr><th scope="row"><code>.neuron/settings.local.json</code></th><td>Machine-local overrides; keep out of version control.</td></tr>
+                <tr><th scope="row"><code>NEURON.md</code></th><td>Project instructions Neuron reads at the start of each session.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="zx-mt">Settings files are JSON. Later files override earlier ones in the order listed. Never put provider keys in a file you commit.</p>
+        </section>
+
+        <section id="api" aria-labelledby="api-title">
+          <h2 id="api-title">API reference</h2>
+          <p>The gateway speaks the OpenAI Chat Completions protocol. Base URL: <code>https://zero-x.live/v1</code>. Authenticate with <code>Authorization: Bearer &lt;token&gt;</code>, where the token is an API key from the dashboard or a CLI session.</p>
+          <h3 id="models-endpoint">GET /v1/models</h3>
+          <p>Lists the catalog. Authentication is optional; <code>available</code> is computed for your plan (anonymous callers see the Free plan).</p>
+          <div class="zx-code"><pre><code>curl https://zero-x.live/v1/models -H "Authorization: Bearer $NEURON_TOKEN"</code></pre></div>
+          <div class="zx-code"><pre><code>{
+  "object": "list",
+  "data": [{
+    "id": "gemini/gemini-2.5-flash",
+    "object": "model",
+    "created": 0,
+    "owned_by": "gemini",
+    "display_name": "Gemini 2.5 Flash",
+    "context_window": 1048576,
+    "max_output_tokens": 65536,
+    "capabilities": { "tools": true, "streaming": true },
+    "tiers": ["free", "paid"],
+    "available": true,
+    "unavailable_reason": null,
+    "pricing": { "input_per_mtok_usd": 0.375, "output_per_mtok_usd": 3.125 }
+  }]
+}</code></pre></div>
+          <p><code>unavailable_reason</code> is <code>null</code>, <code>upgrade_required</code>, <code>region_unavailable</code> or <code>not_configured</code>. <code>pricing</code> is the paid-capacity price per million tokens, or <code>null</code> for free-only models. The list includes the pseudo-model <code>auto</code>.</p>
+
+          <h3 id="chat-completions">POST /v1/chat/completions</h3>
+          <p>Standard OpenAI request body. <code>model</code> may be <code>auto</code>. Set <code>"stream": true</code> for server-sent events ending with <code>data: [DONE]</code>; streamed <code>tool_calls</code> deltas always include <code>index</code>.</p>
+          <div class="zx-code"><pre><code>curl https://zero-x.live/v1/chat/completions \
+  -H "Authorization: Bearer $NEURON_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"auto","messages":[{"role":"user","content":"Explain this stack trace"}]}'</code></pre></div>
+          <p>Response headers:</p>
+          <ul>
+            <li><code>x-request-id</code>: quote it when you contact support.</li>
+            <li><code>x-neuron-model</code>: the model that served the request (useful with <code>auto</code>).</li>
+            <li><code>x-neuron-plan</code>: your plan.</li>
+            <li><code>x-neuron-quota-remaining-requests</code>, <code>x-neuron-quota-remaining-tokens</code>: what is left today.</li>
+          </ul>
+          <p>Any OpenAI-compatible SDK works; set its base URL to <code>https://zero-x.live/v1</code> and its API key to your <code>nzx_</code> key.</p>
+        </section>
+
+        <section id="errors" aria-labelledby="errors-title">
+          <h2 id="errors-title">Error codes</h2>
+          <p>Errors use the OpenAI shape, with extra fields when they help:</p>
+          <div class="zx-code"><pre><code>{ "error": { "message": "…", "type": "insufficient_quota", "code": "insufficient_quota",
+  "param": null, "request_id": "…", "upgrade_url": "https://zero-x.live/pricing",
+  "resets_at": "2026-10-17T00:00:00Z" } }</code></pre></div>
+          <div class="zx-table-wrap">
+            <table class="zx-table">
+              <caption>Retry only where the last column says so; honour <code>Retry-After</code>.</caption>
+              <thead><tr><th scope="col">HTTP</th><th scope="col">code</th><th scope="col">type</th><th scope="col">Meaning</th><th scope="col">What to do</th></tr></thead>
+              <tbody>
+                <tr><td>400</td><th scope="row"><code>invalid_request</code></th><td><code>invalid_request_error</code></td><td>Malformed body.</td><td>Fix the request. Do not retry.</td></tr>
+                <tr><td>400</td><th scope="row"><code>context_length_exceeded</code></th><td><code>invalid_request_error</code></td><td>No model can fit the request.</td><td>Shorten the prompt or run <code>/compact</code>.</td></tr>
+                <tr><td>401</td><th scope="row"><code>invalid_session</code></th><td><code>authentication_error</code></td><td>Missing, expired or revoked credential.</td><td>Run <code>neuron auth login</code> or use a valid key.</td></tr>
+                <tr><td>402</td><th scope="row"><code>insufficient_credits</code></th><td><code>insufficient_quota</code></td><td>Paid capacity needed and the credit balance is too low.</td><td>Top up or wait for renewal (<code>upgrade_url</code>).</td></tr>
+                <tr><td>403</td><th scope="row"><code>upgrade_required</code></th><td><code>permission_error</code></td><td>The model is not in your plan.</td><td>Pick another model or upgrade.</td></tr>
+                <tr><td>403</td><th scope="row"><code>region_unavailable</code></th><td><code>permission_error</code></td><td>The free pool is not offered in your region and no paid option is available.</td><td>Pick another model or upgrade.</td></tr>
+                <tr><td>403</td><th scope="row"><code>account_suspended</code></th><td><code>permission_error</code></td><td>The account is suspended.</td><td>Email support@zero-x.live.</td></tr>
+                <tr><td>429</td><th scope="row"><code>insufficient_quota</code></th><td><code>insufficient_quota</code></td><td>Daily request or token cap reached (<code>resets_at</code>).</td><td>Do not retry. Wait for the reset or upgrade.</td></tr>
+                <tr><td>429</td><th scope="row"><code>rate_limited</code></th><td><code>rate_limit_error</code></td><td>Per-minute or concurrency limit.</td><td>Retry after <code>retry_after_seconds</code>.</td></tr>
+                <tr><td>503</td><th scope="row"><code>capacity_exhausted</code></th><td><code>server_error</code></td><td>The shared free pool is used up.</td><td>Retry later, choose another model or upgrade.</td></tr>
+                <tr><td>502</td><th scope="row"><code>upstream_error</code></th><td><code>server_error</code></td><td>The provider failed after failover. The request is not counted.</td><td>Retry up to twice.</td></tr>
+                <tr><td>504</td><th scope="row"><code>upstream_timeout</code></th><td><code>server_error</code></td><td>No first byte within 45 s, or idle for more than 90 s.</td><td>Retry up to twice.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="limits" aria-labelledby="limits-title">
+          <h2 id="limits-title">Limits</h2>
+          <div class="zx-table-wrap">
+            <table class="zx-table">
+              <thead><tr><th scope="col">Plan</th><th scope="col" class="zx-num">Requests / day</th><th scope="col" class="zx-num">Tokens / day</th><th scope="col" class="zx-num">Requests / min</th><th scope="col" class="zx-num">Concurrent</th><th scope="col">Pools</th></tr></thead>
+              <tbody>
+                <tr><th scope="row">Free</th><td class="zx-num">100</td><td class="zx-num">500,000</td><td class="zx-num">10</td><td class="zx-num">2</td><td>Free</td></tr>
+                <tr><th scope="row">Pro</th><td class="zx-num">2,000</td><td class="zx-num">10,000,000</td><td class="zx-num">30</td><td class="zx-num">4</td><td>Free and paid</td></tr>
+                <tr><th scope="row">Max</th><td class="zx-num">10,000</td><td class="zx-num">50,000,000</td><td class="zx-num">60</td><td class="zx-num">8</td><td>Free and paid</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <ul class="zx-mt">
+            <li>Daily caps reset at 00:00 UTC. Tokens are prompt plus completion tokens.</li>
+            <li>Every free pool also has a global daily budget shared by all users; when it is spent you get <code>capacity_exhausted</code> even if your own cap has room.</li>
+            <li>Groq's free tier allows about 8,000 tokens per minute, so large prompts go to models with more headroom.</li>
+            <li>Paid-capacity requests cost credits at the upstream price plus 25%. Free-pool requests cost no credits.</li>
+          </ul>
+        </section>
+
+        <section id="api-keys" aria-labelledby="api-keys-title">
+          <h2 id="api-keys-title">API keys</h2>
+          <ul>
+            <li>Create keys in the <a href="https://dashboard.zero-x.live/#keys">dashboard</a>. A key starts with <code>nzx_</code> and is shown once; Zero-X stores only a hash.</li>
+            <li>You can have up to 10 active keys. Revoke a key at any time; it stops working immediately.</li>
+            <li>Keys can call <code>/v1/*</code> and read <code>GET /api/account</code> and <code>GET /api/usage</code>. They cannot create or revoke keys, end sessions or change billing.</li>
+            <li>Usage made with a key counts toward your account's plan limits.</li>
+            <li>Keys are for your own scripts and CI. Sharing or reselling access is not allowed under the <a href="/terms">Terms of Service</a>.</li>
+          </ul>
+        </section>
+
+        <section id="billing" aria-labelledby="billing-title">
+          <h2 id="billing-title">Billing FAQ</h2>
+          <div class="zx-faq">
+            <details>
+              <summary>How am I billed?</summary>
+              <p>Pro and Max are monthly subscriptions in USD or INR, processed by Razorpay. They renew automatically until you cancel. Each successful renewal adds the plan's included credits to your balance.</p>
+            </details>
+            <details>
+              <summary>Where are my invoices?</summary>
+              <p>Payment history and invoice links are on the Billing tab of the <a href="https://dashboard.zero-x.live/#billing">dashboard</a>. Razorpay also emails a receipt.</p>
+            </details>
+            <details>
+              <summary>What if a renewal payment fails?</summary>
+              <p>Razorpay retries the payment and the dashboard shows a payment issue. If the subscription ends unpaid, your account returns to the Free plan.</p>
+            </details>
+            <details>
+              <summary>How do I cancel or get a refund?</summary>
+              <p>Cancel from the Billing tab; access continues until the end of the paid period. Refunds follow the <a href="/refund">cancellation and refund policy</a>.</p>
+            </details>
+          </div>
+        </section>
+      </article>
+    </div>
+  </main>
+
+  <footer class="zx-footer">
+    <div class="zx-container zx-footer__grid">
+      <div>
+        <a class="zx-brand" href="/">Zero-X</a>
+        <p>Neuron CLI and NeuCockpit. Built in Tamil Nadu, India.</p>
+      </div>
+      <nav aria-label="Product">
+        <h2>Product</h2>
+        <a href="/neuron-cli">Neuron CLI</a>
+        <a href="/pricing">Pricing</a>
+        <a href="/docs">Docs</a>
+        <a href="https://dashboard.zero-x.live/">Dashboard</a>
+      </nav>
+      <nav aria-label="Company">
+        <h2>Company</h2>
+        <a href="/about">About</a>
+        <a href="/contact">Contact</a>
+        <a href="https://neuron.zero-x.live/">NeuCockpit</a>
+      </nav>
+      <nav aria-label="Legal">
+        <h2>Legal</h2>
+        <a href="/terms">Terms of Service</a>
+        <a href="/privacy">Privacy Policy</a>
+        <a href="/refund">Cancellation and refunds</a>
+        <a href="/shipping">Shipping and delivery</a>
+      </nav>
+    </div>
+    <p class="zx-container zx-footer__legal">© 2026 Zero-X · <a href="mailto:support@zero-x.live">support@zero-x.live</a></p>
+  </footer>
+</body>
+</html>

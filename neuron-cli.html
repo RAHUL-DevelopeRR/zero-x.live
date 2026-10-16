@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Neuron CLI | AI Coding Agent for Your Terminal by Zero-X</title>
+  <meta name="description" content="Neuron CLI is a repo-aware AI coding agent for the terminal. It reads your project, edits files and runs commands with your permission, using free models through Zero-X or your own API key.">
+  <meta name="robots" content="index,follow,max-image-preview:large">
+  <link rel="canonical" href="https://zero-x.live/neuron-cli">
+  <meta name="theme-color" content="#0A0A0C">
+  <link rel="icon" type="image/png" sizes="32x32" href="/Assets/zerox-favicon-32.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/Assets/zerox-apple-touch-icon.png">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Zero-X">
+  <meta property="og:title" content="Neuron CLI: a repo-aware AI coding agent for your terminal">
+  <meta property="og:description" content="Install with npm, sign in once and let Neuron read, edit and test your code with your permission. Free daily usage through Zero-X.">
+  <meta property="og:url" content="https://zero-x.live/neuron-cli">
+  <meta property="og:image" content="https://zero-x.live/Assets/zerox-favicon-centered.png">
+  <meta property="og:image:alt" content="Zero-X logo">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="Neuron CLI: a repo-aware AI coding agent for your terminal">
+  <meta name="twitter:description" content="Install with npm, sign in once and let Neuron read, edit and test your code with your permission.">
+  <meta name="twitter:image" content="https://zero-x.live/Assets/zerox-favicon-centered.png">
+  <meta name="twitter:image:alt" content="Zero-X logo">
+  <link rel="stylesheet" href="/site-fonts.css">
+  <link rel="stylesheet" href="/zx-tokens.css">
+  <script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"SoftwareApplication","@id":"https://zero-x.live/neuron-cli#software","name":"Neuron CLI","applicationCategory":"DeveloperApplication","operatingSystem":"Windows, macOS, Linux","url":"https://zero-x.live/neuron-cli","description":"A repo-aware AI coding agent for the terminal that reads, edits and tests code with the user's permission.","publisher":{"@id":"https://zero-x.live/#organization"},"offers":{"@type":"Offer","name":"Free","price":"0","priceCurrency":"USD","url":"https://zero-x.live/pricing#plan-free"},"downloadUrl":"https://www.npmjs.com/package/@zero-x.live/neuron"},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Zero-X","item":"https://zero-x.live/"},{"@type":"ListItem","position":2,"name":"Neuron CLI","item":"https://zero-x.live/neuron-cli"}]}]}</script>
+  <script type="module" src="/pricing.js"></script>
+</head>
+<body>
+  <a class="zx-skip" href="#main">Skip to content</a>
+  <header class="zx-header">
+    <div class="zx-container zx-header__inner">
+      <a class="zx-brand" href="/"><img src="/Assets/zerox-favicon-32.png" width="28" height="28" alt="">Zero-X</a>
+      <nav class="zx-nav" aria-label="Main">
+        <a href="/neuron-cli" aria-current="page">Neuron CLI</a>
+        <a href="/pricing">Pricing</a>
+        <a href="/docs">Docs</a>
+        <a class="zx-btn zx-btn--sm" href="https://dashboard.zero-x.live/">Dashboard</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="zx-hero zx-container" aria-labelledby="cli-title">
+      <nav class="zx-breadcrumb" aria-label="Breadcrumb"><a href="/">Zero-X</a> / Neuron CLI</nav>
+      <p class="zx-eyebrow">AI coding agent</p>
+      <h1 id="cli-title">Neuron CLI: an AI coding agent that works inside your repository</h1>
+      <p class="zx-lead">Neuron reads your project, plans a change, edits files and runs your commands, asking before it does anything you have not allowed. Sign in once to use free models through Zero-X, or point it at your own API key.</p>
+      <div class="zx-code"><span class="zx-code__label">Install</span><pre><code>npm install -g @zero-x.live/neuron</code></pre></div>
+      <div class="zx-row">
+        <a class="zx-btn zx-btn--primary" href="#install">Install options</a>
+        <a class="zx-btn" href="#first-run">First run</a>
+        <a class="zx-btn zx-btn--ghost" href="/pricing">Pricing</a>
+      </div>
+    </section>
+
+    <section class="zx-container zx-section" id="features" aria-labelledby="features-title">
+      <h2 id="features-title">What Neuron does</h2>
+      <div class="zx-grid zx-grid--4">
+        <article class="zx-card"><h3>Repo-aware agent loop</h3><p class="zx-muted">Neuron explores the files that matter, makes a plan, edits code and checks the result by running your tests or build, then reports what changed.</p></article>
+        <article class="zx-card"><h3>Built-in tools</h3><p class="zx-muted">Read, write and edit files, search with glob and grep, run shell or PowerShell commands, fetch web pages and keep a task list for longer jobs.</p></article>
+        <article class="zx-card"><h3>Permission modes</h3><p class="zx-muted">Choose <code>read-only</code>, <code>workspace-write</code> or <code>danger-full-access</code>. A trust prompt appears before Neuron edits a new folder or runs commands.</p></article>
+        <article class="zx-card"><h3>Sessions and resume</h3><p class="zx-muted">Conversations are saved locally under <code>.neuron/sessions/</code>. Pick up where you left off with <code>neuron --resume</code> or <code>/resume</code>, and shrink long ones with <code>/compact</code>.</p></article>
+        <article class="zx-card"><h3>MCP servers</h3><p class="zx-muted">Connect Model Context Protocol servers to give Neuron extra tools, such as a browser, a database or your issue tracker. Inspect them with <code>/mcp</code>.</p></article>
+        <article class="zx-card"><h3>Subagents</h3><p class="zx-muted">Neuron can hand focused jobs, like searching a large codebase or reviewing a diff, to subagents that run with their own context. List them with <code>/agents</code>.</p></article>
+        <article class="zx-card"><h3>Free models via Zero-X</h3><p class="zx-muted">Sign in with <code>neuron auth login</code> and Neuron uses the Zero-X gateway. Provider keys stay on the server; the CLI only stores an encrypted session.</p></article>
+        <article class="zx-card"><h3>Bring your own key</h3><p class="zx-muted">Prefer your own provider? Set <code>OPENAI_API_KEY</code> and <code>OPENAI_BASE_URL</code> for any OpenAI-compatible endpoint, or connect your own OpenRouter account.</p></article>
+      </div>
+    </section>
+
+    <section class="zx-container zx-section" id="install" aria-labelledby="install-title">
+      <h2 id="install-title">Install</h2>
+      <p class="zx-muted">Neuron ships as a native binary for Windows x64, Linux x64 and macOS on Apple silicon. The npm and pip packages download the matching release binary from GitHub Releases and verify its SHA-256 checksum.</p>
+      <div data-install-tabs>
+        <section class="zx-install" id="install-npm" data-tab-label="npm" aria-labelledby="install-npm-title">
+          <h3 id="install-npm-title">npm</h3>
+          <div class="zx-code"><pre><code>npm install -g @zero-x.live/neuron
+neuron --version</code></pre></div>
+          <p class="zx-help">Works on Windows, macOS and Linux with Node.js installed. Recommended.</p>
+        </section>
+        <section class="zx-install" id="install-pip" data-tab-label="pip" aria-labelledby="install-pip-title">
+          <h3 id="install-pip-title">pip</h3>
+          <div class="zx-code"><pre><code>python -m pip install neuroncli
+neuron --version</code></pre></div>
+          <p class="zx-help">PyPI releases can trail npm. If <code>neuron --version</code> shows an older release, install with npm instead.</p>
+        </section>
+        <section class="zx-install" id="install-sh" data-tab-label="install.sh" aria-labelledby="install-sh-title">
+          <h3 id="install-sh-title">install.sh (macOS and Linux)</h3>
+          <p class="zx-alert zx-alert--info">The hosted install script is not published yet. Until it is, use npm, or build from source with the Rust toolchain:</p>
+          <div class="zx-code"><pre><code>git clone https://github.com/RAHUL-DevelopeRR/neuron-v2.git
+cd neuron-v2/rust
+cargo build --release -p rusty-claude-cli
+./target/release/neuron --version</code></pre></div>
+        </section>
+        <section class="zx-install" id="install-ps1" data-tab-label="install.ps1" aria-labelledby="install-ps1-title">
+          <h3 id="install-ps1-title">install.ps1 (Windows PowerShell)</h3>
+          <p class="zx-alert zx-alert--info">The hosted PowerShell installer is not published yet. Until it is, use npm, or build from source:</p>
+          <div class="zx-code"><pre><code>git clone https://github.com/RAHUL-DevelopeRR/neuron-v2.git
+cd neuron-v2\rust
+cargo build --release -p rusty-claude-cli
+.\target\release\neuron.exe --version</code></pre></div>
+        </section>
+      </div>
+    </section>
+
+    <section class="zx-container zx-section" id="first-run" aria-labelledby="first-run-title">
+      <h2 id="first-run-title">Sign in and run your first task</h2>
+      <ol class="zx-steps">
+        <li>
+          <h3>Sign in from the terminal</h3>
+          <div class="zx-code"><pre><code>neuron auth login</code></pre></div>
+          <p class="zx-muted">Your browser opens the Zero-X sign-in page. Sign in, choose <strong>Connect this account</strong>, and the terminal confirms the login. Neuron stores an encrypted session on your computer; sessions last up to 30 days.</p>
+        </li>
+        <li>
+          <h3>Start Neuron in a project</h3>
+          <div class="zx-code"><pre><code>cd path/to/your-project
+neuron</code></pre></div>
+          <p class="zx-muted">Review the trust prompt before allowing edits and commands in that folder.</p>
+        </li>
+        <li>
+          <h3>Ask for something concrete</h3>
+          <div class="zx-code"><pre><code>Explain how requests are authenticated in this repo, then add a test for an expired token.</code></pre></div>
+          <p class="zx-muted">Use <code>/model</code> to switch models, <code>/permissions</code> to change what Neuron may do, and <code>/usage</code> to see today's limits.</p>
+        </li>
+        <li>
+          <h3>Run it headless</h3>
+          <div class="zx-code"><pre><code>export NEURON_TOKEN=nzx_your_api_key
+neuron -p "Run the test suite and summarise the failures"</code></pre></div>
+          <p class="zx-muted">Create an API key in the <a href="https://dashboard.zero-x.live/#keys">dashboard</a> for CI or servers without a browser.</p>
+        </li>
+      </ol>
+    </section>
+
+    <section class="zx-container zx-section" id="models" aria-labelledby="models-title">
+      <h2 id="models-title">Models</h2>
+      <p class="zx-muted">The gateway publishes its live catalog at <code>https://zero-x.live/v1/models</code>. Choose <code>auto</code> and Neuron picks a tool-capable model whose context window fits the request.</p>
+      <div class="zx-table-wrap">
+        <table class="zx-table">
+          <caption id="models-status">Default catalog. Availability depends on shared pool capacity.</caption>
+          <thead><tr><th scope="col">Model</th><th scope="col">ID</th><th scope="col">Provider</th><th scope="col" class="zx-num">Context</th><th scope="col">Tools</th><th scope="col">Plans</th></tr></thead>
+          <tbody id="models-body">
+            <tr><th scope="row">Auto</th><td><code>auto</code></td><td>Zero-X</td><td class="zx-num">Fits request</td><td>Yes</td><td>All plans</td></tr>
+            <tr><th scope="row">GPT-OSS 120B</th><td><code>groq/openai/gpt-oss-120b</code></td><td>Groq</td><td class="zx-num">—</td><td>Yes</td><td>All plans</td></tr>
+            <tr><th scope="row">GPT-OSS 20B</th><td><code>groq/openai/gpt-oss-20b</code></td><td>Groq</td><td class="zx-num">—</td><td>Yes</td><td>All plans</td></tr>
+            <tr><th scope="row">Qwen 3.8 27B</th><td><code>groq/qwen/qwen3.8-27b</code></td><td>Groq</td><td class="zx-num">—</td><td>Yes</td><td>All plans</td></tr>
+            <tr><th scope="row">Gemini 2.5 Flash</th><td><code>gemini/gemini-2.5-flash</code></td><td>Google Gemini API</td><td class="zx-num">1,048,576</td><td>Yes</td><td>All plans</td></tr>
+            <tr><th scope="row">Gemini 3.5 Flash</th><td><code>gemini/gemini-3.5-flash</code></td><td>Google Gemini API</td><td class="zx-num">—</td><td>Yes</td><td>All plans</td></tr>
+            <tr><th scope="row">Llama 3.3 70B</th><td><code>@cf/meta/llama-3.3-70b-instruct-fp8-fast</code></td><td>Cloudflare Workers AI</td><td class="zx-num">—</td><td>Yes</td><td>All plans</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="zx-help">Groq's free tier accepts small prompts only; larger requests are routed to a model with room. Gemini's free pool is not offered to callers in the EEA, the UK or Switzerland.</p>
+    </section>
+
+    <section class="zx-container zx-section" id="pricing" aria-labelledby="pricing-teaser-title" data-pricing-root>
+      <h2 id="pricing-teaser-title">Pricing</h2>
+      <div class="zx-grid zx-grid--3">
+        <article class="zx-card"><h3>Free</h3><p class="zx-plan__price"><span data-plan-price="free" data-price-currency="USD">$0</span> <small>/ month</small></p><p class="zx-muted"><span data-plan-limit="free:daily_requests">100</span> requests and <span data-plan-limit="free:daily_tokens">500K</span> tokens per day on shared free pools.</p></article>
+        <article class="zx-card zx-card--highlight"><h3>Pro</h3><p class="zx-plan__price"><span data-plan-price="pro" data-price-currency="USD">$10</span> <small>/ month</small></p><p class="zx-muted"><span data-plan-limit="pro:daily_requests">2,000</span> requests and <span data-plan-limit="pro:daily_tokens">10M</span> tokens per day, plus <span data-plan-credit="pro">$8</span> of paid-capacity credits.</p></article>
+        <article class="zx-card"><h3>Max</h3><p class="zx-plan__price"><span data-plan-price="max" data-price-currency="USD">$40</span> <small>/ month</small></p><p class="zx-muted"><span data-plan-limit="max:daily_requests">10,000</span> requests and <span data-plan-limit="max:daily_tokens">50M</span> tokens per day, plus <span data-plan-credit="max">$35</span> of paid-capacity credits.</p></article>
+      </div>
+      <p class="zx-mt"><a class="zx-btn" href="/pricing">Compare plans</a></p>
+    </section>
+
+    <section class="zx-container zx-narrow zx-section" id="faq" aria-labelledby="faq-title">
+      <h2 id="faq-title">Questions</h2>
+      <div class="zx-faq">
+        <details>
+          <summary>Which providers see my code?</summary>
+          <p>The files and messages Neuron includes in a request go to the provider serving the model: Groq, Google Gemini API or Cloudflare Workers AI through Zero-X, or the provider behind your own key. Free tiers of some providers may use prompts to improve their models and allow human review. The Zero-X gateway records usage metadata (model, tokens, cost, latency) but is not designed to store prompt or response text. Details are in the <a href="/privacy">privacy policy</a>.</p>
+        </details>
+        <details>
+          <summary>What are the limits?</summary>
+          <p>The Free plan allows 100 requests and 500K tokens per day, 10 requests per minute and 2 at a time. Pro and Max raise those limits. Limits reset at 00:00 UTC. See <a href="/docs#limits">limits</a> and <a href="/pricing">pricing</a>.</p>
+        </details>
+        <details>
+          <summary>Does it run on Windows, macOS and Linux?</summary>
+          <p>Yes. Release binaries cover Windows x64, Linux x64 and macOS on Apple silicon. On other platforms, such as Intel Macs or ARM Linux, build from source with Cargo. On Windows, Neuron can also run PowerShell commands.</p>
+        </details>
+        <details>
+          <summary>Can I use Neuron without a Zero-X account?</summary>
+          <p>Yes. Configure your own OpenAI-compatible endpoint with <code>OPENAI_API_KEY</code> and <code>OPENAI_BASE_URL</code>. Signing in to Zero-X is what gives you the free hosted models and the usage dashboard.</p>
+        </details>
+      </div>
+    </section>
+  </main>
+
+  <footer class="zx-footer">
+    <div class="zx-container zx-footer__grid">
+      <div>
+        <a class="zx-brand" href="/">Zero-X</a>
+        <p>Neuron CLI and NeuCockpit. Built in Tamil Nadu, India.</p>
+      </div>
+      <nav aria-label="Product">
+        <h2>Product</h2>
+        <a href="/neuron-cli">Neuron CLI</a>
+        <a href="/pricing">Pricing</a>
+        <a href="/docs">Docs</a>
+        <a href="https://dashboard.zero-x.live/">Dashboard</a>
+      </nav>
+      <nav aria-label="Company">
+        <h2>Company</h2>
+        <a href="/about">About</a>
+        <a href="/contact">Contact</a>
+        <a href="https://neuron.zero-x.live/">NeuCockpit</a>
+      </nav>
+      <nav aria-label="Legal">
+        <h2>Legal</h2>
+        <a href="/terms">Terms of Service</a>
+        <a href="/privacy">Privacy Policy</a>
+        <a href="/refund">Cancellation and refunds</a>
+        <a href="/shipping">Shipping and delivery</a>
+      </nav>
+    </div>
+    <p class="zx-container zx-footer__legal">© 2026 Zero-X · <a href="mailto:support@zero-x.live">support@zero-x.live</a></p>
+  </footer>
+
+  <script>
+    (function () {
+      // Install tabs: progressive enhancement of the stacked install sections into WAI-ARIA tabs.
+      var root = document.querySelector('[data-install-tabs]');
+      if (root) {
+        var panels = Array.prototype.slice.call(root.querySelectorAll('[data-tab-label]'));
+        var list = document.createElement('div');
+        list.className = 'zx-tabs';
+        list.setAttribute('role', 'tablist');
+        list.setAttribute('aria-label', 'Install method');
+        var tabs = panels.map(function (panel, index) {
+          var tab = document.createElement('button');
+          tab.type = 'button';
+          tab.className = 'zx-tab';
+          tab.id = panel.id + '-tab';
+          tab.textContent = panel.getAttribute('data-tab-label');
+          tab.setAttribute('role', 'tab');
+          tab.setAttribute('aria-controls', panel.id);
+          panel.setAttribute('role', 'tabpanel');
+          panel.setAttribute('aria-labelledby', tab.id);
+          panel.setAttribute('tabindex', '0');
+          tab.addEventListener('click', function () { select(index, false); });
+          list.appendChild(tab);
+          return tab;
+        });
+        var select = function (index, focus) {
+          tabs.forEach(function (tab, i) {
+            var active = i === index;
+            tab.setAttribute('aria-selected', String(active));
+            tab.setAttribute('tabindex', active ? '0' : '-1');
+            panels[i].hidden = !active;
+          });
+          if (focus) tabs[index].focus();
+        };
+        list.addEventListener('keydown', function (event) {
+          var current = tabs.indexOf(document.activeElement);
+          if (current < 0) return;
+          var next = { ArrowRight: (current + 1) % tabs.length, ArrowLeft: (current - 1 + tabs.length) % tabs.length, Home: 0, End: tabs.length - 1 }[event.key];
+          if (next === undefined) return;
+          event.preventDefault();
+          select(next, true);
+        });
+        root.insertBefore(list, root.firstChild);
+        select(0, false);
+      }
+
+      // Live model catalog. Every value is untrusted and rendered with textContent.
+      var body = document.getElementById('models-body');
+      var status = document.getElementById('models-status');
+      if (!body || typeof fetch !== 'function') return;
+      var cell = function (tag, value, className) {
+        var node = document.createElement(tag);
+        if (tag === 'th') node.setAttribute('scope', 'row');
+        if (className) node.className = className;
+        if (value && value.nodeType) node.appendChild(value); else node.textContent = value;
+        return node;
+      };
+      var code = function (value) { var node = document.createElement('code'); node.textContent = value; return node; };
+      var plans = function (model) {
+        var tiers = Array.isArray(model.tiers) ? model.tiers : [];
+        var label = tiers.indexOf('free') !== -1 ? 'All plans' : tiers.indexOf('paid') !== -1 ? 'Pro and Max' : '—';
+        if (model.available === false && model.unavailable_reason === 'region_unavailable') label += ' (not in your region)';
+        if (model.available === false && model.unavailable_reason === 'not_configured') label = 'Temporarily unavailable';
+        return label;
+      };
+      fetch('/v1/models', { headers: { Accept: 'application/json' }, cache: 'no-store' })
+        .then(function (response) { return response.ok ? response.json() : Promise.reject(new Error('HTTP ' + response.status)); })
+        .then(function (data) {
+          var models = (data && Array.isArray(data.data) ? data.data : []).filter(function (model) {
+            return model && typeof model.id === 'string' && model.id.length > 0 && model.id.length <= 120;
+          }).slice(0, 60);
+          if (!models.length) { status.textContent = 'Default catalog shown; no live models are available right now.'; return; }
+          var rows = models.map(function (model) {
+            var name = typeof model.display_name === 'string' && model.display_name ? model.display_name.slice(0, 80) : model.id;
+            var context = typeof model.context_window === 'number' && isFinite(model.context_window) && model.context_window > 0 ? Math.round(model.context_window).toLocaleString('en-US') : (model.id === 'auto' ? 'Fits request' : '—');
+            var tools = model.capabilities && model.capabilities.tools === true ? 'Yes' : 'No';
+            var row = document.createElement('tr');
+            [cell('th', name), cell('td', code(model.id)), cell('td', typeof model.owned_by === 'string' ? model.owned_by.slice(0, 40) : '—'),
+              cell('td', context, 'zx-num'), cell('td', tools), cell('td', plans(model))].forEach(function (node) { row.appendChild(node); });
+            return row;
+          });
+          while (body.firstChild) body.removeChild(body.firstChild);
+          rows.forEach(function (row) { body.appendChild(row); });
+          status.textContent = 'Live catalog from the Zero-X gateway: ' + models.length + ' models.';
+        })
+        .catch(function () { status.textContent = 'Default catalog shown; the live list could not be loaded.'; });
+    })();
+  </script>
+</body>
+</html>
