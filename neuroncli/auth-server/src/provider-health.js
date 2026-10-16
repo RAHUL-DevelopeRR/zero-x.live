@@ -14,17 +14,24 @@ export const HealthState = Object.freeze({
   DOWN: 'DOWN',
 });
 
-// How an upstream attempt failed. Only provider-side kinds change health.
+// How an upstream attempt failed. Only provider-side kinds change health, and those are
+// derived from HTTP statuses and structured provider fields, never from free-text messages
+// (which can quote client input).
 export const FailureKind = Object.freeze({
   CONTEXT: 'context',                    // 413 / context-length 400: skip for this request only
   INVALID: 'invalid',                    // other 400/422: the request itself was rejected
+  MODEL_ERROR: 'model_error',            // model-side 400 (e.g. tool_use_failed): request only, refunded
   MODEL_UNAVAILABLE: 'model_unavailable', // 404: model gone for this key
   RATE_LIMITED: 'rate_limited',          // 429
-  AUTH: 'auth',                          // 401/403: key or project misconfigured
+  AUTH: 'auth',                          // 401/403, invalid key, region/billing precondition
   SERVER: 'server',                      // 5xx, network failures
-  TIMEOUT: 'timeout',                    // no first byte / idle stream
+  TIMEOUT: 'timeout',                    // no first byte / idle stream / slow response
   ABORTED: 'aborted',                    // client went away: never counted
 });
+
+// Timeouts measured while waiting for upstream bytes. A non-streaming 'response' timeout may
+// just be a long generation, so it counts like a 5xx instead.
+const LIVENESS_PHASES = new Set(['first_byte', 'idle']);
 
 export function failureKindForStatus(status) {
   if (status === 413) return FailureKind.CONTEXT;
@@ -36,16 +43,25 @@ export function failureKindForStatus(status) {
   return FailureKind.SERVER;
 }
 
-const REQUEST_SCOPED = new Set([FailureKind.CONTEXT, FailureKind.INVALID, FailureKind.ABORTED]);
+const REQUEST_SCOPED = new Set([FailureKind.CONTEXT, FailureKind.INVALID, FailureKind.MODEL_ERROR, FailureKind.ABORTED]);
 
+/**
+ * Circuit rules: 404 parks the pool for modelUnavailableMs, 429 for the upstream's retry
+ * delay, auth failures for authCooldownMs, and a first-byte or idle timeout opens it for
+ * timeoutCooldownMs at once (every caller would otherwise wait the full timeout). 5xx,
+ * network errors and slow non-streaming responses open it after failureThreshold
+ * consecutive failures, so one transient 503 does not park a pool shared by all users.
+ * After a cooldown the next failure of a still-failing pool re-opens it immediately.
+ */
 export class ProviderHealthTracker {
   constructor({ failureThreshold = 3, cooldownMs = 30000, modelUnavailableMs = 600000,
-    authCooldownMs = 300000, maxCooldownMs = 3600000 } = {}) {
+    authCooldownMs = 300000, timeoutCooldownMs = 30000, maxCooldownMs = 86400000 } = {}) {
     this.records = new Map();
     this.failureThreshold = failureThreshold;
     this.defaultCooldownMs = cooldownMs;
     this.modelUnavailableMs = modelUnavailableMs;
     this.authCooldownMs = authCooldownMs;
+    this.timeoutCooldownMs = timeoutCooldownMs;
     this.maxCooldownMs = maxCooldownMs;
   }
 
@@ -96,7 +112,7 @@ export class ProviderHealthTracker {
     return rec;
   }
 
-  recordFailure(key, { kind = FailureKind.SERVER, latencyMs = 0, retryAfterSeconds = 0 } = {}) {
+  recordFailure(key, { kind = FailureKind.SERVER, latencyMs = 0, retryAfterSeconds = 0, phase = null } = {}) {
     if (kind === FailureKind.ABORTED) return this.records.get(key) || null;
     const rec = this.getRecord(key);
     const now = Date.now();
@@ -117,6 +133,10 @@ export class ProviderHealthTracker {
     } else if (kind === FailureKind.AUTH) {
       rec.status = HealthState.AUTH_FAILED;
       open(this.authCooldownMs);
+    } else if (kind === FailureKind.TIMEOUT && LIVENESS_PHASES.has(phase)) {
+      rec.consecutive_failures++;
+      rec.status = HealthState.DOWN;
+      open(this.timeoutCooldownMs);
     } else {
       rec.consecutive_failures++;
       if (rec.consecutive_failures >= this.failureThreshold) {
@@ -130,9 +150,9 @@ export class ProviderHealthTracker {
   }
 
   // Compatibility entry point: classifies by HTTP status unless `kind` is given.
-  recordAttempt(key, { success, status, latencyMs = 0, retryAfterSeconds = 0, kind } = {}) {
+  recordAttempt(key, { success, status, latencyMs = 0, retryAfterSeconds = 0, kind, phase } = {}) {
     if (success) return this.recordSuccess(key, { latencyMs });
-    return this.recordFailure(key, { kind: kind || failureKindForStatus(status), latencyMs, retryAfterSeconds });
+    return this.recordFailure(key, { kind: kind || failureKindForStatus(status), latencyMs, retryAfterSeconds, phase });
   }
 
   reset(key) {

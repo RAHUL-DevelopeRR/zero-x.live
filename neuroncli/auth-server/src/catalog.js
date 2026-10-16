@@ -11,8 +11,9 @@ export const EEA_COUNTRIES = Object.freeze(['AT', 'BE', 'BG', 'HR', 'CY', 'CZ', 
 // EU territories that Cloudflare geolocates under their own ISO codes (Åland and the
 // outermost regions). They are EU territory, so they follow the EEA rule.
 const EU_TERRITORIES = Object.freeze(['AX', 'GF', 'GP', 'MQ', 'RE', 'YT', 'MF']);
-// Cloudflare reports Tor exit traffic as T1: the caller's jurisdiction is unknown.
-const UNKNOWN_JURISDICTIONS = Object.freeze(['T1']);
+// Cloudflare reports Tor exit traffic as T1 and unlocatable addresses as XX: the caller's
+// jurisdiction is unknown, so geo-restricted free pools treat them as blocked.
+const UNKNOWN_JURISDICTIONS = Object.freeze(['T1', 'XX']);
 
 export function expandCountries(list = []) {
   const countries = new Set();
@@ -252,9 +253,19 @@ export function poolKey(entry, pool) {
   return `${entry.provider}:${entry.upstream_model}:${pool.tier}`;
 }
 
-export function geoBlocked(entry, pool, country) {
-  if (pool.tier !== 'free' || !entry.geo_block_free?.length || !country) return false;
-  const code = String(country).toUpperCase();
+// Two-character ISO 3166 code (or Cloudflare's T1/XX), otherwise null.
+export function normalizeCountry(country) {
+  const code = typeof country === 'string' ? country.trim().toUpperCase() : '';
+  return /^[A-Z][A-Z0-9]$/.test(code) ? code : null;
+}
+
+// Geo-restricted free pools fail closed: blocked for listed countries, for unknown
+// jurisdictions (T1, XX) and, unless ALLOW_UNKNOWN_COUNTRY=true (local development only),
+// for callers whose country is not known at all.
+export function geoBlocked(entry, pool, country, env = {}) {
+  if (pool.tier !== 'free' || !entry.geo_block_free?.length) return false;
+  const code = normalizeCountry(country);
+  if (!code) return env?.ALLOW_UNKNOWN_COUNTRY !== 'true';
   return UNKNOWN_JURISDICTIONS.includes(code) || expandCountries(entry.geo_block_free).has(code);
 }
 
@@ -263,8 +274,7 @@ export function geoBlocked(entry, pool, country) {
 export function callerCountry(request, env = {}) {
   let country = request?.cf?.country;
   if (!country && env.TRUST_CF_IPCOUNTRY === 'true') country = request?.headers?.get?.('cf-ipcountry');
-  const code = typeof country === 'string' ? country.trim().toUpperCase() : '';
-  return /^[A-Z][A-Z0-9]$/.test(code) && code !== 'XX' ? code : null;
+  return normalizeCountry(country);
 }
 
 // Classifies every pool of an entry for a caller: configured, in plan, region allowed.
@@ -273,7 +283,7 @@ export function poolVerdicts(env, entry, tiers, country) {
     pool,
     configured: poolConfigured(env, entry, pool),
     inPlan: tiers.includes(pool.tier),
-    region: !geoBlocked(entry, pool, country),
+    region: !geoBlocked(entry, pool, country, env),
   }));
 }
 
@@ -312,20 +322,38 @@ function parseTiers(value) {
   return tiers.length && tiers.every(tier => VALID_TIERS.has(tier)) ? tiers : null;
 }
 
+const isSet = value => value !== undefined && value !== null && value !== '';
+
+// One zerox_plan_policies_v2 row: plan, name, daily_requests, daily_tokens, rpm_limit,
+// concurrency_limit, allowed_tiers, monthly_credit_microusd (plus pricing/display columns).
+// Missing or invalid values fall back to the built-in plan of the same id (or the free plan)
+// and are returned as problems so the loader can report them.
 function policyFromRow(row) {
   const id = String(row?.plan ?? row?.id ?? row?.plan_id ?? '').trim().toLowerCase();
   if (!/^[a-z0-9_-]{1,32}$/.test(id)) return null;
   const builtin = BUILTIN_PLANS[id] || BUILTIN_PLANS.free;
-  const tiers = parseTiers(row.tiers) || builtin.tiers;
-  const number = (value, fallback) => Number.isSafeInteger(Number(value)) && Number(value) >= 0 ? Number(value) : fallback;
-  return Object.freeze({
+  const problems = [];
+  const tierValue = row.allowed_tiers ?? row.tiers;
+  let tiers = parseTiers(tierValue);
+  if (!tiers) {
+    problems.push(`${isSet(tierValue) ? 'invalid' : 'missing'} allowed_tiers`);
+    tiers = builtin.tiers;
+  }
+  const number = (value, fallback, column) => {
+    if (isSet(value) && Number.isSafeInteger(Number(value)) && Number(value) >= 0) return Number(value);
+    problems.push(`${isSet(value) ? 'invalid' : 'missing'} ${column}`);
+    return fallback;
+  };
+  const policy = Object.freeze({
     id, name: typeof row.name === 'string' && row.name ? row.name : builtin.name,
-    daily_requests: number(row.daily_requests, builtin.daily_requests),
-    daily_tokens: number(row.daily_tokens, builtin.daily_tokens),
-    rpm: number(row.rpm, builtin.rpm), concurrency: number(row.concurrency, builtin.concurrency),
+    daily_requests: number(row.daily_requests, builtin.daily_requests, 'daily_requests'),
+    daily_tokens: number(row.daily_tokens, builtin.daily_tokens, 'daily_tokens'),
+    rpm: number(row.rpm_limit ?? row.rpm, builtin.rpm, 'rpm_limit'),
+    concurrency: number(row.concurrency_limit ?? row.concurrency, builtin.concurrency, 'concurrency_limit'),
     tiers: Object.freeze(tiers),
-    monthly_credit_microusd: number(row.monthly_credit_microusd, builtin.monthly_credit_microusd),
+    monthly_credit_microusd: number(row.monthly_credit_microusd, builtin.monthly_credit_microusd, 'monthly_credit_microusd'),
   });
+  return { policy, problems };
 }
 
 // Loads plan policies from zerox_plan_policies_v2 (60 s cache). Falls back to the
@@ -340,8 +368,14 @@ export async function loadPlanPolicies(env) {
     const rows = await rpcRows(env, 'zerox_plan_policies_v2', {});
     const loaded = {};
     for (const row of rows) {
-      const policy = policyFromRow(row);
-      if (policy) loaded[policy.id] = policy;
+      const parsed = policyFromRow(row);
+      if (!parsed) continue;
+      // Loud on purpose: a column mismatch would otherwise route silently on built-in tiers.
+      if (parsed.problems.length) {
+        console.error('Neuron plan policy row is incomplete; using built-in values',
+          { plan: parsed.policy.id, problems: parsed.problems });
+      }
+      loaded[parsed.policy.id] = parsed.policy;
     }
     if (!loaded.free) throw new Error('Plan policies are missing the free plan');
     policies = Object.freeze(loaded);
@@ -414,7 +448,7 @@ function describeAuto(models) {
 export function listModelsForCaller(env = {}, { plan = 'free', country = null, tiers } = {}) {
   warnIgnoredModels(env);
   const allowed = Array.isArray(tiers) ? tiers : planPolicy(env, plan).tiers;
-  const code = typeof country === 'string' && country ? country.toUpperCase() : null;
+  const code = normalizeCountry(country);
   const data = offeredEntries(env).map(entry => describeEntry(env, entry, allowed, code));
   return { object: 'list', data: [describeAuto(data), ...data] };
 }

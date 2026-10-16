@@ -405,9 +405,79 @@ export async function requestCompletion(env, session, entry, body, signal, pool)
 }
 
 // ── Upstream failure classification ──
+//
+// Upstream error messages can quote client input (e.g. Gemini echoes unknown schema field
+// names), so pool-wide states (model unavailable, auth, rate limits and their delays) come
+// only from the HTTP status and from structured fields compared with fixed values. Message
+// text may only choose between request-scoped kinds (context vs. invalid).
 
 const CONTEXT_PATTERN = /context[ _-]?(length|window)|maximum context|too many tokens|token limit|request too large|reduce the length|(input|prompt|request|message)s? (is |are )?too (long|large)|exceeds the (maximum|max|limit)/;
-const MODEL_GONE_PATTERN = /model[^\n]{0,60}(not found|does not exist|not supported|is not available|decommissioned|deprecated)|not a valid model|unknown model|no endpoints found/;
+
+// google.rpc status names (Gemini) to HTTP statuses, for errors that carry no HTTP status.
+const RPC_STATUS_HTTP = Object.freeze({
+  INVALID_ARGUMENT: 400, FAILED_PRECONDITION: 400, OUT_OF_RANGE: 400, UNAUTHENTICATED: 401,
+  PERMISSION_DENIED: 403, NOT_FOUND: 404, RESOURCE_EXHAUSTED: 429, INTERNAL: 500, UNAVAILABLE: 503,
+  DEADLINE_EXCEEDED: 504,
+});
+// google.rpc.ErrorInfo reasons that mean the pool's key or project cannot serve anyone.
+const AUTH_REASONS = new Set(['API_KEY_INVALID', 'API_KEY_EXPIRED', 'API_KEY_SERVICE_BLOCKED',
+  'CONSUMER_SUSPENDED', 'SERVICE_DISABLED', 'BILLING_DISABLED', 'USER_LOCATION_INVALID', 'ACCESS_TOKEN_EXPIRED']);
+// OpenAI-style error.code values (Groq, NVIDIA, OpenRouter).
+const AUTH_CODES = new Set(['invalid_api_key', 'api_key_invalid', 'invalid_authentication', 'account_deactivated',
+  'organization_restricted']);
+const MODEL_GONE_CODES = new Set(['model_not_found', 'model_decommissioned', 'model_not_available']);
+const MODEL_ERROR_CODES = new Set(['tool_use_failed', 'json_validate_failed']);
+const CONTEXT_CODES = new Set(['context_length_exceeded']);
+const RATE_LIMIT_CODES = new Set(['rate_limit_exceeded', 'rate_limited']);
+// Workers AI internal error codes (developers.cloudflare.com/workers-ai/platform/errors).
+export const WORKERS_AI_ERRORS = Object.freeze({
+  3003: 400, 5004: 400, 5007: 404, 3042: 404, 3006: 413, 3007: 408, 3023: 403, 3041: 403, 5016: 403, 5018: 403,
+  3036: 429, // daily free allocation used up: resets at 00:00 UTC
+  3040: 429, // out of capacity
+});
+
+const isObject = value => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+
+// Structured fields of an upstream error body (JSON text or a parsed error object).
+export function parseUpstreamError(source) {
+  let value = source;
+  if (typeof source === 'string') {
+    try { value = JSON.parse(source); } catch { value = null; }
+  }
+  if (Array.isArray(value)) value = value[0]; // Gemini wraps errors in an array
+  const root = isObject(value) ? value : {};
+  const error = isObject(root.error) ? root.error : root;
+  const details = Array.isArray(error.details) ? error.details.filter(isObject) : [];
+  const workers = Array.isArray(root.errors) ? root.errors.find(isObject) : null;
+  return {
+    code: typeof error.code === 'string' ? error.code.toLowerCase() : null,
+    numericCode: Number.isInteger(error.code) ? error.code : null,
+    rpcStatus: typeof error.status === 'string' ? error.status.toUpperCase() : null,
+    reasons: details.map(item => item.reason).filter(reason => typeof reason === 'string').map(reason => reason.toUpperCase()),
+    retryDelaySeconds: details.map(item => durationSeconds(item.retryDelay)).find(Boolean) ?? null,
+    dailyQuota: details.some(item => Array.isArray(item.violations) &&
+      item.violations.some(violation => /perday/i.test(String(violation?.quotaId ?? '')))),
+    workersCode: Number.isInteger(workers?.code) ? workers.code : null,
+    message: typeof error.message === 'string' ? error.message : typeof source === 'string' && !isObject(value) ? source : '',
+  };
+}
+
+function secondsUntilUtcMidnight(now = Date.now()) {
+  return Math.max(1, Math.ceil(((Math.floor(now / 86400000) + 1) * 86400000 - now) / 1000));
+}
+
+// Refines a rejected request (400/422, or an in-stream error) using structured fields only.
+function structuredKind(info) {
+  if (info.reasons.some(reason => AUTH_REASONS.has(reason)) || AUTH_CODES.has(info.code)) return FailureKind.AUTH;
+  // Gemini answers FAILED_PRECONDITION when the free tier is unavailable for the project's
+  // region or billing state: nobody can use this pool.
+  if (info.rpcStatus === 'FAILED_PRECONDITION') return FailureKind.AUTH;
+  if ([3023, 3041, 5016, 5018].includes(info.workersCode)) return FailureKind.AUTH;
+  if (MODEL_GONE_CODES.has(info.code) || [5007, 3042].includes(info.workersCode)) return FailureKind.MODEL_UNAVAILABLE;
+  if (MODEL_ERROR_CODES.has(info.code)) return FailureKind.MODEL_ERROR;
+  if (CONTEXT_CODES.has(info.code)) return FailureKind.CONTEXT;
+  return null;
+}
 
 function durationSeconds(value) {
   if (typeof value !== 'string' || !value.trim()) return null;
@@ -420,8 +490,13 @@ function durationSeconds(value) {
 }
 
 // Delay before a rate-limited pool may be retried: Retry-After, then Groq's
-// x-ratelimit-reset-* for the exhausted dimension, then Gemini's RetryInfo.
-export function retryAfterSeconds(headers, text = '') {
+// x-ratelimit-reset-* for the exhausted dimension, then the structured body (Gemini's
+// QuotaFailure per-day quota and RetryInfo, Workers AI's daily allocation).
+export function retryAfterSeconds(headers, body = '') {
+  return retryDelay(headers, parseUpstreamError(body));
+}
+
+function retryDelay(headers, info) {
   const header = headers?.get?.('retry-after');
   if (header) {
     const number = Number(header);
@@ -435,24 +510,31 @@ export function retryAfterSeconds(headers, text = '') {
       : get('x-ratelimit-reset-requests') || get('x-ratelimit-reset-tokens');
   const fromReset = durationSeconds(reset);
   if (fromReset) return fromReset;
-  if (/perday/i.test(text)) return 3600;
-  const delay = /"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"/.exec(text);
-  return delay ? Math.max(1, Math.ceil(Number(delay[1]))) : null;
+  if (info.workersCode === 3036) return secondsUntilUtcMidnight();
+  if (info.dailyQuota) return Math.max(3600, info.retryDelaySeconds || 0);
+  return info.retryDelaySeconds;
 }
 
-export function classifyUpstreamFailure(status, text = '', headers = null) {
-  const lower = String(text).toLowerCase();
-  let kind = failureKindForStatus(status);
-  if (kind === FailureKind.INVALID || kind === FailureKind.CONTEXT) {
-    if (CONTEXT_PATTERN.test(lower)) kind = FailureKind.CONTEXT;
-    else if (MODEL_GONE_PATTERN.test(lower)) kind = FailureKind.MODEL_UNAVAILABLE;
-    // Gemini rejects whole projects whose egress region is unsupported: a pool problem.
-    else if (/user location is not supported/.test(lower)) kind = FailureKind.AUTH;
+/**
+ * Classifies a failed upstream attempt. `status` is the HTTP status (null for an in-stream
+ * error event); `body` is the bounded error body text or the parsed in-stream error.
+ */
+export function classifyUpstreamFailure(status, body = '', headers = null, fallbackKind = FailureKind.SERVER) {
+  const info = parseUpstreamError(body);
+  const httpStatus = Number.isInteger(status) && status >= 400 ? status : null;
+  const effective = httpStatus ?? (info.numericCode >= 400 ? info.numericCode : null) ?? RPC_STATUS_HTTP[info.rpcStatus] ?? null;
+  let kind = effective ? failureKindForStatus(effective) : fallbackKind;
+  if (kind === FailureKind.INVALID || !effective) {
+    const refined = structuredKind(info);
+    if (refined) kind = refined;
+    else if (!effective && RATE_LIMIT_CODES.has(info.code)) kind = FailureKind.RATE_LIMITED;
+    // Request-scoped only: the message may tell a context-length rejection apart.
+    else if (CONTEXT_PATTERN.test(info.message.toLowerCase())) kind = FailureKind.CONTEXT;
   }
   return {
     kind,
-    status,
-    retryAfterSeconds: kind === FailureKind.RATE_LIMITED || status === 413 ? retryAfterSeconds(headers, text) : null,
+    status: effective,
+    retryAfterSeconds: kind === FailureKind.RATE_LIMITED || effective === 413 ? retryDelay(headers, info) : null,
   };
 }
 
@@ -471,12 +553,9 @@ export class UpstreamStreamError extends Error {
   constructor(error, fallbackKind = FailureKind.SERVER) {
     super('Upstream provider reported a streaming error');
     this.name = 'UpstreamStreamError';
-    const status = Number(error?.code ?? error?.status_code);
-    const text = JSON.stringify(error ?? {}).slice(0, 4000);
-    const classified = Number.isInteger(status) && status >= 400
-      ? classifyUpstreamFailure(status, text)
-      : /resource_exhausted|rate.?limit/i.test(text) ? { kind: FailureKind.RATE_LIMITED, retryAfterSeconds: retryAfterSeconds(null, text) }
-        : { kind: CONTEXT_PATTERN.test(text.toLowerCase()) ? FailureKind.CONTEXT : fallbackKind, retryAfterSeconds: null };
+    const status = Number(error?.status_code);
+    const classified = classifyUpstreamFailure(Number.isInteger(status) ? status : null,
+      isObject(error) ? { error } : {}, null, fallbackKind);
     this.kind = classified.kind;
     this.retryAfterSeconds = classified.retryAfterSeconds;
   }
@@ -507,15 +586,17 @@ function abortReason(signal) {
   return signal.reason ?? new DOMException('The operation was aborted', 'AbortError');
 }
 
-// Resolves with `promise` unless the deadline passes (aborting the attempt) or the
-// signal aborts first.
-function guarded(promise, { ms, phase, signal, controller }) {
+// Resolves with `promise` unless the deadline passes (aborting the attempt) or the signal
+// aborts first. `deadline()` returns an absolute time and is re-read whenever the timer
+// fires, so byte progress (SSE comments and keep-alives included) can extend it.
+function guarded(promise, { deadline, phase, signal, controller }) {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
       reject(abortReason(signal));
       return;
     }
     let settled = false;
+    let timer = null;
     const finish = (callback, value) => {
       if (settled) return;
       settled = true;
@@ -524,13 +605,21 @@ function guarded(promise, { ms, phase, signal, controller }) {
       callback(value);
     };
     const onAbort = () => finish(reject, abortReason(signal));
-    const timer = setTimeout(() => {
+    const wait = () => Math.max(0, deadline() - Date.now());
+    const check = () => {
+      if (settled) return;
+      if (wait() > 0) {
+        timer = setTimeout(check, wait());
+        return;
+      }
       const error = new UpstreamTimeoutError(phase);
       finish(reject, error);
       controller?.abort(error);
-    }, Math.max(0, ms));
+    };
     signal?.addEventListener('abort', onAbort, { once: true });
     Promise.resolve(promise).then(value => finish(resolve, value), error => finish(reject, error));
+    // Always a macrotask, so an already-settled promise wins over an expired deadline.
+    timer = setTimeout(check, wait());
   });
 }
 
@@ -554,6 +643,7 @@ async function readBounded(response, limit = 16384) {
 const MAX_EVENT_BYTES = 1048576;
 
 // Incremental SSE parser returning the data payload of each event ('[DONE]' included).
+// `lastByteAt` records the last time any body bytes arrived, comments included.
 export class SseEventReader {
   constructor(body) {
     this.reader = body.getReader();
@@ -561,6 +651,7 @@ export class SseEventReader {
     this.buffer = '';
     this.queue = [];
     this.ended = false;
+    this.lastByteAt = null;
   }
 
   push(raw) {
@@ -572,6 +663,7 @@ export class SseEventReader {
   async next() {
     while (!this.queue.length && !this.ended) {
       const { value, done } = await this.reader.read();
+      if (value?.byteLength) this.lastByteAt = Date.now();
       this.buffer += done ? this.decoder.decode() : this.decoder.decode(value, { stream: true });
       this.buffer = this.buffer.replace(/\r\n/g, '\n');
       let boundary;
@@ -608,9 +700,11 @@ function parseEvent(data) {
 }
 
 /**
- * Starts one upstream attempt. Streams are not committed to the client until the first
- * SSE event arrives within the TTFB budget, so a dead or erroring upstream can still be
- * failed over. Non-streaming calls get TTFB + idle as their total budget.
+ * Starts one upstream attempt. A stream is committed to the client only once its first SSE
+ * data event arrives, so a dead or erroring upstream can still be failed over. Stream
+ * deadlines: the first body byte within ttfbMs; after that, bytes (SSE comments and
+ * keep-alives count) at most idleMs apart, with the first data event due within
+ * ttfbMs + idleMs. Non-streaming calls get ttfbMs + idleMs in total.
  * Resolves { ok:false, status, headers, bodyText } for HTTP errors and
  * { ok:true, json | stream } on success; throws timeout/abort/protocol errors.
  */
@@ -618,12 +712,16 @@ export async function startCompletion(env, session, entry, pool, payload, { clie
   const controller = new AbortController();
   const signal = clientSignal ? AbortSignal.any([clientSignal, controller.signal]) : controller.signal;
   const started = Date.now();
-  const budget = payload.stream ? timeouts.ttfbMs : timeouts.ttfbMs + timeouts.idleMs;
-  const phase = payload.stream ? 'first_byte' : 'response';
-  const remaining = () => budget - (Date.now() - started);
-  const guard = promise => guarded(promise, { ms: remaining(), phase, signal, controller });
-  const response = await guard(requestCompletion(env, session, entry, payload, signal, pool));
+  const total = started + timeouts.ttfbMs + timeouts.idleMs;
   let reader = null;
+  const deadline = () => {
+    if (!payload.stream) return total;
+    const last = reader?.lastByteAt;
+    return last ? Math.min(last + timeouts.idleMs, total) : started + timeouts.ttfbMs;
+  };
+  const phase = payload.stream ? 'first_byte' : 'response';
+  const guard = promise => guarded(promise, { deadline, phase, signal, controller });
+  const response = await guard(requestCompletion(env, session, entry, payload, signal, pool));
   try {
     if (!response.ok) {
       const bodyText = await guard(readBounded(response)).catch(() => '');
