@@ -1,6 +1,6 @@
 # Neuron × Zero-X platform contract
 
-Status: v1.1 (2026-10-16; v1.1 amendments in section 6). This document is the source of truth shared by the Neuron CLI
+Status: v1.2 (2026-10-16; v1.1 amendments in section 6, v1.2 amendments in section 7). This document is the source of truth shared by the Neuron CLI
 (`RAHUL-DevelopeRR/neuron-v2`) and the Zero-X gateway + website
 (`RAHUL-DevelopeRR/zero-x.live`, `neuroncli/auth-server`). A copy lives in both repos;
 change both together.
@@ -191,7 +191,7 @@ All called through `rpc(env, name, args)` / `rpcRows(env, name, args)` in
 | RPC | args | returns (row) |
 |-----|------|---------------|
 | `zerox_reserve_v2` | `p_user_id uuid, p_request_id text, p_model text, p_tier text, p_tokens bigint, p_cost_microusd bigint, p_pool jsonb` (`{rpm,rpd,tpm,tpd}` or null) | `{status, reservation_id, plan, remaining_requests, remaining_tokens, credit_balance_microusd, resets_at, retry_after_seconds}`; status ∈ `ok, no_account, suspended, upgrade_required, user_daily_requests, user_daily_tokens, user_rpm, user_concurrency, insufficient_credits, pool_exhausted` |
-| `zerox_settle_v2` | `p_reservation_id uuid, p_prompt_tokens bigint, p_completion_tokens bigint, p_cost_microusd bigint, p_status text ('ok','error','refunded'), p_latency_ms int, p_provider text, p_upstream_model text, p_error_code text` | `{status:'settled'|'already_settled'|'not_found', credit_balance_microusd}` |
+| `zerox_settle_v2` | `p_reservation_id uuid, p_prompt_tokens bigint, p_completion_tokens bigint, p_cost_microusd bigint, p_status text ('ok','error','refunded','failed_upstream'), p_latency_ms int, p_provider text, p_upstream_model text, p_error_code text` | `{status:'settled'|'already_settled'|'not_found', credit_balance_microusd}` |
 | `zerox_release_stale_reservations` | — | `{released}` |
 | `zerox_plan_policies_v2` | — | one row per plan: `plan, name, price_usd, price_usd_cents, price_inr_paise, daily_requests, daily_tokens, rpm_limit, concurrency_limit, allowed_tiers text[], monthly_credit_microusd, features, sort, public, highlighted, razorpay_plan_id_inr, razorpay_plan_id_usd` |
 | `zerox_account_overview` | `p_user_id` | account + policy + credits + subscription + today usage (jsonb columns) |
@@ -205,13 +205,19 @@ All called through `rpc(env, name, args)` / `rpcRows(env, name, args)` in
 | `zerox_billing_upsert_subscription` | `p_user_id, p_provider, p_provider_subscription_id, p_plan, p_status, p_current_period_start timestamptz, p_current_period_end timestamptz, p_cancel_at_period_end boolean, p_raw jsonb` | subscription row; sets account plan when status ∈ (authenticated, active), reverts to free when ended |
 | `zerox_billing_record_payment` | `p_user_id, p_provider, p_provider_payment_id, p_kind, p_amount_minor bigint, p_currency, p_status, p_invoice_url, p_raw jsonb` | payment row (idempotent on provider+payment id) |
 | `zerox_credit_grant` | `p_user_id, p_delta_microusd bigint, p_reason text` (~ `^[a-z][a-z0-9_]{0,63}$`, e.g. `topup_credits_5`, `subscription_pro`), `p_ref text` (unique; the `usage:` prefix is reserved) | `{granted boolean, balance_microusd}` (idempotent on ref) |
-| `zerox_webhook_claim` | `p_provider, p_event_id, p_event_type, p_payload_sha256` | `{claimed boolean}` |
+| `zerox_webhook_claim` | `p_provider, p_event_id, p_event_type, p_payload_sha256, p_lease_seconds int = 120` | `{claimed boolean, in_progress boolean}` (a lease, see section 7) |
+| `zerox_webhook_complete` | `p_provider, p_event_id` | `{completed boolean}` (marks a claimed delivery processed) |
 | `zerox_webhook_release` | `p_provider, p_event_id` | `{released boolean}` (drop a claim whose processing failed so the retry is processed) |
 | `zerox_billing_get` | `p_user_id` | `{subscription jsonb, payments jsonb}` |
+| `zerox_billing_subscriptions` | `p_user_id` | rows of the user's subscriptions that have not ended, newest first, plus `provider_plan_id` and `payments` (recorded payments that did not fail) |
+| `zerox_billing_record_checkout` | `p_user_id, p_provider, p_provider_subscription_id, p_plan, p_raw` | `{recorded boolean, blocking_subscription_id, blocking_status, blocking_plan_id}` (records a checkout as 'created' unless a live subscription or another unpaid checkout from the last 24 h exists) |
+| `zerox_billing_revoke_subscription` | `p_provider, p_provider_subscription_id, p_reason ('duplicate'|'refunded')` | subscription row (never entitles again) |
+| `zerox_payment_by_provider_id` | `p_provider, p_provider_payment_id` | `{id, user_id, kind, amount_minor, currency, status, subscription_id, granted_microusd, granted_reason}` |
 | `zerox_subscription_by_provider_id` | `p_provider, p_provider_subscription_id` | subscription row incl. `user_id` |
 | `zerox_apply_subscription_expiry` | — | `{downgraded, reconciled}` |
 | `zerox_session_index_add/list/revoke_all` | `p_user_id, p_token_hash, p_expires_at` | session index for revoke-all; `revoke_all` returns one `{token_hash}` row per removed entry |
 | `zerox_session_index_remove` | `p_token_hash` | `{removed boolean}` (single sign-out) |
+| `zerox_session_rearm` | `p_key, p_value, p_ttl` | `{rearmed boolean}` (rewrites a stored session only while it still exists) |
 | `zerox_admin_overview` | — | `{overview jsonb}` |
 
 Legacy RPCs (`zerox_reserve_usage`, `zerox_settle_usage`, …) remain for rollback.
@@ -264,3 +270,50 @@ database or this contract already enforced won. Sync the copy in `neuron-v2`.
   and `tokens_this_minute`; `limits` is `null` for pools without a shared budget (paid pools);
   `health` is `{status, circuit_open, cooldown_remaining_ms, last_failure_kind}` for the serving
   isolate.
+
+## 7. v1.2 amendments (integration review fixes, 2026-10-16)
+
+Sync the copy in `neuron-v2`; nothing here changes what the CLI sends or must handle.
+
+- **One payable subscription per account (§3.5).** `POST /api/billing/checkout` records the
+  Razorpay subscription as `created` and, while it is unpaid (24 h), answers the same
+  `subscription_id` for the same plan and currency; an unpaid checkout for another plan or
+  currency is cancelled at Razorpay first. It answers `409 checkout_in_progress` while a payment
+  for the open checkout is being confirmed (or a parallel checkout for another plan was recorded
+  first), and `409 already_subscribed` while any subscription is live. A subscription that becomes
+  live (authenticated, active, pending) while another one is live is a duplicate: it is revoked
+  (`revoked_reason 'duplicate'`), never entitles, gets no monthly credits, and verify or the
+  webhook cancels it at Razorpay at once and refunds its payments in full (verify answers
+  `409 already_subscribed`). `POST /api/billing/cancel` acts on every live subscription: entitled
+  ones end with their period, live duplicates now; unpaid checkouts are closed.
+- **Unconfirmed payments (§3.5).** Verify's `{status:'pending'}` records the payment attempt.
+  Clients show it as awaiting confirmation (never as confirmed) and offer no new purchase until
+  Billing lists the payment as captured, refunded or failed (the website keeps this lock for
+  30 minutes across reloads).
+- **Webhooks (§3.5).** Claims are leases: a claimed delivery stays `processing` for
+  `p_lease_seconds` (120) until `zerox_webhook_complete`, a retry claims it again once the lease
+  expired, and a delivery whose lease is live answers `503` (Razorpay retries). Handled in
+  addition: `refund.processed` (the payment becomes `refunded` once refunded in full; credits
+  granted for it are taken back in proportion to the refund, ledger reason `refund`, ref
+  `refund:<refund id>`, balances clamp at zero; a full refund of a subscription payment revokes that
+  subscription with `revoked_reason 'refunded'` and cancels it at Razorpay at once).
+  `payment.dispute.*` events are logged for the operator (GATEWAY_SETUP.md, "Refunds and disputes").
+- **Refunded failures (§3.3).** `upstream_error` and `upstream_timeout` still return the request
+  to the caller. An attempt that reached the model (a model-side rejection such as Groq's
+  `tool_use_failed`, a first-byte, idle or response timeout) is settled as `failed_upstream`: it
+  keeps its request and prompt tokens in the shared pool budget, and the caller's refund is
+  limited to a tenth of the plan's daily requests per UTC day (at least 5); further ones count like
+  errors. Rejections the upstream did not count (429, 5xx, network and auth failures) stay full
+  refunds of user and pool. Sessions without an account ledger are unchanged.
+- **Circuit (§2).** A first-byte or idle timeout parks a shared pool only once two distinct callers
+  timed out on it within 60 s; one caller's slow prompts cannot park a pool for everyone.
+- **Dev identity (§3.1).** `dev_` credentials are refused under `NODE_ENV=production` and on
+  requests whose `Origin` is not a loopback origin (`http://127.0.0.1`, `localhost`, `[::1]`).
+- **Sessions (§3.4, §3.7).** `POST /api/sessions/revoke-all` accepts `{api_keys: true}` to also
+  revoke every API key of the user and then answers `{revoked, api_keys_revoked}`.
+  `POST /auth/cli/session` answers `503 service_unavailable` (and keeps no session) when the session
+  cannot be added to the revoke-all index. Re-arming a stored session never recreates one that a
+  sign-out or revoke-all deleted (`zerox_session_rearm`).
+- **Health probes.** `POST /v1/models/health` applies the caller's country (geo rules) exactly as
+  `POST /v1/chat/completions` does.
+- **Errors (§3.3).** Additional code: `checkout_in_progress` (409).

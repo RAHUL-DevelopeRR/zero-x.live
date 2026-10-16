@@ -109,9 +109,11 @@ Work through these in order; nothing in this repository does them for you.
    `https://zero-x.live/webhooks/razorpay` with secret = `RAZORPAY_WEBHOOK_SECRET` and the events
    `subscription.authenticated`, `subscription.activated`, `subscription.charged`,
    `subscription.pending`, `subscription.halted`, `subscription.cancelled`,
-   `subscription.completed`, `payment.captured`, `payment.failed`, `order.paid`. Test a Pro
-   checkout, a top-up and a cancellation end to end in test mode, then repeat the bootstrap with
-   live keys (`--allow-live`) and set `RAZORPAY_KEY_ID` to the `rzp_live_` id.
+   `subscription.completed`, `payment.captured`, `payment.failed`, `order.paid`,
+   `refund.processed` and the `payment.dispute.*` events. Test a Pro checkout, a top-up, a refund
+   and a cancellation end to end in test mode, then repeat the bootstrap with live keys
+   (`--allow-live`) and set `RAZORPAY_KEY_ID` to the `rzp_live_` id. Read "Refunds and disputes"
+   below before taking live payments.
 4. **Paid upstream capacity.** Create a Groq Developer-plan key and a billing-linked Gemini
    project key and store them as `GROQ_PAID_API_KEY` and `GEMINI_PAID_API_KEY`. Without them Pro
    and Max have no paid pool (credits cannot be spent). Check the real Gemini free-tier limits in
@@ -136,3 +138,37 @@ Work through these in order; nothing in this repository does them for you.
 9. **Canary.** `npm test`, deploy, then check `/ready`, `/health` with the operator token, a
    dashboard sign-in, `neuron auth login`, a streamed tool call with the matching Neuron build,
    and `/admin/overview`.
+
+## Refunds and disputes
+
+What the gateway does by itself (contract section 7):
+
+- **Duplicate subscriptions.** An account holds at most one payable subscription: checkout reuses
+  an unpaid one and refuses a second while one is live. If two still end up paid (parallel
+  checkouts, a subscription created in the Razorpay dashboard), the second is revoked, cancelled
+  at Razorpay at once and refunded in full, with the log line "Duplicate Razorpay subscription
+  cancelled and refunded". When the cancellation or refund fails, verify answers 502 and the
+  webhook 503 (Razorpay retries); the duplicate never entitles meanwhile, and the dashboard's
+  cancel ends it too.
+- **Refunds you issue in the Razorpay dashboard** arrive as `refund.processed`. The payment is
+  marked refunded once refunded in full, and credits granted with it are taken back in proportion
+  (top-up credits, or the monthly credits of a subscription payment; balances stop at zero and
+  the ledger records the shortfall). A full refund of a subscription payment also ends that
+  subscription at once (it is revoked and cancelled at Razorpay), as `refund.html` promises. For a
+  goodwill refund that should keep the plan, refund part of the payment instead.
+
+What stays manual:
+
+- **Disputes and chargebacks.** `payment.dispute.*` events are only logged ("Razorpay dispute needs
+  operator review"). Respond in the Razorpay dashboard. If the dispute is lost, take the credits
+  back and end the plan with SQL (service role), using the payment id from the dispute:
+
+  ```sql
+  SELECT * FROM public.zerox_payment_by_provider_id('razorpay', 'pay_…');   -- user, kind, credits granted
+  SELECT * FROM public.zerox_credit_grant('<user_id>', -<granted_microusd>, 'refund', 'dispute:<dispute id>');
+  SELECT * FROM public.zerox_billing_revoke_subscription('razorpay', '<subscription_id>', 'refunded');
+  ```
+
+  then cancel the subscription in the Razorpay dashboard.
+- **Refunds for payments the gateway never recorded** are logged ("Razorpay refund for a payment
+  this gateway never recorded") and ignored; check them by hand.

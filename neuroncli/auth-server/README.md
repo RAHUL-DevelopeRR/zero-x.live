@@ -23,10 +23,14 @@ environment/secret reference and the launch checklist are in [GATEWAY_SETUP.md](
   callers whose country is unknown. Health is tracked per pool.
 - **Quota and credits** (`migrations/2026101600*`). Every upstream attempt is reserved with
   `zerox_reserve_v2` (per-user daily caps, rpm, concurrency, credits and the shared pool budget,
-  atomically) and settled with `zerox_settle_v2` (real usage; refunded on provider failures).
+  atomically) and settled with `zerox_settle_v2` (real usage). Provider failures the upstream
+  did not count (429, 5xx, network) are refunded to the caller and the pool; model errors and
+  timeouts keep their pool share and are refunded to the caller within a daily allowance.
 - **Billing** (`src/routes/billing.js`, `src/routes/webhooks.js`). Razorpay subscriptions
   (Pro/Max, INR and USD) and credit top-ups; `subscription.charged` webhooks grant the monthly
-  credits once per payment.
+  credits once per payment. An account holds one payable subscription (duplicates are cancelled
+  and refunded) and `refund.processed` takes refunded credits back (GATEWAY_SETUP.md, "Refunds and
+  disputes").
 - **Website** (repository root). `pricing.html`, `dashboard.html`, the legal pages and the
   checkout client (`billing-checkout.js`) talk to the same-origin `/api/*` routes.
 
@@ -105,6 +109,7 @@ Nothing below needs Supabase, Razorpay or provider accounts.
   ids). Edits apply to enforcement immediately and to the gateway's cached view within 60 s.
 - Containers: `docker build -t neuron-server .` then `docker run --env-file .env -p 8787:8787
   neuron-server`. Put a TLS proxy in front; never enable `DEV_AUTH_ENABLED` or the PGlite driver
-  there (both are refused outside loopback and under `NODE_ENV=production`).
+  there (both are refused outside loopback and under `NODE_ENV=production`, and dev tokens are
+  also refused on browser requests from a non-loopback `Origin`).
 
 See [PROVIDERS.md](PROVIDERS.md) for upstream adapters and operator health probes.
