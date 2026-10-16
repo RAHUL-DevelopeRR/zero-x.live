@@ -251,11 +251,12 @@ neuron -p "Run the tests and summarise failures"</code></pre></div>
         <h2>CLI sessions</h2>
         <p class="zx-muted">Each <code>neuron auth login</code> creates a CLI session that lasts up to 30 days. If a computer is lost or a session token was exposed, sign out every CLI session at once.</p>
         <div id="sessions-error" class="zx-alert zx-alert--error zx-mb" role="alert"></div>
+        <p class="zx-mb"><input id="sessions-keys" type="checkbox"> <label for="sessions-keys">Also revoke every API key (do this if a session token may have leaked, since a session can create keys)</label></p>
         <div class="zx-row">
           <button id="sessions-revoke" class="zx-btn zx-btn--danger" type="button">Sign out all CLI sessions</button>
         </div>
         <p id="sessions-status" class="zx-muted zx-mt" role="status" aria-live="polite"></p>
-        <p class="zx-help">This does not affect API keys or this browser. Revoke keys from the API keys tab.</p>
+        <p class="zx-help">This does not sign out this browser, and API keys keep working unless you tick the box above. Single keys can be revoked from the API keys tab.</p>
       </section>
 
       <section class="zx-tabpanel" role="tabpanel" id="panel-account" aria-labelledby="tab-account" tabindex="0" hidden>

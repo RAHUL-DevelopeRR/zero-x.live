@@ -285,22 +285,23 @@ function dashboardRoutes(state) {
     'POST /api/billing/cancel': () => { state.cancelled = true; return {status: 'cancel_scheduled', current_period_end: '2026-11-01T00:00:00Z'}; },
     'POST /api/billing/topup': call => ({provider: 'razorpay', key_id: 'rzp_test_AbCdEf123456', order_id: 'order_TEST123456', amount_minor: call.body.currency === 'INR' ? 44900 : 500, currency: call.body.currency, name: 'Zero-X', description: 'Credits', prefill: {email: 'owner@example.com', name: 'Owner'}}),
     'POST /api/billing/verify': {status: 'ok', account: {}},
-    'POST /api/sessions/revoke-all': {revoked: 3},
+    'POST /api/sessions/revoke-all': call => (call.body && call.body.api_keys ? {revoked: 3, api_keys_revoked: 2} : {revoked: 3}),
   };
 }
 
 const {createDashboard, TABS} = await import(new URL('dashboard.js', root));
 const {createPricingPage, PENDING_CHECKOUT_KEY} = await import(new URL('pricing.js', root));
+const {PAYMENT_LOCK_KEY, PAYMENT_LOCK_TTL_MS} = await import(new URL('billing-checkout.js', root));
 const DASHBOARD_HTML = read('dashboard.html');
 
-async function mountDashboard({profile = PROFILE, hash = '', state = {}, routes = {}, session} = {}) {
+async function mountDashboard({profile = PROFILE, hash = '', state = {}, routes = {}, session, local} = {}) {
   const shared = {keys: [
     {id: 'k-1', name: 'Laptop', prefix: 'nzx_Qw12', created_at: '2026-10-01T00:00:00Z', last_used_at: '2026-10-15T00:00:00Z', revoked_at: null},
     {id: 'k-0', name: 'Old CI', prefix: 'nzx_Zz99', created_at: '2026-09-01T00:00:00Z', last_used_at: null, revoked_at: '2026-09-10T00:00:00Z'}],
   cancelled: false, account: () => accountPayload(), ...state};
   const doc = parseDocument(DASHBOARD_HTML);
   const auth = makeAuth(profile);
-  const win = makeWindow({hash, auth, session});
+  const win = makeWindow({hash, auth, session, ...(local ? {local} : {})});
   win.Razorpay = FakeRazorpay;
   const {fetchImpl, calls} = makeFetch({...dashboardRoutes(shared), ...routes});
   const dashboard = createDashboard({doc, win, auth, fetchImpl, now: () => NOW});
@@ -504,6 +505,16 @@ async function mountDashboard({profile = PROFILE, hash = '', state = {}, routes 
   await settle();
   assert.ok(calls.some(call => call.method === 'POST' && call.path === '/api/sessions/revoke-all'));
   assert.match($('sessions-status').textContent, /Signed out 3 CLI sessions\./);
+  assert.deepEqual(calls.filter(call => call.path === '/api/sessions/revoke-all').at(-1).body, {});
+  // Review P3 (integration): revoke-all can also revoke every API key (a leaked session can mint keys).
+  $('sessions-keys').checked = true;
+  $('sessions-revoke').click();
+  await settle();
+  assert.match($('confirm-title').textContent, /revoke every API key/);
+  $('confirm-ok').click();
+  await settle();
+  assert.deepEqual(calls.filter(call => call.path === '/api/sessions/revoke-all').at(-1).body, {api_keys: true});
+  assert.match($('sessions-status').textContent, /Signed out 3 CLI sessions and revoked 2 API keys\./);
 
   // Account sign out clears the local dev identity.
   win.location.hash = '#account';
@@ -577,6 +588,44 @@ async function mountDashboard({profile = PROFILE, hash = '', state = {}, routes 
 }
 
 {
+  // Review P2 (integration): a pending top-up verify is not "Credits added": purchases stay locked,
+  // also after a reload, until Billing lists the payment with a final status.
+  const storage = makeStorage();
+  const {$, doc, calls} = await mountDashboard({hash: '#billing', local: storage, routes: {
+    'POST /api/billing/verify': {status: 'pending', account: accountPayload()}}});
+  FakeRazorpay.instances.length = 0;
+  doc.querySelector('[data-topup="credits_5"]').click();
+  await settle();
+  await FakeRazorpay.instances[0].options.handler({razorpay_payment_id: 'pay_TOPUPWAIT123', razorpay_order_id: 'order_TEST123456', razorpay_signature: 'ab'.repeat(32)});
+  await settle();
+  assert.doesNotMatch($('billing-status').textContent, /Credits have been added/);
+  assert.match($('billing-error').textContent, /awaiting confirmation from Razorpay/);
+  assert.ok(doc.querySelectorAll('[data-topup]').every(button => button.disabled), 'top-ups stay locked');
+  assert.equal(JSON.parse(storage.getItem(PAYMENT_LOCK_KEY)).paymentId, 'pay_TOPUPWAIT123');
+  doc.querySelector('[data-topup="credits_20"]').click();
+  await settle();
+  assert.equal(calls.filter(call => call.path === '/api/billing/topup').length, 1, 'no second order');
+  const pendingRow = {id: 'pay_TOPUPWAIT123', kind: 'topup', amount_minor: 500, currency: 'USD', status: 'authorized', created_at: '2026-10-16T17:59:00Z', invoice_url: null};
+  const billingWith = status => ({provider_configured: true, subscription: {id: 'sub_TEST12345', plan: 'pro', status: 'active',
+    current_period_end: '2026-11-01T00:00:00Z', cancel_at_period_end: false, provider: 'razorpay'}, payments: [{...pendingRow, status}]});
+  const reloaded = await mountDashboard({hash: '#billing', local: storage, routes: {'GET /api/billing': billingWith('authorized')}});
+  assert.ok(reloaded.doc.querySelectorAll('[data-topup]').every(button => button.disabled), 'still locked after a reload');
+  assert.match(reloaded.$('billing-status').textContent, /awaiting confirmation/);
+  const confirmed = await mountDashboard({hash: '#billing', local: storage, routes: {'GET /api/billing': billingWith('captured')}});
+  assert.equal(storage.getItem(PAYMENT_LOCK_KEY), null, 'the lock is cleared once the payment is captured');
+  assert.equal(confirmed.doc.querySelector('[data-topup="credits_5"]').disabled, false, 'purchases are offered again');
+  assert.equal(confirmed.$('billing-status').textContent, '');
+}
+
+{
+  // An unpaid checkout ('created') explains itself instead of showing an empty note.
+  const {$} = await mountDashboard({hash: '#billing', routes: {'GET /api/billing': {provider_configured: true, subscription: {id: 'sub_TEST12345', plan: 'pro',
+    status: 'created', current_period_end: null, cancel_at_period_end: false, provider: 'razorpay'}, payments: []}}});
+  assert.equal($('sub-status').textContent, 'Awaiting payment');
+  assert.match($('sub-note').textContent, /activates as soon as Razorpay confirms the payment/);
+}
+
+{
   // Expired session → gate; server error → inline alert with retry.
   const expired = await mountDashboard({routes: {'GET /api/account': apiError(401, 'invalid_session', 'Session expired. Run neuron auth login.')}});
   assert.equal(expired.$('dash-gate').hidden, false);
@@ -593,10 +642,10 @@ async function mountDashboard({profile = PROFILE, hash = '', state = {}, routes 
 
 /* ───────────── Pricing checkout ───────────── */
 
-async function mountPricing({profile = null, routes = {}, hostname = 'zero-x.live'} = {}) {
+async function mountPricing({profile = null, routes = {}, hostname = 'zero-x.live', local = makeStorage({'zx-currency': 'USD'})} = {}) {
   const doc = parseDocument(read('pricing.html'));
   const auth = makeAuth(profile);
-  const win = makeWindow({hostname, auth, local: makeStorage({'zx-currency': 'USD'})});
+  const win = makeWindow({hostname, auth, local});
   win.Razorpay = FakeRazorpay;
   const {fetchImpl, calls} = makeFetch({
     'GET /api/plans': plansPayload,
@@ -885,6 +934,61 @@ async function loadAuth({hostname, config, session = makeStorage(), sdk = true})
     await settle();
     assert.equal(t.calls.filter(call => call.path === '/api/billing/checkout').length, 1, `${label}: no second checkout`);
   }
+
+  // Review P2 (integration): a verify answer of {status:'pending'} is not a confirmed payment. The
+  // page says so, never redirects as if confirmed, and keeps purchases locked across reloads.
+  const storage = makeStorage({'zx-currency': 'USD'});
+  const waiting = await mountPricing({profile: PROFILE, local: storage, routes: {'POST /api/billing/verify': {status: 'pending', account: {}}}});
+  FakeRazorpay.instances.length = 0;
+  waiting.doc.querySelector('[data-upgrade="pro"]').click();
+  await settle();
+  await FakeRazorpay.instances[0].options.handler({razorpay_payment_id: 'pay_PENDING12345', razorpay_subscription_id: 'sub_TEST12345', razorpay_signature: 'cd'.repeat(32)});
+  await settle();
+  assert.equal(waiting.win.location.assigned, null, 'no redirect for an unconfirmed payment');
+  assert.doesNotMatch(waiting.$('pricing-status').textContent, /Payment confirmed/);
+  assert.match(waiting.$('pricing-error').textContent, /awaiting confirmation from Razorpay/);
+  assert.match(waiting.$('pricing-error').textContent, /do not pay again/);
+  assert.match(waiting.$('pricing-error').textContent, /Payment ID: pay_PENDING12345/);
+  assert.equal(waiting.$('pricing-error').querySelector('a').getAttribute('href'), 'https://dashboard.zero-x.live/#billing');
+  assert.ok(waiting.doc.querySelectorAll('[data-upgrade], [data-topup]').every(button => button.disabled), 'purchases stay locked');
+  assert.deepEqual(JSON.parse(storage.getItem(PAYMENT_LOCK_KEY)), {code: 'payment_pending', paymentId: 'pay_PENDING12345', created: NOW});
+  waiting.doc.querySelector('[data-upgrade="max"]').click();
+  await settle();
+  assert.equal(waiting.calls.filter(call => call.path === '/api/billing/checkout').length, 1, 'no second checkout');
+  // A reload (or another tab) within 30 minutes is still locked.
+  const reloaded = await mountPricing({profile: PROFILE, local: storage});
+  assert.ok(reloaded.doc.querySelectorAll('[data-upgrade], [data-topup]').every(button => button.disabled), 'locked after a reload');
+  assert.match(reloaded.$('pricing-error').textContent, /awaiting confirmation/);
+  reloaded.doc.querySelector('[data-upgrade="pro"]').click();
+  await settle();
+  assert.ok(!reloaded.calls.some(call => call.path === '/api/billing/checkout'), 'no checkout after the reload');
+  const expired = makeStorage({[PAYMENT_LOCK_KEY]: JSON.stringify({code: 'payment_pending', paymentId: 'pay_OLD1234567', created: NOW - PAYMENT_LOCK_TTL_MS - 1})});
+  const later = await mountPricing({profile: PROFILE, local: expired});
+  assert.equal(later.doc.querySelector('[data-upgrade="pro"]').disabled, false, 'the lock lapses after 30 minutes');
+  const tampered = await mountPricing({profile: PROFILE, local: makeStorage({[PAYMENT_LOCK_KEY]: '{"code":"<script>","created":0}'})});
+  assert.equal(tampered.doc.querySelector('[data-upgrade="pro"]').disabled, false, 'a malformed lock is ignored');
+  // The server-side guard's answer (a checkout already in progress) points to Billing.
+  const inProgress = await mountPricing({profile: PROFILE, routes: {'POST /api/billing/checkout':
+    apiError(409, 'checkout_in_progress', 'A checkout for your account is already in progress.')}});
+  inProgress.doc.querySelector('[data-upgrade="max"]').click();
+  await settle();
+  assert.match(inProgress.$('pricing-error').textContent, /already in progress or its payment is being confirmed/);
+  assert.equal(inProgress.$('pricing-error').querySelector('a').getAttribute('href'), 'https://dashboard.zero-x.live/#billing');
+
+  // A duplicate subscription (verify 409 already_subscribed) was cancelled and refunded by the
+  // gateway: that is final and explained, not reported as an unconfirmed payment.
+  const duplicate = await mountPricing({profile: PROFILE, routes: {'POST /api/billing/verify':
+    apiError(409, 'already_subscribed', 'This subscription duplicates another subscription or checkout on your account.')}});
+  FakeRazorpay.instances.length = 0;
+  duplicate.doc.querySelector('[data-upgrade="pro"]').click();
+  await settle();
+  await FakeRazorpay.instances[0].options.handler({razorpay_payment_id: 'pay_DUPLICATE123', razorpay_subscription_id: 'sub_TEST12345', razorpay_signature: 'cd'.repeat(32)});
+  await settle();
+  assert.match(duplicate.$('pricing-error').textContent, /duplicated a subscription or checkout already on your account/);
+  assert.match(duplicate.$('pricing-error').textContent, /being refunded/);
+  assert.doesNotMatch(duplicate.$('pricing-error').textContent, /could not confirm/);
+  assert.equal(duplicate.$('pricing-error').querySelector('a').getAttribute('href'), 'https://dashboard.zero-x.live/#billing');
+  assert.equal(duplicate.win.location.assigned, null);
 
   // Review B4 P2: a signed-in Free account cannot open a top-up checkout.
   const free = await mountPricing({profile: PROFILE, routes: {'GET /api/account': accountPayload({plan: {id: 'free', name: 'Free'}, subscription: null})}});

@@ -1,7 +1,8 @@
 // Zero-X account dashboard (dashboard.zero-x.live). Contract §3.4–3.5.
 // All API data is rendered with textContent / DOM nodes; nothing from the network reaches innerHTML.
 import {
-  ApiError, SUPPORT_EMAIL, apiFetch, describeError, normalizeCurrency, safeHttpsUrl, siteUrl, startTopup,
+  ApiError, PAYMENT_LOCK_CODES, SUPPORT_EMAIL, apiFetch, clearPaymentLock, describeError, normalizeCurrency, readPaymentLock,
+  rememberPaymentLock, safeHttpsUrl, siteUrl, startTopup,
 } from './billing-checkout.js';
 import { PLAN_CATALOG, formatCount, formatMoney, formatTokens, normalizeCatalog } from './pricing.js';
 
@@ -311,7 +312,8 @@ export function createDashboard({ doc = globalThis.document, win = globalThis.wi
   const state = {
     tab: 'overview', profile: null, account: null, loaded: new Set(), metric: 'requests', usage: null,
     cursors: [null], page: 0, keys: [], billing: null, catalog: PLAN_CATALOG, revisions: {}, gated: false,
-    paymentLocked: false, // a payment Razorpay took could not be confirmed: no further purchases here
+    paymentLocked: false, // a payment Razorpay took is not confirmed yet: no further purchases
+    paymentLock: null, // the ApiError describing it (payment_unverified or payment_pending)
   };
   const api = (path, options = {}) => apiFetch(path, { ...options, auth: getAuth(), fetchImpl });
 
@@ -750,7 +752,8 @@ export function createDashboard({ doc = globalThis.document, win = globalThis.wi
     setText('sub-note', !sub ? 'You are on the Free plan. Upgrade for higher limits and paid-capacity models.'
       : sub.cancel_at_period_end ? 'Your plan will not renew. You keep access until the date above.'
         : summary.label === 'Payment issue' ? 'Razorpay could not collect the last payment. Update your payment method from the Razorpay email or cancel.'
-          : summary.active ? 'Cancel any time. Access continues until the end of the paid period.' : '');
+          : summary.label === 'Awaiting payment' ? 'Checkout started. If you paid, your plan activates as soon as Razorpay confirms the payment; otherwise finish checkout from Pricing.'
+            : summary.active ? 'Cancel any time. Access continues until the end of the paid period.' : '');
     $('sub-cancel').hidden = !summary.canCancel;
     // While a cancellation is scheduled the subscription is still live (checkout answers
     // already_subscribed), so plans are offered again only once it has ended.
@@ -758,6 +761,7 @@ export function createDashboard({ doc = globalThis.document, win = globalThis.wi
     if (sub && sub.cancel_at_period_end && summary.active) {
       setText('sub-note', 'Your plan will not renew. You keep access until the date above and can subscribe again after it ends.');
     }
+    if (state.paymentLock) setText('billing-status', describeError(state.paymentLock));
     const body = $('payments-list');
     body.replaceChildren(...(billing.payments.length ? billing.payments.map(payment => el('tr', {},
       el('th', { scope: 'row', text: formatDate(payment.created_at) }),
@@ -786,6 +790,7 @@ export function createDashboard({ doc = globalThis.document, win = globalThis.wi
       const catalog = normalizeCatalog(plans);
       if (catalog) state.catalog = { ...catalog, topups: catalog.topups.length ? catalog.topups : PLAN_CATALOG.topups };
       state.billing = normalizeBilling(billing);
+      releasePaymentLock();
       renderBilling();
     } catch (error) {
       if (current()) handleError(error, 'billing-error', loadBilling);
@@ -813,6 +818,24 @@ export function createDashboard({ doc = globalThis.document, win = globalThis.wi
     }
   }
 
+  function lockPayments(error) {
+    state.paymentLocked = true;
+    state.paymentLock = error;
+    rememberPaymentLock(win, error, now());
+  }
+
+  // A remembered lock ends once Billing lists its payment with a final status.
+  function releasePaymentLock() {
+    const lock = state.paymentLock;
+    if (!lock || !lock.paymentId || !state.billing) return;
+    const payment = state.billing.payments.find(entry => entry.id === lock.paymentId);
+    if (!payment || !['captured', 'refunded', 'failed'].includes(payment.status)) return;
+    clearPaymentLock(win);
+    state.paymentLocked = false;
+    state.paymentLock = null;
+    setText('billing-status', '');
+  }
+
   async function buyTopup(pack) {
     if (!topupsAllowed() || state.paymentLocked) { renderTopups(); return; }
     const buttons = Array.from(doc.querySelectorAll('[data-topup]'));
@@ -825,9 +848,10 @@ export function createDashboard({ doc = globalThis.document, win = globalThis.wi
       await Promise.all([loadBilling(), loadAccount()]);
     } catch (error) {
       if (error && error.code === 'checkout_dismissed') setText('billing-status', describeError(error));
-      else if (error && error.code === 'payment_unverified') {
-        // Razorpay took the payment: never offer a retry (or a sign-in that leads to one).
-        state.paymentLocked = true;
+      else if (error && PAYMENT_LOCK_CODES.includes(error.code)) {
+        // Razorpay took the payment: never offer a retry (or a sign-in that leads to one), and keep
+        // purchases locked across reloads until Billing shows the payment confirmed.
+        lockPayments(error);
         setText('billing-status', '');
         setAlert('billing-error', describeError(error));
       } else { setText('billing-status', ''); handleError(error, 'billing-error'); }
@@ -839,19 +863,25 @@ export function createDashboard({ doc = globalThis.document, win = globalThis.wi
   /* Sessions and sign out */
 
   async function revokeSessions() {
+    const withKeys = Boolean($('sessions-keys') && $('sessions-keys').checked);
     const confirmed = await confirmAction({
-      title: 'Sign out all CLI sessions?',
-      body: 'Every computer signed in with neuron auth login is signed out. API keys keep working.',
-      confirm: 'Sign out everywhere',
+      title: withKeys ? 'Sign out all CLI sessions and revoke every API key?' : 'Sign out all CLI sessions?',
+      body: withKeys ? 'Every computer signed in with neuron auth login is signed out and every API key stops working.'
+        : 'Every computer signed in with neuron auth login is signed out. API keys keep working.',
+      confirm: withKeys ? 'Sign out and revoke keys' : 'Sign out everywhere',
     });
     if (!confirmed) return;
     const button = $('sessions-revoke');
     button.disabled = true;
     setAlert('sessions-error', '');
     try {
-      const result = await api('/api/sessions/revoke-all', { method: 'POST', body: {} });
+      const result = await api('/api/sessions/revoke-all', { method: 'POST', body: withKeys ? { api_keys: true } : {} });
       const count = toNumber(result && result.revoked) || 0;
-      setText('sessions-status', 'Signed out ' + formatCount(count) + ' CLI session' + (count === 1 ? '' : 's') + '. Run neuron auth login on each computer you still use.');
+      const keys = toNumber(result && result.api_keys_revoked);
+      setText('sessions-status', 'Signed out ' + formatCount(count) + ' CLI session' + (count === 1 ? '' : 's') +
+        (withKeys && keys !== null ? ' and revoked ' + formatCount(keys) + ' API key' + (keys === 1 ? '' : 's') : '') +
+        '. Run neuron auth login on each computer you still use.');
+      if (withKeys) state.loaded.delete('keys'); // the API keys tab reloads when opened
     } catch (error) {
       handleError(error, 'sessions-error');
     } finally {
@@ -979,6 +1009,8 @@ export function createDashboard({ doc = globalThis.document, win = globalThis.wi
     if (!profile) { showGate(''); return; }
     state.profile = profile;
     state.gated = false;
+    const lock = readPaymentLock(win, now());
+    if (lock) { state.paymentLocked = true; state.paymentLock = lock; }
     $('dash-loading').hidden = true;
     $('dash-gate').hidden = true;
     $('dash-app').hidden = false;

@@ -20,6 +20,9 @@ const FRIENDLY_MESSAGES = {
   checkout_dismissed: 'Checkout closed. You have not been charged.',
   checkout_unavailable: 'The payment window could not load. Allow checkout.razorpay.com in your content blocker and try again.',
   payment_unverified: 'We could not confirm the payment in your browser. If you were charged, it will appear in Billing within a few minutes; otherwise email ' + SUPPORT_EMAIL + ' with your payment ID.',
+  payment_pending: 'Payment received and awaiting confirmation from Razorpay. Your plan or credits update automatically within a few minutes, so do not pay again; check Billing in your dashboard.',
+  checkout_in_progress: 'A checkout for your account is already in progress or its payment is being confirmed. Check Billing in your dashboard before paying again.',
+  duplicate_refunded: 'This payment duplicated a subscription or checkout already on your account, so it was cancelled and is being refunded to your original payment method. Your current plan is unchanged.',
   network_error: 'Could not reach Zero-X. Check your connection and try again.',
   timeout: 'Zero-X took too long to respond. Try again.',
   account_suspended: 'This account is suspended. Email ' + SUPPORT_EMAIL + ' for help.',
@@ -103,8 +106,8 @@ export function parseApiError(status, body, retryAfterHeader) {
 /** A user-facing sentence for any thrown value. */
 export function describeError(error) {
   if (!error) return 'Something went wrong. Try again.';
-  if (error.code === 'payment_unverified' && error.paymentId) {
-    return FRIENDLY_MESSAGES.payment_unverified + ' Payment ID: ' + error.paymentId + '.';
+  if (PAYMENT_LOCK_CODES.includes(error.code) && error.paymentId) {
+    return FRIENDLY_MESSAGES[error.code] + ' Payment ID: ' + error.paymentId + '.';
   }
   if (error.code && FRIENDLY_MESSAGES[error.code]) return FRIENDLY_MESSAGES[error.code];
   if (error instanceof ApiError || error.name === 'ApiError') {
@@ -228,6 +231,61 @@ function paymentFailureMessage(event) {
   return (description ? 'Payment failed: ' + description + '.' : 'Payment failed.') + ' You can retry in the payment window or close it.';
 }
 
+// Razorpay took a payment that is not confirmed yet: no further purchase is offered until it is.
+export const PAYMENT_LOCK_CODES = Object.freeze(['payment_unverified', 'payment_pending']);
+export const PAYMENT_LOCK_KEY = 'zx-payment-lock';
+export const PAYMENT_LOCK_TTL_MS = 30 * 60 * 1000;
+
+function localStore(win) {
+  try { return win && win.localStorage ? win.localStorage : null; }
+  catch { return null; }
+}
+
+/** Remembers (30 minutes, across reloads and tabs) that a payment awaits confirmation. */
+export function rememberPaymentLock(win, error, now = Date.now()) {
+  const store = localStore(win);
+  if (!store || !error || !PAYMENT_LOCK_CODES.includes(error.code)) return;
+  const paymentId = PROVIDER_ID.test(error.paymentId || '') ? error.paymentId : '';
+  try { store.setItem(PAYMENT_LOCK_KEY, JSON.stringify({ code: error.code, paymentId, created: now })); }
+  catch { /* Storage may be blocked: the lock then lasts for this page only. */ }
+}
+
+/** The remembered payment lock as an ApiError (with paymentId), or null. */
+export function readPaymentLock(win, now = Date.now()) {
+  const store = localStore(win);
+  if (!store) return null;
+  let lock = null;
+  try { lock = JSON.parse(store.getItem(PAYMENT_LOCK_KEY) || 'null'); }
+  catch { lock = null; }
+  if (!lock || !PAYMENT_LOCK_CODES.includes(lock.code) || !Number.isFinite(lock.created) ||
+      now - lock.created > PAYMENT_LOCK_TTL_MS || lock.created > now + 60000) return null;
+  const error = new ApiError(FRIENDLY_MESSAGES[lock.code], { code: lock.code });
+  error.paymentId = PROVIDER_ID.test(lock.paymentId || '') ? lock.paymentId : '';
+  return error;
+}
+
+export function clearPaymentLock(win) {
+  const store = localStore(win);
+  try { if (store) store.removeItem(PAYMENT_LOCK_KEY); }
+  catch { /* Storage may be blocked. */ }
+}
+
+function duplicateRefundedError(response) {
+  const error = new ApiError(FRIENDLY_MESSAGES.duplicate_refunded, { code: 'duplicate_refunded', status: 409 });
+  error.paymentId = response && typeof response.razorpay_payment_id === 'string' && PROVIDER_ID.test(response.razorpay_payment_id)
+    ? response.razorpay_payment_id : '';
+  return error;
+}
+
+/** A verify answer of {status:'pending'}: Razorpay took the payment but has not confirmed it. */
+export function pendingPaymentError(response) {
+  const id = response && typeof response.razorpay_payment_id === 'string' && PROVIDER_ID.test(response.razorpay_payment_id)
+    ? response.razorpay_payment_id : '';
+  const error = new ApiError(FRIENDLY_MESSAGES.payment_pending, { code: 'payment_pending' });
+  error.paymentId = id;
+  return error;
+}
+
 /**
  * Razorpay has already taken the payment when its handler runs, so any failure to confirm it with
  * Zero-X (network, timeout, 5xx, an expired sign-in) is reported as payment_unverified: terminal,
@@ -242,7 +300,10 @@ export function unverifiedPaymentError(response, cause) {
   return error;
 }
 
-/** Opens Razorpay Checkout and resolves with the /api/billing/verify result. */
+/**
+ * Opens Razorpay Checkout and resolves with the /api/billing/verify result. A verify answer of
+ * {status:'pending'} rejects with payment_pending, which callers treat like payment_unverified.
+ */
 export async function runCheckout(payload, deps = {}) {
   const { auth, fetchImpl, win, doc, onStatus, onOpen } = deps;
   const Razorpay = await loadRazorpay({ win, doc });
@@ -259,9 +320,13 @@ export async function runCheckout(payload, deps = {}) {
         try {
           if (onStatus) onStatus('Confirming your payment…');
           const result = await apiFetch('/api/billing/verify', { method: 'POST', body: verifyPayload(response), auth, fetchImpl });
-          settle(resolve, result);
+          if (result && result.status === 'pending') settle(reject, pendingPaymentError(response));
+          else settle(resolve, result);
         } catch (error) {
-          settle(reject, error && error.code === 'payment_unverified' && error.paymentId ? error : unverifiedPaymentError(response, error));
+          // Verify answers 409 already_subscribed for a duplicate subscription, which the gateway
+          // has already cancelled and refunded: that outcome is final, not an unconfirmed payment.
+          if (error && error.status === 409 && error.code === 'already_subscribed') settle(reject, duplicateRefundedError(response));
+          else settle(reject, error && error.code === 'payment_unverified' && error.paymentId ? error : unverifiedPaymentError(response, error));
         }
       },
       onDismiss: () => settle(reject, new ApiError(lastFailure || FRIENDLY_MESSAGES.checkout_dismissed, { code: lastFailure ? 'payment_failed' : 'checkout_dismissed' })),

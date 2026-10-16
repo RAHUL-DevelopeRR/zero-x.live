@@ -1,7 +1,8 @@
 // Pricing page: static plan catalog (contract §1), currency toggle, hydration from GET /api/plans,
 // and upgrade/top-up buttons that run the Razorpay checkout in billing-checkout.js.
 import {
-  ApiError, SUPPORT_EMAIL, apiFetch, dashboardUrl, describeError, normalizeCurrency, siteUrl, startSubscription, startTopup,
+  ApiError, PAYMENT_LOCK_CODES, SUPPORT_EMAIL, apiFetch, dashboardUrl, describeError, normalizeCurrency, readPaymentLock,
+  rememberPaymentLock, siteUrl, startSubscription, startTopup,
 } from './billing-checkout.js';
 
 /** Mirrors PLATFORM_CONTRACT.md §1 and the GET /api/plans shape; used until the API responds. */
@@ -194,7 +195,7 @@ export function createPricingPage({ doc = globalThis.document, win = globalThis.
   const errorEl = doc.getElementById('pricing-error');
   let catalog = PLAN_CATALOG;
   let busy = false;
-  let locked = false; // set once a payment could not be confirmed
+  let locked = false; // set while a payment Razorpay took is not confirmed (also after a reload)
   let currency = defaultCurrency({
     stored: storageGet(local, CURRENCY_STORAGE_KEY),
     timeZone: (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return ''; } })(),
@@ -310,13 +311,25 @@ export function createPricingPage({ doc = globalThis.document, win = globalThis.
     });
   }
 
+  function lockPurchases(error) {
+    locked = true;
+    rememberPaymentLock(win, error, now());
+    setBusy(busy);
+    const host = win && win.location ? win.location.hostname : '';
+    setError(describeError(error), { href: dashboardUrl('#billing', host), label: 'Open billing' });
+  }
+
   function handleFailure(error, intent, planName) {
     const host = win && win.location ? win.location.hostname : '';
     setStatus('');
     if (!(error && error.code === 'invalid_session')) clearPending();
-    if (error && error.code === 'payment_unverified') {
-      // Razorpay already took the payment: no retry, no new checkout, buttons stay locked.
-      locked = true;
+    if (error && PAYMENT_LOCK_CODES.includes(error.code)) {
+      // Razorpay already took the payment: no retry, no new checkout, buttons stay locked, here
+      // and on reloads, until the dashboard sees the payment confirmed (or 30 minutes pass).
+      lockPurchases(error);
+      return;
+    }
+    if (error && (error.code === 'checkout_in_progress' || error.code === 'duplicate_refunded')) {
       setError(describeError(error), { href: dashboardUrl('#billing', host), label: 'Open billing' });
       return;
     }
@@ -415,6 +428,8 @@ export function createPricingPage({ doc = globalThis.document, win = globalThis.
   async function init() {
     bind();
     render();
+    const lock = readPaymentLock(win, now());
+    if (lock) lockPurchases(lock);
     await hydrate();
     if (all('[data-upgrade], [data-topup]').length) await resumePending().catch(() => false);
   }
