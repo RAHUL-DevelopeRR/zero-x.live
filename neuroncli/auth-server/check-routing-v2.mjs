@@ -349,7 +349,11 @@ try {
     assert.equal(router.route({ ...base, env: { GROQ_API_KEY: 'g', GEMINI_API_KEY: 'g' }, promptTokens: 12000 }).error, 'region_unavailable');
     assert.equal(router.route({ ...base, promptTokens: 2000000 }).error, 'context_length_exceeded');
     assert.equal(router.route({ ...base, country: 'US', promptTokens: 2000000 }).error, 'context_length_exceeded');
-    assert.equal(ids(router.route({ ...base, country: 'US', promptTokens: 200000 }))[0], 'gemini/gemini-2.5-flash#free');
+    assert.equal(ids(router.route({ ...base, country: 'US', promptTokens: 90000 }))[0], 'gemini/gemini-2.5-flash#free');
+    // The free Gemini budget (100K TPM, below the observed upstream limit) cannot take a 200K
+    // prompt; the paid pools (no per-minute token cap) can, so free callers are told to upgrade.
+    assert.equal(router.route({ ...base, country: 'US', promptTokens: 200000 }).error, 'upgrade_required');
+    assert.equal(ids(router.route({ ...base, country: 'US', promptTokens: 200000, tiers: ['free', 'paid'] }))[0], 'gemini/gemini-2.5-flash#paid');
     assert.equal(router.route({ ...base, env: {}, promptTokens: 10 }).error, 'service_unavailable');
   });
 

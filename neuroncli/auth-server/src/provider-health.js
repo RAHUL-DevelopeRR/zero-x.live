@@ -46,8 +46,14 @@ export function failureKindForStatus(status) {
 const REQUEST_SCOPED = new Set([FailureKind.CONTEXT, FailureKind.INVALID, FailureKind.MODEL_ERROR, FailureKind.ABORTED]);
 
 /**
- * Circuit rules: 404 parks the pool for modelUnavailableMs, 429 for the upstream's retry
- * delay and auth failures for authCooldownMs. First-byte and idle timeouts open it for
+ * Circuit rules: 404 parks the pool for modelUnavailableMs and auth failures for
+ * authCooldownMs. A 429 parks it for the upstream's retry delay (Retry-After, Groq's reset
+ * headers, Gemini's RetryInfo, a per-day quota), or cooldownMs without one; when the pool is
+ * rate limited again within rateLimitWindowMs of its last 429 after its cooldown ended, the
+ * backoff doubles (up to rateLimitMaxBackoffMs, never below the upstream's delay), so a shared
+ * free tier that is tighter than its published limits is probed less and less often. 429s that
+ * arrive while the circuit is already open (requests sent before it opened) do not escalate.
+ * A success resets the backoff. First-byte and idle timeouts open it for
  * timeoutCooldownMs once timeoutThreshold distinct callers timed out within timeoutWindowMs:
  * a dead pool trips quickly, while one caller's long-thinking prompts (which a client can
  * provoke) cannot park a pool shared by everyone. 5xx, network errors and slow non-streaming
@@ -58,7 +64,7 @@ const REQUEST_SCOPED = new Set([FailureKind.CONTEXT, FailureKind.INVALID, Failur
 export class ProviderHealthTracker {
   constructor({ failureThreshold = 3, cooldownMs = 30000, modelUnavailableMs = 600000,
     authCooldownMs = 300000, timeoutCooldownMs = 30000, timeoutThreshold = 2, timeoutWindowMs = 60000,
-    maxCooldownMs = 86400000 } = {}) {
+    maxCooldownMs = 86400000, rateLimitWindowMs = 600000, rateLimitMaxBackoffMs = 900000 } = {}) {
     this.records = new Map();
     // Recent liveness timeouts per pool ({caller, at}); kept apart from the records so caller
     // identities never appear in health snapshots.
@@ -71,6 +77,8 @@ export class ProviderHealthTracker {
     this.authCooldownMs = authCooldownMs;
     this.timeoutCooldownMs = timeoutCooldownMs;
     this.maxCooldownMs = maxCooldownMs;
+    this.rateLimitWindowMs = rateLimitWindowMs;
+    this.rateLimitMaxBackoffMs = rateLimitMaxBackoffMs;
   }
 
   getRecord(key) {
@@ -89,6 +97,8 @@ export class ProviderHealthTracker {
         last_failure_kind: null,
         last_latency_ms: null,
         circuit_open_until: 0,
+        rate_limit_strikes: 0,
+        last_rate_limited_at: null,
       };
       if (this.records.size >= 1000) this.records.delete(this.records.keys().next().value);
       this.records.set(key, rec);
@@ -127,6 +137,7 @@ export class ProviderHealthTracker {
     rec.last_success_at = now;
     rec.last_latency_ms = latencyMs;
     rec.circuit_open_until = 0;
+    rec.rate_limit_strikes = 0;
     rec.status = HealthState.HEALTHY;
     return rec;
   }
@@ -147,8 +158,19 @@ export class ProviderHealthTracker {
       rec.status = HealthState.MODEL_UNAVAILABLE;
       open(this.modelUnavailableMs);
     } else if (kind === FailureKind.RATE_LIMITED) {
+      const alreadyOpen = rec.circuit_open_until > now;
+      const recent = rec.last_rate_limited_at !== null && now - rec.last_rate_limited_at < this.rateLimitWindowMs;
+      if (!alreadyOpen) rec.rate_limit_strikes = recent ? rec.rate_limit_strikes + 1 : 1;
+      else rec.rate_limit_strikes = Math.max(1, rec.rate_limit_strikes);
+      rec.last_rate_limited_at = now;
       rec.status = HealthState.RATE_LIMITED;
-      open(retryAfterSeconds > 0 ? retryAfterSeconds * 1000 : this.defaultCooldownMs);
+      const backoff = Math.min(this.rateLimitMaxBackoffMs, this.defaultCooldownMs * 2 ** (rec.rate_limit_strikes - 1));
+      const hinted = retryAfterSeconds > 0 ? retryAfterSeconds * 1000 : 0;
+      // The upstream's delay is honoured as given on the first strike; repeated strikes back off
+      // at least as far as the escalation (half of it when the upstream named a delay).
+      const ms = hinted ? Math.max(hinted, rec.rate_limit_strikes > 1 ? backoff / 2 : 0) : backoff;
+      const until = now + Math.min(this.maxCooldownMs, Math.max(1000, ms));
+      rec.circuit_open_until = Math.max(rec.circuit_open_until, until);
     } else if (kind === FailureKind.AUTH) {
       rec.status = HealthState.AUTH_FAILED;
       open(this.authCooldownMs);

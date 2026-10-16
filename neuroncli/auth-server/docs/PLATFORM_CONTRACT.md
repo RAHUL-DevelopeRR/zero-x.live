@@ -50,7 +50,7 @@ Each public model has one or more pools:
   supports_tools: true, supports_streaming: true,
   geo_block_free: ['EEA','GB','CH'],       // free pool unavailable for these caller countries
   pools: [
-    { tier: 'free', key_var: 'GEMINI_API_KEY', limits: { rpm: 10, rpd: 250, tpm: 250000, tpd: 5000000 } },
+    { tier: 'free', key_var: 'GEMINI_API_KEY', limits: { rpm: 5, rpd: 250, tpm: 100000, tpd: 5000000 } },
     { tier: 'paid', key_var: 'GEMINI_PAID_API_KEY',
       price: { input_microusd_per_mtok: 375000, output_microusd_per_mtok: 3125000 } },
   ],
