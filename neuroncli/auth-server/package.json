@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
-    "test": "npm run check:server && npm run check:database",
+    "test": "npm run check:server && npm run check:database && npm run check:platform",
     "build:seo": "node build-sitemap.mjs",
     "check:production": "node check-server-policy.mjs && node check-worker.mjs && node check-gateway.mjs && node check-providers.mjs && node check-auth-storage.mjs && node check-dashboard.mjs && node check-seo.mjs && node check-callback.mjs && node check-cli-login.mjs && node check-node-server.cjs",
     "deploy": "wrangler deploy",
@@ -14,7 +14,12 @@
     "start:api": "node server.js",
     "check:database": "node check-quota-policy.mjs && node check-session-store.mjs",
     "check:server": "node check-server-policy.mjs && node check-gateway.mjs && node check-providers.mjs && node check-api-server.cjs && node check-phase1-architecture.mjs",
-    "check:phase1": "node check-phase1-architecture.mjs"
+    "check:phase1": "node check-phase1-architecture.mjs",
+    "check:business-db": "node check-business-db.mjs",
+    "check:routing": "node check-routing-v2.mjs",
+    "check:api": "node check-account-api.mjs && node check-billing.mjs",
+    "check:web": "node check-pages.mjs",
+    "check:platform": "npm run check:business-db && npm run check:routing && npm run check:api && npm run check:web"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",
