@@ -2,6 +2,8 @@
 // dashboard.js, pricing.js and billing-checkout.js. Browser behaviour lives in check-dashboard.mjs.
 import assert from 'node:assert/strict';
 import {existsSync, readFileSync, statSync} from 'node:fs';
+// Site scripts load as ES modules whatever package.json lies above the checkout.
+import './site-modules.mjs';
 
 const root = new URL('../../', import.meta.url);
 const read = file => readFileSync(new URL(file, root), 'utf8');

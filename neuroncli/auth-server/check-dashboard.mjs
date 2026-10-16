@@ -4,6 +4,8 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
+// Site scripts load as ES modules whatever package.json lies above the checkout.
+import './site-modules.mjs';
 
 const root = new URL('../../', import.meta.url);
 const read = file => readFileSync(new URL(file, root), 'utf8');

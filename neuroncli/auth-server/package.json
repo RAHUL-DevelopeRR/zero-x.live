@@ -18,7 +18,7 @@
     "check:business-db": "node check-business-db.mjs",
     "check:routing": "node check-routing-v2.mjs",
     "check:api": "node check-account-api.mjs && node check-billing.mjs",
-    "check:web": "node check-pages.mjs",
+    "check:web": "node check-pages.mjs && node check-dashboard.mjs",
     "check:platform": "npm run check:business-db && npm run check:routing && npm run check:api && npm run check:web"
   },
   "dependencies": {
