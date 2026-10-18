@@ -54,3 +54,19 @@ Assets/Pasted text.txt
 Assets/linear_design_breakdown.html
 .wranglerignore
 tailwind.config.cjs
+
+# Local-only working folders and stray Wrangler configs: never publish
+tmp/
+output/
+wrangler.json
+wrangler.jsonc
+**/wrangler.json
+**/wrangler.jsonc
+
+# Key material and credential exports anywhere in the tree
+Assets/*.csv
+**/*.pem
+**/*.key
+**/*.p12
+**/*.pfx
+**/*.keystore
