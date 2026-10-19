@@ -1,6 +1,6 @@
 import { loadPlanCatalog, TOPUP_PACKS } from '../plan-policy.js';
 import {
-  AUTO_MODEL_ID, callerCountry, catalogEntry, listModelsForCaller, loadPlanPolicies, planPolicy, poolKey,
+  AUTO_MODEL_ID, callerCountry, catalogEntry, entryPools, listModelsForCaller, loadPlanPolicies, planPolicy, poolKey,
 } from '../catalog.js';
 import { isOwnedSession, listModelsForSession } from '../providers.js';
 import { sessionTiers } from '../capacity.js';
@@ -52,11 +52,12 @@ export async function v1ModelsPayload(c, session = {}) {
   const plan = session?.plan || 'free';
   const policy = planPolicy(env, plan, await loadPlanPolicies(env));
   const payload = listModelsForCaller(env, { plan, country, tiers: sessionTiers(env, session, policy) });
-  // Runtime health: the pools behind each model in the tiers listed for it, read from the
-  // HealthHub Durable Object (KV on the Node server or when the hub does not answer).
+  // Runtime health: the pools behind each model in the tiers listed for it (one per provider
+  // key), read from the HealthHub Durable Object (KV on the Node server or when the hub does not
+  // answer). A model stays bright while any of its keys can serve.
   const poolKeysFor = model => {
     const entry = catalogEntry(model.id);
-    return entry ? entry.pools.filter(pool => model.tiers.includes(pool.tier)).map(pool => poolKey(entry, pool)) : [];
+    return entry ? entryPools(env, entry).filter(pool => model.tiers.includes(pool.tier)).map(pool => poolKey(entry, pool)) : [];
   };
   return withHealth(env, payload, poolKeysFor, {
     tracker: globalHealthTracker, autoId: AUTO_MODEL_ID,

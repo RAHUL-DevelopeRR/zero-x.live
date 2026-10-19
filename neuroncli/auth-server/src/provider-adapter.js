@@ -1,4 +1,5 @@
 ﻿import { normalizeProviderRequest } from './provider-request.js';
+import { poolSecret } from './catalog.js';
 
 /**
  * ProviderAdapter - Common interface for upstream AI model providers.
@@ -78,12 +79,14 @@ export class OpenAICompatibleAdapter extends ProviderAdapter {
   }
 
   // A caller's own OpenRouter key (BYOK) is used only for sessions that are not
-  // provisioned accounts; every hosted pool names its own server-side key variable.
+  // provisioned accounts; every hosted pool names its own server-side key variable, or is a
+  // provider key vault pool (src/catalog.js entryPools) whose key never leaves the gateway.
   getApiKey(env, session = {}, pool = null) {
     if (this.id === 'openrouter' && !session.account_backed && session.openrouter_key &&
         (!pool || pool.tier === 'byok')) {
       return session.openrouter_key;
     }
+    if (pool?.key_id) return poolSecret(env, pool);
     return env[pool?.key_var || this.keyVar];
   }
 

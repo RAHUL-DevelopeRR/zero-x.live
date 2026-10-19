@@ -44,7 +44,10 @@ export function nextUtcMidnight(now = Date.now()) {
   return new Date((Math.floor(now / 86400000) + 1) * 86400000).toISOString();
 }
 
+// The shared budget is counted per model and tier in Postgres, so a model served by several
+// vault keys reserves against all of them together (pool.shared_limits, src/catalog.js).
 export function reservationArgs({ session, requestId, entry, pool, promptTokens, maxTokens }) {
+  const limits = pool.shared_limits || pool.limits;
   return {
     p_user_id: session.user_id,
     p_request_id: requestId,
@@ -52,8 +55,8 @@ export function reservationArgs({ session, requestId, entry, pool, promptTokens,
     p_tier: pool.tier,
     p_tokens: promptTokens + maxTokens,
     p_cost_microusd: pool.tier === 'paid' ? costMicrousd(pool.price, promptTokens, maxTokens) : 0,
-    p_pool: pool.limits ? { rpm: pool.limits.rpm ?? null, rpd: pool.limits.rpd ?? null,
-      tpm: pool.limits.tpm ?? null, tpd: pool.limits.tpd ?? null } : null,
+    p_pool: limits ? { rpm: limits.rpm ?? null, rpd: limits.rpd ?? null,
+      tpm: limits.tpm ?? null, tpd: limits.tpd ?? null } : null,
   };
 }
 
