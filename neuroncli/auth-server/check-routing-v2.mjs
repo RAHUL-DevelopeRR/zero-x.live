@@ -220,10 +220,13 @@ try {
     const byId = Object.fromEntries(list.data.map(model => [model.id, model]));
     assert.equal(list.data[0].id, 'auto');
     assert.equal(byId.auto.available, true);
-    assert.deepEqual(byId.auto.capabilities, { tools: true, streaming: true });
+    assert.deepEqual(byId.auto.capabilities, { tools: true, streaming: true, vision: false, reasoning: true });
     const flash = byId['gemini/gemini-2.5-flash'];
-    assert.deepEqual(Object.keys(flash).sort(), ['available', 'capabilities', 'context_window', 'created', 'display_name', 'id',
-      'max_output_tokens', 'object', 'owned_by', 'pricing', 'tiers', 'unavailable_reason']);
+    assert.deepEqual(Object.keys(flash).sort(), ['available', 'capabilities', 'context_length', 'context_window', 'created',
+      'display_name', 'id', 'max_output_tokens', 'object', 'owned_by', 'pricing', 'reasoning_efforts', 'tiers',
+      'unavailable_reason']);
+    assert.deepEqual(flash.capabilities, { tools: true, streaming: true, vision: true, reasoning: true });
+    assert.equal(flash.context_length, flash.context_window);
     assert.equal(flash.available, true);
     assert.deepEqual(flash.tiers, ['free', 'paid']);
     assert.deepEqual(flash.pricing, { input_per_mtok_usd: 0.375, output_per_mtok_usd: 3.125 });
@@ -249,7 +252,7 @@ try {
     assert.equal(listModelsForCaller({}, {}).data[0].unavailable_reason, 'not_configured');
 
     const hosted = listModelsForCaller({ NVIDIA_API_KEY: 'n', NVIDIA_HOSTED: 'true', OPENROUTER_API_KEY: 'o', OPENROUTER_HOSTED: 'true' }).data;
-    assert.ok(hosted.some(model => model.id === 'nvidia/nvidia/nemotron-3-super-120b-a12b' && model.available));
+    assert.ok(hosted.some(model => model.id === 'nvidia/stepfun-ai/step-5-preview' && model.available));
     assert.ok(hosted.some(model => model.id === 'cohere/north-mini-code:free' && model.available));
     const workers = Object.fromEntries(listModelsForCaller({ AI: {}, CLOUDFLARE_PAID: 'true' }, { plan: 'pro' }).data.map(model => [model.id, model]));
     assert.deepEqual(workers['@cf/meta/llama-3.3-70b-instruct-fp8-fast'].tiers, ['free', 'paid']);
@@ -325,9 +328,10 @@ try {
     const router = new RoutingEngine(new ProviderHealthTracker());
     const base = { env: KEYS, requestedModel: 'auto', needsTools: true, promptTokens: 500, maxTokens: 2000 };
     assert.deepEqual(ids(router.route({ ...base, tiers: ['free'], country: 'US' })), ['gemini/gemini-2.5-flash#free',
-      'gemini/gemini-3.5-flash#free', 'groq/openai/gpt-oss-120b#free', 'groq/qwen/qwen3.8-27b#free', 'groq/openai/gpt-oss-20b#free']);
-    assert.deepEqual(ids(router.route({ ...base, tiers: ['free', 'paid'], country: 'US' })).slice(-2),
-      ['gemini/gemini-2.5-flash#paid', 'groq/openai/gpt-oss-120b#paid']);
+      'gemini/gemini-3.5-flash#free', 'gemini/gemini-3.6-flash#free',
+      'groq/openai/gpt-oss-120b#free', 'groq/qwen/qwen3.8-27b#free', 'groq/openai/gpt-oss-20b#free']);
+    assert.deepEqual(ids(router.route({ ...base, tiers: ['free', 'paid'], country: 'US' })).slice(-3),
+      ['gemini/gemini-2.5-flash#paid', 'gemini/gemini-3.6-flash#paid', 'groq/openai/gpt-oss-120b#paid']);
     assert.ok(!ids(router.route({ ...base, tiers: ['free', 'paid'] })).some(id => id.startsWith('gemini/gemini-2.5-pro')), 'auto never picks 2.5 Pro');
     assert.equal(ids(router.route({ ...base, tiers: ['free'], country: 'DE' }))[0], 'groq/openai/gpt-oss-120b#free');
     assert.equal(ids(router.route({ ...base, tiers: ['free', 'paid'], country: 'DE' }))[0], 'groq/openai/gpt-oss-120b#free');
@@ -940,7 +944,7 @@ try {
     assert.equal(error.type, 'insufficient_quota');
     assert.ok(error.upgrade_url);
     const tiers = rpcCalls('zerox_reserve_v2').map(call => call.body.p_tier);
-    assert.deepEqual(tiers, ['free', 'free', 'free', 'free', 'free', 'paid'], 'paid pools stop after the first credit refusal');
+    assert.deepEqual(tiers, [...Array(6).fill('free'), 'paid'], 'paid pools stop after the first credit refusal');
     reset({ 'rpc:zerox_plan_policies_v2': policiesRpc,
       'rpc:zerox_reserve_v2': () => Response.json([{ status: 'pool_exhausted', retry_after_seconds: 45 }]) });
     const freeUser = gateway();
@@ -1198,9 +1202,9 @@ try {
       return completion({ content: 'hosted' });
     } });
     const env = { OPENROUTER_API_KEY: 'operator-key', OPENROUTER_HOSTED: 'true' };
-    const response = await gw.call(env, { model: 'poolside/laguna-s-2.1:free', messages });
+    const response = await gw.call(env, { model: 'minimax/minimax-m3.1-flash:free', messages });
     assert.equal(response.status, 200);
-    await expectError(await gw.call({ OPENROUTER_API_KEY: 'operator-key' }, { model: 'poolside/laguna-s-2.1:free', messages }), 404, 'model_not_found');
+    await expectError(await gw.call({ OPENROUTER_API_KEY: 'operator-key' }, { model: 'minimax/minimax-m3.1-flash:free', messages }), 404, 'model_not_found');
   });
 } finally {
   globalThis.fetch = originalFetch;

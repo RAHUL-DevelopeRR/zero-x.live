@@ -6,6 +6,7 @@ import {
 import { globalSignatureCache } from './provider-request.js';
 import { globalRouter } from './router.js';
 import { FailureKind, globalHealthTracker } from './provider-health.js';
+import { shareHealth } from './health-share.js';
 import { callerCountry, loadPlanPolicies, planPolicy } from './catalog.js';
 import { billableUsage, estimateOutputTokens, estimatePromptTokens, utf8Bytes } from './pricing.js';
 import {
@@ -233,8 +234,16 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
     // phase ('first_byte' | 'idle' | 'response') tells liveness timeouts from slow generations;
     // caller lets the tracker require timeouts from several callers before parking a shared pool.
     const caller = session.user_id || String(token).slice(0, 16);
+    // Every outcome is also published for other isolates (health-share.js), throttled there.
     const recordFailure = (key, kind, retryAfterSeconds, latencyMs, phase = null) => {
-      if (key) healthTracker.recordFailure(key, { kind, retryAfterSeconds: retryAfterSeconds || 0, latencyMs, phase, caller });
+      if (!key) return;
+      const record = healthTracker.recordFailure(key, { kind, retryAfterSeconds: retryAfterSeconds || 0, latencyMs, phase, caller });
+      if (record) shareHealth(c, env, key, record);
+    };
+    const recordSuccess = (key, latencyMs) => {
+      if (!key) return;
+      healthTracker.recordSuccess(key, { latencyMs });
+      shareHealth(c, env, key, healthTracker.getRecord(key));
     };
 
     const timeouts = streamTimeouts(env);
@@ -294,12 +303,12 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
           console.error('Neuron upstream returned an invalid completion', log);
           return { ok: false, kind: FailureKind.SERVER, latencyMs: started.latencyMs, errorCode: 'upstream_error' };
         }
-        if (key) healthTracker.recordSuccess(key, { latencyMs: started.latencyMs });
+        recordSuccess(key, started.latencyMs);
         await finishAttempt(info, { status: 'ok', usage: completion.usage, outputBytes: utf8Bytes(completion.choices) });
         return { ok: true, response: new Response(JSON.stringify(completion), {
           status: 200, headers: { ...responseHeaders, 'Content-Type': 'application/json' } }) };
       }
-      if (key) healthTracker.recordSuccess(key, { latencyMs: started.latencyMs });
+      recordSuccess(key, started.latencyMs);
       const stream = createCompletionStream({
         ...started.stream, model: entry.id, controller: started.controller, clientSignal, timeouts, requestId, env,
         onToolSignature,

@@ -41,7 +41,9 @@ export const POOL_LIMITS = Object.freeze({
   gemini_free: Object.freeze({ rpm: 5, rpd: 250, tpm: 120000, tpd: 5000000 }),
   workers_llama_free: Object.freeze({ rpm: 20, rpd: 300, tpm: 60000, tpd: 120000 }),
   workers_gpt_oss_free: Object.freeze({ rpm: 20, rpd: 200, tpm: 60000, tpd: 90000 }),
-  nvidia_trial: Object.freeze({ rpm: 20, rpd: 500, tpm: 100000, tpd: 1000000 }),
+  // build.nvidia.com/faq (2026-10-19): up to 40 RPM and 10,000 requests per day; no token caps
+  // are published, and other users' traffic can throttle the shared endpoints.
+  nvidia_trial: Object.freeze({ rpm: 40, rpd: 10000, tpm: null, tpd: null }),
   openrouter_free: Object.freeze({ rpm: 20, rpd: 50, tpm: null, tpd: null }),
 });
 
@@ -61,7 +63,7 @@ const MODELS = [
   {
     id: 'gemini/gemini-2.5-flash', display_name: 'Gemini 2.5 Flash', provider: 'gemini',
     upstream_model: 'gemini-2.5-flash', context_window: 1048576, max_output_tokens: 65536,
-    supports_tools: true, supports_streaming: true, auto_rank: 1,
+    supports_tools: true, supports_streaming: true, supports_vision: true, auto_rank: 1,
     geo_block_free: GEMINI_FREE_GEO_BLOCK, aliases: ['gemini-2.5-flash', 'google/gemini-2.5-flash'],
     reasoning_efforts: ['none', 'low', 'medium', 'high'], reasoning_effort_map: { minimal: 'low' },
     pools: [
@@ -72,16 +74,34 @@ const MODELS = [
   {
     id: 'gemini/gemini-3.5-flash', display_name: 'Gemini 3.5 Flash', provider: 'gemini',
     upstream_model: 'gemini-3.5-flash', context_window: 1048576, max_output_tokens: 65536,
-    supports_tools: true, supports_streaming: true, auto_rank: 2,
+    supports_tools: true, supports_streaming: true, supports_vision: true, auto_rank: 2,
     geo_block_free: GEMINI_FREE_GEO_BLOCK, aliases: ['gemini-3.5-flash', 'google/gemini-3.5-flash'],
     reasoning_efforts: STANDARD_EFFORTS, reasoning_effort_map: { minimal: 'low', none: 'low' },
     // No paid pool until a verified upstream price is recorded here.
     pools: [pool('free', key('GEMINI_API_KEY'), { limits: POOL_LIMITS.gemini_free })],
   },
+  // Listed by the free-tier key's /v1beta/models on 2026-10-19 and priced "Free of charge" on the
+  // pricing page. Free limits are per model, so each entry adds its own daily budget. Live probe
+  // 2026-10-19: 3.6 Flash answered streamed tool calls in 2-4 s. Not listed: 3.8 and 3.7 Flash,
+  // which took 44-60 s to the first byte or answered "temporarily unavailable" on the free tier.
+  ...[
+    ['gemini-3.6-flash', 'Gemini 3.6 Flash', 3, 0.75, 3.75],
+  ].map(([upstream, name, rank, input, output]) => ({
+    id: `gemini/${upstream}`, display_name: name, provider: 'gemini',
+    upstream_model: upstream, context_window: 1048576, max_output_tokens: 65536,
+    supports_tools: true, supports_streaming: true, supports_vision: true, auto_rank: rank,
+    geo_block_free: GEMINI_FREE_GEO_BLOCK, aliases: [upstream, `google/${upstream}`],
+    reasoning_efforts: STANDARD_EFFORTS, reasoning_effort_map: { minimal: 'low', none: 'low' },
+    pools: [
+      pool('free', key('GEMINI_API_KEY'), { limits: POOL_LIMITS.gemini_free }),
+      // Paid list price through 2026-12-31 (doubles from 2027-01-01).
+      pool('paid', key('GEMINI_PAID_API_KEY'), { price: priceFromCost(input, output) }),
+    ],
+  })),
   {
     id: 'gemini/gemini-2.5-pro', display_name: 'Gemini 2.5 Pro', provider: 'gemini',
     upstream_model: 'gemini-2.5-pro', context_window: 1048576, max_output_tokens: 65536,
-    supports_tools: true, supports_streaming: true, auto_rank: null,
+    supports_tools: true, supports_streaming: true, supports_vision: true, auto_rank: null,
     aliases: ['gemini-2.5-pro', 'google/gemini-2.5-pro'],
     reasoning_efforts: STANDARD_EFFORTS, reasoning_effort_map: { minimal: 'low', none: 'low' },
     // The free tier has no 2.5 Pro quota (404 for new projects): paid only.
@@ -92,7 +112,7 @@ const MODELS = [
   {
     id: 'groq/openai/gpt-oss-120b', display_name: 'GPT-OSS 120B (Groq)', provider: 'groq',
     upstream_model: 'openai/gpt-oss-120b', context_window: 131072, max_output_tokens: 65536,
-    supports_tools: true, supports_streaming: true, auto_rank: 3,
+    supports_tools: true, supports_streaming: true, auto_rank: 5,
     aliases: ['gpt-oss-120b', 'openai/gpt-oss-120b'], reasoning_efforts: STANDARD_EFFORTS,
     reasoning_effort_map: { minimal: 'low', none: 'low' },
     pools: [
@@ -103,7 +123,7 @@ const MODELS = [
   {
     id: 'groq/qwen/qwen3.8-27b', display_name: 'Qwen 3.8 27B (Groq)', provider: 'groq',
     upstream_model: 'qwen/qwen3.8-27b', context_window: 131072, max_output_tokens: 40960,
-    supports_tools: true, supports_streaming: true, auto_rank: 4,
+    supports_tools: true, supports_streaming: true, auto_rank: 6,
     aliases: ['qwen3.8-27b', 'qwen/qwen3.8-27b'], reasoning_efforts: ['none', 'default'],
     reasoning_effort_map: { minimal: 'default', low: 'default', medium: 'default', high: 'default' },
     pools: [pool('free', key('GROQ_API_KEY'), { limits: POOL_LIMITS.groq_free })],
@@ -111,7 +131,7 @@ const MODELS = [
   {
     id: 'groq/openai/gpt-oss-20b', display_name: 'GPT-OSS 20B (Groq)', provider: 'groq',
     upstream_model: 'openai/gpt-oss-20b', context_window: 131072, max_output_tokens: 65536,
-    supports_tools: true, supports_streaming: true, auto_rank: 5,
+    supports_tools: true, supports_streaming: true, auto_rank: 7,
     aliases: ['gpt-oss-20b', 'openai/gpt-oss-20b'], reasoning_efforts: STANDARD_EFFORTS,
     reasoning_effort_map: { minimal: 'low', none: 'low' },
     pools: [pool('free', key('GROQ_API_KEY'), { limits: POOL_LIMITS.groq_free })],
@@ -120,7 +140,7 @@ const MODELS = [
     // Not part of the 2026-10-16 live probe: enable explicitly with CLOUDFLARE_MODELS.
     id: '@cf/openai/gpt-oss-120b', display_name: 'GPT-OSS 120B (Workers AI)', provider: 'cloudflare',
     upstream_model: '@cf/openai/gpt-oss-120b', context_window: 131072, max_output_tokens: 32768,
-    supports_tools: true, supports_streaming: true, auto_rank: 6, default_enabled: false,
+    supports_tools: true, supports_streaming: true, auto_rank: 8, default_enabled: false,
     aliases: ['workers-ai/gpt-oss-120b', 'cloudflare/gpt-oss-120b'],
     pools: [
       pool('free', WORKERS_AI, { limits: POOL_LIMITS.workers_gpt_oss_free }),
@@ -131,39 +151,47 @@ const MODELS = [
     id: '@cf/meta/llama-3.3-70b-instruct-fp8-fast', display_name: 'Llama 3.3 70B (Workers AI)',
     provider: 'cloudflare', upstream_model: '@cf/meta/llama-3.3-70b-instruct-fp8-fast',
     context_window: 24000, max_output_tokens: 8192, supports_tools: true, supports_streaming: true,
-    auto_rank: 7, aliases: ['llama-3.3-70b', 'workers-ai/llama-3.3-70b', 'cloudflare/llama-3.3-70b'],
+    auto_rank: 9, aliases: ['llama-3.3-70b', 'workers-ai/llama-3.3-70b', 'cloudflare/llama-3.3-70b'],
     pools: [
       pool('free', WORKERS_AI, { limits: POOL_LIMITS.workers_llama_free }),
       // Workers AI list price: 26,668 / 204,805 neurons per million tokens at $0.011 / 1K neurons.
       pool('paid', WORKERS_AI, { requires_flag: 'CLOUDFLARE_PAID', price: priceFromCost(0.293, 2.253) }),
     ],
   },
-  // NVIDIA API Catalog trial terms forbid production use: internal evaluation only.
+  // NVIDIA API Catalog trial keys (terms: evaluation use). Offered to users only when
+  // NVIDIA_HOSTED=true. The shared free endpoints are erratic (two live probes, 2026-10-19):
+  // gpt-oss-20b passed both (5-11 s), nemotron-3-ultra both (0.7-40 s), step-5-preview once
+  // (the other run returned no tool call after 59 s), so auto never picks step-5-preview.
+  // Dropped: nemotron-3-super-120b-a12b (deprecated 2026-10-19) and deepseek-v4.1-flash (no
+  // response within 90 s).
   ...[
-    ['nvidia/nemotron-3-super-120b-a12b', 'Nemotron 3 Super 120B (NVIDIA, evaluation)', 8, 65536],
-    ['stepfun-ai/step-5-preview', 'Step 5 Preview (NVIDIA, evaluation)', 9, 16384],
-    ['openai/gpt-oss-20b', 'GPT-OSS 20B (NVIDIA, evaluation)', 10, 32768],
-  ].map(([upstream, name, rank, maxOutput]) => ({
+    ['openai/gpt-oss-20b', 'GPT-OSS 20B (NVIDIA)', 10, 131072, 32768],
+    ['nvidia/nemotron-3-ultra-550b-a55b', 'Nemotron 3 Ultra 550B (NVIDIA)', 11, 1048576, 32768],
+    ['stepfun-ai/step-5-preview', 'Step 5 Preview (NVIDIA)', null, 131072, 16384],
+  ].map(([upstream, name, rank, context, maxOutput]) => ({
     id: `nvidia/${upstream}`, display_name: name, provider: 'nvidia', upstream_model: upstream,
-    context_window: 131072, max_output_tokens: maxOutput, supports_tools: true, supports_streaming: true,
+    context_window: context, max_output_tokens: maxOutput, supports_tools: true, supports_streaming: true,
     auto_rank: rank, hosted_flag: 'NVIDIA_HOSTED', aliases: [],
     pools: [pool('free', key('NVIDIA_API_KEY'), { limits: POOL_LIMITS.nvidia_trial })],
   })),
-  // OpenRouter forbids reselling: the operator key is used only with OPENROUTER_HOSTED=true.
+  // OpenRouter terms restrict reselling: the operator key is used only with OPENROUTER_HOSTED=true.
+  // The 50 requests/day free cap is per account across every ':free' model, so two entries.
+  // thinkingmachines/inkling:free was not added: OpenRouter serves it only to registered apps (403).
   ...[
-    ['cohere/north-mini-code:free', 'North Mini Code (OpenRouter, free)', 11],
-    ['poolside/laguna-s-2.1:free', 'Laguna S 2.1 (OpenRouter, free)', 12],
-  ].map(([upstream, name, rank]) => ({
+    ['cohere/north-mini-code:free', 'North Mini Code (OpenRouter, free)', 12, 256000, 64000, false],
+    ['minimax/minimax-m3.1-flash:free', 'MiniMax M3.1 Flash (OpenRouter, free)', 13, 1000000, 65536, true],
+  ].map(([upstream, name, rank, context, maxOutput, vision]) => ({
     id: upstream, display_name: name, provider: 'openrouter', upstream_model: upstream,
-    context_window: 128000, max_output_tokens: 8192, supports_tools: true, supports_streaming: true,
-    auto_rank: rank, hosted_flag: 'OPENROUTER_HOSTED', aliases: [`openrouter/${upstream}`],
+    context_window: context, max_output_tokens: maxOutput, supports_tools: true, supports_streaming: true,
+    supports_vision: vision, auto_rank: rank, hosted_flag: 'OPENROUTER_HOSTED',
+    aliases: [`openrouter/${upstream}`],
     pools: [pool('free', key('OPENROUTER_API_KEY'), { limits: POOL_LIMITS.openrouter_free })],
   })),
 ];
 
 function freezeEntry(entry) {
   return Object.freeze({
-    default_enabled: true, hosted_flag: null, geo_block_free: [], reasoning_efforts: [],
+    default_enabled: true, hosted_flag: null, geo_block_free: [], reasoning_efforts: [], supports_vision: false,
     reasoning_effort_map: {}, ...entry, pools: Object.freeze(entry.pools),
     aliases: Object.freeze(entry.aliases || []),
   });
@@ -428,8 +456,14 @@ function describeEntry(env, entry, tiers, country) {
     owned_by: entry.provider,
     display_name: entry.display_name,
     context_window: entry.context_window,
+    // OpenAI-compatible clients (opencode, Freebuff BYOK, Cursor) read context_length.
+    context_length: entry.context_window,
     max_output_tokens: entry.max_output_tokens,
-    capabilities: { tools: entry.supports_tools, streaming: entry.supports_streaming },
+    capabilities: {
+      tools: entry.supports_tools, streaming: entry.supports_streaming,
+      vision: entry.supports_vision, reasoning: entry.reasoning_efforts.length > 0,
+    },
+    reasoning_efforts: entry.reasoning_efforts,
     tiers: [...new Set((configured.length ? configured : entry.pools).map(pool => pool.tier))],
     available: reason === null,
     unavailable_reason: reason,
@@ -450,9 +484,17 @@ function describeAuto(models) {
     created: 0,
     owned_by: 'zero-x',
     display_name: 'Auto (best available model)',
-    context_window: Math.max(0, ...pool.map(model => model.context_window)),
-    max_output_tokens: Math.max(0, ...pool.map(model => model.max_output_tokens)),
-    capabilities: { tools: true, streaming: true },
+    // auto can fail over to any candidate mid-task, so it advertises the smallest window:
+    // advertising the largest (1M from Gemini) made clients defer compaction until a
+    // 131K-context fallback rejected the request.
+    context_window: pool.length ? Math.min(...pool.map(model => model.context_window)) : 0,
+    context_length: pool.length ? Math.min(...pool.map(model => model.context_window)) : 0,
+    max_output_tokens: pool.length ? Math.min(...pool.map(model => model.max_output_tokens)) : 0,
+    capabilities: {
+      tools: true, streaming: true, vision: false,
+      reasoning: pool.some(model => model.capabilities.reasoning),
+    },
+    reasoning_efforts: [],
     tiers: [...new Set(pool.flatMap(model => model.tiers))],
     available: reason === null,
     unavailable_reason: reason,

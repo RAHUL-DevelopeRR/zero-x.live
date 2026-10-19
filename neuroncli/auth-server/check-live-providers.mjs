@@ -1,11 +1,12 @@
 // Manual live smoke test (not part of npm test): drives the real gateway app with the
-// provider keys in .dev.vars through one streamed tool call per hosted upstream.
-// Makes at most 15 upstream calls and never prints credential values.
-//   node check-live-providers.mjs
+// provider keys in .dev.vars (or, with --env, the process environment) through one streamed
+// tool call per hosted catalog model. Never prints credential values.
+//   node check-live-providers.mjs [--env]
 import { readFile } from 'node:fs/promises';
 import app from './src/index.js';
+import { offeredEntries, poolConfigured } from './src/catalog.js';
 
-const MAX_UPSTREAM_CALLS = 15;
+const PROVIDER_KEYS = ['GROQ_API_KEY', 'GEMINI_API_KEY', 'NVIDIA_API_KEY', 'OPENROUTER_API_KEY'];
 
 function parseDevVars(text) {
   const vars = {};
@@ -18,11 +19,15 @@ function parseDevVars(text) {
 }
 
 let vars;
-try {
-  vars = parseDevVars(await readFile(new URL('./.dev.vars', import.meta.url), 'utf8'));
-} catch {
-  console.error('SKIP: neuroncli/auth-server/.dev.vars is missing; it must hold the provider keys.');
-  process.exit(2);
+if (process.argv.includes('--env')) {
+  vars = Object.fromEntries(PROVIDER_KEYS.filter(name => process.env[name]).map(name => [name, process.env[name]]));
+} else {
+  try {
+    vars = parseDevVars(await readFile(new URL('./.dev.vars', import.meta.url), 'utf8'));
+  } catch {
+    console.error('SKIP: neuroncli/auth-server/.dev.vars is missing; it must hold the provider keys (or use --env).');
+    process.exit(2);
+  }
 }
 const secrets = Object.values(vars).filter(value => value.length >= 8);
 const redact = text => secrets.reduce((result, secret) => result.split(secret).join('[redacted]'), String(text));
@@ -36,13 +41,16 @@ globalThis.fetch = async (input, options) => {
 };
 
 const kv = new Map();
+// Operator settings from wrangler.toml for the hosted catalog.
+const hosting = { NVIDIA_HOSTED: 'true', OPENROUTER_HOSTED: 'true',
+  OPENROUTER_MODELS: 'cohere/north-mini-code:free,minimax/minimax-m3.1-flash:free', ALLOW_UNKNOWN_COUNTRY: 'true' };
+const models = offeredEntries({ ...vars, ...hosting })
+  .filter(entry => entry.pools.some(pool => pool.tier === 'free' && poolConfigured({ ...vars, ...hosting }, entry, pool)));
+const MAX_UPSTREAM_CALLS = models.length + 4;
 const env = {
   ...vars,
   ALLOW_ANONYMOUS_SESSIONS: 'true',
-  // NVIDIA's trial terms allow internal evaluation only; this smoke run is exactly that.
-  NVIDIA_HOSTED: 'true',
-  // The BYOK session below uses this allowlist instead of a discovery call.
-  OPENROUTER_MODELS: 'cohere/north-mini-code:free',
+  ...hosting,
   SESSIONS_KV: {
     get: async key => kv.get(key) ?? null,
     put: async (key, value) => { kv.set(key, value); },
@@ -66,13 +74,6 @@ async function anonymousSession() {
   }, env);
   if (!response.ok) throw new Error(`anonymous session failed (${response.status})`);
   return (await response.json()).session_token;
-}
-
-function byokSession() {
-  const token = `ses_live_byok_${crypto.randomUUID().replace(/-/g, '')}`;
-  kv.set(token, JSON.stringify({ created: Date.now(), plan: 'free', requests: 0, tokens_used: 0, owned_provider_only: true,
-    openrouter_key: vars.OPENROUTER_API_KEY, usage_day: new Date().toISOString().slice(0, 10) }));
-  return token;
 }
 
 async function streamedToolCall(label, token, model) {
@@ -143,18 +144,8 @@ const run = async (label, token, model, { optional = false } = {}) => {
 
 try {
   const token = await anonymousSession();
-  if (vars.GROQ_API_KEY) {
-    await run('groq', token, 'groq/openai/gpt-oss-120b');
-    await run('groq', token, 'groq/qwen/qwen3.8-27b');
-    await run('groq', token, 'groq/openai/gpt-oss-20b');
-  }
-  if (vars.GEMINI_API_KEY) {
-    await run('gemini', token, 'gemini/gemini-2.5-flash');
-    await run('gemini', token, 'gemini/gemini-3.5-flash');
-  }
+  for (const entry of models) await run(entry.provider, token, entry.id, { optional: entry.provider === 'openrouter' });
   await run('auto', token, 'auto');
-  if (vars.NVIDIA_API_KEY) await run('nvidia (evaluation)', token, 'nvidia/nvidia/nemotron-3-super-120b-a12b', { optional: true });
-  if (vars.OPENROUTER_API_KEY) await run('openrouter (BYOK)', byokSession(), 'cohere/north-mini-code:free', { optional: true });
 } finally {
   globalThis.fetch = originalFetch;
 }

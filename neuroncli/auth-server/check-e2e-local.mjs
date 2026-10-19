@@ -307,8 +307,9 @@ try {
   step('dev token -> POST /auth/cli/session', `ses_ session for the dev identity ${userId} (auth.users row provisioned on PGlite), 720 h TTL`);
 
   // ── 3. /v1/models with plan-aware availability ──
-  const modelKeys = ['available', 'capabilities', 'context_window', 'created', 'display_name', 'id', 'max_output_tokens',
-    'object', 'owned_by', 'pricing', 'tiers', 'unavailable_reason'];
+  const modelKeys = ['available', 'available_again_at', 'capabilities', 'checked_at', 'context_length', 'context_window',
+    'created', 'display_name', 'id', 'max_output_tokens', 'object', 'owned_by', 'pricing', 'reasoning_efforts', 'status',
+    'tiers', 'unavailable_reason'];
   const models = async token => {
     const listed = await call('/v1/models', { token });
     assert.equal(listed.status, 200);
@@ -327,7 +328,16 @@ try {
     assert.equal(view['gemini/gemini-2.5-pro'].unavailable_reason, 'upgrade_required');
   }
   assert.ok(!Object.values(free).some(model => ['nvidia', 'openrouter'].includes(model.owned_by)), 'non-hosted providers are not listed');
-  step('GET /v1/models', `${Object.keys(free).length} entries; Free (anonymous and ses_): free pools available, gemini-2.5-pro upgrade_required`);
+  assert.ok(Object.values(free).every(model => model.status === 'available'), 'no failures yet: every model is available');
+  const status = await call('/v1/models/status', { token: ses });
+  assert.equal(status.status, 200);
+  assert.equal(status.body.poll_interval_seconds, 30);
+  assert.equal(status.body.data.length, Object.keys(free).length);
+  const etag = status.headers.get('etag');
+  assert.match(etag, /^W\/"[0-9a-f]{24}"$/);
+  const unchanged = await call('/v1/models/status', { token: ses, headers: { 'If-None-Match': etag } });
+  assert.equal(unchanged.status, 304, 'an unchanged status list answers 304');
+  step('GET /v1/models', `${Object.keys(free).length} entries; Free (anonymous and ses_): free pools available, gemini-2.5-pro upgrade_required; /v1/models/status ETag ${etag} -> 304`);
 
   // ── 4. Streaming chat with tools on 'auto' ──
   const upstreamBefore = upstream.calls.length;

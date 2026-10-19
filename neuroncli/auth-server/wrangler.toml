@@ -31,8 +31,8 @@ custom_domain = true
 # The hosted model list is the verified catalog in src/catalog.js (docs/PLATFORM_CONTRACT.md
 # section 2). GROQ_MODELS / GEMINI_MODELS / CLOUDFLARE_MODELS / NVIDIA_MODELS can only narrow it
 # (unknown ids are ignored and reported on /v1/providers/health); *_TOOL_MODELS are no longer read.
-# OPENROUTER_MODELS is the allowlist for users' own OpenRouter keys (BYOK).
-OPENROUTER_MODELS = "cohere/north-mini-code:free"
+# OPENROUTER_MODELS narrows the OpenRouter models offered, hosted and BYOK alike.
+OPENROUTER_MODELS = "cohere/north-mini-code:free,minimax/minimax-m3.1-flash:free"
 SUPABASE_URL = "https://norrtosjwcossxrhhtvd.supabase.co"
 # Public browser key. OAuth, SMTP, SMS and service-role secrets stay outside this repository.
 SUPABASE_PUBLISHABLE_KEY = "sb_publishable_Fgrm-Cfyj3w0xAfepK-CFg_SpUydF2T"
@@ -47,10 +47,10 @@ CLI_SESSION_TTL_HOURS = "720"
 SESSION_TTL_HOURS = "24"
 MAX_REQUESTS_PER_SESSION = "1000"
 PRICING_URL = "https://zero-x.live/pricing"
-# Compliance defaults (docs/PROVIDER_TERMS.md): NVIDIA trial keys are evaluation-only and the
-# OpenRouter operator key is not resold (BYOK only).
-NVIDIA_HOSTED = "false"
-OPENROUTER_HOSTED = "false"
+# Operator decision (2026-10-19, alpha): the NVIDIA trial key and the OpenRouter operator key
+# also serve users' free models. Their terms are summarised in docs/PROVIDER_TERMS.md.
+NVIDIA_HOSTED = "true"
+OPENROUTER_HOSTED = "true"
 # Public Razorpay key id (rzp_live_...). RAZORPAY_KEY_SECRET and RAZORPAY_WEBHOOK_SECRET are
 # Worker secrets; billing answers 503 billing_not_configured until all three are set.
 RAZORPAY_KEY_ID = ""

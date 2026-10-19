@@ -1,7 +1,11 @@
 import { loadPlanCatalog, TOPUP_PACKS } from '../plan-policy.js';
-import { callerCountry, listModelsForCaller, loadPlanPolicies, planPolicy } from '../catalog.js';
+import {
+  AUTO_MODEL_ID, callerCountry, catalogEntry, listModelsForCaller, loadPlanPolicies, planPolicy, poolKey,
+} from '../catalog.js';
 import { isOwnedSession, listModelsForSession } from '../providers.js';
 import { sessionTiers } from '../capacity.js';
+import { withHealth } from '../health-share.js';
+import { globalHealthTracker } from '../provider-health.js';
 
 export const microusdToUsd = value => {
   const micro = Number(value);
@@ -46,5 +50,28 @@ export async function v1ModelsPayload(c, session = {}) {
   if (isOwnedSession(session)) return listModelsForSession(env, { session, country });
   const plan = session?.plan || 'free';
   const policy = planPolicy(env, plan, await loadPlanPolicies(env));
-  return listModelsForCaller(env, { plan, country, tiers: sessionTiers(env, session, policy) });
+  const payload = listModelsForCaller(env, { plan, country, tiers: sessionTiers(env, session, policy) });
+  // Runtime health (health-share.js): the pools behind each model in the tiers listed for it.
+  const poolKeysFor = model => {
+    const entry = catalogEntry(model.id);
+    return entry ? entry.pools.filter(pool => model.tiers.includes(pool.tier)).map(pool => poolKey(entry, pool)) : [];
+  };
+  return withHealth(env, payload, poolKeysFor, {
+    tracker: globalHealthTracker, autoId: AUTO_MODEL_ID,
+    isAutoCandidate: model => catalogEntry(model.id)?.auto_rank != null,
+  });
+}
+
+// GET /v1/models/status: the part of /v1/models that changes at runtime, small enough for
+// clients to poll every 30 s. The ETag lets an unchanged list answer 304 with no body.
+export async function v1ModelStatusPayload(c, session = {}) {
+  const models = await v1ModelsPayload(c, session);
+  const data = models.data.map(model => ({
+    id: model.id, available: model.available !== false, unavailable_reason: model.unavailable_reason ?? null,
+    status: model.status ?? 'available', available_again_at: model.available_again_at ?? null,
+  }));
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(data)));
+  const etag = `W/"${[...new Uint8Array(digest).slice(0, 12)].map(byte => byte.toString(16).padStart(2, '0')).join('')}"`;
+  const checked = models.data.map(model => model.checked_at).filter(Boolean).sort().at(-1) ?? null;
+  return { etag, body: { object: 'list', checked_at: checked, poll_interval_seconds: 30, data } };
 }

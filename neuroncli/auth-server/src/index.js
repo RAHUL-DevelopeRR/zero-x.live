@@ -21,7 +21,7 @@ import { registerAccountRoutes } from './routes/account.js';
 import { registerAdminRoutes, runScheduledMaintenance } from './routes/admin.js';
 import { registerBillingRoutes } from './routes/billing.js';
 import { registerKeyRoutes } from './routes/keys.js';
-import { registerPlanRoutes, v1ModelsPayload } from './routes/plans.js';
+import { registerPlanRoutes, v1ModelsPayload, v1ModelStatusPayload } from './routes/plans.js';
 import { registerSessionIndex, registerSessionRoutes, unregisterSessionIndex } from './routes/sessions.js';
 import { registerWebhookRoutes } from './routes/webhooks.js';
 
@@ -689,16 +689,30 @@ api.post('/v1/chat/completions', chatCompletionsHandler);
 api.post('/auth/azure/proxy', chatCompletionsHandler);
 api.post('/auth/azure/chat/completions', chatCompletionsHandler);
 
+// Anonymous callers get the free plan's view; a bad credential is an error, not anonymous.
+async function modelsCaller(c) {
+  if (!c.req.header('Authorization')) return { session: {} };
+  try {
+    const valid = await validateInferenceCredential(c);
+    return valid ? { session: valid.session } : { response: invalidSessionResponse(c) };
+  } catch { return { response: sessionUnavailableResponse(c) }; }
+}
+
 api.get('/v1/models', async (c) => {
-  let session = {};
-  if (c.req.header('Authorization')) {
-    try {
-      const valid = await validateInferenceCredential(c);
-      if (!valid) return invalidSessionResponse(c);
-      session = valid.session;
-    } catch { return sessionUnavailableResponse(c); }
-  }
-  return c.json(await v1ModelsPayload(c, session));
+  const caller = await modelsCaller(c);
+  if (caller.response) return caller.response;
+  c.header('Cache-Control', 'no-store');
+  return c.json(await v1ModelsPayload(c, caller.session));
+});
+
+api.get('/v1/models/status', async (c) => {
+  const caller = await modelsCaller(c);
+  if (caller.response) return caller.response;
+  const { etag, body } = await v1ModelStatusPayload(c, caller.session);
+  c.header('Cache-Control', 'no-cache');
+  c.header('ETag', etag);
+  if (c.req.header('If-None-Match') === etag) return c.body(null, 304);
+  return c.json(body);
 });
 
 api.get('/v1/providers/health', async (c) => {
