@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta name="robots" content="noindex">
+  <title>Sign in to Neuron | Zero-X</title>
+  <link rel="icon" href="/Assets/zerox-favicon-32.png">
+  <link rel="stylesheet" href="/site-fonts.css">
+  <link rel="stylesheet" href="/zx-tokens.css">
+  <style>
+    body{display:grid;place-items:center;min-height:100vh;padding:16px;margin:0}
+    .card{width:min(520px,100%);padding:28px 24px;border:1px solid var(--zx-border);border-radius:var(--zx-radius-lg);background:var(--zx-surface)}
+    h1{font-size:1.6rem;margin:0 0 8px}
+    p{color:var(--zx-muted);overflow-wrap:anywhere;margin:8px 0}
+    label{display:block;font-weight:600;color:var(--zx-heading);margin:16px 0 6px}
+    input{width:100%;box-sizing:border-box;min-height:48px;padding:10px 14px;font:600 1.4rem var(--zx-font-mono,monospace);letter-spacing:.2em;text-transform:uppercase;border:1px solid var(--zx-border);border-radius:12px;background:var(--zx-bg);color:var(--zx-heading)}
+    .code{font:700 2rem var(--zx-font-mono,monospace);letter-spacing:.2em;color:var(--zx-heading);text-align:center;margin:12px 0}
+    dl{display:grid;grid-template-columns:max-content 1fr;gap:6px 14px;margin:16px 0;padding:14px;border:1px solid var(--zx-border);border-radius:12px}
+    dt{color:var(--zx-muted)}dd{margin:0;color:var(--zx-heading);overflow-wrap:anywhere}
+    .warn{padding:12px 14px;border-radius:12px;border:1px solid #b7791f;background:rgba(183,121,31,.12);color:var(--zx-heading)}
+    .row{display:flex;gap:12px;flex-wrap:wrap;margin-top:18px}
+    button{flex:1;min-height:48px;padding:12px 20px;border:0;border-radius:999px;font:600 1rem var(--zx-font-body);cursor:pointer}
+    #approve{background:var(--zx-accent);color:var(--zx-on-accent)}#approve:hover{background:var(--zx-accent-h)}
+    #deny,#find,#signin{background:transparent;color:var(--zx-heading);border:1px solid var(--zx-border)}
+    #find,#signin{background:var(--zx-accent);color:var(--zx-on-accent);border:0}
+    button:disabled{opacity:.55;cursor:not-allowed}button:focus-visible,input:focus-visible{outline:none;box-shadow:var(--zx-focus)}
+    .done{font-size:1.1rem;color:var(--zx-heading)}
+  </style>
+  <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js" integrity="sha384-Rj26LVGvoeRVR6+mwQmFfcR3QOBEwT+ZmuCWpuiqeTzJpCs0ER4ITAWGb4Hiy3Ok" crossorigin="anonymous"></script>
+  <script defer src="/zerox-auth.js"></script>
+  <script defer src="/neuroncli/device/device.js"></script>
+</head>
+<body>
+  <main class="card">
+    <h1>Sign in to Neuron</h1>
+    <p id="message" role="status" aria-live="polite">Checking your sign-in…</p>
+    <p id="account"></p>
+
+    <section id="signin-step" hidden>
+      <button id="signin" type="button">Sign in to Zero-X</button>
+    </section>
+
+    <form id="code-step" hidden>
+      <label for="code">Code shown in your terminal</label>
+      <input id="code" name="code" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="9" placeholder="XXXX-XXXX" required>
+      <div class="row"><button id="find" type="submit">Continue</button></div>
+    </form>
+
+    <section id="confirm-step" hidden>
+      <p>Check that this code matches the one in your terminal:</p>
+      <div class="code" id="confirm-code"></div>
+      <dl>
+        <dt>Device</dt><dd id="device"></dd>
+        <dt>Requested from</dt><dd id="location"></dd>
+        <dt>Requested</dt><dd id="when"></dd>
+      </dl>
+      <p class="warn" id="mismatch" hidden></p>
+      <p class="warn">Only approve if you just ran <code>neuron login</code> yourself. Zero-X never asks you to enter a code sent to you by email, chat or phone. If someone sent you here, choose Deny.</p>
+      <div class="row">
+        <button id="deny" type="button">Deny</button>
+        <button id="approve" type="button" disabled>Approve</button>
+      </div>
+    </section>
+
+    <p id="done" class="done" hidden></p>
+  </main>
+</body>
+</html>

@@ -414,6 +414,72 @@ try {
   assert.ok(listedKeys[0].last_used_at, 'last_used_at is recorded');
   step('POST /api/keys + nzx_ chat', `key ${created.body.key.prefix}… served groq/openai/gpt-oss-20b; creating a key with the ses_ session -> 403 session_not_allowed, with the nzx_ key -> 403 api_key_not_allowed`);
 
+  // ── 6b. Device sign-in (neuron login): code → pending → approve on the page → one session ──
+  const pageHeaders = { Origin: base };
+  const deviceCode = async () => {
+    const created = await call('/auth/device/code', { method: 'POST',
+      body: { client_id: 'neuron-cli', client_version: '7.0.0-alpha.1', device_name: 'e2e-host', os: 'linux' } });
+    assert.equal(created.status, 200, redact(created.text));
+    assert.match(created.body.device_code, /^zdc_[A-Za-z0-9_-]{43}$/);
+    assert.match(created.body.user_code, /^[BCDFGHJKLMNPQRSTVWXZ]{4}-[BCDFGHJKLMNPQRSTVWXZ]{4}$/);
+    assert.equal(created.body.verification_uri, `${base}/neuroncli/device/`);
+    assert.equal(created.body.verification_uri_complete, `${base}/neuroncli/device/?user_code=${created.body.user_code}`);
+    assert.equal(created.body.expires_in, 600);
+    assert.equal(created.body.interval, 5);
+    return created.body;
+  };
+  const poll = code => call('/auth/device/token', { method: 'POST',
+    body: { grant_type: 'urn:ietf:params:oauth:grant-type:device_code', device_code: code } });
+  const grantA = await deviceCode();
+  const pending = await poll(grantA.device_code);
+  assert.equal(pending.status, 400);
+  assert.equal(pending.body.error.code, 'authorization_pending');
+  const tooFast = await poll(grantA.device_code);
+  assert.equal(tooFast.body.error.code, 'slow_down');
+  assert.equal(tooFast.body.error.interval, 10, 'slow_down adds 5 s to the interval');
+  expectError(await call('/auth/device/lookup', { method: 'POST', token: dev, body: { user_code: grantA.user_code } }), 403, 'forbidden');
+  expectError(await call('/auth/device/lookup', { method: 'POST', token: dev, headers: { Origin: 'https://evil.example' },
+    body: { user_code: grantA.user_code } }), 403, 'forbidden');
+  expectError(await call('/auth/device/lookup', { method: 'POST', token: ses, headers: pageHeaders,
+    body: { user_code: grantA.user_code } }), 401, 'invalid_session');
+  expectError(await call('/auth/device/lookup', { method: 'POST', token: dev, headers: pageHeaders,
+    body: { user_code: 'BBBB-BBBB' } }), 404, 'not_found');
+  const looked = await call('/auth/device/lookup', { method: 'POST', token: dev, headers: pageHeaders,
+    body: { user_code: grantA.user_code.toLowerCase().replace('-', ' ') } });
+  assert.equal(looked.status, 200, redact(looked.text));
+  assert.equal(looked.body.user_code, grantA.user_code);
+  assert.deepEqual(looked.body.client, { name: 'neuron-cli', version: '7.0.0-alpha.1', device_name: 'e2e-host', os: 'linux' });
+  assert.equal(looked.body.account.email, email);
+  expectError(await call('/auth/device/approve', { method: 'POST', token: dev, headers: pageHeaders,
+    body: { grant_id: looked.body.grant_id, approval_nonce: '1.forged', decision: 'approve' } }), 400, 'invalid_request');
+  const approved = await call('/auth/device/approve', { method: 'POST', token: dev, headers: pageHeaders,
+    body: { grant_id: looked.body.grant_id, approval_nonce: looked.body.approval_nonce, decision: 'approve' } });
+  assert.equal(approved.status, 200, redact(approved.text));
+  assert.equal(approved.body.status, 'approved');
+  expectError(await call('/auth/device/approve', { method: 'POST', token: dev, headers: pageHeaders,
+    body: { grant_id: looked.body.grant_id, approval_nonce: looked.body.approval_nonce, decision: 'deny' } }), 409, 'grant_not_pending');
+  const issued = await poll(grantA.device_code);
+  assert.equal(issued.status, 200, redact(issued.text));
+  assert.match(issued.body.access_token, /^ses_[A-Za-z0-9_-]{32}$/);
+  assert.equal(issued.body.token_type, 'Bearer');
+  assert.equal(issued.body.email, email);
+  assert.equal((await call('/auth/session', { token: issued.body.access_token })).status, 200, 'the device session works');
+  expectError(await poll(grantA.device_code), 400, 'invalid_grant');
+  const grantB = await deviceCode();
+  const lookedB = await call('/auth/device/lookup', { method: 'POST', token: dev, headers: pageHeaders, body: { user_code: grantB.user_code } });
+  await call('/auth/device/approve', { method: 'POST', token: dev, headers: pageHeaders,
+    body: { grant_id: lookedB.body.grant_id, approval_nonce: lookedB.body.approval_nonce, decision: 'deny' } });
+  expectError(await poll(grantB.device_code), 400, 'access_denied');
+  expectError(await poll('zdc_' + 'A'.repeat(43)), 400, 'invalid_grant');
+  const page = await call('/neuroncli/device/');
+  assert.equal(page.status, 200);
+  assert.match(page.text, /Sign in to Neuron/);
+  assert.ok(page.headers.get('content-security-policy'), 'the approval page enforces its CSP');
+  assert.equal(page.headers.get('cache-control'), 'no-store');
+  assert.ok(!serverLog.includes(grantA.device_code) && !serverLog.includes(issued.body.access_token),
+    'device codes and session tokens never reach the logs');
+  step('device sign-in', `code ${grantA.user_code} pending -> slow_down (interval 10) -> page lookup (origin-checked, CLI session refused) -> approve (forged nonce refused) -> one ses_ session -> replay invalid_grant; deny -> access_denied; page served with enforced CSP`);
+
   // ── 7. Daily cap → 429 insufficient_quota (no upstream call) ──
   const callsBeforeCap = upstream.calls.length;
   const realBeforeCap = realCalls();

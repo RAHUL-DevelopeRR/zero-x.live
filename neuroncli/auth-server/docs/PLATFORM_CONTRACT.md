@@ -324,3 +324,55 @@ Sync the copy in `neuron-v2`; nothing here changes what the CLI sends or must ha
   the budget, with `upgrade_url` when a paid pool would take it, instead of
   `403 upgrade_required` ("model not in plan"). Clients handle it like any other
   `context_length_exceeded` (compact or shorten).
+
+## 8. v1.3 amendments (production alpha, 2026-10-19)
+
+### 8.1 Model status (`/v1/models`, `/v1/models/status`)
+
+- `/v1/models` items also carry `context_length` (equal to `context_window`, for OpenAI-style
+  clients), `reasoning_efforts[]`, `capabilities.vision`, `capabilities.reasoning`, and runtime
+  health: `status` (`available` | `degraded` | `busy` | `blurred`), `available_again_at`
+  (ISO time or `null`) and `checked_at` (ISO time of the newest observation, or `null`).
+  - `busy`: a short rate-limit cooldown (60 s or less); keep the model selectable and show the wait.
+  - `blurred`: grey the model out until `available_again_at` (quota spent, model gone, provider down).
+  - `available` stays the plan/region/configuration verdict; a client greys out a model when
+    `available` is false or `status` is `blurred`.
+  - Pool health is shared across isolates through KV, so a status can be up to about a minute old.
+- `auto` advertises the smallest context window among its candidates (it can fail over to any).
+- `GET /v1/models/status` (same optional auth as `/v1/models`) returns
+  `{object:'list', checked_at, poll_interval_seconds:30, data:[{id, available, unavailable_reason,
+  status, available_again_at}]}` with a weak `ETag`; `If-None-Match` answers `304`. Clients poll it
+  every `poll_interval_seconds`.
+
+### 8.2 Device sign-in (`neuron login` without a localhost callback)
+
+RFC 8628 shape. Errors use the §3.3 envelope with `error.code` set to the RFC name.
+
+| Endpoint | Auth | Body → response |
+|---|---|---|
+| `POST /auth/device/code` | none | `{client_id, client_version, device_name, os}` → `{device_code:'zdc_…', user_code:'XXXX-XXXX', verification_uri, verification_uri_complete, expires_in:600, interval:5}` |
+| `POST /auth/device/token` | none | `{grant_type:'urn:ietf:params:oauth:grant-type:device_code', device_code}` → `{access_token:'ses_…', token_type:'Bearer', expires_in, expires_at, session_token, …account}` |
+| `POST /auth/device/lookup` | website identity, approval page only | `{user_code}` → `{grant_id, user_code, account:{email}, client, requester, browser_country, created_at, expires_at, approval_nonce}` |
+| `POST /auth/device/approve` | website identity, approval page only | `{grant_id, approval_nonce, decision:'approve'\|'deny'}` → `{status}` |
+
+- `verification_uri` is `https://neuron.zero-x.live/device` (the loopback origin plus
+  `/neuroncli/device/` on a local dev server). The CLI prints it and the code, opens a browser
+  when it can, and never needs a local listener.
+- Polling: `400 authorization_pending` (keep polling every `interval` s), `400 slow_down` with
+  `error.interval` (the new interval; +5 s, at most 60 s), `400 expired_token`, `400 access_denied`,
+  `400 invalid_grant` (unknown or already used: a device code yields exactly one session).
+  `/auth/device/code` answers `429 rate_limited` with `Retry-After` when an IP asks too often.
+- The session is the same account-backed `ses_` session as `/auth/cli/session` (same TTL, listed
+  for revoke-all). Refresh tokens are a later amendment; until then an expired session means
+  running `neuron login` again.
+- `user_code`: 8 letters from `BCDFGHJKLMNPQRSTVWXZ`; input is case-insensitive and separators are
+  ignored. The approval page shows the device as reported, the requester's IP and location, and a
+  warning when the requester's country differs from the browser's; approval needs an explicit click.
+- `/auth/device/lookup` and `/approve` require `Origin` `https://neuron.zero-x.live` (or
+  `https://zero-x.live`), JSON, and a website identity in `Authorization` (`ses_`/`nzx_` → 401);
+  `approval_nonce` binds the approval to that user and grant for 5 minutes. Production needs the
+  Worker secret `DEVICE_APPROVAL_SECRET`.
+
+### 8.3 Credentials
+
+- `POST /api/keys` requires the website identity; a CLI session gets `403 session_not_allowed`.

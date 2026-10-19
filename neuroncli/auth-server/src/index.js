@@ -23,6 +23,7 @@ import { registerBillingRoutes } from './routes/billing.js';
 import { registerKeyRoutes } from './routes/keys.js';
 import { registerPlanRoutes, v1ModelsPayload, v1ModelStatusPayload } from './routes/plans.js';
 import { registerSessionIndex, registerSessionRoutes, unregisterSessionIndex } from './routes/sessions.js';
+import { registerDeviceRoutes } from './routes/device.js';
 import { registerWebhookRoutes } from './routes/webhooks.js';
 
 const SERVICE = 'neuroncli-gateway-worker';
@@ -65,9 +66,11 @@ app.use('*', async (c, next) => {
   if (url.protocol === 'https:') c.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
   // The Neuron sign-in pages carry session tokens, so their policy is always enforced; the
   // rest of the site stays report-only until CSP_ENFORCE=true.
-  const enforceCsp = c.env?.CSP_ENFORCE === 'true' || url.pathname.startsWith('/neuroncli/');
+  const signInPage = url.pathname.startsWith('/neuroncli/') ||
+    (url.hostname === 'neuron.zero-x.live' && url.pathname.startsWith('/device'));
+  const enforceCsp = c.env?.CSP_ENFORCE === 'true' || signInPage;
   c.header(enforceCsp ? 'Content-Security-Policy' : 'Content-Security-Policy-Report-Only', CONTENT_SECURITY_POLICY);
-  if (path.startsWith('/auth/') || url.pathname.startsWith('/neuroncli/')) {
+  if (path.startsWith('/auth/') || signInPage) {
     c.header('Cache-Control', 'no-store');
     c.header('Referrer-Policy', url.pathname.startsWith('/neuroncli/login/') ? 'origin' : 'no-referrer');
   }
@@ -120,6 +123,11 @@ app.use('*', async (c, next) => {
     }
     if (path === '/neuroncli/login/' && c.env?.ASSETS) {
       return c.env.ASSETS.fetch(new Request(new URL('/neuroncli/login/index.html', url), c.req.raw));
+    }
+    // Device sign-in approval page: https://neuron.zero-x.live/device (also /neuroncli/device/).
+    if (c.env?.ASSETS && (path === '/neuroncli/device/' ||
+        (hostname === 'neuron.zero-x.live' && (path === '/device' || path === '/device/')))) {
+      return c.env.ASSETS.fetch(new Request(new URL('/neuroncli/device/index.html', url), c.req.raw));
     }
     let target = null;
     let fragment = '';
@@ -551,13 +559,32 @@ const createIdentityCliSessionHandler = async (c) => {
 
   if (!user) return errorResponse(c, 503, 'service_unavailable', 'Account database returned no record. Please retry shortly.');
   const account = await userResponse(c, user, auth.userId);
-  const sessionToken = newSessionToken();
+  const minted = await mintCliSession(c, account, {
+    fingerprint: fp, version: typeof body.version === 'string' ? body.version : 'unknown',
+  });
+  if (!minted) return errorResponse(c, 503, 'service_unavailable', 'Sign-in could not be completed. Please retry shortly.');
+
+  return c.json({
+    session_token: minted.token,
+    provider: "gateway",
+    ttl_seconds: minted.ttlSeconds,
+    expires_at: new Date(minted.expires).toISOString(),
+    ...account,
+  });
+};
+
+// Stores a new account-backed ses_ session for `account` (a userResponse) and indexes it for
+// revoke-all. Shared by the browser login and the device flow. Returns null when the index
+// write fails: a session missing from the index could not be signed out by revoke-all, so it
+// is dropped and sign-in fails (the client retries).
+async function mintCliSession(c, account, { fingerprint, version }) {
+  const token = newSessionToken();
   const { created, expires, ttlSeconds } = newSessionTimes(c.env);
-  const sessionData = {
+  await setSession(c, token, {
     created,
     expires,
-    fingerprint: fp,
-    version: typeof body.version === 'string' ? body.version.slice(0, 64) : "unknown",
+    fingerprint: String(fingerprint || 'supabase-user').slice(0, 256),
+    version: String(version || 'unknown').slice(0, 64),
     user_id: account.user_id,
     email: account.email,
     name: account.name,
@@ -567,24 +594,18 @@ const createIdentityCliSessionHandler = async (c) => {
     requests: account.usage.requests,
     tokens_used: account.usage.tokens_used,
     provider_used: null,
-  };
-
-  await setSession(c, sessionToken, sessionData);
-  // A session missing from the index could not be signed out by revoke-all: without the index
-  // entry the session is dropped and sign-in fails (the client retries).
-  if (!await registerSessionIndex(c.env, account.user_id, sessionToken, expires)) {
-    await deleteSession(c, sessionToken).catch(() => {});
-    return errorResponse(c, 503, 'service_unavailable', 'Sign-in could not be completed. Please retry shortly.');
-  }
-
-  return c.json({
-    session_token: sessionToken,
-    provider: "gateway",
-    ttl_seconds: ttlSeconds,
-    expires_at: new Date(expires).toISOString(),
-    ...account,
   });
-};
+  if (!await registerSessionIndex(c.env, account.user_id, token, expires)) {
+    await deleteSession(c, token).catch(() => {});
+    return null;
+  }
+  return { token, created, expires, ttlSeconds };
+}
+
+async function dropCliSession(c, token) {
+  await deleteSession(c, token).catch(() => {});
+  await unregisterSessionIndex(c.env, token).catch(() => {});
+}
 
 api.post('/auth/cli/session', createIdentityCliSessionHandler);
 
@@ -838,6 +859,10 @@ registerPlanRoutes(api);
 registerAccountRoutes(api);
 registerKeyRoutes(api);
 registerSessionRoutes(api);
+registerDeviceRoutes(api, {
+  getIdentityAuth, sendIdentityFailure, syncUserRecord, loadUserRecord, userResponse, mintCliSession, dropCliSession,
+  clientAddress,
+});
 registerBillingRoutes(api);
 registerWebhookRoutes(api);
 registerAdminRoutes(api);

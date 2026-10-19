@@ -61,6 +61,10 @@ export async function runScheduledMaintenance(env) {
     throw new Error('Scheduled maintenance failed');
   }
   if (result.released || result.downgraded) console.log('Scheduled maintenance', result);
+  // Housekeeping only (expired device sign-in grants): a failure is logged, not reported.
+  await rpc(env, 'zerox_device_purge', {}).catch(error => {
+    console.warn('Device grant purge failed', { message: error?.message });
+  });
   return result;
 }
 
