@@ -24,6 +24,8 @@ import { registerKeyRoutes } from './routes/keys.js';
 import { registerPlanRoutes, v1ModelsPayload, v1ModelStatusPayload } from './routes/plans.js';
 import { registerSessionIndex, registerSessionRoutes, unregisterSessionIndex } from './routes/sessions.js';
 import { registerDeviceRoutes } from './routes/device.js';
+// Durable Object classes are exported from the Worker entry (wrangler.toml [[durable_objects]]).
+export { HealthHub } from './health-hub.js';
 import { registerWebhookRoutes } from './routes/webhooks.js';
 
 const SERVICE = 'neuroncli-gateway-worker';

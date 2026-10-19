@@ -6,7 +6,7 @@ import {
 import { globalSignatureCache } from './provider-request.js';
 import { globalRouter } from './router.js';
 import { FailureKind, globalHealthTracker } from './provider-health.js';
-import { shareHealth } from './health-share.js';
+import { publishHealth } from './health-hub-client.js';
 import { callerCountry, loadPlanPolicies, planPolicy } from './catalog.js';
 import { billableUsage, estimateOutputTokens, estimatePromptTokens, utf8Bytes } from './pricing.js';
 import {
@@ -234,16 +234,18 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
     // phase ('first_byte' | 'idle' | 'response') tells liveness timeouts from slow generations;
     // caller lets the tracker require timeouts from several callers before parking a shared pool.
     const caller = session.user_id || String(token).slice(0, 16);
-    // Every outcome is also published for other isolates (health-share.js), throttled there.
+    // Every outcome is also published for the whole gateway: to the HealthHub Durable Object,
+    // or through KV without it (health-hub-client.js). A client abort says nothing about the pool.
     const recordFailure = (key, kind, retryAfterSeconds, latencyMs, phase = null) => {
       if (!key) return;
-      const record = healthTracker.recordFailure(key, { kind, retryAfterSeconds: retryAfterSeconds || 0, latencyMs, phase, caller });
-      if (record) shareHealth(c, env, key, record);
+      const outcome = { success: false, kind, retryAfterSeconds: retryAfterSeconds || 0, latencyMs, phase, caller };
+      const record = healthTracker.recordFailure(key, outcome);
+      if (record && kind !== FailureKind.ABORTED) publishHealth(c, env, key, record, outcome);
     };
     const recordSuccess = (key, latencyMs) => {
       if (!key) return;
       healthTracker.recordSuccess(key, { latencyMs });
-      shareHealth(c, env, key, healthTracker.getRecord(key));
+      publishHealth(c, env, key, healthTracker.getRecord(key), { success: true, latencyMs });
     };
 
     const timeouts = streamTimeouts(env);

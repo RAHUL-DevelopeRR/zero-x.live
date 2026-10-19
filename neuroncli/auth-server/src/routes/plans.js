@@ -5,6 +5,7 @@ import {
 import { isOwnedSession, listModelsForSession } from '../providers.js';
 import { sessionTiers } from '../capacity.js';
 import { withHealth } from '../health-share.js';
+import { hubHealthRows } from '../health-hub-client.js';
 import { globalHealthTracker } from '../provider-health.js';
 
 export const microusdToUsd = value => {
@@ -51,7 +52,8 @@ export async function v1ModelsPayload(c, session = {}) {
   const plan = session?.plan || 'free';
   const policy = planPolicy(env, plan, await loadPlanPolicies(env));
   const payload = listModelsForCaller(env, { plan, country, tiers: sessionTiers(env, session, policy) });
-  // Runtime health (health-share.js): the pools behind each model in the tiers listed for it.
+  // Runtime health: the pools behind each model in the tiers listed for it, read from the
+  // HealthHub Durable Object (KV on the Node server or when the hub does not answer).
   const poolKeysFor = model => {
     const entry = catalogEntry(model.id);
     return entry ? entry.pools.filter(pool => model.tiers.includes(pool.tier)).map(pool => poolKey(entry, pool)) : [];
@@ -59,6 +61,7 @@ export async function v1ModelsPayload(c, session = {}) {
   return withHealth(env, payload, poolKeysFor, {
     tracker: globalHealthTracker, autoId: AUTO_MODEL_ID,
     isAutoCandidate: model => catalogEntry(model.id)?.auto_rank != null,
+    readRows: keys => hubHealthRows(env, keys),
   });
 }
 

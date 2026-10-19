@@ -64,6 +64,17 @@ id = "717e03bfc7cf4efa84648ccd82e4c9ed"
 [ai]
 binding = "AI"
 
+# HealthHub (src/health-hub.js): one Durable Object holding every pool's health, with a 30 s
+# alarm for free checks and capped test requests. /v1/models reads it; without the binding the
+# gateway falls back to sharing health through SESSIONS_KV.
+[[durable_objects.bindings]]
+name = "HEALTH_HUB"
+class_name = "HealthHub"
+
+[[migrations]]
+tag = "v1-health-hub"
+new_sqlite_classes = ["HealthHub"]
+
 # Releases stale quota reservations and applies subscription expiry (src/routes/admin.js).
 [triggers]
 crons = ["*/10 * * * *"]

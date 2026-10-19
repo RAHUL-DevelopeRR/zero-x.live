@@ -337,7 +337,12 @@ Sync the copy in `neuron-v2`; nothing here changes what the CLI sends or must ha
   - `blurred`: grey the model out until `available_again_at` (quota spent, model gone, provider down).
   - `available` stays the plan/region/configuration verdict; a client greys out a model when
     `available` is false or `status` is `blurred`.
-  - Pool health is shared across isolates through KV, so a status can be up to about a minute old.
+  - Pool health comes from the HealthHub Durable Object (src/health-hub.js): real outcomes from
+    every isolate, plus a 30 s alarm that reads provider model lists and status pages and sends a
+    one-line test request only to idle pools whose cooldown ended (daily caps: Groq 24, Gemini 6,
+    Workers AI 48 per model; NVIDIA and OpenRouter none). A recovered model returns to
+    `available`. Isolates cache the snapshot for 5 s. Without the binding (the Node server) health
+    is shared through KV instead, up to about a minute old.
 - `auto` advertises the smallest context window among its candidates (it can fail over to any).
 - `GET /v1/models/status` (same optional auth as `/v1/models`) returns
   `{object:'list', checked_at, poll_interval_seconds:30, data:[{id, available, unavailable_reason,
