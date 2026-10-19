@@ -18,7 +18,7 @@
  */
 import { FailureKind, HealthState, ProviderHealthTracker } from './provider-health.js';
 import { publicStatus } from './health-share.js';
-import { offeredEntries, poolConfigured, poolKey } from './catalog.js';
+import { loadCatalogDbModels, offeredEntries, poolConfigured, poolKey } from './catalog.js';
 import { classifyUpstreamFailure, requestCompletion } from './providers.js';
 
 export const ALARM_INTERVAL_MS = 30_000;
@@ -129,6 +129,19 @@ export class HealthHub {
       return Response.json({ ok: true });
     }
     if (request.method === 'GET' && url.pathname === '/snapshot') return Response.json(this.snapshot());
+    // The daily discovery job (src/discovery/jobs.js) found these pools' models missing from
+    // their provider's public list. Not a real request: idle-time test requests are unaffected.
+    if (request.method === 'POST' && url.pathname === '/mark') {
+      const body = await request.json().catch(() => null);
+      const keys = Array.isArray(body?.keys) ? body.keys.filter(key => typeof key === 'string' && key.length <= 200) : [];
+      if (!keys.length || keys.length > 50 || body.kind !== FailureKind.MODEL_UNAVAILABLE) {
+        return new Response('bad request', { status: 400 });
+      }
+      const now = this.now();
+      for (const key of keys) this.mark(key, now, { kind: FailureKind.MODEL_UNAVAILABLE });
+      await this.persist();
+      return Response.json({ ok: true, marked: keys.length });
+    }
     return new Response('not found', { status: 404 });
   }
 
@@ -159,6 +172,7 @@ export class HealthHub {
   }
 
   async runChecks(now) {
+    await loadCatalogDbModels(this.env);
     const byProvider = this.pools();
     const due = [
       ...Object.keys(LIST_CHECKS).filter(provider => byProvider.has(provider)).map(provider => `list:${provider}`),

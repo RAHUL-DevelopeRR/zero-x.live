@@ -75,6 +75,8 @@ class_name = "HealthHub"
 tag = "v1-health-hub"
 new_sqlite_classes = ["HealthHub"]
 
-# Releases stale quota reservations and applies subscription expiry (src/routes/admin.js).
+# Releases stale quota reservations and applies subscription expiry (src/routes/admin.js), and
+# runs provider discovery: each public model list once a day, OmniRoute and research once a week
+# (src/discovery/jobs.js).
 [triggers]
 crons = ["*/10 * * * *"]

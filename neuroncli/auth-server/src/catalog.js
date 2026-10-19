@@ -207,25 +207,121 @@ export const MODEL_ALIASES = Object.freeze(Object.fromEntries([
   ...CATALOG.flatMap(entry => entry.aliases.map(alias => [alias, entry.id])),
 ]));
 
-export function catalogEntry(id) {
-  return BY_ID.get(id) || null;
+// ── Verified discovery models (contract §8.4) ──
+// Rows the operator promoted from a verified discovery candidate (zerox_catalog_db_models,
+// src/routes/discovery.js). They join this catalog only with CATALOG_DB_MODELS=true and only
+// through the templates below, which fix everything that decides where a request goes and what
+// it may cost (adapter, key, hosting flag, shared budget). The database supplies the upstream
+// id, display name, context window, output limit and vision. They are free pools only, never
+// chosen by `auto`, never replace a code-defined id, and *_MODELS still narrows them.
+export const DB_MODEL_TEMPLATES = Object.freeze({
+  openrouter: Object.freeze({
+    publicId: upstream => upstream, hosted_flag: 'OPENROUTER_HOSTED',
+    pools: Object.freeze([pool('free', key('OPENROUTER_API_KEY'), { limits: POOL_LIMITS.openrouter_free })]),
+  }),
+  nvidia: Object.freeze({
+    publicId: upstream => `nvidia/${upstream}`, hosted_flag: 'NVIDIA_HOSTED',
+    pools: Object.freeze([pool('free', key('NVIDIA_API_KEY'), { limits: POOL_LIMITS.nvidia_trial })]),
+  }),
+});
+const DB_MODELS_TTL_MS = 60000;
+const DB_MODELS_RETRY_MS = 10000;
+const NO_DB_MODELS = Object.freeze({ entries: Object.freeze([]), byId: new Map() });
+const dbModelCache = new WeakMap();
+
+export function dbModelsEnabled(env) {
+  return env?.CATALOG_DB_MODELS === 'true' && databaseConfigured(env);
 }
 
-function lookup(value) {
+const positive = value => (Number.isSafeInteger(Number(value)) && Number(value) > 0 ? Number(value) : null);
+
+// Catalog entry for one zerox_catalog_db_models row, or null when no template fits.
+export function dbCatalogEntry(row) {
+  const template = DB_MODEL_TEMPLATES[row?.provider_id];
+  const upstream = typeof row?.provider_model_id === 'string' ? row.provider_model_id.trim() : '';
+  if (!template || !/^[\x21-\x7e]{1,200}$/.test(upstream)) return null;
+  const id = template.publicId(upstream);
+  const lower = id.toLowerCase();
+  // The row must name what the template builds, and code-defined ids and aliases always win.
+  if (row.public_model_id !== id || BY_ID.has(lower) || Object.hasOwn(MODEL_ALIASES, lower) || lower === AUTO_MODEL_ID) return null;
+  const context = positive(row.context_window);
+  const maxOutput = positive(row.max_output_tokens);
+  if (!context || !maxOutput || maxOutput > context) return null;
+  return freezeEntry({
+    id, display_name: typeof row.display_name === 'string' && row.display_name.trim() ? row.display_name.trim().slice(0, 120) : id,
+    provider: row.provider_id, upstream_model: upstream, context_window: context, max_output_tokens: maxOutput,
+    supports_tools: true, supports_streaming: true, supports_vision: row.supports_vision === true, auto_rank: null,
+    hosted_flag: template.hosted_flag, aliases: [], pools: template.pools, source: 'database',
+    candidate_id: positive(row.candidate_id),
+  });
+}
+
+function dbModels(env) {
+  if (!env || typeof env !== 'object' || !dbModelsEnabled(env)) return NO_DB_MODELS;
+  return dbModelCache.get(env)?.models || NO_DB_MODELS;
+}
+
+/**
+ * Loads the promoted discovery models for `env` (60 s cache). Callers that route or list
+ * models await this first; synchronous lookups then see the cached rows. While the database
+ * does not answer, the last list that loaded stays in use (retried every 10 s).
+ */
+export async function loadCatalogDbModels(env) {
+  if (!env || typeof env !== 'object' || !dbModelsEnabled(env)) return NO_DB_MODELS.entries;
+  const cached = dbModelCache.get(env);
+  if (cached?.expires > Date.now()) return cached.models.entries;
+  if (cached?.pending) return cached.pending;
+  const pending = (async () => {
+    let models = cached?.models || NO_DB_MODELS;
+    let ttl = DB_MODELS_TTL_MS;
+    try {
+      const entries = [];
+      const seen = new Set();
+      for (const row of await rpcRows(env, 'zerox_catalog_db_models', {})) {
+        const entry = dbCatalogEntry(row);
+        if (!entry || seen.has(entry.id.toLowerCase())) continue;
+        seen.add(entry.id.toLowerCase());
+        entries.push(entry);
+      }
+      models = { entries: Object.freeze(entries), byId: new Map(entries.map(entry => [entry.id.toLowerCase(), entry])) };
+    } catch (error) {
+      console.error('Neuron catalog database models unavailable; keeping the last list', { name: error.name });
+      ttl = DB_MODELS_RETRY_MS;
+    }
+    dbModelCache.set(env, { models, expires: Date.now() + ttl });
+    return models.entries;
+  })();
+  dbModelCache.set(env, { ...cached, models: cached?.models || NO_DB_MODELS, expires: 0, pending });
+  return pending;
+}
+
+// Code-defined entries plus the loaded discovery models of this deployment.
+export function catalogEntries(env) {
+  const extra = dbModels(env).entries;
+  return extra.length ? [...CATALOG, ...extra] : CATALOG;
+}
+
+export function catalogEntry(id, env) {
+  return BY_ID.get(id) || (typeof id === 'string' ? dbModels(env).byId.get(id.toLowerCase()) : null) || null;
+}
+
+function lookup(value, env) {
   if (value === AUTO_MODEL_ID) return AUTO_MODEL_ID;
   if (BY_ID.has(value)) return value;
-  return Object.hasOwn(MODEL_ALIASES, value) ? MODEL_ALIASES[value] : null;
+  if (Object.hasOwn(MODEL_ALIASES, value)) return MODEL_ALIASES[value];
+  return dbModels(env).byId.get(value)?.id ?? null;
 }
 
 // Resolves a requested model to a public id ('auto' included). An `openai/` transport
 // prefix (added by OpenAI-compatible clients) is accepted when the remainder resolves.
-export function resolveModelId(requested) {
+// Discovery models resolve only for an `env` whose models were loaded (loadCatalogDbModels).
+export function resolveModelId(requested, env) {
   if (typeof requested !== 'string') return null;
   const value = requested.trim().toLowerCase();
   if (!value || value.length > 200) return null;
-  const direct = lookup(value);
+  const direct = lookup(value, env);
   if (direct) return direct;
-  return value.startsWith('openai/') ? lookup(value.slice('openai/'.length)) : null;
+  return value.startsWith('openai/') ? lookup(value.slice('openai/'.length), env) : null;
 }
 
 function listedModels(env, provider) {
@@ -246,7 +342,7 @@ export function isEnabled(env, entry) {
 
 // Entries this deployment offers (enabled and hosted), whether or not keys are present.
 export function offeredEntries(env) {
-  return CATALOG.filter(entry => isHosted(env, entry) && isEnabled(env, entry));
+  return catalogEntries(env).filter(entry => isHosted(env, entry) && isEnabled(env, entry));
 }
 
 // Unknown ids in *_MODELS are ignored, never silently added; operators see them here.
@@ -255,7 +351,7 @@ export function catalogWarnings(env) {
   for (const [provider, name] of Object.entries(MODELS_VARS)) {
     const listed = listedModels(env, provider);
     if (!listed) continue;
-    const known = new Set(CATALOG.filter(entry => entry.provider === provider)
+    const known = new Set(catalogEntries(env).filter(entry => entry.provider === provider)
       .flatMap(entry => [entry.upstream_model.toLowerCase(), entry.id.toLowerCase()]));
     const ignored = [...listed].filter(id => !known.has(id));
     if (ignored.length) warnings.push({ variable: name, ignored_models: ignored });

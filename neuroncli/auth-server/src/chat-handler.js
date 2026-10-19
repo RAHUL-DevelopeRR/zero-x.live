@@ -7,7 +7,7 @@ import { globalSignatureCache } from './provider-request.js';
 import { globalRouter } from './router.js';
 import { FailureKind, globalHealthTracker } from './provider-health.js';
 import { publishHealth } from './health-hub-client.js';
-import { callerCountry, loadPlanPolicies, planPolicy } from './catalog.js';
+import { callerCountry, loadCatalogDbModels, loadPlanPolicies, planPolicy } from './catalog.js';
 import { billableUsage, estimateOutputTokens, estimatePromptTokens, utf8Bytes } from './pricing.js';
 import {
   PAID_DENIED_STATUSES, RESERVE_ERRORS, TERMINAL_RESERVE_STATUSES, reservationArgs, reserveCapacity, reserveError,
@@ -153,6 +153,7 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
     const ledger = usesLedger(env, session);
     if (session.account_backed && !ledger) return fail('service_unavailable');
     const policy = planPolicy(env, session.plan, ledger ? await loadPlanPolicies(env) : undefined);
+    await loadCatalogDbModels(env);
     headers['x-neuron-plan'] = policy.id;
     const promptTokens = estimatePromptTokens(body.messages, body.tools);
     const requestedMax = body.max_completion_tokens ?? body.max_tokens ?? DEFAULT_MAX_TOKENS;
