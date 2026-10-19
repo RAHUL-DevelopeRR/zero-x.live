@@ -73,19 +73,24 @@ async function readShared(env, keys) {
  * is that of its best pool among the tiers the caller can use; `auto` takes its best candidate.
  * `poolKeysFor(model)` returns the pool keys behind a listed model id.
  */
+// `readRows(keys)` may supply the rows from elsewhere (the HealthHub snapshot); when it returns
+// null the rows are read from KV.
 export async function withHealth(env, payload, poolKeysFor,
-  { tracker, autoId = null, isAutoCandidate = () => false, now = Date.now() } = {}) {
+  { tracker, autoId = null, isAutoCandidate = () => false, readRows = null, now = Date.now() } = {}) {
   const models = payload.data;
   const keysByModel = new Map(models.map(model => [model.id, poolKeysFor(model)]));
-  const shared = await readShared(env, [...new Set([...keysByModel.values()].flat())]);
+  const allKeys = [...new Set([...keysByModel.values()].flat())];
+  const shared = (readRows && await readRows(allKeys)) || await readShared(env, allKeys);
   const describe = keys => {
     let best = null;
     for (const key of keys) {
       const local = tracker?.records?.get(key);
       const localStatus = local ? { ...publicStatus(local, now), at: local.last_attempt_at || now } : null;
       const row = shared.get(key);
-      const remote = row && (row.until || 0) > now ? row
-        : row ? { status: 'available', until: 0, at: row.at } : null;
+      // busy/blurred last until their cooldown ends; degraded has no cooldown and stands as is.
+      const remote = !row ? null
+        : row.status === 'degraded' || (row.until || 0) > now ? row
+          : { status: 'available', until: 0, at: row.at };
       // The fresher observation wins; with none, the pool counts as available.
       const pick = [localStatus, remote].filter(Boolean).sort((a, b) => (b.at || 0) - (a.at || 0))[0]
         || { status: 'available', until: 0, at: null };

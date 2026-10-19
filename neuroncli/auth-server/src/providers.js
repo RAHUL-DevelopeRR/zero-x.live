@@ -3,8 +3,8 @@ import { OpenAICompatibleAdapter } from './provider-adapter.js';
 import { toolCallSignature } from './provider-request.js';
 import { FailureKind, failureKindForStatus } from './provider-health.js';
 import {
-  AUTO_MODEL_ID, catalogEntry, catalogWarnings, isHosted, isEnabled, listModelsForCaller, offeredEntries,
-  CATALOG, poolConfigured, planPolicy,
+  AUTO_MODEL_ID, catalogEntries, catalogEntry, catalogWarnings, isHosted, isEnabled, listModelsForCaller, loadCatalogDbModels,
+  offeredEntries, poolConfigured, planPolicy,
 } from './catalog.js';
 import { errorEvent } from './errors.js';
 import { sessionTiers } from './capacity.js';
@@ -94,7 +94,7 @@ export function providerConfiguration(env, session = {}) {
   const warnings = catalogWarnings(env);
   return HTTP_PROVIDER_KEYS.map(provider => {
     const adapter = ADAPTERS[provider];
-    const entries = CATALOG.filter(entry => entry.provider === provider);
+    const entries = catalogEntries(env).filter(entry => entry.provider === provider);
     return {
       provider,
       configured: adapter ? adapter.isConfigured(env, session) : false,
@@ -203,6 +203,7 @@ export async function ownedCatalog(env, session) {
 
 export async function resolveModelCatalog(env, session = {}) {
   if (isOwnedSession(session)) return ownedCatalog(env, session);
+  await loadCatalogDbModels(env);
   return modelCatalog(env, session);
 }
 

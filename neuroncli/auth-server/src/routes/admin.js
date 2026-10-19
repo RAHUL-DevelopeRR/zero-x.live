@@ -1,7 +1,7 @@
 import { rpc, databaseConfigured } from '../account-store.js';
 import { errorResponse, sendApiError } from '../auth-context.js';
 import { isOperator } from '../operator-auth.js';
-import { offeredEntries, poolConfigured, poolKey } from '../catalog.js';
+import { loadCatalogDbModels, offeredEntries, poolConfigured, poolKey } from '../catalog.js';
 import { globalHealthTracker } from '../provider-health.js';
 
 const counter = value => {
@@ -73,7 +73,7 @@ export function registerAdminRoutes(api) {
   api.get('/admin/overview', async c => {
     if (!await isOperator(c)) return errorResponse(c, 401, 'invalid_session', 'Operator authentication required.');
     try {
-      const row = await rpc(c.env, 'zerox_admin_overview', {});
+      const [row] = await Promise.all([rpc(c.env, 'zerox_admin_overview', {}), loadCatalogDbModels(c.env)]);
       const overview = row?.overview && typeof row.overview === 'object' ? row.overview : null;
       if (!overview) throw new Error('Admin overview returned no data');
       c.header('Cache-Control', 'no-store');

@@ -40,7 +40,7 @@ secret store, never in a committed file. `.dev.vars.example` lists them with com
 | `CLI_SESSION_TTL_HOURS` | var | `720` | CLI session lifetime (reported as `expires_at`). |
 | `SESSION_TTL_HOURS` | var | `24` | Lifetime of sessions created before hashed storage. |
 | `SESSION_ENCRYPTION_KEY` | **secret** | unset | ≥ 32 chars (`openssl rand -base64 32`); seals users' own OpenRouter keys (AES-GCM). Rotating it disconnects those keys. |
-| `GATEWAY_ADMIN_TOKEN` | **secret** | unset | ≥ 32 random chars; `/admin/overview`, `/v1/providers/health`, full `/health`. |
+| `GATEWAY_ADMIN_TOKEN` | **secret** | unset | ≥ 32 random chars; `/admin/overview`, `/admin/discovery/*`, `/v1/providers/health`, full `/health`. |
 | `CSP_ENFORCE` | var | `false` | `true` sends `Content-Security-Policy` instead of `-Report-Only`. |
 | `PRICING_URL` | var | `https://zero-x.live/pricing` | `upgrade_url` in errors (https only). |
 
@@ -99,6 +99,23 @@ No new variables control request shaping or 429 handling; both are always on:
 No longer read: `*_TOOL_MODELS` (tool support comes from the catalog), `MAX_REQUESTS_PER_SESSION`,
 `OPENROUTER_CLIENT_ID`. Test-only: `E2E_*` (read by `e2e-upstream-shim.mjs`), `PGLITE_ENTRY`
 (`check-session-store.mjs`, `check-quota.mjs`).
+
+### Provider discovery
+
+Daily and weekly jobs on the existing cron queue new free models and providers for review at
+`/admin/discovery` (contract §8.4). They need migration `20261019120000_provider_discovery.sql`;
+without it the cron logs "Discovery is unavailable" once per isolate and carries on.
+
+| Variable | Kind | Default | Purpose |
+|---|---|---|---|
+| `DISCOVERY_ENABLED` | var | on | `false` stops the discovery jobs (the review page still works). |
+| `ANTHROPIC_API_KEY` | **secret** | unset | Enables the weekly research agent (Claude Haiku 5.5 with web search). |
+| `DISCOVERY_RESEARCH_MAX_USD` | var | `0.25` | Spending cap per research run (0.02 to 2); searches and output tokens are sized to it. |
+| `CATALOG_DB_MODELS` | var | unset | `true` serves promoted (verified) discovery models alongside `src/catalog.js`. |
+| `DISCOVERY_KEY_<ID>` + `DISCOVERY_BASE_<ID>` | **secret** + var | unset | Key and https base URL for verifying candidates of a provider the gateway has no adapter for (`<ID>`: provider id in upper case, `-` as `_`). Built-in providers use their own keys. |
+
+The jobs parse up to ~10 MB of JSON a day in one cron invocation (models.dev is ~6 MB), which
+needs the Workers Paid CPU allowance.
 
 ## Deploy gate
 

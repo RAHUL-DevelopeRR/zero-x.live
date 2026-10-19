@@ -337,7 +337,12 @@ Sync the copy in `neuron-v2`; nothing here changes what the CLI sends or must ha
   - `blurred`: grey the model out until `available_again_at` (quota spent, model gone, provider down).
   - `available` stays the plan/region/configuration verdict; a client greys out a model when
     `available` is false or `status` is `blurred`.
-  - Pool health is shared across isolates through KV, so a status can be up to about a minute old.
+  - Pool health comes from the HealthHub Durable Object (src/health-hub.js): real outcomes from
+    every isolate, plus a 30 s alarm that reads provider model lists and status pages and sends a
+    one-line test request only to idle pools whose cooldown ended (daily caps: Groq 24, Gemini 6,
+    Workers AI 48 per model; NVIDIA and OpenRouter none). A recovered model returns to
+    `available`. Isolates cache the snapshot for 5 s. Without the binding (the Node server) health
+    is shared through KV instead, up to about a minute old.
 - `auto` advertises the smallest context window among its candidates (it can fail over to any).
 - `GET /v1/models/status` (same optional auth as `/v1/models`) returns
   `{object:'list', checked_at, poll_interval_seconds:30, data:[{id, available, unavailable_reason,
@@ -376,3 +381,48 @@ RFC 8628 shape. Errors use the §3.3 envelope with `error.code` set to the RFC n
 ### 8.3 Credentials
 
 - `POST /api/keys` requires the website identity; a CLI session gets `403 session_not_allowed`.
+
+### 8.4 Provider discovery (operator only)
+
+Finds new free models and providers and queues them for the operator; it never enables anything
+by itself, and signing up to a provider stays manual. Code: `src/discovery/`, review routes
+`src/routes/discovery.js`, migration `20261019120000_provider_discovery.sql`.
+
+- **Candidates** (`zerox_provider_candidates`, unique per provider and model id; `model_id ''` is
+  the provider's own record in the provider database shape). Status: `new` (queued), `approved`
+  (operator yes), `verified` (the live tool call passed: proposed for the catalog), `rejected`
+  (operator no; with no reviewer it means filtered by the policy), `excluded` (never offered).
+  Seeded from the 2026-10-19 provider database (186 providers): models in `src/catalog.js` are
+  `verified`, free tool-capable models with at least 64K context are `new`, the rest filtered.
+- **Jobs** on the 10-minute cron, each claimed with a lease (`zerox_discovery_claim`), state in
+  `zerox_discovery_state`:
+  - `list:<source>`, daily: the public no-key lists of OpenRouter (`:free` ids), Kilo Gateway,
+    OpenCode Zen, Vercel AI Gateway, Requesty, AIHubMix, NVIDIA and LLM7 (bare lists completed
+    from models.dev). A free, tool-capable id with at least 64K context becomes a candidate;
+    candidates no longer listed get `gone_at`; a `src/catalog.js` (or promoted) model whose
+    upstream id is gone is marked `model_unavailable` in HealthHub (`POST /mark`), unless the list
+    dropped more than half of them. A failed list retries in an hour.
+  - `omniroute`, weekly: diff of OmniRoute's MIT free-tier catalog
+    (`raw.githubusercontent.com/diegosouzapw/OmniRoute/main/open-sse/config/freeModelCatalog.data.ts`);
+    the first run records a baseline.
+  - `research`, weekly, only with `ANTHROPIC_API_KEY`: one Claude Haiku 5.5 call with web search,
+    given the current list, returning records in the provider database shape with sources.
+    Searches and output tokens are sized to `DISCOVERY_RESEARCH_MAX_USD` (default $0.25 a run);
+    the list-price spend is recorded, a paused answer is not resumed, and a run over the cap halves
+    the next run's searches.
+- **Exclusion filter**: access that needs CAPTCHA solving, scraping a consumer chat website, a
+  spoofed client or another product's login is `excluded`, also for every model of an excluded
+  provider; excluded candidates cannot be approved.
+- **Review** (`Bearer GATEWAY_ADMIN_TOKEN`; page `GET /admin/discovery`):
+  `GET /admin/discovery/candidates?status=&provider=&q=&limit=&offset=`, `GET …/candidates/{id}`,
+  `POST …/{id}/approve` (runs one live streamed tool call when this deployment holds a key for the
+  provider: the provider's own secret, or `DISCOVERY_KEY_<ID>` with `DISCOVERY_BASE_<ID>`),
+  `POST …/{id}/verify`, `POST …/{id}/reject`, `POST …/candidates/reject` (`{ids}`),
+  `POST …/{id}/promote`, `POST …/{id}/demote`, `POST /admin/discovery/run` (`{jobs}`; research
+  only when named).
+- **Catalog join**: promotion writes `gateway_provider_models` (with `candidate_id`). With
+  `CATALOG_DB_MODELS=true` the gateway adds those rows to the code-defined catalog (60 s cache)
+  through a template per provider in `src/catalog.js` (OpenRouter and NVIDIA today), which fixes
+  the adapter, key, hosting flag and shared budget. They are free pools only, never chosen by
+  `auto`, never replace a code-defined id, and `*_MODELS` still narrows them. A demoted, rejected or
+  failed candidate stops being offered within the 60 s cache.
