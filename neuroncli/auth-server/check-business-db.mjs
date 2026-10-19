@@ -101,10 +101,10 @@ try {
     'Worker-bundled modules stay free of Node built-ins');
   const migrations = await listMigrations();
   assert.deepEqual(handle.applied, migrations.map(migration => migration.version), 'all migrations applied in version order');
-  assert.deepEqual(migrations.slice(-5).map(migration => migration.file), [
+  assert.deepEqual(migrations.slice(-6).map(migration => migration.file), [
     '20261016000000_business_schema.sql', '20261016000100_business_quota.sql',
     '20261016000200_business_billing.sql', '20261016000300_business_sessions_admin.sql',
-    '20261019000000_device_auth.sql']);
+    '20261019000000_device_auth.sql', '20261019120000_provider_discovery.sql']);
   assert.equal((await sql('SELECT count(*)::int AS n FROM supabase_migrations.schema_migrations'))[0].n, migrations.length);
   await assert.rejects(rpc(env, 'zerox_does_not_exist', {}), error =>
     error instanceof AccountDatabaseError && error.code === 'PGRST202');

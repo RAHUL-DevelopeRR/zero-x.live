@@ -37,7 +37,7 @@ export class RoutingEngine {
   route({ env = {}, requestedModel, needsTools = false, promptTokens, maxTokens, tiers = ['free'],
     country = null, ownedCatalog = null, now = Date.now() }) {
     if (ownedCatalog) return this.routeOwned({ requestedModel, needsTools, maxTokens, ownedCatalog });
-    const resolved = resolveModelId(requestedModel);
+    const resolved = resolveModelId(requestedModel, env);
     if (!resolved) return failure('model_not_found');
     const auto = resolved === AUTO_MODEL_ID;
     const offered = offeredEntries(env);

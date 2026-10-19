@@ -5,6 +5,7 @@
  */
 import { runInBackground } from './capacity.js';
 import { shareHealth } from './health-share.js';
+import { FailureKind } from './provider-health.js';
 
 const HUB_ORIGIN = 'https://health-hub.internal';
 const SNAPSHOT_TTL_MS = 5_000;       // /v1/models sees health at most ~5 s older than the hub's
@@ -77,6 +78,28 @@ export async function hubHealthRows(env, keys, now = Date.now()) {
     }
   }
   return new Map(keys.map(key => [key, snapshot.pools[key] ?? null]));
+}
+
+/**
+ * Marks pools whose model disappeared from the provider's public list (daily discovery job) as
+ * model_unavailable: in the hub when it is bound, otherwise in this isolate's tracker. Returns
+ * the number of pools marked.
+ */
+export async function markPoolsUnavailable(env, keys, tracker) {
+  const list = [...new Set(keys)].filter(key => typeof key === 'string' && key).slice(0, 50);
+  if (!list.length) return 0;
+  const hub = healthHub(env);
+  if (!hub) {
+    for (const key of list) tracker?.recordFailure(key, { kind: FailureKind.MODEL_UNAVAILABLE });
+    return tracker ? list.length : 0;
+  }
+  const response = await hub.fetch(`${HUB_ORIGIN}/mark`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ keys: list, kind: FailureKind.MODEL_UNAVAILABLE }),
+  });
+  if (!response.ok) throw new Error(`hub answered ${response.status}`);
+  snapshot = null;
+  return list.length;
 }
 
 // Test hook.

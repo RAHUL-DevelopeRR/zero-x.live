@@ -24,6 +24,8 @@ import { registerKeyRoutes } from './routes/keys.js';
 import { registerPlanRoutes, v1ModelsPayload, v1ModelStatusPayload } from './routes/plans.js';
 import { registerSessionIndex, registerSessionRoutes, unregisterSessionIndex } from './routes/sessions.js';
 import { registerDeviceRoutes } from './routes/device.js';
+import { registerDiscoveryRoutes } from './routes/discovery.js';
+import { runDiscoveryTick } from './discovery/jobs.js';
 // Durable Object classes are exported from the Worker entry (wrangler.toml [[durable_objects]]).
 export { HealthHub } from './health-hub.js';
 import { registerWebhookRoutes } from './routes/webhooks.js';
@@ -868,6 +870,7 @@ registerDeviceRoutes(api, {
 registerBillingRoutes(api);
 registerWebhookRoutes(api);
 registerAdminRoutes(api);
+registerDiscoveryRoutes(api);
 
 app.route(API_MOUNT, api);
 app.route('/', api);
@@ -912,9 +915,17 @@ app.notFound(async (c) => {
   return c.text('Not Found', 404);
 });
 
-// Cloudflare cron trigger (wrangler.toml [triggers]).
+// Cloudflare cron trigger (wrangler.toml [triggers]). Provider discovery (src/discovery/jobs.js)
+// runs beside maintenance: it records its own failures and never fails the maintenance run,
+// and the invocation lasts until both are done.
 app.scheduled = (controller, env, ctx) => {
-  const task = runScheduledMaintenance(env);
+  const discovery = runDiscoveryTick(env).catch(error => {
+    console.warn('Discovery tick failed', { message: String(error?.message).slice(0, 200) });
+  });
+  const task = Promise.allSettled([runScheduledMaintenance(env), discovery]).then(([maintenance]) => {
+    if (maintenance.status === 'rejected') throw maintenance.reason;
+    return maintenance.value;
+  });
   ctx?.waitUntil?.(task.catch(() => {}));
   return task;
 };
