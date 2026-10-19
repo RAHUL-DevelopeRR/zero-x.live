@@ -63,7 +63,10 @@ app.use('*', async (c, next) => {
   c.header('Referrer-Policy', 'strict-origin-when-cross-origin');
   c.header('X-Frame-Options', 'DENY');
   if (url.protocol === 'https:') c.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
-  c.header(c.env?.CSP_ENFORCE === 'true' ? 'Content-Security-Policy' : 'Content-Security-Policy-Report-Only', CONTENT_SECURITY_POLICY);
+  // The Neuron sign-in pages carry session tokens, so their policy is always enforced; the
+  // rest of the site stays report-only until CSP_ENFORCE=true.
+  const enforceCsp = c.env?.CSP_ENFORCE === 'true' || url.pathname.startsWith('/neuroncli/');
+  c.header(enforceCsp ? 'Content-Security-Policy' : 'Content-Security-Policy-Report-Only', CONTENT_SECURITY_POLICY);
   if (path.startsWith('/auth/') || url.pathname.startsWith('/neuroncli/')) {
     c.header('Cache-Control', 'no-store');
     c.header('Referrer-Policy', url.pathname.startsWith('/neuroncli/login/') ? 'origin' : 'no-referrer');

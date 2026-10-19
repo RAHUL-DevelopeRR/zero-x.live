@@ -1,5 +1,7 @@
 import { rpc, rpcRows } from '../account-store.js';
-import { ApiError, INTERACTIVE_CREDENTIALS, requireActiveAccount, withCaller } from '../auth-context.js';
+import {
+  ACCOUNT_OWNER_CREDENTIALS, ApiError, INTERACTIVE_CREDENTIALS, requireActiveAccount, withCaller,
+} from '../auth-context.js';
 import { sha256Hex } from '../session-store.js';
 
 export const MAX_ACTIVE_KEYS = 10;
@@ -46,7 +48,7 @@ export function registerKeyRoutes(api) {
     return c.json({ keys: rows.filter(row => row && (row.id ?? row.key_id)).map(keyView) });
   }));
 
-  api.post('/api/keys', withCaller(INTERACTIVE_CREDENTIALS, async (c, caller) => {
+  api.post('/api/keys', withCaller(ACCOUNT_OWNER_CREDENTIALS, async (c, caller) => {
     const body = await c.req.json().catch(() => null);
     if (body !== null && (typeof body !== 'object' || Array.isArray(body))) {
       throw new ApiError(400, 'invalid_request', 'Send a JSON object such as {"name":"CI"}.');

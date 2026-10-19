@@ -254,6 +254,7 @@ database or this contract already enforced won. Sync the copy in `neuron-v2`.
   backed by an account ledger, exactly as routing does.
 - **Errors (§3.3).** `param` is `null` or names the offending field. Additional codes:
   `model_not_found` (404), `service_unavailable` (503), `api_key_not_allowed` (403),
+  `session_not_allowed` (403: creating an API key needs the website sign-in, not a CLI session),
   `too_many_keys` (409), `not_found` (404), `billing_not_configured` (503),
   `already_subscribed` (409), `no_active_subscription` (409), `invalid_signature` (400),
   `payment_mismatch` (400/403), `payment_failed` (402), `payment_provider_error` (502); suspended

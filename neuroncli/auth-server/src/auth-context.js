@@ -283,10 +283,14 @@ export function callerFromAccount(kind, account, fallback = {}) {
 export const ALL_CREDENTIALS = Object.freeze(['session', 'api_key', 'supabase', 'dev']);
 // Interactive credentials only: API keys can never manage keys, sessions or billing.
 export const INTERACTIVE_CREDENTIALS = Object.freeze(['session', 'supabase', 'dev']);
+// Website sign-in only: minting a long-lived credential (an nzx_ key survives revoke-all) needs
+// the account owner, so a stolen CLI session cannot turn itself into a lasting key.
+export const ACCOUNT_OWNER_CREDENTIALS = Object.freeze(['supabase', 'dev']);
 
 // Resolves the Authorization header to a caller (docs/PLATFORM_CONTRACT.md §3.1):
 // {kind, user_id, email, name, image_url, plan, suspended, session?, key_id?}.
-// Throws ApiError: 401 invalid_session, 403 api_key_not_allowed, 503 when a backend is down.
+// Throws ApiError: 401 invalid_session, 403 api_key_not_allowed or session_not_allowed,
+// 503 when a backend is down.
 export async function resolveCaller(c, { allow = ALL_CREDENTIALS } = {}) {
   const env = c.env;
   const token = bearerToken(c);
@@ -315,7 +319,11 @@ export async function resolveCaller(c, { allow = ALL_CREDENTIALS } = {}) {
   }
 
   if (token.startsWith('ses_')) {
-    if (!allow.includes('session')) throw invalidSession();
+    // 403, not 401: the session is fine, this action needs the website sign-in.
+    if (!allow.includes('session')) {
+      throw new ApiError(403, 'session_not_allowed',
+        'Create API keys from the dashboard at https://zero-x.live/dashboard while signed in on the website.');
+    }
     const session = await database(() => loadCliSession(env, token));
     if (!session?.account_backed || typeof session.user_id !== 'string') throw invalidSession();
     const account = await database(() => rpc(env, 'zerox_get_account', { p_user_id: session.user_id }));

@@ -394,7 +394,9 @@ try {
   step('GET /api/account and /api/usage', `requests 1, tokens ${account.usage_today.tokens}, by_model ${streamModel} x1`);
 
   // ── 6. API keys: nzx_ works for inference and cannot mint keys ──
-  const created = await call('/api/keys', { method: 'POST', token: ses, body: { name: 'e2e CI' } });
+  // Minting a key needs the website sign-in (the dev identity here), never a CLI session.
+  expectError(await call('/api/keys', { method: 'POST', token: ses, body: { name: 'from cli' } }), 403, 'session_not_allowed');
+  const created = await call('/api/keys', { method: 'POST', token: dev, body: { name: 'e2e CI' } });
   assert.equal(created.status, 201, redact(created.text));
   const apiKey = created.body.secret;
   assert.match(apiKey, /^nzx_[A-Za-z0-9_-]{43}$/);
@@ -410,7 +412,7 @@ try {
   const listedKeys = (await call('/api/keys', { token: ses })).body.keys;
   assert.equal(listedKeys.length, 1);
   assert.ok(listedKeys[0].last_used_at, 'last_used_at is recorded');
-  step('POST /api/keys + nzx_ chat', `key ${created.body.key.prefix}… served groq/openai/gpt-oss-20b; creating a key with the nzx_ key -> 403 api_key_not_allowed`);
+  step('POST /api/keys + nzx_ chat', `key ${created.body.key.prefix}… served groq/openai/gpt-oss-20b; creating a key with the ses_ session -> 403 session_not_allowed, with the nzx_ key -> 403 api_key_not_allowed`);
 
   // ── 7. Daily cap → 429 insufficient_quota (no upstream call) ──
   const callsBeforeCap = upstream.calls.length;

@@ -354,8 +354,9 @@ try {
   // Key validation, limit and revocation
   assertOpenAIError(await json(await request('/api/keys', { method: 'POST', token: 'supabase-token-user-a', body: { name: 'x'.repeat(65) } })), 400, 'invalid_request');
   assertOpenAIError(await json(await request('/api/keys', { method: 'POST', token: 'supabase-token-user-a', body: { name: 42 } })), 400, 'invalid_request');
-  const defaultName = await json(await request('/api/keys', { method: 'POST', token: sessionToken }));
-  assert.equal(defaultName.status, 201, 'ses_ sessions can create keys');
+  assertOpenAIError(await json(await request('/api/keys', { method: 'POST', token: sessionToken })), 403, 'session_not_allowed');
+  const defaultName = await json(await request('/api/keys', { method: 'POST', token: 'supabase-token-user-a' }));
+  assert.equal(defaultName.status, 201, 'the website sign-in creates keys');
   assert.equal(defaultName.body.key.name, 'API key');
   for (let index = 0; index < 8; index++) {
     assert.equal((await request('/api/keys', { method: 'POST', token: 'supabase-token-user-a', body: { name: `k${index}` } })).status, 201);
@@ -433,7 +434,10 @@ try {
   assert.deepEqual({ kind: caller.kind, user_id: caller.user_id, email: caller.email, plan: caller.plan },
     { kind: 'supabase', user_id: userA.id, email: 'alice@example.test', plan: 'free' });
   await assert.rejects(resolveCaller(fakeContext('supabase-token-user-a'), { allow: ['session'] }), { status: 401 });
-  await assert.rejects(resolveCaller(fakeContext(sessionToken), { allow: ['supabase'] }), { status: 401 });
+  // A valid CLI session on a website-only action is refused with 403, so the CLI does not
+  // mistake it for an expired session and loop back to sign-in.
+  await assert.rejects(resolveCaller(fakeContext(sessionToken), { allow: ['supabase'] }),
+    { status: 403, code: 'session_not_allowed' });
   const sessionCaller = await resolveCaller(fakeContext(sessionToken));
   assert.equal(sessionCaller.kind, 'session');
   assert.equal(sessionCaller.session.user_id, userA.id);
@@ -532,7 +536,7 @@ try {
   db.policyOverrides = {};
   db.accounts.get(userA.id).suspended = true;
   assert.equal((await json(await request('/api/account', { token: sessionToken }))).body.flags.suspended, true);
-  assertOpenAIError(await json(await request('/api/keys', { method: 'POST', token: sessionToken, body: { name: 'blocked' } })), 403, 'account_suspended');
+  assertOpenAIError(await json(await request('/api/keys', { method: 'POST', token: 'supabase-token-user-a', body: { name: 'blocked' } })), 403, 'account_suspended');
   db.accounts.get(userA.id).suspended = false;
   db.fail.add('zerox_account_overview');
   assertOpenAIError(await json(await request('/api/account', { token: sessionToken })), 503, 'service_unavailable');
