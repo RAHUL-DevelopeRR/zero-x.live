@@ -59,6 +59,11 @@ OPENROUTER_HOSTED = "true"
 RAZORPAY_KEY_ID = ""
 # Set to "true" once Content-Security-Policy-Report-Only shows no violations.
 CSP_ENFORCE = "false"
+# Cloudflare Access application on dashboard.zero-x.live/admin (provider key vault page,
+# GATEWAY_SETUP.md step 5). With both set, the page and /admin/providers/keys also verify the
+# Access JWT. The vault itself needs the Worker secret PROVIDER_KEYS_KEK.
+# CF_ACCESS_TEAM_DOMAIN = "<team>.cloudflareaccess.com"
+# CF_ACCESS_AUD = "<application audience tag>"
 
 # Neuron release manifests (docs/RELEASE_MANIFESTS.md). Off until the bucket exists: create it
 # with `wrangler r2 bucket create neuron-releases`, then uncomment. Without it the Worker serves

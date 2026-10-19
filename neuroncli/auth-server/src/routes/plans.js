@@ -1,6 +1,7 @@
 import { loadPlanCatalog, TOPUP_PACKS } from '../plan-policy.js';
 import {
-  AUTO_MODEL_ID, callerCountry, catalogEntry, listModelsForCaller, loadCatalogDbModels, loadPlanPolicies, planPolicy, poolKey,
+  AUTO_MODEL_ID, callerCountry, catalogEntry, entryPools, listModelsForCaller, loadCatalogDbModels, loadPlanPolicies,
+  planPolicy, poolKey,
 } from '../catalog.js';
 import { isOwnedSession, listModelsForSession } from '../providers.js';
 import { sessionTiers } from '../capacity.js';
@@ -55,13 +56,14 @@ export async function v1ModelsPayload(c, session = {}) {
   const policy = planPolicy(env, plan, policies);
   const tiers = sessionTiers(env, session, policy);
   const payload = listModelsForCaller(env, { plan, country, tiers });
-  // Runtime health: the pools behind each model in the tiers listed for it that the caller can
-  // use (all listed tiers when it can use none), read from the HealthHub Durable Object (KV on
-  // the Node server or when the hub does not answer), plus pool budgets this isolate saw spent.
+  // Runtime health: the pools behind each model (one per provider key) in the tiers listed for
+  // it that the caller can use (all listed tiers when it can use none), read from the HealthHub
+  // Durable Object (KV on the Node server or when the hub does not answer), plus pool budgets
+  // this isolate saw spent. A model stays bright while any of its keys can serve.
   const poolKeysFor = model => {
     const entry = catalogEntry(model.id, env);
     if (!entry) return [];
-    const listed = entry.pools.filter(pool => model.tiers.includes(pool.tier));
+    const listed = entryPools(env, entry).filter(pool => model.tiers.includes(pool.tier));
     const usable = listed.filter(pool => tiers.includes(pool.tier));
     return (usable.length ? usable : listed).map(pool => poolKey(entry, pool));
   };

@@ -25,6 +25,28 @@ function failure(error, extra = {}) {
   return { ok: false, error, ...extra };
 }
 
+// FNV-1a: a stable 32-bit number for a caller id.
+function hashText(text) {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < text.length; index++) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash;
+}
+
+// Rotates a model's vault-key pools (src/catalog.js entryPools) by `turn`, leaving every other
+// pool where it is. Each caller starts on its own key, so callers spread over the keys while one
+// conversation stays on one org or project (its prompt cache); failover reaches the others.
+export function rotateKeyPools(verdicts, turn) {
+  const slots = verdicts.map((verdict, index) => verdict.pool.key_id ? index : -1).filter(index => index >= 0);
+  if (slots.length < 2) return verdicts;
+  const shift = turn % slots.length;
+  const rotated = [...verdicts];
+  slots.forEach((slot, position) => { rotated[slot] = verdicts[slots[(position + shift) % slots.length]]; });
+  return rotated;
+}
+
 /**
  * RoutingEngine - plan-, region-, size- and health-aware candidate selection.
  * Returns ordered (model, pool) candidates; the chat handler reserves capacity and
@@ -33,10 +55,13 @@ function failure(error, extra = {}) {
 export class RoutingEngine {
   constructor(healthTracker = globalHealthTracker) {
     this.healthTracker = healthTracker;
+    this.turn = 0;
   }
 
+  // `affinity` (the caller) picks which vault key of a model is tried first; without one the
+  // keys are taken in turn.
   route({ env = {}, requestedModel, needsTools = false, promptTokens, maxTokens, tiers = ['free'],
-    country = null, ownedCatalog = null, now = Date.now() }) {
+    country = null, ownedCatalog = null, affinity = null, now = Date.now() }) {
     if (ownedCatalog) return this.routeOwned({ requestedModel, needsTools, maxTokens, ownedCatalog });
     const resolved = resolveModelId(requestedModel, env);
     if (!resolved) return failure('model_not_found');
@@ -56,8 +81,9 @@ export class RoutingEngine {
     }
 
     const evaluated = [];
+    const turn = affinity ? hashText(String(affinity)) : this.turn++;
     for (const entry of entries) {
-      for (const verdict of poolVerdicts(env, entry, tiers, country)) {
+      for (const verdict of rotateKeyPools(poolVerdicts(env, entry, tiers, country), turn)) {
         const key = poolKey(entry, verdict.pool);
         const fit = fitMaxTokens(entry, verdict.pool, promptTokens, maxTokens);
         // Ruled out only by the pool's per-minute token budget, not by the context window.

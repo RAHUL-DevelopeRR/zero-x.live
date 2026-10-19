@@ -1,7 +1,7 @@
 import { rpc, databaseConfigured } from '../account-store.js';
 import { errorResponse, sendApiError } from '../auth-context.js';
 import { isOperator } from '../operator-auth.js';
-import { loadCatalogDbModels, offeredEntries, poolConfigured, poolKey } from '../catalog.js';
+import { entryPools, loadCatalogDbModels, offeredEntries, poolConfigured, poolKey } from '../catalog.js';
 import { globalHealthTracker } from '../provider-health.js';
 
 const counter = value => {
@@ -11,24 +11,37 @@ const counter = value => {
 
 // Contract §3.6 pools[]: every pool this deployment offers, with today's counters from
 // zerox_admin_overview, the shared budget from the catalog (null = no shared budget) and the
-// in-memory health of this isolate (keyed provider:upstream_model:tier).
+// in-memory health of this isolate (keyed provider:upstream_model:tier). A pool served by
+// provider key vault keys (§11.1) lists each key's health in `keys` and reports its best key's
+// health, since it serves while any key can; its budget is the sum of the keys' budgets.
 export function overviewPools(env, rows = [], tracker = globalHealthTracker) {
   const counters = new Map(rows.filter(row => row && typeof row === 'object').map(row => [`${row.model}#${row.tier}`, row]));
   const snapshot = tracker.getSnapshot();
+  const healthOf = key => {
+    const health = snapshot[key];
+    return { status: health?.status ?? 'HEALTHY', circuit_open: health?.circuit_open === true,
+      cooldown_remaining_ms: health?.cooldown_remaining_ms ?? 0, last_failure_kind: health?.last_failure_kind ?? null };
+  };
   const pools = [];
   for (const entry of offeredEntries(env)) {
+    const expanded = entryPools(env, entry);
     for (const pool of entry.pools) {
       const row = counters.get(`${entry.id}#${pool.tier}`);
       counters.delete(`${entry.id}#${pool.tier}`);
-      const health = snapshot[poolKey(entry, pool)];
+      const served = expanded.filter(item => item.tier === pool.tier);
+      const keys = served.map(item => ({ key_id: item.key_id ?? null, source: item.key_id ? 'vault' : 'env',
+        health: healthOf(poolKey(entry, item)) }));
+      const best = keys.reduce((left, right) => !left.health.circuit_open ? left : !right.health.circuit_open ? right
+        : right.health.cooldown_remaining_ms < left.health.cooldown_remaining_ms ? right : left);
+      const limits = served[0]?.shared_limits || pool.limits;
       pools.push({
-        model: entry.id, tier: pool.tier, provider: entry.provider, configured: poolConfigured(env, entry, pool),
+        model: entry.id, tier: pool.tier, provider: entry.provider,
+        configured: served.some(item => poolConfigured(env, entry, item)),
         requests_today: counter(row?.requests_today), tokens_today: counter(row?.tokens_today),
         requests_this_minute: counter(row?.requests_this_minute), tokens_this_minute: counter(row?.tokens_this_minute),
-        limits: pool.limits ? { rpm: pool.limits.rpm ?? null, rpd: pool.limits.rpd ?? null,
-          tpm: pool.limits.tpm ?? null, tpd: pool.limits.tpd ?? null } : null,
-        health: { status: health?.status ?? 'HEALTHY', circuit_open: health?.circuit_open === true,
-          cooldown_remaining_ms: health?.cooldown_remaining_ms ?? 0, last_failure_kind: health?.last_failure_kind ?? null },
+        limits: limits ? { rpm: limits.rpm ?? null, rpd: limits.rpd ?? null, tpm: limits.tpm ?? null, tpd: limits.tpd ?? null } : null,
+        health: best.health,
+        ...(served.some(item => item.key_id) ? { keys } : {}),
       });
     }
   }

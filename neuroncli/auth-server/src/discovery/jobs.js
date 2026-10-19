@@ -8,9 +8,10 @@
 // Jobs only ever create or refresh candidates. Approval, verification and promotion are
 // operator actions (src/routes/discovery.js); signing up to a provider stays manual.
 import { databaseConfigured, rpcRows } from '../account-store.js';
-import { loadCatalogDbModels, offeredEntries, poolKey } from '../catalog.js';
+import { entryPools, loadCatalogDbModels, offeredEntries, poolKey } from '../catalog.js';
 import { markPoolsUnavailable } from '../health-hub-client.js';
 import { globalHealthTracker } from '../provider-health.js';
+import { loadVaultKeys } from '../provider-keys.js';
 import { candidateRow, evaluateOffer } from './policy.js';
 import { LIST_SOURCES, MODELS_DEV_URL } from './sources.js';
 import { OMNIROUTE_CATALOG_URL, MIN_ENTRIES, omnirouteDiff, parseOmnirouteCatalog } from './omniroute.js';
@@ -71,14 +72,15 @@ const firstIds = list => list.slice(0, SUMMARY_IDS);
  * more than one) is treated as broken and marks nothing.
  */
 export async function markMissingCatalogModels(env, provider, ids) {
-  await loadCatalogDbModels(env);
+  await Promise.all([loadCatalogDbModels(env), loadVaultKeys(env)]);
   const entries = offeredEntries(env).filter(entry => entry.provider === provider);
   const missing = entries.filter(entry => !ids.has(entry.upstream_model));
   if (!missing.length) return { missing: [], marked: 0 };
   if (missing.length > 1 && missing.length > entries.length / 2) {
     return { missing: missing.map(entry => entry.id), marked: 0, skipped: 'list dropped most catalog models; not trusted' };
   }
-  const keys = missing.flatMap(entry => entry.pools.map(pool => poolKey(entry, pool)));
+  // Every pool of the entry, including one per vault key.
+  const keys = missing.flatMap(entry => entryPools(env, entry).map(pool => poolKey(entry, pool)));
   const marked = await markPoolsUnavailable(env, keys, globalHealthTracker);
   return { missing: missing.map(entry => entry.id), marked };
 }

@@ -4,8 +4,11 @@
  *
  * Isolates report real attempt outcomes to it (src/health-hub-client.js), and every 30 s an
  * alarm adds what real traffic cannot show, cheapest first:
- *   1. model lists (free): a model missing from its provider's list is gone (blurred) and a
- *      401/403 on the list means the pool's key cannot serve anyone;
+ *   1. model lists (free), read once per key (the environment key and every provider key vault
+ *      key, src/provider-keys.js): a model missing from the list is gone (blurred) and a
+ *      rejected key greys out only that key's pools. NVIDIA and OpenRouter publish their lists
+ *      without a key, so those are read once; OpenRouter keys are checked on its key endpoint,
+ *      and a dead NVIDIA key shows up from real traffic;
  *   2. provider status pages (free): Groq lists each model, Cloudflare lists Workers AI;
  *   3. a real one-line request, only for a pool whose cooldown has ended (half-open) and that
  *      no real request has touched for two minutes, within a small daily cap per model.
@@ -18,32 +21,54 @@
  */
 import { FailureKind, HealthState, ProviderHealthTracker } from './provider-health.js';
 import { publicStatus } from './health-share.js';
-import { loadCatalogDbModels, offeredEntries, poolConfigured, poolKey } from './catalog.js';
+import { entryPools, loadCatalogDbModels, offeredEntries, poolConfigured, poolKey, poolSecret } from './catalog.js';
 import { classifyUpstreamFailure, requestCompletion } from './providers.js';
+import { loadVaultKeys } from './provider-keys.js';
 
 export const ALARM_INTERVAL_MS = 30_000;
-const CHECK_INTERVAL_MS = 60_000; // each list or status page at most once a minute
-const CHECKS_PER_ALARM = 2;       // staggered: a minute's checks spread over two alarms
+const CHECK_INTERVAL_MS = 60_000; // each list, key or status page check at most once a minute
+const CHECKS_PER_ALARM = 4;       // staggered, oldest first: with many keys a check runs less often
 const IDLE_MS = 120_000;          // no real request for this long before a test request
 const PROBES_PER_ALARM = 2;
 const STATUS_HOLD_MS = 90_000;    // an outage on a status page holds until the next check
 const FETCH_TIMEOUT_MS = 8_000;
-// Test requests per model per UTC day: about 2.4% of Groq's 1,000 requests, under 4% of the
-// Workers AI daily neurons, a handful for Gemini's small free RPD. 0 = never.
+// Test requests per pool (model and key) per UTC day: about 2.4% of Groq's 1,000 requests, under
+// 4% of the Workers AI daily neurons, a handful for Gemini's small free RPD. 0 = never.
 export const PROBE_DAILY_CAPS = Object.freeze({ groq: 24, gemini: 6, cloudflare: 48, nvidia: 0, openrouter: 0 });
 
-// Free model lists. `keyVar` names the key the list is read with; only pools that use that key
-// are judged by it (a paid key's pool is not).
+// Free model lists. A `header` list is read with each key and judges only that key's free pools
+// (a paid key's pool is not checked); a public list (no header) is read once for all of them.
 const LIST_CHECKS = Object.freeze({
-  groq: { url: 'https://api.groq.com/openai/v1/models', keyVar: 'GROQ_API_KEY', header: 'bearer',
+  groq: { url: 'https://api.groq.com/openai/v1/models', header: 'bearer',
     ids: body => body?.data?.map(model => model.id) },
-  gemini: { url: 'https://generativelanguage.googleapis.com/v1beta/models?pageSize=200', keyVar: 'GEMINI_API_KEY',
+  gemini: { url: 'https://generativelanguage.googleapis.com/v1beta/models?pageSize=200',
     header: 'goog', ids: body => body?.models?.map(model => String(model.name).replace(/^models\//, '')) },
-  nvidia: { url: 'https://integrate.api.nvidia.com/v1/models', keyVar: 'NVIDIA_API_KEY', header: 'bearer',
+  // Public: an invalid key still gets the list (checked 2026-10-19).
+  nvidia: { url: 'https://integrate.api.nvidia.com/v1/models', header: null,
     ids: body => body?.data?.map(model => model.id) },
-  openrouter: { url: 'https://openrouter.ai/api/v1/models', keyVar: 'OPENROUTER_API_KEY', header: null,
+  openrouter: { url: 'https://openrouter.ai/api/v1/models', header: null,
     ids: body => body?.data?.map(model => model.id) },
 });
+
+// Free endpoints that tell a live key from a dead one where the model list is public.
+const KEY_CHECKS = Object.freeze({
+  openrouter: { url: 'https://openrouter.ai/api/v1/key', header: 'bearer' },
+});
+
+const authHeaders = (header, secret) => !secret ? {}
+  : header === 'bearer' ? { Authorization: `Bearer ${secret}` } : header === 'goog' ? { 'x-goog-api-key': secret } : {};
+
+// Free pools grouped by the key that serves them: 'env' or a vault key id.
+function byKey(pools) {
+  const groups = new Map();
+  for (const item of pools) {
+    if (!item.pool.key_id && !item.pool.key_var) continue;
+    const ref = item.pool.key_id || 'env';
+    if (!groups.has(ref)) groups.set(ref, []);
+    groups.get(ref).push(item);
+  }
+  return groups;
+}
 
 // Statuspage summaries: which component speaks for a catalog entry.
 const STATUS_CHECKS = Object.freeze({
@@ -149,6 +174,8 @@ export class HealthHub {
     await this.ready;
     const now = this.now();
     try {
+      // Vault keys (60 s cache in this object): each key's pools are checked like the env key's.
+      await loadVaultKeys(this.env);
       await this.runChecks(now);
     } catch (error) {
       console.warn('HealthHub checks failed', { message: error?.message });
@@ -158,11 +185,11 @@ export class HealthHub {
     }
   }
 
-  // Configured free pools of offered models, grouped by provider.
+  // Configured free pools of offered models (one per key), grouped by provider.
   pools() {
     const byProvider = new Map();
     for (const entry of offeredEntries(this.env)) {
-      for (const pool of entry.pools) {
+      for (const pool of entryPools(this.env, entry)) {
         if (pool.tier !== 'free' || !poolConfigured(this.env, entry, pool)) continue;
         if (!byProvider.has(entry.provider)) byProvider.set(entry.provider, []);
         byProvider.get(entry.provider).push({ entry, pool, key: poolKey(entry, pool) });
@@ -171,53 +198,93 @@ export class HealthHub {
     return byProvider;
   }
 
+  // Every check this deployment needs now: { id, type, provider, pools }. Keyed checks are
+  // named after the key (`list:groq:env`, `list:groq:<vault key id>`), never the key itself.
+  checkUnits(byProvider) {
+    const units = [];
+    for (const [provider, pools] of byProvider) {
+      const list = LIST_CHECKS[provider];
+      if (list?.header) {
+        for (const [ref, keyed] of byKey(pools)) units.push({ id: `list:${provider}:${ref}`, type: 'list', provider, pools: keyed });
+      } else if (list) units.push({ id: `list:${provider}`, type: 'list', provider, pools });
+      if (KEY_CHECKS[provider]) {
+        for (const [ref, keyed] of byKey(pools)) units.push({ id: `key:${provider}:${ref}`, type: 'key', provider, pools: keyed });
+      }
+      if (STATUS_CHECKS[provider]) units.push({ id: `status:${provider}`, type: 'status', provider, pools });
+    }
+    return units;
+  }
+
   async runChecks(now) {
     await loadCatalogDbModels(this.env);
     const byProvider = this.pools();
-    const due = [
-      ...Object.keys(LIST_CHECKS).filter(provider => byProvider.has(provider)).map(provider => `list:${provider}`),
-      ...Object.keys(STATUS_CHECKS).filter(provider => byProvider.has(provider)).map(provider => `status:${provider}`),
-    ].filter(id => now - (this.checks[id] || 0) >= CHECK_INTERVAL_MS)
-      .sort((a, b) => (this.checks[a] || 0) - (this.checks[b] || 0))
+    const units = this.checkUnits(byProvider);
+    // Forget the checks of keys disabled since.
+    const known = new Set(units.map(unit => unit.id));
+    for (const id of Object.keys(this.checks)) {
+      if (!known.has(id)) { delete this.checks[id]; this.dirty = true; }
+    }
+    const due = units.filter(unit => now - (this.checks[unit.id] || 0) >= CHECK_INTERVAL_MS)
+      .sort((a, b) => (this.checks[a.id] || 0) - (this.checks[b.id] || 0))
       .slice(0, CHECKS_PER_ALARM);
-    for (const id of due) {
-      const [type, provider] = id.split(':');
-      this.checks[id] = now;
+    for (const unit of due) {
+      this.checks[unit.id] = now;
       this.dirty = true;
-      if (type === 'list') await this.checkList(provider, byProvider.get(provider), now);
-      else await this.checkStatusPage(provider, byProvider.get(provider), now);
+      if (unit.type === 'list') await this.checkList(unit, now);
+      else if (unit.type === 'key') await this.checkKey(unit, now);
+      else await this.checkStatusPage(unit.provider, unit.pools, now);
     }
     await this.runProbes(byProvider, now);
   }
 
   async getJson(url, headers = {}) {
     const response = await this.fetch_(url, { headers, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
-    const body = response.ok ? await response.json().catch(() => null) : null;
-    return { status: response.status, body };
+    if (response.ok) return { status: response.status, body: await response.json().catch(() => null), text: '' };
+    const text = await response.text().catch(() => '');
+    return { status: response.status, body: null, text: text.slice(0, 16384) };
   }
 
-  async checkList(provider, pools, now) {
-    const check = LIST_CHECKS[provider];
-    const secret = check.keyVar ? this.env[check.keyVar] : null;
-    const headers = check.header === 'bearer' && secret ? { Authorization: `Bearer ${secret}` }
-      : check.header === 'goog' && secret ? { 'x-goog-api-key': secret } : {};
+  // 401/403, or a structured reason that the key cannot serve (Gemini answers an invalid key
+  // with 400 API_KEY_INVALID).
+  rejected(result) {
+    if (result.status === 401 || result.status === 403) return true;
+    return result.status >= 400 && classifyUpstreamFailure(result.status, result.text).kind === FailureKind.AUTH;
+  }
+
+  async checkList(unit, now) {
+    const check = LIST_CHECKS[unit.provider];
+    const secret = check.header ? poolSecret(this.env, unit.pools[0].pool) : null;
     let result;
     try {
-      result = await this.getJson(check.url, headers);
+      result = await this.getJson(check.url, authHeaders(check.header, secret));
     } catch {
       return; // the list endpoint being slow says nothing about the models
     }
-    const judged = pools.filter(({ pool }) => !check.keyVar || pool.key_var === check.keyVar);
-    if ((result.status === 401 || result.status === 403) && check.header) {
-      for (const { key } of judged) this.mark(key, now, { kind: FailureKind.AUTH });
+    if (check.header && this.rejected(result)) {
+      for (const { key } of unit.pools) this.mark(key, now, { kind: FailureKind.AUTH });
       return;
     }
     const ids = result.status === 200 ? check.ids(result.body) : null;
     if (!Array.isArray(ids) || !ids.length) return;
     const listed = new Set(ids);
-    for (const { entry, key } of judged) {
+    for (const { entry, key } of unit.pools) {
       if (!listed.has(entry.upstream_model)) this.mark(key, now, { kind: FailureKind.MODEL_UNAVAILABLE });
       else this.seen.set(key, now);
+    }
+  }
+
+  async checkKey(unit, now) {
+    const check = KEY_CHECKS[unit.provider];
+    let result;
+    try {
+      result = await this.getJson(check.url, authHeaders(check.header, poolSecret(this.env, unit.pools[0].pool)));
+    } catch {
+      return;
+    }
+    if (this.rejected(result)) {
+      for (const { key } of unit.pools) this.mark(key, now, { kind: FailureKind.AUTH });
+    } else if (result.status === 200) {
+      for (const { key } of unit.pools) this.seen.set(key, now);
     }
   }
 

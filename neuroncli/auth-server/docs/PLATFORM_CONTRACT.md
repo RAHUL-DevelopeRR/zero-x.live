@@ -220,6 +220,11 @@ All called through `rpc(env, name, args)` / `rpcRows(env, name, args)` in
 | `zerox_session_index_remove` | `p_token_hash` | `{removed boolean}` (single sign-out) |
 | `zerox_session_rearm` | `p_key, p_value, p_ttl` | `{rearmed boolean}` (rewrites a stored session only while it still exists) |
 | `zerox_admin_overview` | — | `{overview jsonb}` |
+| `zerox_provider_key_add` | `p_id uuid` (chosen by the gateway: the ciphertext is bound to it), `p_provider` (`groq`, `gemini`, `nvidia`, `openrouter`), `p_label`, `p_ciphertext`, `p_iv` (base64), `p_last4` | key metadata row (raises `too_many_keys` at 20 active keys per provider) |
+| `zerox_provider_keys_list` | — | metadata rows `{id, provider, label, last4, status, created_at, disabled_at, last_used_at}`, never ciphertext |
+| `zerox_provider_keys_active` | — | active rows with `ciphertext, iv` for the gateway to decrypt |
+| `zerox_provider_key_disable` | `p_id` | the key's metadata row (idempotent; no row = unknown id) |
+| `zerox_provider_key_touch` | `p_id` | `{touched boolean}` (`last_used_at`) |
 
 Legacy RPCs (`zerox_reserve_usage`, `zerox_settle_usage`, …) remain for rollback.
 
@@ -537,3 +542,39 @@ Protocol, limits, close codes and push rules: `docs/RELAY.md`. Endpoints `wss://
 | `zerox_push_list` | `p_user_id` | rows including `token` (server use only) |
 | `zerox_push_delete` | `p_user_id, p_id` | `{deleted boolean}` |
 | `zerox_push_delivered` | `p_sent uuid[], p_unregistered text[]` | `{sent, removed}` |
+
+## 11. v1.6 amendments (provider key vault, 2026-10-24)
+
+### 11.1 Provider key vault (operator)
+
+Free-tier provider keys are added and rotated on `https://dashboard.zero-x.live/admin/keys`
+instead of Worker secrets. Keys stay on the server: no endpoint returns one, and the Neuron CLI
+never sees them.
+
+| Endpoint | Body → response |
+|---|---|
+| `GET /admin/providers/keys` | → `{vault_configured, access_configured, providers:[{provider, active_keys, max_keys, env_key:{variable, last4, fallback, duplicate_of} or null}], keys:[{id, provider, label, last4, status, created_at, disabled_at, last_used_at, health:{pools, available, degraded, busy, blurred} or null}]}` |
+| `POST /admin/providers/keys` | `{provider, label, key}` → `201 {key}` (metadata). `400 invalid_request`, `409 duplicate_key`, `409 too_many_keys`, `422 invalid_provider_key` (the provider rejected it), `502 upstream_error` (the provider could not be reached; nothing saved) |
+| `DELETE /admin/providers/keys/{id}` | → `{key}` with `status:'disabled'` (idempotent), `404 not_found` |
+
+- **Auth.** `Authorization: Bearer GATEWAY_ADMIN_TOKEN`; when `CF_ACCESS_TEAM_DOMAIN` and
+  `CF_ACCESS_AUD` are set, also a valid Cloudflare Access JWT (`Cf-Access-Jwt-Assertion`, RS256,
+  audience, issuer and expiry checked) on the API and the page (`403 access_required`). `503
+  vault_not_configured` without `PROVIDER_KEYS_KEK` or a database.
+- **Validation.** One free request before saving: Groq and Gemini model lists with the key,
+  OpenRouter `GET /api/v1/key`; NVIDIA's list is public, so a 1-token completion. A rate-limited
+  answer counts as valid (the key authenticated).
+- **Storage.** AES-256-GCM under `PROVIDER_KEYS_KEK` (32 bytes, base64) with a random 96-bit IV
+  and `zerox_provider_keys:v1:<id>:<provider>` as additional data. Rotating the KEK means
+  re-adding the keys (old rows no longer open and are skipped).
+- **Pools.** Each isolate decrypts the active keys at most once a minute. Every key is its own
+  free pool, `<provider>:<upstream_model>:free#<key id>`, with its own health; the environment
+  key (`GROQ_API_KEY`, …) stays as the last pool unless the vault holds the same key. A caller
+  starts on one key per model (stable per caller) and fails over to the others. The shared
+  Postgres budget of a model is the sum of its keys' budgets; per-request sizing keeps one key's
+  `tpm`. Disabled keys leave every isolate within a minute.
+- **Health.** HealthHub reads the Groq and Gemini model lists once per key and OpenRouter's key
+  endpoint per key, so a rejected key greys out only its own pools; a model stays available while
+  any key can serve it. NVIDIA and OpenRouter model lists are public and read once.
+- **Admin overview (§3.6).** A pool served by vault keys also carries `keys:[{key_id, source, health}]`
+  (`source` is `vault` or `env`); its `health` is the best key's and `limits` the summed budget.

@@ -3,6 +3,7 @@
 // *_MODELS environment lists can disable entries but never add unknown ones.
 import { databaseConfigured, rpcRows } from './account-store.js';
 import { priceFromCost, publicPricing } from './pricing.js';
+import { vaultKeys, vaultKeySecret } from './provider-keys.js';
 
 // EU-27 plus Iceland, Liechtenstein and Norway.
 export const EEA_COUNTRIES = Object.freeze(['AT', 'BE', 'BG', 'HR', 'CY', 'CZ', 'DK', 'EE', 'FI', 'FR',
@@ -374,15 +375,76 @@ export function cloudflareBound(env) {
   return Boolean(env?.AI || (env?.CLOUDFLARE_ACCOUNT_ID && env?.CLOUDFLARE_API_TOKEN));
 }
 
+// ── Provider key vault pools (src/provider-keys.js) ──
+// Free pools whose key the operator can also add on the admin page. Every active vault key of
+// the provider becomes its own pool (`<pool key>#<key id>`) with its own health, so several Groq
+// orgs or Gemini projects rotate through the routing; the environment key stays as the last
+// (fallback) pool unless the vault holds the same key.
+export const VAULT_KEY_VARS = Object.freeze({
+  groq: 'GROQ_API_KEY', gemini: 'GEMINI_API_KEY', nvidia: 'NVIDIA_API_KEY', openrouter: 'OPENROUTER_API_KEY',
+});
+
+const POOL_SECRETS = new WeakMap(); // vault pool -> plaintext key (never a property)
+const expandedPools = new WeakMap(); // env -> { keys, byEntry }
+
+// The shared upstream budget of N keys is N times one key's (each org or project has its own).
+function scaledLimits(limits, count) {
+  const scale = value => value === null || value === undefined ? null : value * count;
+  return Object.freeze({ rpm: scale(limits.rpm), rpd: scale(limits.rpd), tpm: scale(limits.tpm), tpd: scale(limits.tpd) });
+}
+
+function expandPools(env, entry, keys) {
+  const vaultVar = VAULT_KEY_VARS[entry.provider];
+  const pools = [];
+  for (const pool of entry.pools) {
+    if (pool.tier !== 'free' || !vaultVar || pool.key_var !== vaultVar) {
+      pools.push(pool);
+      continue;
+    }
+    const own = keys.filter(key => key.provider === entry.provider);
+    const envKey = typeof env?.[pool.key_var] === 'string' ? env[pool.key_var].trim() : '';
+    const envPool = Boolean(envKey) && !own.some(key => vaultKeySecret(key) === envKey);
+    const count = own.length + (envPool ? 1 : 0);
+    const shared = count > 1 && pool.limits ? { shared_limits: scaledLimits(pool.limits, count) } : {};
+    for (const key of own) {
+      const keyed = Object.freeze({ ...pool, ...shared, key_var: null, key_id: key.id });
+      POOL_SECRETS.set(keyed, vaultKeySecret(key));
+      pools.push(keyed);
+    }
+    if (envPool) pools.push(count > 1 ? Object.freeze({ ...pool, ...shared }) : pool);
+    // No key at all: the pool stays listed so the model reports not_configured.
+    if (!count) pools.push(pool);
+  }
+  return Object.freeze(pools);
+}
+
+// The pools of an entry in this isolate: the catalog's, with vault keys expanded once loaded.
+export function entryPools(env, entry) {
+  const keys = vaultKeys(env);
+  if (!keys.length || !VAULT_KEY_VARS[entry.provider]) return entry.pools;
+  let cache = expandedPools.get(env);
+  if (!cache || cache.keys !== keys) expandedPools.set(env, cache = { keys, byEntry: new Map() });
+  if (!cache.byEntry.has(entry.id)) cache.byEntry.set(entry.id, expandPools(env, entry, keys));
+  return cache.byEntry.get(entry.id);
+}
+
+// The upstream API key of a pool (null for bindings and unconfigured pools).
+export function poolSecret(env, pool) {
+  if (pool?.key_id) return POOL_SECRETS.get(pool) ?? null;
+  const value = pool?.key_var ? env?.[pool.key_var] : null;
+  return typeof value === 'string' && value ? value : null;
+}
+
 export function poolConfigured(env, entry, pool) {
   if (pool.requires_flag && env?.[pool.requires_flag] !== 'true') return false;
   if (pool.binding === 'cloudflare') return cloudflareBound(env);
+  if (pool.key_id) return POOL_SECRETS.has(pool);
   const value = env?.[pool.key_var];
   return typeof value === 'string' && value.trim().length > 0;
 }
 
 export function poolKey(entry, pool) {
-  return `${entry.provider}:${entry.upstream_model}:${pool.tier}`;
+  return `${entry.provider}:${entry.upstream_model}:${pool.tier}${pool.key_id ? `#${pool.key_id}` : ''}`;
 }
 
 // Two-character ISO 3166 code (or Cloudflare's T1/XX), otherwise null.
@@ -421,7 +483,7 @@ export function callerCountry(request, env = {}) {
 
 // Classifies every pool of an entry for a caller: configured, in plan, region allowed.
 export function poolVerdicts(env, entry, tiers, country) {
-  return entry.pools.map(pool => ({
+  return entryPools(env, entry).map(pool => ({
     pool,
     configured: poolConfigured(env, entry, pool),
     inPlan: tiers.includes(pool.tier),

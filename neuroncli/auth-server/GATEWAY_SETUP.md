@@ -40,7 +40,9 @@ secret store, never in a committed file. `.dev.vars.example` lists them with com
 | `CLI_SESSION_TTL_HOURS` | var | `720` | CLI session lifetime (reported as `expires_at`). |
 | `SESSION_TTL_HOURS` | var | `24` | Lifetime of sessions created before hashed storage. |
 | `SESSION_ENCRYPTION_KEY` | **secret** | unset | ≥ 32 chars (`openssl rand -base64 32`); seals users' own OpenRouter keys (AES-GCM). Rotating it disconnects those keys. |
-| `GATEWAY_ADMIN_TOKEN` | **secret** | unset | ≥ 32 random chars; `/admin/overview`, `/admin/discovery/*`, `/v1/providers/health`, full `/health`. |
+| `GATEWAY_ADMIN_TOKEN` | **secret** | unset | ≥ 32 random chars; `/admin/overview`, `/admin/discovery/*`, `/admin/providers/keys`, `/v1/providers/health`, full `/health`. |
+| `PROVIDER_KEYS_KEK` | **secret** | unset | 32 random bytes, base64 (`openssl rand -base64 32`): encrypts the provider key vault (contract §11.1). Unset = no vault; the admin page answers 503. Losing or rotating it means re-adding the keys. |
+| `CF_ACCESS_TEAM_DOMAIN`, `CF_ACCESS_AUD` | var | unset | Cloudflare Access team domain (`<team>.cloudflareaccess.com`) and the audience tag of the Access application on `dashboard.zero-x.live/admin`. When both are set, the key vault page and API also require a valid Access JWT. |
 | `CSP_ENFORCE` | var | `false` | `true` sends `Content-Security-Policy` instead of `-Report-Only`. |
 | `PRICING_URL` | var | `https://zero-x.live/pricing` | `upgrade_url` in errors (https only). |
 
@@ -60,7 +62,7 @@ them in `zerox_plan_policy.razorpay_plan_id_inr/usd`.
 
 | Variable | Kind | Default | Purpose |
 |---|---|---|---|
-| `GROQ_API_KEY`, `GEMINI_API_KEY` | **secret** | — | Free pools (Groq free org; Gemini free tier, refused for EEA/GB/CH callers). |
+| `GROQ_API_KEY`, `GEMINI_API_KEY` | **secret** | unset | Free pools (Groq free org; Gemini free tier, refused for EEA/GB/CH callers). Optional once the provider key vault holds keys: each vault key is its own pool and these serve last. |
 | `GROQ_PAID_API_KEY`, `GEMINI_PAID_API_KEY` | **secret** | unset | Paid pools for Pro/Max (Groq Developer plan, billing-linked Gemini project). Unset = no paid pool. |
 | `CLOUDFLARE_PAID` | var | unset | `true` adds paid Workers AI pools (Workers Paid accounts only). |
 | `NVIDIA_HOSTED` + `NVIDIA_API_KEY` | var + **secret** | `false` | NVIDIA trial keys are evaluation-only: keep `false` in production. |
@@ -159,8 +161,19 @@ Work through these in order; nothing in this repository does them for you.
    AI Studio (or the `quotas` field of `Neuron upstream error detail` log lines) against
    `POOL_LIMITS` in `src/catalog.js`; the free Gemini budget is 5 rpm / 120K tpm per model after
    the project was rate limited below its published limits on 2026-10-16.
-5. **Operator secrets.** Set `GATEWAY_ADMIN_TOKEN` (≥ 32 random characters) and
-   `SESSION_ENCRYPTION_KEY` (`openssl rand -base64 32`) as GitHub Actions secrets.
+5. **Operator secrets.** Set `GATEWAY_ADMIN_TOKEN` (≥ 32 random characters),
+   `SESSION_ENCRYPTION_KEY` and `PROVIDER_KEYS_KEK` (each `openssl rand -base64 32`) as GitHub
+   Actions secrets. Keep a copy of `PROVIDER_KEYS_KEK`: without it the vault's keys cannot be read.
+   **Provider key vault:** apply `migrations/20261024000000_provider_keys.sql`. In Cloudflare Zero
+   Trust, add a self-hosted Access application for `dashboard.zero-x.live` with path `admin` (it
+   covers the page, its script and `/admin/providers/keys`) and a policy allowing only your
+   identity; put its audience tag in `CF_ACCESS_AUD` and the team domain in
+   `CF_ACCESS_TEAM_DOMAIN` (`wrangler.toml` `[vars]`). Then open
+   `https://dashboard.zero-x.live/admin/keys`, unlock it with `GATEWAY_ADMIN_TOKEN` and add keys;
+   each is checked with one free request first. Free-tier terms and quotas apply per provider
+   account; how many accounts to pool is the operator's call. Once the vault serves, the
+   `GROQ_API_KEY`/`GEMINI_API_KEY`/`NVIDIA_API_KEY`/`OPENROUTER_API_KEY` secrets are only the
+   fallback and may be removed.
 6. **Legal and support review (owner).** Confirm the refund windows in `refund.html` and remove
    its owner-review note before taking live payments; review `privacy.html` (processor list,
    free-tier training notice, grievance officer) and `terms.html` (liability cap, governing law,

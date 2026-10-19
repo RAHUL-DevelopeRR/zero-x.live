@@ -3,9 +3,10 @@ import { OpenAICompatibleAdapter } from './provider-adapter.js';
 import { toolCallSignature } from './provider-request.js';
 import { FailureKind, failureKindForStatus } from './provider-health.js';
 import {
-  AUTO_MODEL_ID, catalogEntries, catalogEntry, catalogWarnings, isHosted, isEnabled, listModelsForCaller, loadCatalogDbModels,
-  offeredEntries, poolConfigured, planPolicy,
+  AUTO_MODEL_ID, catalogEntries, catalogEntry, catalogWarnings, entryPools, isHosted, isEnabled, listModelsForCaller,
+  loadCatalogDbModels, offeredEntries, poolConfigured, planPolicy,
 } from './catalog.js';
+import { vaultKeys } from './provider-keys.js';
 import { errorEvent } from './errors.js';
 import { sessionTiers } from './capacity.js';
 import { estimatePromptTokens, estimateOutputTokens, publicPricing, utf8Bytes } from './pricing.js';
@@ -97,7 +98,8 @@ export function providerConfiguration(env, session = {}) {
     const entries = catalogEntries(env).filter(entry => entry.provider === provider);
     return {
       provider,
-      configured: adapter ? adapter.isConfigured(env, session) : false,
+      configured: adapter ? adapter.isConfigured(env, session) || vaultKeys(env).some(key => key.provider === provider) : false,
+      vault_keys: vaultKeys(env).filter(key => key.provider === provider).length,
       catalog_source: adapter ? adapter.catalogSource(env) : 'discovery',
       hosted: HOSTED_FLAGS[provider] ? env[HOSTED_FLAGS[provider]] === 'true' : entries.length > 0,
       catalog_models: entries.filter(entry => isHosted(env, entry) && isEnabled(env, entry)).map(entry => entry.id),
@@ -154,7 +156,7 @@ export function modelCatalog(env, session = {}) {
   const tiers = sessionTiers(env, session, planPolicy(env, session.plan));
   const catalog = [];
   for (const entry of offeredEntries(env)) {
-    const pools = entry.pools.filter(pool => tiers.includes(pool.tier) && poolConfigured(env, entry, pool));
+    const pools = entryPools(env, entry).filter(pool => tiers.includes(pool.tier) && poolConfigured(env, entry, pool));
     if (pools.length) catalog.push(legacyEntry(entry, pools));
   }
   return catalog;

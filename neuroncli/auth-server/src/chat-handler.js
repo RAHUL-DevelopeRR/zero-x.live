@@ -7,7 +7,8 @@ import { globalSignatureCache } from './provider-request.js';
 import { globalRouter } from './router.js';
 import { FailureKind, globalHealthTracker } from './provider-health.js';
 import { publishHealth } from './health-hub-client.js';
-import { callerCountry, loadCatalogDbModels, loadPlanPolicies, planPolicy, resolveModelId } from './catalog.js';
+import { callerCountry, loadCatalogDbModels, loadPlanPolicies, planPolicy, poolSecret, resolveModelId } from './catalog.js';
+import { touchVaultKey } from './provider-keys.js';
 import { billableUsage, estimateOutputTokens, estimatePromptTokens, utf8Bytes } from './pricing.js';
 import { exhaustedBudget, notePoolExhausted, notePoolReserved } from './pool-budget.js';
 import {
@@ -158,6 +159,10 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
     headers['x-neuron-plan'] = policy.id;
     const promptTokens = estimatePromptTokens(body.messages, body.tools);
     const requestedMax = body.max_completion_tokens ?? body.max_tokens ?? DEFAULT_MAX_TOKENS;
+    // phase ('first_byte' | 'idle' | 'response') tells liveness timeouts from slow generations;
+    // caller lets the tracker require timeouts from several callers before parking a shared pool,
+    // and keeps one caller on the same vault key of a model (router.js rotateKeyPools).
+    const caller = session.user_id || String(token).slice(0, 16);
 
     let route;
     try {
@@ -170,6 +175,7 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
         tiers: sessionTiers(env, session, policy),
         country: callerCountry(c.req.raw, env),
         ownedCatalog: isOwnedSession(session) ? await ownedCatalog(env, session) : null,
+        affinity: caller,
       });
     } catch (error) {
       console.error('Neuron routing failed', { name: error?.name, request_id: requestId });
@@ -238,9 +244,6 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
         await background(settleKv({ actualTokens: billed.total_tokens, refundRequest: false }));
       }
     };
-    // phase ('first_byte' | 'idle' | 'response') tells liveness timeouts from slow generations;
-    // caller lets the tracker require timeouts from several callers before parking a shared pool.
-    const caller = session.user_id || String(token).slice(0, 16);
     // Every outcome is also published for the whole gateway: to the HealthHub Durable Object,
     // or through KV without it (health-hub-client.js). A client abort says nothing about the pool.
     const recordFailure = (key, kind, retryAfterSeconds, latencyMs, phase = null) => {
@@ -249,10 +252,13 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
       const record = healthTracker.recordFailure(key, outcome);
       if (record && kind !== FailureKind.ABORTED) publishHealth(c, env, key, record, outcome);
     };
-    const recordSuccess = (key, latencyMs) => {
+    const recordSuccess = (key, latencyMs, pool) => {
       if (!key) return;
       healthTracker.recordSuccess(key, { latencyMs });
       publishHealth(c, env, key, healthTracker.getRecord(key), { success: true, latencyMs });
+      // Vault keys show when they last served (written at most every 10 minutes per isolate).
+      const touch = pool?.key_id ? touchVaultKey(env, pool.key_id) : null;
+      if (touch) background(touch);
     };
 
     const timeouts = streamTimeouts(env);
@@ -280,7 +286,7 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
       const startedAt = Date.now();
       const log = { provider: entry.provider, model: entry.upstream_model, tier: pool.tier, request_id: requestId };
       const { request, onToolSignature } = signatureHooks(entry);
-      const secrets = [pool.key_var ? env[pool.key_var] : null, session.openrouter_key];
+      const secrets = [poolSecret(env, pool), session.openrouter_key];
       let started;
       try {
         started = await startCompletion(env, session, entry, pool, payload, { clientSignal, timeouts, request });
@@ -312,12 +318,12 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
           console.error('Neuron upstream returned an invalid completion', log);
           return { ok: false, kind: FailureKind.SERVER, latencyMs: started.latencyMs, errorCode: 'upstream_error' };
         }
-        recordSuccess(key, started.latencyMs);
+        recordSuccess(key, started.latencyMs, pool);
         await finishAttempt(info, { status: 'ok', usage: completion.usage, outputBytes: utf8Bytes(completion.choices) });
         return { ok: true, response: new Response(JSON.stringify(completion), {
           status: 200, headers: { ...responseHeaders, 'Content-Type': 'application/json' } }) };
       }
-      recordSuccess(key, started.latencyMs);
+      recordSuccess(key, started.latencyMs, pool);
       const stream = createCompletionStream({
         ...started.stream, model: entry.id, controller: started.controller, clientSignal, timeouts, requestId, env,
         onToolSignature,

@@ -30,6 +30,9 @@ import { registerChangelogRoutes } from './routes/changelog.js';
 import { registerPushRoutes } from './routes/push.js';
 import { registerRelayRoutes } from './routes/relay.js';
 import { runDiscoveryTick } from './discovery/jobs.js';
+import { registerProviderKeyRoutes } from './routes/provider-keys.js';
+import { loadVaultKeys, vaultConfigured } from './provider-keys.js';
+import { accessConfigured, passedAccess } from './access-auth.js';
 // Durable Object classes are exported from the Worker entry (wrangler.toml [[durable_objects]]).
 export { HealthHub } from './health-hub.js';
 export { RelayRoom } from './relay.js';
@@ -68,6 +71,28 @@ const CONTENT_SECURITY_POLICY = [
 // Public, cacheable API answers (everything else under /api/ is no-store).
 const PUBLIC_API_PATHS = ['/api/plans', '/api/changelog.json'];
 
+// The provider key vault page (dashboard.zero-x.live/admin/keys, src/routes/provider-keys.js):
+// served from neuroncli/admin/keys/ under /admin/ only, so one Cloudflare Access application on
+// dashboard.zero-x.live/admin covers the page, its script and the key API.
+const ADMIN_PAGE_FILES = Object.freeze({
+  '/admin/keys': '/neuroncli/admin/keys/index.html',
+  '/admin/keys/': '/neuroncli/admin/keys/index.html',
+  '/admin/keys/keys.js': '/neuroncli/admin/keys/keys.js',
+  '/admin/keys/keys.css': '/neuroncli/admin/keys/keys.css',
+});
+// No inline script or style, nothing from another origin except the site fonts.
+const ADMIN_CONTENT_SECURITY_POLICY = [
+  "default-src 'none'",
+  "script-src 'self'",
+  "style-src 'self'",
+  "font-src 'self' https://cdn.fontshare.com https://fonts.gstatic.com",
+  "img-src 'self'",
+  "connect-src 'self'",
+  "form-action 'none'",
+  "frame-ancestors 'none'",
+  "base-uri 'none'",
+].join('; ');
+
 app.use('*', async (c, next) => {
   const url = new URL(c.req.url);
   const path = routePath(url.pathname);
@@ -83,8 +108,11 @@ app.use('*', async (c, next) => {
   // rest of the site stays report-only until CSP_ENFORCE=true.
   const signInPage = url.pathname.startsWith('/neuroncli/') ||
     ((url.hostname === 'neuron.zero-x.live' || isLoopbackHost(url.host)) && url.pathname.startsWith('/device'));
-  const enforceCsp = c.env?.CSP_ENFORCE === 'true' || signInPage;
-  c.header(enforceCsp ? 'Content-Security-Policy' : 'Content-Security-Policy-Report-Only', CONTENT_SECURITY_POLICY);
+  const adminPage = Object.hasOwn(ADMIN_PAGE_FILES, url.pathname);
+  const enforceCsp = c.env?.CSP_ENFORCE === 'true' || signInPage || adminPage;
+  c.header(enforceCsp ? 'Content-Security-Policy' : 'Content-Security-Policy-Report-Only',
+    adminPage ? ADMIN_CONTENT_SECURITY_POLICY : CONTENT_SECURITY_POLICY);
+  if (adminPage) c.header('Referrer-Policy', 'no-referrer');
   if (path.startsWith('/auth/') || signInPage) {
     c.header('Cache-Control', 'no-store');
     c.header('Referrer-Policy', url.pathname.startsWith('/neuroncli/login/') ? 'origin' : 'no-referrer');
@@ -130,6 +158,9 @@ app.use('*', async (c, next) => {
     return c.redirect(url.toString(), 308);
   }
 
+  // The admin page's files are only reachable through /admin/keys on the dashboard host.
+  if (path.startsWith('/neuroncli/admin/')) return (await notFoundPage(c)) || c.text('Not Found', 404);
+
   if (c.req.method === 'GET' || c.req.method === 'HEAD') {
     if (hostname === 'dashboard.zero-x.live' && path === '/robots.txt')
       return c.text('User-agent: *\nDisallow: /\n');
@@ -144,6 +175,11 @@ app.use('*', async (c, next) => {
     if (c.env?.ASSETS && (path === '/neuroncli/device/' ||
         ((hostname === 'neuron.zero-x.live' || loopback) && (path === '/device' || path === '/device/')))) {
       return c.env.ASSETS.fetch(new Request(new URL('/neuroncli/device/index.html', url), c.req.raw));
+    }
+    // Provider key vault page: dashboard host (or the local Node server), behind Cloudflare Access.
+    if (c.env?.ASSETS && Object.hasOwn(ADMIN_PAGE_FILES, path) && (hostname === 'dashboard.zero-x.live' || loopback)) {
+      if (!await passedAccess(c)) return c.text('Cloudflare Access authentication required.', 403);
+      return c.env.ASSETS.fetch(new Request(new URL(ADMIN_PAGE_FILES[path], url), c.req.raw));
     }
     let target = null;
     let fragment = '';
@@ -228,6 +264,13 @@ app.use('*', async (c, next) => {
   if (path.startsWith('/relay/') && c.req.header('Upgrade')?.toLowerCase() === 'websocket') return next();
   if (path.startsWith('/auth/') || path.startsWith('/api/') || path.startsWith('/relay/')) return identityCors(c, next);
   if (path.startsWith('/v1/') || path === '/health' || path === '/ready') return openCors(c, next);
+  return next();
+});
+
+// Provider key vault keys become pools in src/catalog.js once loaded into this isolate (60 s
+// cache; a slow database delays a request by at most 3 s, then the previous keys serve).
+app.use('*', async (c, next) => {
+  if (vaultConfigured(c.env) && isApiRoute(routePath(new URL(c.req.url).pathname))) await loadVaultKeys(c.env);
   return next();
 });
 
@@ -456,6 +499,8 @@ api.get('/health', async (c) => {
     billing_configured: razorpayConfigured(c.env),
     webhook_configured: webhookConfigured(c.env),
     session_encryption: sessionEncryptionConfigured(c.env),
+    provider_key_vault: vaultConfigured(c.env),
+    admin_access_configured: accessConfigured(c.env),
     csp_enforced: c.env.CSP_ENFORCE === 'true',
   });
 });
@@ -895,6 +940,7 @@ registerReleaseRoutes(api);
 registerChangelogRoutes(api);
 registerPushRoutes(api);
 registerRelayRoutes(api);
+registerProviderKeyRoutes(api);
 
 app.route(API_MOUNT, api);
 app.route('/', api);

@@ -44,6 +44,9 @@ const RAZORPAY_WEBHOOK_SECRET = random();
 const ADMIN = random(36);
 const FAKE_KEYS = { GROQ_API_KEY: 'e2e-groq-free', GEMINI_API_KEY: 'e2e-gemini-free',
   GROQ_PAID_API_KEY: 'e2e-groq-paid', GEMINI_PAID_API_KEY: 'e2e-gemini-paid' };
+// Provider key vault keys (fake even with --live: the shim sends e2e- keys to the fake upstream).
+const VAULT_KEY = 'e2e-groq-vault-key-0001';
+const REJECTED_VAULT_KEY = 'e2e-groq-rejected-0001';
 
 // Real free-pool keys for --live, parsed from .dev.vars and never printed.
 function liveKeys() {
@@ -75,6 +78,14 @@ const upstreamServer = createServer(async (request, response) => {
   const provider = request.url.startsWith('/openai/v1/') ? 'groq' : request.url.startsWith('/v1beta/openai/') ? 'gemini' : null;
   upstream.calls.push({ provider, key: String(request.headers.authorization || '').replace(/^Bearer /, ''), model: body.model,
     stream: body.stream === true, tools: Array.isArray(body.tools) ? body.tools.length : 0, streamOptions: body.stream_options ?? null });
+  // Groq's model list: how the provider key vault checks a key before saving it.
+  if (request.method === 'GET' && request.url === '/openai/v1/models') {
+    const rejected = request.headers.authorization === `Bearer ${REJECTED_VAULT_KEY}`;
+    response.writeHead(rejected ? 401 : 200, { 'Content-Type': 'application/json' });
+    response.end(JSON.stringify(rejected ? { error: { message: 'Invalid API Key', code: 'invalid_api_key' } }
+      : { data: [{ id: 'openai/gpt-oss-120b' }, { id: 'openai/gpt-oss-20b' }, { id: 'qwen/qwen3.8-27b' }] }));
+    return;
+  }
   if (!provider || !request.url.endsWith('/chat/completions')) { response.writeHead(404).end(); return; }
   if (JSON.stringify(body.messages || []).includes('E2E_TOOL_USE_FAILED')) {
     // Groq's answer when the generated tool call does not match the schema (after generation).
@@ -277,7 +288,7 @@ try {
     PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, TEMP: process.env.TEMP, TMP: process.env.TMP,
     AUTH_HOST: '127.0.0.1', AUTH_PORT: '0', DATABASE_DRIVER: 'pglite', PGLITE_DATA_DIR: dataDir,
     DEV_AUTH_ENABLED: 'true', ALLOW_UNKNOWN_COUNTRY: 'true', GATEWAY_ADMIN_TOKEN: ADMIN,
-    SESSION_ENCRYPTION_KEY: random(36), RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET, RAZORPAY_WEBHOOK_SECRET, RAZORPAY_API_BASE: razorpayBase,
+    SESSION_ENCRYPTION_KEY: random(36), PROVIDER_KEYS_KEK: randomBytes(32).toString('base64'), RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET, RAZORPAY_WEBHOOK_SECRET, RAZORPAY_API_BASE: razorpayBase,
     ...upstreamKeys, E2E_UPSTREAM_BASE: upstreamBase, E2E_LIVE: LIVE ? 'true' : 'false', E2E_REAL_CALLS_FILE: realCallsFile(),
     ...(LIVE ? { ROUTER_MAX_ATTEMPTS: '2' } : {}),
   };
@@ -677,6 +688,44 @@ try {
   assert.equal((await call('/health', { token: ADMIN })).body.database_configured, true);
   step('GET /admin/overview', `users ${overview.body.users.total}, active subscriptions 1, MRR $10, ${overview.body.pools.length} pools with limits and health`);
 
+  // ── 14b. Provider key vault: a key added on the admin page serves first; disabling it falls back ──
+  const keysPage = await call('/admin/keys');
+  assert.equal(keysPage.status, 200);
+  assert.match(keysPage.headers.get('content-security-policy'), /script-src 'self';/);
+  assert.ok(!keysPage.headers.get('content-security-policy').includes('unsafe-inline'));
+  assert.equal(keysPage.headers.get('content-security-policy-report-only'), null, 'enforced');
+  assert.ok(keysPage.text.includes('src="/admin/keys/keys.js"') && !/<script>/.test(keysPage.text));
+  assert.equal((await call('/admin/keys/keys.js')).status, 200);
+  assert.equal((await call('/neuroncli/admin/keys/index.html')).status, 404, 'only reachable as /admin/keys');
+  expectError(await call('/admin/providers/keys'), 401, 'invalid_session');
+  expectError(await call('/admin/providers/keys', { method: 'POST', token: ADMIN,
+    body: { provider: 'groq', label: 'revoked org', key: REJECTED_VAULT_KEY } }), 422, 'invalid_provider_key');
+  const vaultAdd = await call('/admin/providers/keys', { method: 'POST', token: ADMIN,
+    body: { provider: 'groq', label: 'groq-org-2', key: VAULT_KEY } });
+  assert.equal(vaultAdd.status, 201, redact(vaultAdd.text));
+  assert.ok(!vaultAdd.text.includes(VAULT_KEY), 'the key is never echoed');
+  const pong = { model: 'groq/openai/gpt-oss-20b', messages: [{ role: 'user', content: 'Reply with the single word pong.' }], max_tokens: 64 };
+  const vaultChat = await call('/v1/chat/completions', { method: 'POST', token: apiKey, body: pong });
+  assert.equal(vaultChat.status, 200, redact(vaultChat.text).slice(0, 400));
+  assert.equal(upstream.calls.at(-1).key, VAULT_KEY, 'the vault key serves before the Worker secret');
+  const vaultList = await call('/admin/providers/keys', { token: ADMIN });
+  assert.equal(vaultList.status, 200);
+  assert.ok(!vaultList.text.includes(VAULT_KEY));
+  const listedVaultKey = vaultList.body.keys.find(key => key.id === vaultAdd.body.key.id);
+  assert.equal(listedVaultKey.last4, '0001');
+  assert.ok(listedVaultKey.last_used_at, 'last_used_at is recorded');
+  const vaultPools = (await call('/admin/overview', { token: ADMIN })).body.pools.find(pool => pool.model === pong.model && pool.tier === 'free');
+  assert.deepEqual(vaultPools.keys.map(key => key.source), ['vault', 'env']);
+  const vaultOff = await call(`/admin/providers/keys/${vaultAdd.body.key.id}`, { method: 'DELETE', token: ADMIN });
+  assert.equal(vaultOff.status, 200);
+  assert.equal(vaultOff.body.key.status, 'disabled');
+  if (!LIVE) {
+    const fallbackChat = await call('/v1/chat/completions', { method: 'POST', token: apiKey, body: pong });
+    assert.equal(fallbackChat.status, 200, redact(fallbackChat.text).slice(0, 400));
+    assert.equal(upstream.calls.at(-1).key, 'e2e-groq-free', 'the Worker secret is the fallback');
+  }
+  step('provider key vault', `/admin/keys served with an enforced CSP and no inline script; rejected key -> 422; ••••0001 added, served ${pong.model} first and shows last_used_at; disabled -> the Worker secret serves`);
+
   if (LIVE) {
     // One more real call: a streamed Groq tool call, to check its deltas too.
     const fresh = await call('/auth/cli/session', { method: 'POST', token: dev, body: {} });
@@ -790,4 +839,5 @@ if (failed) {
 await writeFile(join(tmpdir(), `zerox-e2e-${LIVE ? 'live' : 'offline'}-steps.json`), JSON.stringify(steps, null, 2)).catch(() => {});
 console.log(`PASS: end-to-end ${LIVE ? '(live Groq/Gemini free pools)' : '(offline)'}: ${steps.length} steps — dev sign-in, CLI session, plan-aware ` +
   'models, streamed tool calls, usage, API keys, daily cap, pool-kept model failures, Pro checkout (reused across tabs), charged webhook once, ' +
-  'duplicate subscription cancelled and refunded, paid-pool credits, top-up, refund clawback, cancel, revoke-all, admin overview, static site and CSP');
+  'duplicate subscription cancelled and refunded, paid-pool credits, top-up, refund clawback, cancel, revoke-all, admin overview, provider key vault, ' +
+  'static site and CSP');
