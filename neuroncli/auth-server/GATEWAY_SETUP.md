@@ -164,7 +164,8 @@ Work through these in order; nothing in this repository does them for you.
 5. **Operator secrets.** Set `GATEWAY_ADMIN_TOKEN` (≥ 32 random characters),
    `SESSION_ENCRYPTION_KEY` and `PROVIDER_KEYS_KEK` (each `openssl rand -base64 32`) as GitHub
    Actions secrets. Keep a copy of `PROVIDER_KEYS_KEK`: without it the vault's keys cannot be read.
-   **Provider key vault:** apply `migrations/20261024000000_provider_keys.sql`. In Cloudflare Zero
+   **Provider key vault:** apply `migrations/20261024000000_provider_keys.sql` and
+   `migrations/20261024000100_provider_key_budgets.sql` (per-key budgets) before deploying. In Cloudflare Zero
    Trust, add a self-hosted Access application for `dashboard.zero-x.live` with path `admin` (it
    covers the page, its script and `/admin/providers/keys`) and a policy allowing only your
    identity; put its audience tag in `CF_ACCESS_AUD` and the team domain in

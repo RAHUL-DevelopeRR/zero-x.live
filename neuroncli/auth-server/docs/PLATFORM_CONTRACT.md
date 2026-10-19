@@ -175,7 +175,8 @@ credential (never an `nzx_` key). Session tokens are stored hashed (SHA-256) in 
 
 `GET /admin/overview` (Bearer `GATEWAY_ADMIN_TOKEN`) → `{users:{total, active_today,
 by_plan}, revenue:{active_subscriptions, mrr_usd_estimate}, usage_today:{requests, tokens,
-cost_usd}, pools:[{model, tier, requests_today, tokens_today, limits, health}]}`
+cost_usd}, pools:[{model, tier, requests_today, tokens_today, limits, health, keys?}]}` (`keys`: vault
+keys, section 8.4)
 
 ### 3.7 Existing endpoints kept
 
@@ -191,8 +192,8 @@ All called through `rpc(env, name, args)` / `rpcRows(env, name, args)` in
 
 | RPC | args | returns (row) |
 |-----|------|---------------|
-| `zerox_reserve_v2` | `p_user_id uuid, p_request_id text, p_model text, p_tier text, p_tokens bigint, p_cost_microusd bigint, p_pool jsonb` (`{rpm,rpd,tpm,tpd}` or null) | `{status, reservation_id, plan, remaining_requests, remaining_tokens, credit_balance_microusd, resets_at, retry_after_seconds}`; status ∈ `ok, no_account, suspended, upgrade_required, user_daily_requests, user_daily_tokens, user_rpm, user_concurrency, insufficient_credits, pool_exhausted` |
-| `zerox_settle_v2` | `p_reservation_id uuid, p_prompt_tokens bigint, p_completion_tokens bigint, p_cost_microusd bigint, p_status text ('ok','error','refunded','failed_upstream'), p_latency_ms int, p_provider text, p_upstream_model text, p_error_code text` | `{status:'settled'|'already_settled'|'not_found', credit_balance_microusd}` |
+| `zerox_reserve_v2` | `p_user_id uuid, p_request_id text, p_model text, p_tier text, p_tokens bigint, p_cost_microusd bigint, p_pool jsonb` (`{rpm,rpd,tpm,tpd}` or null), `p_pool_key text = null` (a provider key vault pool's key, 1-300 characters: `p_pool` is then that key's budget, counted in its own buckets; null = the model's default bucket, §11.1) | `{status, reservation_id, plan, remaining_requests, remaining_tokens, credit_balance_microusd, resets_at, retry_after_seconds}`; status ∈ `ok, no_account, suspended, upgrade_required, user_daily_requests, user_daily_tokens, user_rpm, user_concurrency, insufficient_credits, pool_exhausted` |
+| `zerox_settle_v2` | `p_reservation_id uuid, p_prompt_tokens bigint, p_completion_tokens bigint, p_cost_microusd bigint, p_status text ('ok','error','refunded','failed_upstream'), p_latency_ms int, p_provider text, p_upstream_model text, p_error_code text` | `{status:'settled'|'already_settled'|'not_found', credit_balance_microusd}`; reconciles the pool bucket stored on the reservation (model, tier, pool key) |
 | `zerox_release_stale_reservations` | — | `{released}` |
 | `zerox_plan_policies_v2` | — | one row per plan: `plan, name, price_usd, price_usd_cents, price_inr_paise, daily_requests, daily_tokens, rpm_limit, concurrency_limit, allowed_tiers text[], monthly_credit_microusd, features, sort, public, highlighted, razorpay_plan_id_inr, razorpay_plan_id_usd` |
 | `zerox_account_overview` | `p_user_id` | account + policy + credits + subscription + today usage (jsonb columns) |
@@ -219,7 +220,7 @@ All called through `rpc(env, name, args)` / `rpcRows(env, name, args)` in
 | `zerox_session_index_add/list/revoke_all` | `p_user_id, p_token_hash, p_expires_at` | session index for revoke-all; `revoke_all` returns one `{token_hash}` row per removed entry |
 | `zerox_session_index_remove` | `p_token_hash` | `{removed boolean}` (single sign-out) |
 | `zerox_session_rearm` | `p_key, p_value, p_ttl` | `{rearmed boolean}` (rewrites a stored session only while it still exists) |
-| `zerox_admin_overview` | — | `{overview jsonb}` |
+| `zerox_admin_overview` | — | `{overview jsonb}`; `overview.pools` has one row per model and tier, summed over its pool keys, with `keys:[{pool_key (null = default bucket), requests_today, tokens_today, requests_this_minute, tokens_this_minute}]` |
 | `zerox_provider_key_add` | `p_id uuid` (chosen by the gateway: the ciphertext is bound to it), `p_provider` (`groq`, `gemini`, `nvidia`, `openrouter`), `p_label`, `p_ciphertext`, `p_iv` (base64), `p_last4` | key metadata row (raises `too_many_keys` at 20 active keys per provider) |
 | `zerox_provider_keys_list` | — | metadata rows `{id, provider, label, last4, status, created_at, disabled_at, last_used_at}`, never ciphertext |
 | `zerox_provider_keys_active` | — | active rows with `ciphertext, iv` for the gateway to decrypt |
@@ -570,11 +571,23 @@ never sees them.
 - **Pools.** Each isolate decrypts the active keys at most once a minute. Every key is its own
   free pool, `<provider>:<upstream_model>:free#<key id>`, with its own health; the environment
   key (`GROQ_API_KEY`, …) stays as the last pool unless the vault holds the same key. A caller
-  starts on one key per model (stable per caller) and fails over to the others. The shared
-  Postgres budget of a model is the sum of its keys' budgets; per-request sizing keeps one key's
-  `tpm`. Disabled keys leave every isolate within a minute.
+  starts on one key per model (stable per caller) and fails over to the others. Disabled keys
+  leave every isolate within a minute.
+- **Budgets.** Each key has its own shared Postgres budget (its org's or project's free limits)
+  in its own `zerox_pool_usage` buckets: the gateway reserves with `p_pool_key` = the pool key and
+  `p_pool` = one key's limits, and the reservation keeps the pool key so settlement reconciles the
+  same bucket. A key whose budget is spent returns `pool_exhausted` and is skipped without an
+  upstream call or an attempt (`ROUTER_MAX_ATTEMPTS`), like any exhausted pool, while the model's
+  other keys serve; once every key is spent the request gets `capacity_exhausted`. The
+  environment key (and every pool outside the vault) keeps the model's default bucket, without
+  `p_pool_key`. Pool keys contain key ids, so they stay out of usage events, `zerox_usage_daily`,
+  `zerox_usage_by_model` and every user-facing response, which remain per model. Migration
+  `20261024000100_provider_key_budgets.sql`.
 - **Health.** HealthHub reads the Groq and Gemini model lists once per key and OpenRouter's key
   endpoint per key, so a rejected key greys out only its own pools; a model stays available while
   any key can serve it. NVIDIA and OpenRouter model lists are public and read once.
-- **Admin overview (§3.6).** A pool served by vault keys also carries `keys:[{key_id, source, health}]`
-  (`source` is `vault` or `env`); its `health` is the best key's and `limits` the summed budget.
+- **Admin overview (§3.6).** A pool served by vault keys also carries `keys:[{key_id, source,
+  requests_today, tokens_today, requests_this_minute, tokens_this_minute, limits, health}]`
+  (`source` is `vault` or `env`; counters and `limits` are the key's own). The pool's counters
+  are the sums over its keys, its `limits` the summed budget and its `health` the best key's. A
+  key disabled after serving today stays listed with its counters and `limits`/`health` null.

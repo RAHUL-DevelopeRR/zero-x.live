@@ -3,6 +3,7 @@
 // shared pool budget atomically in Postgres (zerox_reserve_v2); anonymous/dev sessions
 // without a database keep the session-KV daily allocation.
 import { databaseConfigured, rpc } from './account-store.js';
+import { poolKey } from './catalog.js';
 import { billableUsage, costMicrousd, estimateOutputTokens } from './pricing.js';
 
 export function usesLedger(env, session) {
@@ -55,10 +56,12 @@ export function reservedTokens(promptTokens, maxTokens) {
   return promptTokens + Math.min(maxTokens, RESERVED_OUTPUT_TOKENS);
 }
 
-// The shared budget is counted per model and tier in Postgres, so a model served by several
-// vault keys reserves against all of them together (pool.shared_limits, src/catalog.js).
+// The shared budget is counted per model and tier in Postgres. A provider key vault pool
+// (src/catalog.js entryPools) reserves against its own key's bucket and budget (p_pool_key), so a
+// key that spent its org or project budget returns pool_exhausted and the chat handler moves on
+// to the model's next key. Other pools omit p_pool_key and share the model's default bucket.
 export function reservationArgs({ session, requestId, entry, pool, promptTokens, maxTokens }) {
-  const limits = pool.shared_limits || pool.limits;
+  const { limits } = pool;
   return {
     p_user_id: session.user_id,
     p_request_id: requestId,
@@ -68,6 +71,7 @@ export function reservationArgs({ session, requestId, entry, pool, promptTokens,
     p_cost_microusd: pool.tier === 'paid' ? costMicrousd(pool.price, promptTokens, maxTokens) : 0,
     p_pool: limits ? { rpm: limits.rpm ?? null, rpd: limits.rpd ?? null,
       tpm: limits.tpm ?? null, tpd: limits.tpd ?? null } : null,
+    ...(pool.key_id ? { p_pool_key: poolKey(entry, pool) } : {}),
   };
 }
 
@@ -90,7 +94,8 @@ export function reserveError(row) {
 }
 
 // zerox_settle_v2 arguments. Refunds bill nothing; otherwise real usage (Gemini: from
-// total_tokens) or, when the upstream sent none, the byte-based estimate.
+// total_tokens) or, when the upstream sent none, the byte-based estimate. The pool bucket
+// (model, tier and vault key) is the one stored on the reservation.
 export function settlementArgs({ reservationId, entry, pool, usage, promptEstimate = 0, outputBytes = 0,
   status, latencyMs = 0, errorCode = null }) {
   let prompt = 0;

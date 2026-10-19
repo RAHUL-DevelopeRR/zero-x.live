@@ -387,7 +387,9 @@ export const VAULT_KEY_VARS = Object.freeze({
 const POOL_SECRETS = new WeakMap(); // vault pool -> plaintext key (never a property)
 const expandedPools = new WeakMap(); // env -> { keys, byEntry }
 
-// The shared upstream budget of N keys is N times one key's (each org or project has its own).
+// The model's upstream budget across N keys is N times one key's (each org or project has its
+// own). Reservations check each key's own budget (src/capacity.js reservationArgs); the sum is
+// what the admin overview reports for the model.
 function scaledLimits(limits, count) {
   const scale = value => value === null || value === undefined ? null : value * count;
   return Object.freeze({ rpm: scale(limits.rpm), rpd: scale(limits.rpd), tpm: scale(limits.tpm), tpd: scale(limits.tpd) });

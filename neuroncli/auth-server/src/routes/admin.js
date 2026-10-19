@@ -9,13 +9,22 @@ const counter = value => {
   return Number.isFinite(number) && number >= 0 ? number : 0;
 };
 
+const counters = row => ({
+  requests_today: counter(row?.requests_today), tokens_today: counter(row?.tokens_today),
+  requests_this_minute: counter(row?.requests_this_minute), tokens_this_minute: counter(row?.tokens_this_minute),
+});
+const budget = limits => limits ? { rpm: limits.rpm ?? null, rpd: limits.rpd ?? null, tpm: limits.tpm ?? null, tpd: limits.tpd ?? null } : null;
+
 // Contract §3.6 pools[]: every pool this deployment offers, with today's counters from
 // zerox_admin_overview, the shared budget from the catalog (null = no shared budget) and the
 // in-memory health of this isolate (keyed provider:upstream_model:tier). A pool served by
-// provider key vault keys (§11.1) lists each key's health in `keys` and reports its best key's
-// health, since it serves while any key can; its budget is the sum of the keys' budgets.
+// provider key vault keys (§11.1) lists each key in `keys` with its own counters (its Postgres
+// bucket), budget and health. The pool itself reports the model totals: counters summed over
+// its keys, `limits` the sum of their budgets and its best key's health, since it serves while
+// any key can. Keys disabled since they served today keep their counters (with no budget or
+// health), as they are part of the totals.
 export function overviewPools(env, rows = [], tracker = globalHealthTracker) {
-  const counters = new Map(rows.filter(row => row && typeof row === 'object').map(row => [`${row.model}#${row.tier}`, row]));
+  const byPool = new Map(rows.filter(row => row && typeof row === 'object').map(row => [`${row.model}#${row.tier}`, row]));
   const snapshot = tracker.getSnapshot();
   const healthOf = key => {
     const health = snapshot[key];
@@ -26,30 +35,38 @@ export function overviewPools(env, rows = [], tracker = globalHealthTracker) {
   for (const entry of offeredEntries(env)) {
     const expanded = entryPools(env, entry);
     for (const pool of entry.pools) {
-      const row = counters.get(`${entry.id}#${pool.tier}`);
-      counters.delete(`${entry.id}#${pool.tier}`);
+      const row = byPool.get(`${entry.id}#${pool.tier}`);
+      byPool.delete(`${entry.id}#${pool.tier}`);
+      // zerox_admin_overview buckets: pool_key is the vault pool's key, null for the default bucket.
+      const buckets = new Map((Array.isArray(row?.keys) ? row.keys : [])
+        .filter(item => item && typeof item === 'object').map(item => [item.pool_key || null, item]));
       const served = expanded.filter(item => item.tier === pool.tier);
-      const keys = served.map(item => ({ key_id: item.key_id ?? null, source: item.key_id ? 'vault' : 'env',
-        health: healthOf(poolKey(entry, item)) }));
+      const keys = served.map(item => {
+        const bucket = item.key_id ? poolKey(entry, item) : null;
+        const usage = buckets.get(bucket);
+        buckets.delete(bucket);
+        return { key_id: item.key_id ?? null, source: item.key_id ? 'vault' : 'env', ...counters(usage),
+          limits: budget(item.limits), health: healthOf(poolKey(entry, item)) };
+      });
       const best = keys.reduce((left, right) => !left.health.circuit_open ? left : !right.health.circuit_open ? right
         : right.health.cooldown_remaining_ms < left.health.cooldown_remaining_ms ? right : left);
-      const limits = served[0]?.shared_limits || pool.limits;
+      for (const [bucket, usage] of buckets) {
+        keys.push({ key_id: bucket ? bucket.slice(bucket.lastIndexOf('#') + 1) : null, source: bucket ? 'vault' : 'env',
+          ...counters(usage), limits: null, health: null });
+      }
       pools.push({
         model: entry.id, tier: pool.tier, provider: entry.provider,
         configured: served.some(item => poolConfigured(env, entry, item)),
-        requests_today: counter(row?.requests_today), tokens_today: counter(row?.tokens_today),
-        requests_this_minute: counter(row?.requests_this_minute), tokens_this_minute: counter(row?.tokens_this_minute),
-        limits: limits ? { rpm: limits.rpm ?? null, rpd: limits.rpd ?? null, tpm: limits.tpm ?? null, tpd: limits.tpd ?? null } : null,
+        ...counters(row),
+        limits: budget(served[0]?.shared_limits || pool.limits),
         health: best.health,
-        ...(served.some(item => item.key_id) ? { keys } : {}),
+        ...(keys.some(key => key.source === 'vault') ? { keys } : {}),
       });
     }
   }
   // Counters for pools no longer offered (e.g. disabled since this morning) stay visible.
-  for (const row of counters.values()) {
-    pools.push({ model: row.model, tier: row.tier, provider: null, configured: false,
-      requests_today: counter(row.requests_today), tokens_today: counter(row.tokens_today),
-      requests_this_minute: counter(row.requests_this_minute), tokens_this_minute: counter(row.tokens_this_minute),
+  for (const row of byPool.values()) {
+    pools.push({ model: row.model, tier: row.tier, provider: null, configured: false, ...counters(row),
       limits: null, health: null });
   }
   return pools;

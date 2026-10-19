@@ -3,14 +3,14 @@
 // test Cloudflare Access signing key, a controlled HealthHub clock.
 //   node check-provider-keys.mjs
 import assert from 'node:assert/strict';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { closeAllPglite, getPgliteHandle } from './src/db/pglite.js';
 import {
   base64ToBytes, kekConfigured, loadVaultKeys, openProviderKey, resetVaultCache, sealProviderKey, touchVaultKey,
   vaultConfigured, vaultKeys,
 } from './src/provider-keys.js';
 import { catalogEntry, entryPools, poolConfigured, poolKey, poolSecret } from './src/catalog.js';
-import { RoutingEngine } from './src/router.js';
+import { RoutingEngine, globalRouter } from './src/router.js';
 import { reservationArgs } from './src/capacity.js';
 import { ADAPTERS, requestCompletion } from './src/providers.js';
 import { FailureKind, HealthState, ProviderHealthTracker } from './src/provider-health.js';
@@ -204,9 +204,12 @@ try {
   assert.ok(free.every(pool => poolConfigured(env, gpt, pool)));
   assert.deepEqual(leaks(JSON.stringify(free)), [], 'a serialized pool carries no key');
   assert.equal(free[0].limits.rpm, 30, 'one key: its own per-minute budget (prompt sizing)');
-  assert.equal(free[0].shared_limits.rpm, 120, 'four keys: four budgets in the shared reservation');
-  assert.equal(reservationArgs({ session: { user_id: 'u' }, requestId: 'r', entry: gpt, pool: free[1], promptTokens: 10, maxTokens: 10 })
-    .p_pool.rpd, 4000);
+  assert.equal(free[0].shared_limits.rpm, 120, 'four keys: four budgets for the model (admin overview)');
+  const argsFor = pool => reservationArgs({ session: { user_id: 'u' }, requestId: 'r', entry: gpt, pool, promptTokens: 10, maxTokens: 10 });
+  assert.deepEqual([argsFor(free[1]).p_pool.rpd, argsFor(free[1]).p_pool_key], [1000, `groq:openai/gpt-oss-120b:free#${keyB.id}`],
+    'a vault key reserves its own budget in its own bucket');
+  assert.equal(argsFor(free[3]).p_pool.rpd, 1000);
+  assert.ok(!('p_pool_key' in argsFor(free[3])), 'the env key keeps the default bucket and the old RPC shape');
   assert.equal(ADAPTERS.groq.getApiKey(env, {}, free[1]), SECRETS.groqB);
   assert.equal(entryPools(env, catalogEntry('@cf/meta/llama-3.3-70b-instruct-fp8-fast')), catalogEntry('@cf/meta/llama-3.3-70b-instruct-fp8-fast').pools);
   calls.length = 0;
@@ -234,7 +237,7 @@ try {
   assert.deepEqual(entryPools(geminiTwin, flash).filter(pool => pool.tier === 'free').map(pool => pool.key_id), [keyGemini.id]);
   const twinList = await (await admin('/admin/providers/keys', { target: geminiTwin })).json();
   assert.equal(twinList.providers.find(item => item.provider === 'gemini').env_key.duplicate_of, keyGemini.id);
-  ok('pools: one per key (#id), env key last unless duplicated, budgets summed for reservations, callers spread, dead key fails over');
+  ok('pools: one per key (#id), env key last unless duplicated, each key reserves its own budget, callers spread, dead key fails over');
 
   // 5. /v1/models with vault keys only: the env-less deployment still serves; no key id leaks.
   const vaultOnly = { ...env, GROQ_API_KEY: undefined, GEMINI_API_KEY: undefined };
@@ -248,8 +251,82 @@ try {
   const groqFree = overview.find(row => row.model === gpt.id && row.tier === 'free');
   assert.equal(groqFree.limits.rpm, 120);
   assert.deepEqual(groqFree.keys.map(key => key.source), ['vault', 'vault', 'vault', 'env']);
+  assert.ok(groqFree.keys.every(key => key.limits.rpm === 30 && key.requests_today === 0), 'each key: its own budget and counters');
+  const goneKey = crypto.randomUUID();
+  const counted = overviewPools(env, [{ model: gpt.id, tier: 'free', requests_today: 9, keys: [
+    { pool_key: poolKey(gpt, free[1]), requests_today: 4 }, { pool_key: `groq:openai/gpt-oss-120b:free#${goneKey}`, requests_today: 2 },
+    { pool_key: null, requests_today: 3 }] }], new ProviderHealthTracker()).find(row => row.model === gpt.id && row.tier === 'free');
+  assert.equal(counted.requests_today, 9);
+  assert.deepEqual(counted.keys.map(key => [key.key_id, key.requests_today]),
+    [[keyA.id, 0], [keyB.id, 4], [flakyKey.id, 0], [null, 3], [goneKey, 2]], 'buckets matched to keys; a disabled key keeps its counters');
+  assert.deepEqual([counted.keys.at(-1).limits, counted.keys.at(-1).health], [null, null]);
   assert.deepEqual(leaks(JSON.stringify(overview)), []);
   ok('catalog: vault-only deployment lists the models; /v1/models and the overview carry no key or key id beyond operators');
+
+  // 5b. Per-key budgets end to end: an nzx_ caller's first key has spent its own daily budget in
+  // Postgres, so its reservation returns pool_exhausted and the next key of the same model serves
+  // without the spent key ever being called. Spent keys use no attempt (ROUTER_MAX_ATTEMPTS = 3).
+  const [{ id: budgetUser }] = await sql("INSERT INTO auth.users (email) VALUES ('budget@example.test') RETURNING id");
+  await sql('SELECT * FROM public.zerox_sync_account($1, $2::jsonb)', [budgetUser, JSON.stringify({ email: 'budget@example.test' })]);
+  const apiKey = `nzx_${randomBytes(32).toString('base64url')}`;
+  await sql('SELECT * FROM public.zerox_api_key_create($1, $2, $3, $4)',
+    [budgetUser, 'budget', apiKey.slice(0, 12), createHash('sha256').update(apiKey).digest('hex')]);
+  const chat = () => app.request('https://zero-x.live/v1/chat/completions', { method: 'POST',
+    headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: gpt.id, messages: [{ role: 'user', content: 'hi' }], max_tokens: 64 }) }, env);
+  const order = globalRouter.route({ env, requestedModel: gpt.id, promptTokens: 10, maxTokens: 64, affinity: budgetUser })
+    .candidates.map(candidate => candidate.pool);
+  assert.equal(order.length, 4);
+  assert.equal(order.at(-1).key_id, undefined, 'the env key is the last candidate');
+  const bucketOf = pool => pool.key_id ? poolKey(gpt, pool) : '';
+  const spend = pool => sql(`INSERT INTO public.zerox_pool_usage (model, tier, pool_key, bucket, bucket_start, requests, tokens)
+    VALUES ($1, 'free', $2, 'day', ((now() AT TIME ZONE 'UTC')::date::timestamp AT TIME ZONE 'UTC'), 1000, 0)
+    ON CONFLICT (model, tier, pool_key, bucket, bucket_start) DO UPDATE SET requests = 1000`, [gpt.id, bucketOf(pool)]);
+  const dayCount = async pool => (await sql(`SELECT requests FROM public.zerox_pool_usage WHERE model = $1 AND pool_key = $2
+    AND bucket = 'day' ORDER BY bucket_start DESC LIMIT 1`, [gpt.id, bucketOf(pool)]))[0]?.requests ?? 0;
+  const chatCalls = () => calls.filter(call => call.url === 'https://api.groq.com/openai/v1/chat/completions');
+  const secretOf = pool => poolSecret(env, pool);
+
+  await spend(order[0]);
+  calls.length = 0;
+  const served = await chat();
+  const servedText = await served.text();
+  assert.equal(served.status, 200, servedText);
+  assert.deepEqual(chatCalls().map(call => call.authorization), [`Bearer ${secretOf(order[1])}`],
+    'the spent key is never called; the next key of the model serves');
+  const reservations = await sql('SELECT pool_key, status, outcome FROM public.zerox_reservations WHERE user_id = $1', [budgetUser]);
+  assert.deepEqual(reservations, [{ pool_key: poolKey(gpt, order[1]), status: 'settled', outcome: 'ok' }]);
+  assert.equal(await dayCount(order[0]), 1000, 'the spent key keeps its count');
+  assert.equal(await dayCount(order[1]), 1, 'the serving key counts the request');
+  assert.ok(![keyA.id, keyB.id, flakyKey.id].some(id => servedText.includes(id) || [...served.headers.values()].some(value => value.includes(id))),
+    'no key id in the response');
+  const usageText = await (await app.request('https://zero-x.live/api/usage', { headers: { Authorization: `Bearer ${apiKey}` } }, env)).text();
+  assert.ok(usageText.includes(gpt.id) && ![keyA.id, keyB.id, flakyKey.id].some(id => usageText.includes(id)), 'usage is per model only');
+
+  await spend(order[1]);
+  await spend(order[2]);
+  calls.length = 0;
+  const lastKey = await chat();
+  assert.equal(lastKey.status, 200, await lastKey.clone().text());
+  assert.deepEqual(chatCalls().map(call => call.authorization), [`Bearer ${SECRETS.groqEnv}`],
+    'three spent keys use no attempt: the env key still serves');
+  assert.equal(await dayCount(order[3]), 1);
+  const operator = await (await admin('/admin/overview', { host: 'zero-x.live' })).json();
+  const budgetPool = operator.pools.find(row => row.model === gpt.id && row.tier === 'free');
+  assert.deepEqual(budgetPool.keys.map(key => [key.key_id, key.requests_today, key.limits.rpd]),
+    free.map(pool => [pool.key_id ?? null, pool.key_id ? 1000 : 1, 1000]), 'each key: its own counters and budget');
+  assert.equal(budgetPool.requests_today, 3 * 1000 + 1, 'the model row sums its keys');
+  assert.equal(budgetPool.limits.rpd, 4000);
+
+  await spend(order[3]);
+  calls.length = 0;
+  const spent = await chat();
+  const spentBody = await spent.json();
+  assert.equal(spent.status, 503);
+  assert.equal(spentBody.error.code, 'capacity_exhausted');
+  assert.ok(Number(spent.headers.get('retry-after')) > 60, 'every key spent for the day: retry at UTC midnight');
+  assert.equal(chatCalls().length, 0, 'no upstream call once every key is spent');
+  ok('per-key budgets: a key spent in Postgres is skipped (pool_exhausted, no attempt used) while another key of the model serves; the overview counts each key; users see models only');
 
   // 6. HealthHub: one list check per key; a dead key greys out only its own pools.
   revoked.add(SECRETS.groqA);
@@ -305,12 +382,15 @@ try {
   assert.equal(relisted.find(key => key.id === keyA.id).status, 'disabled');
   ok('disable: idempotent, 404 for unknown ids, pools leave this isolate at once and the hub drops its checks');
 
-  // 8. Last used, decrypt failures and the cap.
-  const touch = touchVaultKey(env, keyB.id);
+  // 8. Last used, decrypt failures and the cap. The key that served in 5b was touched then.
+  assert.ok((await sql('SELECT last_used_at FROM public.zerox_provider_keys WHERE id = $1', [order[1].key_id]))[0].last_used_at,
+    'the vault key that served in 5b records last_used_at');
+  const idle = [keyB.id, flakyKey.id].find(id => id !== order[1].key_id);
+  const touch = touchVaultKey(env, idle);
   assert.ok(touch);
-  assert.equal(touchVaultKey(env, keyB.id), null, 'at most every 10 minutes per isolate');
+  assert.equal(touchVaultKey(env, idle), null, 'at most every 10 minutes per isolate');
   await touch;
-  assert.ok((await sql('SELECT last_used_at FROM public.zerox_provider_keys WHERE id = $1', [keyB.id]))[0].last_used_at);
+  assert.ok((await sql('SELECT last_used_at FROM public.zerox_provider_keys WHERE id = $1', [idle]))[0].last_used_at);
   const otherKek = { ...env, PROVIDER_KEYS_KEK: b64(randomBytes(32)) };
   const errors = console.error;
   console.error = () => {};

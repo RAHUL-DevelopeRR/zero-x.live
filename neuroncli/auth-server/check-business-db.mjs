@@ -109,11 +109,12 @@ try {
     'Worker-bundled modules stay free of Node built-ins');
   const migrations = await listMigrations();
   assert.deepEqual(handle.applied, migrations.map(migration => migration.version), 'all migrations applied in version order');
-  assert.deepEqual(migrations.slice(-10).map(migration => migration.file), [
+  assert.deepEqual(migrations.slice(-11).map(migration => migration.file), [
     '20261016000000_business_schema.sql', '20261016000100_business_quota.sql',
     '20261016000200_business_billing.sql', '20261016000300_business_sessions_admin.sql',
     '20261019000000_device_auth.sql', '20261019120000_provider_discovery.sql', '20261021000000_device_pending_retry.sql',
-    '20261023000000_session_devices.sql', '20261023000100_push_tokens.sql', '20261024000000_provider_keys.sql']);
+    '20261023000000_session_devices.sql', '20261023000100_push_tokens.sql', '20261024000000_provider_keys.sql',
+    '20261024000100_provider_key_budgets.sql']);
   assert.equal((await sql('SELECT count(*)::int AS n FROM supabase_migrations.schema_migrations'))[0].n, migrations.length);
   await assert.rejects(rpc(env, 'zerox_does_not_exist', {}), error =>
     error instanceof AccountDatabaseError && error.code === 'PGRST202');
@@ -569,6 +570,81 @@ try {
       INSERT INTO public.zerox_pool_usage SELECT * FROM groq_pool_saved; DROP TABLE groq_pool_saved;`);
   }
   ok('Groq free pool: four Neuron-sized turns in one minute (prompt + 1,024 held, settled to usage); the fifth is refused, logged with its pool and budget, and shown busy');
+
+  // ---------------------------------------------------------------- per-key pool budgets (provider key vault, §11.1)
+  // Each vault key is its own upstream budget: p_pool_key selects that key's buckets, so a spent
+  // key returns pool_exhausted while another key of the same model still reserves.
+  await clockHeadroom();
+  const vaultModel = 'groq/openai/gpt-oss-120b-vault';
+  const keyIds = [randomUUID(), randomUUID()];
+  const [vaultKeyA, vaultKeyB] = keyIds.map(id => `groq:openai/gpt-oss-120b:free#${id}`);
+  const keyRow = async (poolKey, bucket) => (await sql(`SELECT * FROM public.zerox_pool_usage
+    WHERE model = $1 AND tier = 'free' AND pool_key = $2 AND bucket = $3 ORDER BY bucket_start DESC LIMIT 1`,
+  [vaultModel, poolKey, bucket]))[0];
+  const keyUsers = [await newUser('max'), await newUser('max'), await newUser('max')];
+  const perKey = { rpm: 2, rpd: 5, tpm: 1000, tpd: null };
+  const onKey = (user, poolKey, overrides = {}) => reserve(user, { p_model: vaultModel, p_pool: perKey, p_pool_key: poolKey, ...overrides });
+  const a1 = await onKey(keyUsers[0], vaultKeyA);
+  const a2 = await onKey(keyUsers[1], vaultKeyA);
+  assert.equal(a1.status, 'ok'); assert.equal(a2.status, 'ok');
+  const aSpent = await onKey(keyUsers[2], vaultKeyA);
+  assert.equal(aSpent.status, 'pool_exhausted', 'key A has spent its own per-minute budget');
+  assert.ok(aSpent.retry_after_seconds >= 1 && aSpent.retry_after_seconds <= 60);
+  const b1 = await onKey(keyUsers[2], vaultKeyB);
+  assert.equal(b1.status, 'ok', 'key B of the same model still has its own budget');
+  assert.equal((await reserve(keyUsers[2], { p_model: vaultModel, p_pool: perKey })).status, 'ok',
+    'the default bucket (no pool key, e.g. the environment key) is separate from every vault key');
+  assert.equal((await keyRow(vaultKeyA, 'minute')).requests, 2);
+  assert.equal((await keyRow(vaultKeyB, 'minute')).requests, 1);
+  assert.equal((await keyRow('', 'minute')).requests, 1);
+  assert.equal((await keyRow(vaultKeyA, 'day')).requests, 2);
+  const stored = Object.fromEntries((await sql('SELECT id, pool_key FROM public.zerox_reservations WHERE id = ANY($1::uuid[])',
+    [[a1.reservation_id, b1.reservation_id]])).map(row => [row.id, row.pool_key]));
+  assert.deepEqual(stored, { [a1.reservation_id]: vaultKeyA, [b1.reservation_id]: vaultKeyB }, 'the reservation remembers its bucket');
+  // Settlement reconciles the reservation's own bucket: actual tokens on A, a refund on B.
+  await settle(a1.reservation_id, { p_prompt_tokens: 30, p_completion_tokens: 10 });
+  assert.equal((await keyRow(vaultKeyA, 'minute')).tokens, 140, 'key A: 100 reserved + 40 actual');
+  assert.equal((await keyRow(vaultKeyA, 'day')).tokens, 140);
+  assert.equal((await keyRow(vaultKeyB, 'minute')).tokens, 100, 'key B untouched by key A settling');
+  await settle(b1.reservation_id, { p_status: 'refunded', p_prompt_tokens: 0, p_completion_tokens: 0 });
+  assert.deepEqual([(await keyRow(vaultKeyB, 'minute')).requests, (await keyRow(vaultKeyB, 'minute')).tokens], [0, 0],
+    'a refund returns the request and tokens to key B only');
+  assert.equal((await keyRow(vaultKeyA, 'minute')).requests, 2);
+  assert.equal((await keyRow('', 'minute')).requests, 1);
+  // Token and daily budgets are per key as well.
+  assert.equal((await onKey(keyUsers[0], vaultKeyB, { p_tokens: 900 })).status, 'ok');
+  assert.equal((await onKey(keyUsers[1], vaultKeyB, { p_tokens: 200 })).status, 'pool_exhausted', 'key B tpm');
+  await sql(`UPDATE public.zerox_pool_usage SET requests = 5 WHERE model = $1 AND pool_key = $2 AND bucket = 'day'`, [vaultModel, vaultKeyA]);
+  const daySpent = await onKey(keyUsers[1], vaultKeyA);
+  assert.equal(daySpent.status, 'pool_exhausted', 'key A rpd');
+  assert.ok(Math.abs(daySpent.retry_after_seconds - Math.ceil((Date.parse(nextResets) - Date.now()) / 1000)) <= 5,
+    'a spent daily key budget retries at UTC midnight');
+  const vaultKeyC = `groq:openai/gpt-oss-120b:free#${randomUUID()}`;
+  assert.equal((await onKey(keyUsers[1], vaultKeyC)).status, 'ok', 'a third key starts with an empty budget');
+  await assert.rejects(onKey(keyUsers[0], ''), /invalid_reservation: p_pool_key/);
+  await assert.rejects(onKey(keyUsers[0], 'k'.repeat(301)), /invalid_reservation: p_pool_key/);
+  // Users only ever see models: usage events, by-model usage and the account overview carry no pool key.
+  const userViews = JSON.stringify([
+    await rpcRows(env, 'zerox_usage_events', { p_user_id: keyUsers[0], p_limit: 50, p_before: null }),
+    await rpcRows(env, 'zerox_usage_by_model', { p_user_id: keyUsers[0], p_from: todayUtc, p_to: todayUtc }),
+    await rpc(env, 'zerox_account_overview', { p_user_id: keyUsers[0] })]);
+  assert.ok(userViews.includes(vaultModel) && !keyIds.some(id => userViews.includes(id)), 'no vault key id in user-facing rows');
+  assert.ok(!(await sql(`SELECT column_name FROM information_schema.columns WHERE table_schema = 'public'
+    AND table_name IN ('zerox_usage_events', 'zerox_usage_daily') AND column_name = 'pool_key'`)).length);
+  // Operators get one row per model and tier, summed over its keys, with each key's counters.
+  const vaultPool = (await rpc(env, 'zerox_admin_overview', {})).overview.pools.find(row => row.model === vaultModel && row.tier === 'free');
+  const vaultKeys = Object.fromEntries(vaultPool.keys.map(key => [key.pool_key, key]));
+  assert.deepEqual(Object.keys(vaultKeys).sort(), [vaultKeyA, vaultKeyB, vaultKeyC, 'null'].sort());
+  assert.equal(vaultKeys[vaultKeyA].requests_this_minute, 2);
+  assert.equal(vaultKeys[vaultKeyA].requests_today, 5);
+  assert.equal(vaultKeys[vaultKeyB].requests_this_minute, 1);
+  assert.equal(vaultKeys[vaultKeyB].tokens_this_minute, 900);
+  assert.equal(vaultKeys.null.requests_today, 1);
+  assert.equal(vaultPool.requests_this_minute, 2 + 1 + 1 + 1, 'the model row sums its keys');
+  assert.equal(vaultPool.requests_today, 5 + 1 + 1 + 1);
+  assert.equal(vaultPool.tokens_this_minute, vaultPool.keys.reduce((sum, key) => sum + key.tokens_this_minute, 0));
+  assert.equal((await rpc(env, 'zerox_admin_overview', {})).overview.pools.filter(row => row.model === vaultModel && row.tier === 'free').length, 1);
+  ok('per-key pool budgets: p_pool_key buckets (rpm/tpm/rpd) are independent of each other and of the default bucket, stored on the reservation and settled/refunded there; users see models only; admin overview sums keys and lists each');
 
   // ---------------------------------------------------------------- stale release and housekeeping
   const staleUser = await newUser('free');
@@ -1083,6 +1159,26 @@ try {
   assert.equal(shared.filter(row => row.status === 'ok').length, 7, 'parallel reservations never exceed the shared pool');
   assert.ok(shared.filter(row => row.status !== 'ok').every(row => row.status === 'pool_exhausted'));
   assert.equal((await poolRow('burst/pool', 'free', 'minute')).requests, 7);
+  // Interleaved bursts on two vault keys of one model (plus the default bucket): each key admits
+  // exactly its own budget, and parallel double settles reconcile each key's bucket once.
+  const burstKeys = [`groq:burst/keys:free#${randomUUID()}`, `groq:burst/keys:free#${randomUUID()}`, null];
+  const keyBurstUsers = [];
+  for (let index = 0; index < 24; index += 1) keyBurstUsers.push(await newUser('max'));
+  const keyed = await Promise.all(keyBurstUsers.map((user, index) => reserve(user, { p_model: 'burst/keys',
+    p_pool: { rpm: 4, tpm: 100000 }, p_pool_key: burstKeys[index % 3] }).then(row => ({ ...row, key: burstKeys[index % 3] }))));
+  for (const key of burstKeys) {
+    const rows = keyed.filter(row => row.key === key);
+    assert.equal(rows.filter(row => row.status === 'ok').length, 4, `${key ?? 'default'}: never more than its own budget`);
+    assert.ok(rows.filter(row => row.status !== 'ok').every(row => row.status === 'pool_exhausted'));
+  }
+  const burstBucket = async key => (await sql(`SELECT requests, tokens FROM public.zerox_pool_usage WHERE model = 'burst/keys'
+    AND pool_key = $1 AND bucket = 'minute' ORDER BY bucket_start DESC LIMIT 1`, [key ?? '']))[0];
+  for (const key of burstKeys) assert.deepEqual(await burstBucket(key), { requests: 4, tokens: 400 });
+  const keyedOk = keyed.filter(row => row.status === 'ok');
+  const keyedSettles = await Promise.all([...keyedOk, ...keyedOk].map(row => settle(row.reservation_id)));
+  assert.equal(keyedSettles.filter(row => row.status === 'settled').length, 12);
+  assert.equal(keyedSettles.filter(row => row.status === 'already_settled').length, 12);
+  for (const key of burstKeys) assert.deepEqual(await burstBucket(key), { requests: 4, tokens: 60 }, 'each bucket reconciled once (4 x 15 tokens)');
   const capUser = await newUser('max');
   await sql('UPDATE public.zerox_accounts SET daily_requests = 9997 WHERE clerk_id = $1', [capUser]);
   const capped = await Promise.all(Array.from({ length: 8 }, () => reserve(capUser)));
@@ -1108,7 +1204,7 @@ try {
     p_user_id: keyBurstUser, p_name: `k${index}`, p_prefix: 'nzx_burst', p_hash: sha(`burst-${index}`) })));
   assert.equal(keyBurst.filter(result => result.status === 'fulfilled').length, 10);
   assert.ok(keyBurst.filter(result => result.status === 'rejected').every(result => /too_many_keys/.test(result.reason.message)));
-  ok('serialized bursts (one PGlite connection, so no lock contention): reserves never exceed concurrency, pool, daily or credit limits; settles, claims, grants and key creation are exactly-once');
+  ok('serialized bursts (one PGlite connection, so no lock contention): reserves never exceed concurrency, pool (per key), daily or credit limits; settles, claims, grants and key creation are exactly-once');
 
   // ---------------------------------------------------------------- legacy RPCs still work
   const legacyUser = await newUser('pro');
