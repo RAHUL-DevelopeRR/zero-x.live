@@ -9,10 +9,10 @@ const root = new URL('../../', import.meta.url);
 const read = file => readFileSync(new URL(file, root), 'utf8');
 const isFile = file => existsSync(new URL(file, root)) && statSync(new URL(file, root)).isFile();
 
-const PUBLIC_PAGES = ['pricing.html', 'neuron-cli.html', 'docs.html', 'refund.html', 'contact.html', 'shipping.html', 'privacy.html', 'terms.html'];
+const PUBLIC_PAGES = ['index.html', 'pricing.html', 'neuron-cli.html', 'docs.html', 'refund.html', 'contact.html', 'shipping.html', 'privacy.html', 'terms.html'];
 const PRIVATE_PAGES = ['dashboard.html', '404.html', 'neuroncli/index.html'];
-const SITE_SCRIPTS = ['dashboard.js', 'pricing.js', 'billing-checkout.js'];
-const SITE_FILES = [...PUBLIC_PAGES, ...PRIVATE_PAGES, ...SITE_SCRIPTS, 'zx-tokens.css', 'zerox-auth.js', 'index.html', 'neuroncli/login/index.html', 'neuroncli/callback/index.html'];
+const SITE_SCRIPTS = ['dashboard.js', 'pricing.js', 'billing-checkout.js', 'home.js'];
+const SITE_FILES = [...PUBLIC_PAGES, ...PRIVATE_PAGES, ...SITE_SCRIPTS, 'zx-tokens.css', 'home.css', 'zerox-auth.js', 'neuroncli/login/index.html', 'neuroncli/callback/index.html'];
 const BASES = {'dashboard.html': 'https://dashboard.zero-x.live/', '404.html': 'https://zero-x.live/404', 'neuroncli/index.html': 'https://zero-x.live/neuroncli/'};
 const CSP = {
   script: ['https://cdn.jsdelivr.net', 'https://checkout.razorpay.com'],
@@ -206,7 +206,7 @@ assert.match(read('zerox-auth.js'), /getAccessToken: getAccessToken/);
 {
   const patterns = read('.assetsignore').split(/\r?\n/).map(line => line.trim()).filter(line => line && !line.startsWith('#'));
   const toRegex = pattern => new RegExp('^' + pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*\*\//g, '(?:.*/)?').replace(/\*/g, '[^/]*') + (pattern.endsWith('/') ? '' : '$'));
-  for (const file of [...PUBLIC_PAGES, ...PRIVATE_PAGES, ...SITE_SCRIPTS, 'zx-tokens.css', 'site-fonts.css']) {
+  for (const file of [...PUBLIC_PAGES, ...PRIVATE_PAGES, ...SITE_SCRIPTS, 'zx-tokens.css', 'site-fonts.css', 'home.css']) {
     assert.ok(!patterns.some(pattern => toRegex(pattern).test(file)), `${file} is excluded from the Worker assets`);
   }
 }
@@ -547,6 +547,59 @@ assert.equal(checkout.normalizeCurrency('EUR'), 'USD');
   assert.equal(calls.length, 2, 'Missing tokens and foreign URLs never reach the network');
   await assert.rejects(checkout.apiFetch('/api/account', {fetchImpl: async () => { throw new TypeError('Failed to fetch'); }}), error => error.code === 'network_error');
   await assert.rejects(checkout.apiFetch('/api/account', {fetchImpl: async () => new Response('{"error":{"message":"Nope","code":"account_suspended"}}', {status: 403})}), error => error.code === 'account_suspended' && error.status === 403);
+}
+
+/* Homepage: install commands, plan slots, live model list and its helpers */
+{
+  const html = read('index.html');
+  for (const command of ['npm install -g @zero-x.live/neuron', 'python -m pip install neuroncli', 'neuron auth login', 'curl https://zero-x.live/v1/models']) {
+    assert.ok(html.includes(command), 'index.html shows ' + command);
+  }
+  for (const id of ['get-started', 'features', 'models', 'pricing', 'docs', 'faq', 'products']) assert.ok(ids(html).includes(id), 'index.html section #' + id);
+  for (const plan of ['free', 'pro', 'max']) assert.match(html, new RegExp(`data-plan-price="${plan}"`), 'index.html hydrates the ' + plan + ' price');
+  assert.match(html, /<main id="main" data-pricing-root>/, 'pricing.js hydrates the homepage');
+  for (const button of tags(html, 'button').filter(b => 'data-copy-target' in b)) assert.ok(ids(html).includes(button['data-copy-target']), 'copy target ' + button['data-copy-target']);
+  assert.ok(ids(html).includes('models-list') && ids(html).includes('models-note'), 'live model list slots');
+  assert.match(html, /NeuCockpit local AI/, 'NeuCockpit stays on the homepage');
+
+  const home = await import(new URL('home.js', root));
+  assert.equal(home.formatContext(1048576, 'x'), '1M');
+  assert.equal(home.formatContext(131072, 'x'), '131K');
+  assert.equal(home.formatContext(24000, 'auto'), 'Fits request');
+  assert.equal(home.formatContext(0, 'x'), '—');
+  const now = Date.parse('2026-10-20T10:00:00Z');
+  const state = model => home.modelState(model, now);
+  assert.deepEqual(state({available: true, status: 'available'}), {tone: 'ok', label: 'Available'});
+  assert.equal(state({available: true, status: 'degraded'}).tone, 'warn');
+  assert.equal(state({available: true, status: 'busy'}).tone, 'busy');
+  assert.deepEqual(state({available: true, status: 'blurred', available_again_at: '2026-10-20T10:04:10Z'}), {tone: 'off', label: 'Back in about 5 min'});
+  assert.equal(state({available: true, status: 'blurred', available_again_at: null}).label, 'Temporarily unavailable');
+  assert.deepEqual(state({available: false, unavailable_reason: 'upgrade_required'}), {tone: 'locked', label: 'Pro and Max plans'});
+  assert.equal(state({available: false, unavailable_reason: 'region_unavailable'}).label, 'Not offered in your region');
+  assert.equal(state({available: false, unavailable_reason: 'not_configured'}).tone, 'off');
+  assert.equal(state(null).tone, 'off');
+
+  assert.equal(home.modelRows({nope: true}), null, 'unusable payload keeps the static catalog');
+  const rows = home.modelRows({data: [
+    {id: 'gemini/gemini-2.5-pro', display_name: 'Gemini 2.5 Pro', owned_by: 'gemini', context_length: 1048576, capabilities: {reasoning: true, vision: true}, tiers: ['paid'], available: false, unavailable_reason: 'upgrade_required', status: 'available'},
+    {id: '', display_name: 'empty id'}, {id: 'x'.repeat(121)}, null,
+    {id: 'odd/model', display_name: '<img src=x onerror=alert(1)>', owned_by: 'someone-else'},
+  ]});
+  assert.equal(rows.length, 2, 'invalid ids are dropped');
+  assert.deepEqual(rows[0], {id: 'gemini/gemini-2.5-pro', name: 'Gemini 2.5 Pro', provider: 'Google Gemini', context: '1M', reasoning: true, vision: true,
+    paidOnly: true, available: false, unavailable_reason: 'upgrade_required', status: 'available', available_again_at: null});
+  assert.equal(rows[1].name, '<img src=x onerror=alert(1)>', 'names stay plain text (rendered with textContent)');
+  assert.equal(rows[1].provider, 'someone-else');
+  assert.equal(home.modelRows({data: Array.from({length: 80}, (_, i) => ({id: 'm' + i}))}).length, 60, 'list is capped');
+
+  const updated = home.applyStatus(rows, {data: [{id: 'gemini/gemini-2.5-pro', available: true, status: 'blurred', available_again_at: '2026-10-20T10:30:00Z'}, {id: 'unknown'}]});
+  assert.equal(updated.length, 2, 'unknown ids are ignored');
+  assert.equal(updated[0].available, true);
+  assert.equal(updated[0].status, 'blurred', 'a model that goes down greys out');
+  assert.equal(home.applyStatus(updated, {data: [{id: 'gemini/gemini-2.5-pro', available: true, status: 'available'}]})[0].status, 'available', 'and brightens again');
+  assert.equal(home.pollSeconds({poll_interval_seconds: 30}), 30);
+  assert.equal(home.pollSeconds({poll_interval_seconds: 1}), 30, 'too-fast polling falls back to 30 s');
+  assert.equal(home.pollSeconds(null), 30);
 }
 
 console.log('PASS: ' + (PUBLIC_PAGES.length + PRIVATE_PAGES.length) + ' pages: structure, landmarks, aria references, robots, resolvable links, legal sections, contract prices/limits/error codes, CSP origins, pinned SDK, no secrets or unsafe sinks; pure helpers for formatting, chart scaling, normalisation, routing and checkout validation');
