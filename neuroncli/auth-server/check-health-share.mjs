@@ -5,6 +5,7 @@ import { publicStatus, resetSharedHealthCache, shareHealth, withHealth } from '.
 import { HealthState, ProviderHealthTracker, FailureKind } from './src/provider-health.js';
 import { v1ModelsPayload, v1ModelStatusPayload } from './src/routes/plans.js';
 import { catalogEntry, poolKey } from './src/catalog.js';
+import { notePoolExhausted, notePoolReserved, poolBudgetState, resetPoolBudgets } from './src/pool-budget.js';
 
 function fakeKv() {
   const store = new Map();
@@ -143,6 +144,46 @@ console.log('ok - public status: available, degraded, busy (<=60 s), blurred, ha
   const changed = await v1ModelStatusPayload(c, {});
   assert.notEqual(changed.etag, first.etag, 'a recovered model changes the ETag');
   console.log('ok - routes: status on every model, vision/reasoning/context_length, NVIDIA + OpenRouter hosted, auto window, ETag');
+}
+
+// 5. Spent pool budgets (E2E finding 2026-10-21: a model stayed "available" while its pool refused
+//    every request): busy until the next minute, blurred until a daily budget resets, judged on
+//    the pools the caller can use, cleared by the next successful reservation.
+{
+  resetSharedHealthCache();
+  resetPoolBudgets();
+  const env = { GROQ_API_KEY: 'groq-test', GROQ_PAID_API_KEY: 'groq-paid-test', GEMINI_API_KEY: 'gemini-test', ALLOW_UNKNOWN_COUNTRY: 'true' };
+  const c = { env, req: { raw: new Request('https://zero-x.live/v1/models') } };
+  const pool = id => poolKey(catalogEntry(id), catalogEntry(id).pools[0]);
+  const at = Date.now();
+  notePoolExhausted(pool('groq/openai/gpt-oss-120b'), { budget: 'rpm|tpm', retryAfterSeconds: 40, now: at });
+  notePoolExhausted(pool('groq/qwen/qwen3.8-27b'), { budget: 'rpd|tpd', retryAfterSeconds: 3600, now: at });
+  notePoolExhausted(pool('groq/openai/gpt-oss-20b'), { budget: 'rpm|tpm', retryAfterSeconds: 5, now: at - 10_000 });
+  const byId = Object.fromEntries((await v1ModelsPayload(c, {})).data.map(model => [model.id, model]));
+  const gptOss = byId['groq/openai/gpt-oss-120b'];
+  assert.deepEqual(gptOss.tiers, ['free', 'paid'], 'the paid pool is configured');
+  assert.equal(gptOss.status, 'busy', 'a free caller cannot use the paid pool, so the spent free budget decides');
+  assert.equal(gptOss.available_again_at, new Date(at + 40_000).toISOString());
+  assert.equal(gptOss.checked_at, new Date(at).toISOString());
+  assert.equal(byId['groq/qwen/qwen3.8-27b'].status, 'blurred');
+  assert.equal(byId['groq/qwen/qwen3.8-27b'].available_again_at, new Date(at + 3_600_000).toISOString());
+  assert.equal(byId['groq/openai/gpt-oss-20b'].status, 'available', 'a budget that has reset no longer counts');
+  const status = await v1ModelStatusPayload(c, {});
+  assert.deepEqual(status.body.data.find(model => model.id === 'groq/openai/gpt-oss-120b'), { id: 'groq/openai/gpt-oss-120b',
+    available: true, unavailable_reason: null, status: 'busy', available_again_at: new Date(at + 40_000).toISOString() });
+
+  // A caller that can also use the paid pool still has a way through it.
+  const both = { object: 'list', data: [{ id: 'gpt-oss', available: true }] };
+  await withHealth(env, both, () => [pool('groq/openai/gpt-oss-120b'), 'groq:openai/gpt-oss-120b:paid'], { budgetState: poolBudgetState });
+  assert.equal(both.data[0].status, 'available');
+
+  notePoolReserved(pool('groq/openai/gpt-oss-120b'));
+  resetSharedHealthCache();
+  const cleared = await v1ModelStatusPayload(c, {});
+  assert.equal(cleared.body.data.find(model => model.id === 'groq/openai/gpt-oss-120b').status, 'available');
+  assert.notEqual(cleared.etag, status.etag, 'the ETag follows the budget state');
+  resetPoolBudgets();
+  console.log('ok - spent pool budgets: busy (per minute) or blurred (daily) with available_again_at, usable tiers only, cleared on reserve');
 }
 
 console.log('PASS: shared health and /v1/models/status');

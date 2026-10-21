@@ -74,9 +74,10 @@ async function readShared(env, keys) {
  * `poolKeysFor(model)` returns the pool keys behind a listed model id.
  */
 // `readRows(keys)` may supply the rows from elsewhere (the HealthHub snapshot); when it returns
-// null the rows are read from KV.
+// null the rows are read from KV. `budgetState(key, now)` returns { until, at } while the pool's
+// shared budget is spent (pool-budget.js): such a pool refuses every request, however healthy.
 export async function withHealth(env, payload, poolKeysFor,
-  { tracker, autoId = null, isAutoCandidate = () => false, readRows = null, now = Date.now() } = {}) {
+  { tracker, autoId = null, isAutoCandidate = () => false, readRows = null, budgetState = () => null, now = Date.now() } = {}) {
   const models = payload.data;
   const keysByModel = new Map(models.map(model => [model.id, poolKeysFor(model)]));
   const allKeys = [...new Set([...keysByModel.values()].flat())];
@@ -92,8 +93,16 @@ export async function withHealth(env, payload, poolKeysFor,
         : row.status === 'degraded' || (row.until || 0) > now ? row
           : { status: 'available', until: 0, at: row.at };
       // The fresher observation wins; with none, the pool counts as available.
-      const pick = [localStatus, remote].filter(Boolean).sort((a, b) => (b.at || 0) - (a.at || 0))[0]
+      let pick = [localStatus, remote].filter(Boolean).sort((a, b) => (b.at || 0) - (a.at || 0))[0]
         || { status: 'available', until: 0, at: null };
+      // A spent per-minute budget is busy until the next minute, a spent daily budget blurred.
+      const spent = budgetState(key, now);
+      if (spent?.until > now) {
+        const status = spent.until - now <= BUSY_MAX_MS ? 'busy' : 'blurred';
+        if (STATUS_RANK[status] > STATUS_RANK[pick.status] || (status === pick.status && spent.until > (pick.until || 0))) {
+          pick = { status, until: spent.until, at: spent.at };
+        }
+      }
       if (!best || STATUS_RANK[pick.status] < STATUS_RANK[best.status]
           || (pick.status === best.status && (pick.until || 0) < (best.until || 0))) best = pick;
     }

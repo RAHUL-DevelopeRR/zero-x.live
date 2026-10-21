@@ -7,8 +7,9 @@ import { globalSignatureCache } from './provider-request.js';
 import { globalRouter } from './router.js';
 import { FailureKind, globalHealthTracker } from './provider-health.js';
 import { publishHealth } from './health-hub-client.js';
-import { callerCountry, loadCatalogDbModels, loadPlanPolicies, planPolicy } from './catalog.js';
+import { callerCountry, loadCatalogDbModels, loadPlanPolicies, planPolicy, resolveModelId } from './catalog.js';
 import { billableUsage, estimateOutputTokens, estimatePromptTokens, utf8Bytes } from './pricing.js';
+import { exhaustedBudget, notePoolExhausted, notePoolReserved } from './pool-budget.js';
 import {
   PAID_DENIED_STATUSES, RESERVE_ERRORS, TERMINAL_RESERVE_STATUSES, reservationArgs, reserveCapacity, reserveError,
   reserveSessionQuota, runInBackground, sessionTiers, settleCapacity, settleSessionQuota, settlementArgs, usesLedger,
@@ -175,6 +176,11 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
       return fail('service_unavailable');
     }
     if (!route.ok) {
+      if (route.error === 'capacity_exhausted') {
+        // Every pool that would take the request is parked after upstream 429s (provider-health.js).
+        console.warn('Neuron pools rate limited upstream', { pools: route.pools, model: resolveModelId(body.model, env),
+          retry_after_seconds: route.retryAfterSeconds ?? null, request_id: requestId });
+      }
       return fail(route.error, { message: route.message, retryAfterSeconds: route.retryAfterSeconds, upgrade: route.upgrade });
     }
 
@@ -381,9 +387,17 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
               return fail(error.code, error);
             }
             if (PAID_DENIED_STATUSES.has(row.status)) paidDenied = row;
-            else exhausted.push(row);
+            else {
+              // pool_exhausted: the shared budget of this pool is spent for every user.
+              exhausted.push(row);
+              const budget = exhaustedBudget(candidate.pool.limits, row.retry_after_seconds);
+              notePoolExhausted(candidate.key, { budget, retryAfterSeconds: row.retry_after_seconds });
+              console.warn('Neuron pool budget exhausted', { pool: candidate.key, model: candidate.entry.id,
+                budget, retry_after_seconds: row.retry_after_seconds ?? null, request_id: requestId });
+            }
             continue;
           }
+          notePoolReserved(candidate.key);
           reservations++;
           reservation = row;
           current = { reservation, candidate };

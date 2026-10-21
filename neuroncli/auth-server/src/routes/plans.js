@@ -7,6 +7,7 @@ import { sessionTiers } from '../capacity.js';
 import { withHealth } from '../health-share.js';
 import { hubHealthRows } from '../health-hub-client.js';
 import { globalHealthTracker } from '../provider-health.js';
+import { poolBudgetState } from '../pool-budget.js';
 
 export const microusdToUsd = value => {
   const micro = Number(value);
@@ -52,17 +53,23 @@ export async function v1ModelsPayload(c, session = {}) {
   const plan = session?.plan || 'free';
   const [policies] = await Promise.all([loadPlanPolicies(env), loadCatalogDbModels(env)]);
   const policy = planPolicy(env, plan, policies);
-  const payload = listModelsForCaller(env, { plan, country, tiers: sessionTiers(env, session, policy) });
-  // Runtime health: the pools behind each model in the tiers listed for it, read from the
-  // HealthHub Durable Object (KV on the Node server or when the hub does not answer).
+  const tiers = sessionTiers(env, session, policy);
+  const payload = listModelsForCaller(env, { plan, country, tiers });
+  // Runtime health: the pools behind each model in the tiers listed for it that the caller can
+  // use (all listed tiers when it can use none), read from the HealthHub Durable Object (KV on
+  // the Node server or when the hub does not answer), plus pool budgets this isolate saw spent.
   const poolKeysFor = model => {
     const entry = catalogEntry(model.id, env);
-    return entry ? entry.pools.filter(pool => model.tiers.includes(pool.tier)).map(pool => poolKey(entry, pool)) : [];
+    if (!entry) return [];
+    const listed = entry.pools.filter(pool => model.tiers.includes(pool.tier));
+    const usable = listed.filter(pool => tiers.includes(pool.tier));
+    return (usable.length ? usable : listed).map(pool => poolKey(entry, pool));
   };
   return withHealth(env, payload, poolKeysFor, {
     tracker: globalHealthTracker, autoId: AUTO_MODEL_ID,
     isAutoCandidate: model => catalogEntry(model.id, env)?.auto_rank != null,
     readRows: keys => hubHealthRows(env, keys),
+    budgetState: poolBudgetState,
   });
 }
 

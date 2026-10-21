@@ -268,7 +268,7 @@ try {
   assert.equal(plans.filter(row => row.action === 'created').length, 4, 'bootstrap creates Pro/Max in INR and USD');
   await handle.db.exec(planSql(plans));
   // Cap fixture: a small free-plan token allocation so the daily cap is reached without
-  // spending upstream calls (a 60K-token reservation exceeds it).
+  // spending upstream calls (a 60K-token prompt exceeds it).
   await handle.db.query("UPDATE public.zerox_plan_policy SET daily_tokens = 50000 WHERE plan = 'free'");
   await closeAllPglite();
   step('database prepared', `${handle.applied.length} migrations applied in a fresh PGlite directory; scripts/razorpay-bootstrap.mjs created 4 plans on the fake Razorpay and their ids were stored`);
@@ -476,15 +476,25 @@ try {
   assert.match(page.text, /Sign in to Neuron/);
   assert.ok(page.headers.get('content-security-policy'), 'the approval page enforces its CSP');
   assert.equal(page.headers.get('cache-control'), 'no-store');
-  assert.ok(!serverLog.includes(grantA.device_code) && !serverLog.includes(issued.body.access_token),
-    'device codes and session tokens never reach the logs');
-  step('device sign-in', `code ${grantA.user_code} pending -> slow_down (interval 10) -> page lookup (origin-checked, CLI session refused) -> approve (forged nonce refused) -> one ses_ session -> replay invalid_grant; deny -> access_denied; page served with enforced CSP`);
+  // The production path /device answers on the loopback server too (it was a 404).
+  const shortPage = await call('/device');
+  assert.equal(shortPage.status, 200);
+  assert.equal(shortPage.text, page.text, '/device is the same approval page');
+  assert.ok(shortPage.headers.get('content-security-policy'), 'with its enforced CSP');
+  assert.equal(shortPage.headers.get('cache-control'), 'no-store');
+  assert.ok(![grantA.device_code, grantB.device_code, issued.body.access_token, grantA.user_code, grantB.user_code,
+    grantA.user_code.replace('-', ''), grantB.user_code.replace('-', '')].some(secret => serverLog.includes(secret)),
+  'device codes, user codes and session tokens never reach the logs');
+  step('device sign-in', `code ${grantA.user_code} pending -> slow_down (interval 10) -> page lookup (origin-checked, CLI session refused) -> approve (forged nonce refused) -> one ses_ session -> replay invalid_grant; deny -> access_denied; page served at /neuroncli/device/ and /device with enforced CSP`);
 
   // ── 7. Daily cap → 429 insufficient_quota (no upstream call) ──
+  // A reservation holds the prompt plus at most 1,024 output tokens (max_tokens alone no longer
+  // reaches the cap), so the request carries a ~60K-token prompt.
   const callsBeforeCap = upstream.calls.length;
   const realBeforeCap = realCalls();
   const cap = expectError(await call('/v1/chat/completions', { method: 'POST', token: ses,
-    body: { model: 'gemini/gemini-2.5-flash', messages, max_tokens: 60000 } }), 429, 'insufficient_quota');
+    body: { model: 'gemini/gemini-2.5-flash', messages: [{ role: 'user', content: 'word '.repeat(42000) }], max_tokens: 4096 } }),
+  429, 'insufficient_quota');
   assert.equal(cap.type, 'insufficient_quota');
   assert.equal(cap.resets_at, nextUtcMidnight());
   assert.equal(cap.upgrade_url, 'https://zero-x.live/pricing');

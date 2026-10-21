@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import app from './src/index.js';
 import { estimatePromptTokens, modelCatalog } from './src/providers.js';
 import { globalHealthTracker } from './src/provider-health.js';
+import { RESERVED_OUTPUT_TOKENS } from './src/capacity.js';
 import { planPolicyRows } from './contract-rows.mjs';
 
 const B1_POLICY_ROWS = await planPolicyRows();
@@ -185,7 +186,7 @@ try {
   assert.equal(response.headers.get('x-neuron-quota-remaining-requests'), '98');
   const reserve = rpcCalls.find(([rpc]) => rpc === 'zerox_reserve_v2')[1];
   assert.equal(reserve.p_user_id, accountId);
-  assert.equal(reserve.p_tokens, estimatePromptTokens(messages) + 4096);
+  assert.equal(reserve.p_tokens, estimatePromptTokens(messages) + RESERVED_OUTPUT_TOKENS, 'the prompt plus a bounded output allowance');
   assert.equal(reserve.p_request_id, response.headers.get('x-request-id'));
   assert.equal(rpcCalls.at(-1)[0], 'zerox_settle_v2');
   assert.equal(rpcCalls.at(-1)[1].p_reservation_id, 'res-1');
