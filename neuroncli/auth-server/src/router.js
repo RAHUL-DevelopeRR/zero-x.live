@@ -11,7 +11,8 @@ const TIER_RANK = { free: 0, byok: 0, paid: 1 };
 
 // Largest max_tokens a pool can take for this prompt (0 = does not fit). Bounded by the
 // model's output limit, the context window and the pool's tokens-per-minute budget
-// (Groq's free org counts prompt + max_tokens against 8K TPM).
+// (Groq's free org refuses a request whose prompt + max_tokens exceeds 8K TPM). The pool
+// reservation holds less than this (capacity.js reservedTokens).
 export function fitMaxTokens(entry, pool, promptTokens, requestedMaxTokens) {
   const requested = Math.min(requestedMaxTokens, entry.max_output_tokens);
   let room = entry.context_window - promptTokens;
@@ -90,7 +91,7 @@ export class RoutingEngine {
       const waits = unhealthy.map(item => this.healthTracker.cooldownRemainingMs(item.key, now));
       const retryAfterSeconds = Math.max(1, Math.ceil(Math.min(...waits) / 1000));
       const limited = unhealthy.some(item => this.healthTracker.getRecord(item.key).status === HealthState.RATE_LIMITED);
-      return failure(limited ? 'capacity_exhausted' : 'upstream_error', { retryAfterSeconds });
+      return failure(limited ? 'capacity_exhausted' : 'upstream_error', { retryAfterSeconds, pools: unhealthy.map(item => item.key) });
     }
     const locked = configured.filter(item => item.fits && !(item.inPlan && item.region));
     const paidWouldFit = locked.some(item => !item.inPlan && item.region);

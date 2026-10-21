@@ -71,7 +71,7 @@ app.use('*', async (c, next) => {
   // The Neuron sign-in pages carry session tokens, so their policy is always enforced; the
   // rest of the site stays report-only until CSP_ENFORCE=true.
   const signInPage = url.pathname.startsWith('/neuroncli/') ||
-    (url.hostname === 'neuron.zero-x.live' && url.pathname.startsWith('/device'));
+    ((url.hostname === 'neuron.zero-x.live' || isLoopbackHost(url.host)) && url.pathname.startsWith('/device'));
   const enforceCsp = c.env?.CSP_ENFORCE === 'true' || signInPage;
   c.header(enforceCsp ? 'Content-Security-Policy' : 'Content-Security-Policy-Report-Only', CONTENT_SECURITY_POLICY);
   if (path.startsWith('/auth/') || signInPage) {
@@ -128,9 +128,10 @@ app.use('*', async (c, next) => {
     if (path === '/neuroncli/login/' && c.env?.ASSETS) {
       return c.env.ASSETS.fetch(new Request(new URL('/neuroncli/login/index.html', url), c.req.raw));
     }
-    // Device sign-in approval page: https://neuron.zero-x.live/device (also /neuroncli/device/).
+    // Device sign-in approval page: https://neuron.zero-x.live/device (also /neuroncli/device/,
+    // and /device on the local Node server, whose request URLs carry the loopback host).
     if (c.env?.ASSETS && (path === '/neuroncli/device/' ||
-        (hostname === 'neuron.zero-x.live' && (path === '/device' || path === '/device/')))) {
+        ((hostname === 'neuron.zero-x.live' || loopback) && (path === '/device' || path === '/device/')))) {
       return c.env.ASSETS.fetch(new Request(new URL('/neuroncli/device/index.html', url), c.req.raw));
     }
     let target = null;

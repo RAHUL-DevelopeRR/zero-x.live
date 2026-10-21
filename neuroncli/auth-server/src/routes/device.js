@@ -129,6 +129,24 @@ function pageRequestRefused(c) {
 
 const databaseMessage = 'Device sign-in is temporarily unavailable. Please retry shortly.';
 
+// Operator diagnostics for a failed step: the error's code and message, never a user code,
+// device code or token. The database only sees codes as parameters or hashes, and anything
+// shaped like a code or credential is masked in case a message ever quotes one.
+function logStepFailure(step, error) {
+  const message = String(error?.message || error || '').slice(0, 200)
+    .replace(/\b(zdc|ses|nzx|dev)_[A-Za-z0-9_-]+/g, '$1_…')
+    .replace(/\b[BCDFGHJKLMNPQRSTVWXZ]{4}-?[BCDFGHJKLMNPQRSTVWXZ]{4}\b/g, '…');
+  console.error('Device sign-in step failed', { step, code: error?.code ?? null, message });
+}
+
+// Seconds until the requester's oldest pending grant expires and frees a slot (the database
+// reports it with too_many_pending); the whole code lifetime when it does not say.
+function pendingRetryAfter(error) {
+  const match = /retry_after_seconds=(\d+)/.exec(`${error?.detail ?? ''} ${error?.message ?? ''}`);
+  const seconds = match ? Number(match[1]) : 0;
+  return seconds >= 1 && seconds <= CODE_TTL_SECONDS ? seconds : CODE_TTL_SECONDS;
+}
+
 export function registerDeviceRoutes(api, deps) {
   const { getIdentityAuth, sendIdentityFailure, syncUserRecord, loadUserRecord, userResponse, mintCliSession,
     dropCliSession, clientAddress } = deps;
@@ -174,11 +192,13 @@ export function registerDeviceRoutes(api, deps) {
       } catch (error) {
         const message = String(error?.message || '');
         if (message.includes('too_many_pending')) {
-          return errorResponse(c, 429, 'rate_limited', 'Too many sign-in codes are waiting. Use one of them or wait 10 minutes.',
-            { retry_after_seconds: CODE_TTL_SECONDS });
+          const retryAfter = pendingRetryAfter(error);
+          return errorResponse(c, 429, 'rate_limited',
+            `Too many sign-in codes are waiting. Use one of them or try again in ${Math.ceil(retryAfter / 60)} min.`,
+            { retry_after_seconds: retryAfter });
         }
         if (!/duplicate|unique/i.test(message)) {
-          console.error('Device code creation failed', { message: message.slice(0, 200) });
+          logStepFailure('create', error);
           return errorResponse(c, 503, 'service_unavailable', databaseMessage);
         }
       }
@@ -204,7 +224,8 @@ export function registerDeviceRoutes(api, deps) {
     let grant;
     try {
       [grant] = await rpcRows(c.env, 'zerox_device_lookup', { p_user_code: userCode });
-    } catch {
+    } catch (error) {
+      logStepFailure('lookup', error);
       return errorResponse(c, 503, 'service_unavailable', databaseMessage);
     }
     if (!grant) {
@@ -232,20 +253,23 @@ export function registerDeviceRoutes(api, deps) {
     const auth = await getIdentityAuth(c);
     if (!auth.ok) return sendIdentityFailure(c, auth);
     const secret = approvalSecret(c);
-    if (!secret) return errorResponse(c, 503, 'service_unavailable', databaseMessage);
+    if (!secret) {
+      console.error('DEVICE_APPROVAL_SECRET is not set');
+      return errorResponse(c, 503, 'service_unavailable', databaseMessage);
+    }
     const body = await c.req.json().catch(() => ({}));
     const decision = body.decision === 'approve' ? 'approve' : body.decision === 'deny' ? 'deny' : null;
     if (!decision) return errorResponse(c, 400, 'invalid_request', 'decision must be "approve" or "deny".', { param: 'decision' });
     if (typeof body.grant_id !== 'string' || !await nonceValid(secret, body.approval_nonce, body.grant_id, auth.userId)) {
       return errorResponse(c, 400, 'invalid_request', 'This approval expired. Reload the page and try again.', { param: 'approval_nonce' });
     }
-    if (decision === 'approve') {
-      // The session the CLI receives is built from this account record.
-      try {
-        if (!await syncUserRecord(c, auth)) throw new Error('no account');
-      } catch {
-        return errorResponse(c, 503, 'service_unavailable', databaseMessage);
-      }
+    // Both decisions record the user on the grant, which references the account; a first visit
+    // to this page may not have synced it yet. An approved grant's session is also built from it.
+    try {
+      if (!await syncUserRecord(c, auth)) throw new Error('no account');
+    } catch (error) {
+      logStepFailure(`${decision}_sync_account`, error);
+      return errorResponse(c, 503, 'service_unavailable', databaseMessage);
     }
     try {
       const [row] = await rpcRows(c.env, 'zerox_device_decide', {
@@ -256,6 +280,7 @@ export function registerDeviceRoutes(api, deps) {
       if (String(error?.message || '').includes('grant_not_pending')) {
         return errorResponse(c, 409, 'grant_not_pending', 'This code was already used, denied or has expired.');
       }
+      logStepFailure(decision, error);
       return errorResponse(c, 503, 'service_unavailable', databaseMessage);
     }
   });
@@ -271,7 +296,8 @@ export function registerDeviceRoutes(api, deps) {
     let grant;
     try {
       [grant] = await rpcRows(c.env, 'zerox_device_poll', { p_device_code_hash: await sha256Hex(body.device_code) });
-    } catch {
+    } catch (error) {
+      logStepFailure('poll', error);
       return errorResponse(c, 503, 'service_unavailable', databaseMessage);
     }
     c.header('Cache-Control', 'no-store');
@@ -293,15 +319,20 @@ export function registerDeviceRoutes(api, deps) {
       const user = await loadUserRecord(c, grant.user_id);
       if (!user) throw new Error('no account');
       account = await userResponse(c, user, grant.user_id);
-    } catch {
+    } catch (error) {
+      logStepFailure('load_user', error);
       return errorResponse(c, 503, 'service_unavailable', databaseMessage);
     }
     const minted = await mintCliSession(c, account, { fingerprint: 'device-flow', version: 'neuron-cli' });
-    if (!minted) return errorResponse(c, 503, 'service_unavailable', databaseMessage);
+    if (!minted) {
+      logStepFailure('mint_session', 'no session was stored');
+      return errorResponse(c, 503, 'service_unavailable', databaseMessage);
+    }
     let redeemed;
     try {
       [redeemed] = await rpcRows(c.env, 'zerox_device_redeem', { p_grant_id: grant.id });
-    } catch {
+    } catch (error) {
+      logStepFailure('redeem', error);
       await dropCliSession(c, minted.token);
       return errorResponse(c, 503, 'service_unavailable', databaseMessage);
     }

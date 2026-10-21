@@ -7,12 +7,13 @@ import { createChatHandler } from './src/chat-handler.js';
 import { RoutingEngine, fitMaxTokens } from './src/router.js';
 import { FailureKind, HealthState, ProviderHealthTracker } from './src/provider-health.js';
 import {
-  BUILTIN_PLANS, CATALOG, EEA_COUNTRIES, MODEL_ALIASES, callerCountry, catalogEntry, catalogWarnings,
+  BUILTIN_PLANS, CATALOG, EEA_COUNTRIES, MODEL_ALIASES, POOL_LIMITS, callerCountry, catalogEntry, catalogWarnings,
   expandCountries, listModelsForCaller, loadPlanPolicies, planPolicy, poolKey, resolveModelId,
 } from './src/catalog.js';
 import { billableUsage, costMicrousd, estimatePromptTokens, priceFromCost } from './src/pricing.js';
 import { errorBody, errorResponse } from './src/errors.js';
-import { reservationArgs, reserveError, settlementArgs } from './src/capacity.js';
+import { RESERVED_OUTPUT_TOKENS, reservationArgs, reservedTokens, reserveError, settlementArgs } from './src/capacity.js';
+import { exhaustedBudget, poolBudgetState, resetPoolBudgets } from './src/pool-budget.js';
 import { buildUpstreamPayload, classifyUpstreamFailure, listModelsForSession, retryAfterSeconds } from './src/providers.js';
 import { planPolicyRows } from './contract-rows.mjs';
 
@@ -117,6 +118,19 @@ function gateway({ tracker = new ProviderHealthTracker() } = {}) {
 const messages = [{ role: 'user', content: 'Read a.js and b.js' }];
 const tools = [{ type: 'function', function: { name: 'read_file', description: 'Read a file',
   parameters: { type: 'object', properties: { path: { type: 'string' } } } } }];
+
+async function captureLogs(fn) {
+  const logs = { warn: [], error: [] };
+  const original = { warn: console.warn, error: console.error };
+  console.warn = (...args) => logs.warn.push(args);
+  console.error = (...args) => logs.error.push(args);
+  try {
+    return { result: await fn(), logs };
+  } finally {
+    console.warn = original.warn;
+    console.error = original.error;
+  }
+}
 
 async function expectError(response, status, code) {
   assert.equal(response.status, status, `expected HTTP ${status} for ${code}`);
@@ -975,11 +989,13 @@ try {
     const [free, paid] = rpcCalls('zerox_reserve_v2').map(call => call.body);
     const prompt = estimatePromptTokens(messages);
     assert.deepEqual(free, { p_user_id: ACCOUNT, p_request_id: requestId, p_model: 'groq/openai/gpt-oss-120b', p_tier: 'free',
-      p_tokens: prompt + 2048, p_cost_microusd: 0, p_pool: { rpm: 30, rpd: 1000, tpm: 8000, tpd: 200000 } });
+      p_tokens: prompt + RESERVED_OUTPUT_TOKENS, p_cost_microusd: 0, p_pool: { rpm: 30, rpd: 1000, tpm: 8000, tpd: 200000 } });
     assert.equal(paid.p_request_id, requestId, 'no reservation existed yet, so the id is reused');
     assert.equal(paid.p_tier, 'paid');
     assert.equal(paid.p_pool, null);
-    assert.equal(paid.p_cost_microusd, costMicrousd(catalogEntry('groq/openai/gpt-oss-120b').pools[1].price, prompt, 2048));
+    assert.equal(paid.p_tokens, prompt + RESERVED_OUTPUT_TOKENS);
+    assert.equal(paid.p_cost_microusd, costMicrousd(catalogEntry('groq/openai/gpt-oss-120b').pools[1].price, prompt, 2048),
+      'credits are held for the full max_tokens');
     assert.equal(waited.length, 1, 'settlement runs in waitUntil');
     await Promise.all(waited);
     assert.equal(settled.length, 1);
@@ -993,9 +1009,58 @@ try {
     assert.equal(settle.p_error_code, null);
     assert.ok(Number.isInteger(settle.p_latency_ms));
     assert.deepEqual(gw.writes, []);
-    const clamped = reservationArgs({ session: { user_id: ACCOUNT }, requestId: 'r', entry: catalogEntry('groq/openai/gpt-oss-120b'),
-      pool: catalogEntry('groq/openai/gpt-oss-120b').pools[0], promptTokens: 3000, maxTokens: 5000 });
-    assert.equal(clamped.p_tokens, 8000);
+    // E2E finding (2026-10-21): max_tokens fitted to the rest of Groq's 8K minute made every
+    // reservation hold the whole minute budget. The pool holds the prompt plus a bounded output
+    // allowance; a smaller max_tokens is held as is.
+    const groq = catalogEntry('groq/openai/gpt-oss-120b');
+    const args = (promptTokens, maxTokens) => reservationArgs({ session: { user_id: ACCOUNT }, requestId: 'r', entry: groq,
+      pool: groq.pools[0], promptTokens, maxTokens });
+    assert.equal(args(3000, 5000).p_tokens, 3000 + RESERVED_OUTPUT_TOKENS);
+    assert.equal(args(1400, 6600).p_tokens, 2424, 'max_tokens 8192 fitted to 6600 still holds 1,024 output tokens');
+    assert.equal(args(3000, 64).p_tokens, 3064);
+    assert.equal(reservedTokens(10, 2048), 10 + RESERVED_OUTPUT_TOKENS);
+    assert.ok(3 * reservedTokens(1400, 6600) <= POOL_LIMITS.groq_free.tpm, 'three such requests fit in one Groq minute at once');
+  });
+
+  await test('pool budget refusals are logged with the pool, model and budget and remembered for /v1/models', async () => {
+    const gw = accountGateway();
+    resetPoolBudgets();
+    reset({ 'rpc:zerox_plan_policies_v2': policiesRpc,
+      'rpc:zerox_reserve_v2': call => Response.json([call.body.p_tier === 'free'
+        ? { status: 'pool_exhausted', retry_after_seconds: 42 } : { status: 'insufficient_credits', credit_balance_microusd: 0 }]) });
+    const { result: response, logs } = await captureLogs(async () =>
+      gw.call(accountEnv(), { model: 'groq/openai/gpt-oss-120b', messages }, { token: 'ses_pro' }));
+    const error = await expectError(response, 402, 'insufficient_credits');
+    assert.ok(error.upgrade_url);
+    const refusals = logs.warn.filter(([message]) => message === 'Neuron pool budget exhausted');
+    assert.equal(refusals.length, 1, 'one line per refused pool');
+    assert.deepEqual(refusals[0][1], { pool: 'groq:openai/gpt-oss-120b:free', model: 'groq/openai/gpt-oss-120b', budget: 'rpm|tpm',
+      retry_after_seconds: 42, request_id: response.headers.get('x-request-id') });
+    assert.ok(!JSON.stringify(logs).includes('groq-free-key') && !JSON.stringify(logs).includes('ses_pro'), 'no keys or tokens');
+    const spent = poolBudgetState('groq:openai/gpt-oss-120b:free');
+    assert.equal(spent.budget, 'rpm|tpm');
+    assert.ok(spent.until - Date.now() > 40000 && spent.until - Date.now() <= 42000);
+    // A daily budget (retry at UTC midnight) is named as such; the free pool of OpenRouter has no tpm.
+    assert.equal(exhaustedBudget(POOL_LIMITS.openrouter_free, 7200), 'rpd');
+    assert.equal(exhaustedBudget(POOL_LIMITS.nvidia_trial, 30, Date.UTC(2026, 9, 21, 12, 0, 30)), 'rpm');
+    assert.equal(exhaustedBudget(POOL_LIMITS.groq_free, 30, Date.UTC(2026, 9, 21, 23, 59, 30)), 'rpm|tpm|rpd|tpd',
+      'in the last minute of the day both windows end together');
+
+    // The next successful reservation on the pool clears it.
+    reset({ 'rpc:zerox_plan_policies_v2': policiesRpc, 'rpc:zerox_reserve_v2': () => Response.json([okReserve({ reservation_id: 'res-ok' })]),
+      'rpc:zerox_settle_v2': () => Response.json([{ status: 'settled' }]), groq: () => completion({ content: 'ok' }) });
+    assert.equal((await gw.call(accountEnv(), { model: 'groq/openai/gpt-oss-120b', messages }, { token: 'ses_pro' })).status, 200);
+    assert.equal(poolBudgetState('groq:openai/gpt-oss-120b:free'), null);
+
+    // Pools parked after upstream 429s answer capacity_exhausted from the router: logged as well.
+    gw.tracker.recordFailure('groq:openai/gpt-oss-20b:free', { kind: FailureKind.RATE_LIMITED, retryAfterSeconds: 20 });
+    reset({ 'rpc:zerox_plan_policies_v2': policiesRpc });
+    const parked = await captureLogs(async () => gw.call(accountEnv(), { model: 'gpt-oss-20b', messages }, { token: 'ses_pro' }));
+    await expectError(parked.result, 503, 'capacity_exhausted');
+    const cooled = parked.logs.warn.find(([message]) => message === 'Neuron pools rate limited upstream');
+    assert.deepEqual(cooled?.[1], { pools: ['groq:openai/gpt-oss-20b:free'], model: 'groq/openai/gpt-oss-20b',
+      retry_after_seconds: 20, request_id: parked.result.headers.get('x-request-id') });
+    resetPoolBudgets();
   });
 
   await test('failed attempts are refunded before failover and the final failure is refunded too', async () => {

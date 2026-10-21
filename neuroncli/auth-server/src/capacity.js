@@ -44,13 +44,24 @@ export function nextUtcMidnight(now = Date.now()) {
   return new Date((Math.floor(now / 86400000) + 1) * 86400000).toISOString();
 }
 
+// Output tokens a reservation holds against the user's daily tokens and the shared pool budget
+// until settlement replaces the estimate with the real usage. max_tokens is a ceiling, not an
+// estimate: holding all of it let one Groq request (8K TPM, max_tokens fitted to the rest of
+// the minute) take the whole per-minute budget of every user. Paid credits still hold the cost
+// of the full max_tokens.
+export const RESERVED_OUTPUT_TOKENS = 1024;
+
+export function reservedTokens(promptTokens, maxTokens) {
+  return promptTokens + Math.min(maxTokens, RESERVED_OUTPUT_TOKENS);
+}
+
 export function reservationArgs({ session, requestId, entry, pool, promptTokens, maxTokens }) {
   return {
     p_user_id: session.user_id,
     p_request_id: requestId,
     p_model: entry.id,
     p_tier: pool.tier,
-    p_tokens: promptTokens + maxTokens,
+    p_tokens: reservedTokens(promptTokens, maxTokens),
     p_cost_microusd: pool.tier === 'paid' ? costMicrousd(pool.price, promptTokens, maxTokens) : 0,
     p_pool: pool.limits ? { rpm: pool.limits.rpm ?? null, rpd: pool.limits.rpd ?? null,
       tpm: pool.limits.tpm ?? null, tpd: pool.limits.tpd ?? null } : null,

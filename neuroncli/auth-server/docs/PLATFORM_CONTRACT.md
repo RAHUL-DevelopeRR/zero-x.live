@@ -324,6 +324,11 @@ Sync the copy in `neuron-v2`; nothing here changes what the CLI sends or must ha
   the budget, with `upgrade_url` when a paid pool would take it, instead of
   `403 upgrade_required` ("model not in plan"). Clients handle it like any other
   `context_length_exceeded` (compact or shorten).
+- **Reservation size (§4, 2026-10-21).** `zerox_reserve_v2`'s `p_tokens` (the user's daily tokens
+  and the shared pool budget) is the prompt estimate plus `min(max_tokens, 1024)`, settled to the
+  real usage; paid credits still hold the cost of the full `max_tokens`. Holding all of
+  `max_tokens` let one Groq request take the whole 8K-token minute of every user. A request can
+  therefore run past the daily token cap by its own output; the next one is refused.
 
 ## 8. v1.3 amendments (production alpha, 2026-10-19)
 
@@ -343,6 +348,11 @@ Sync the copy in `neuron-v2`; nothing here changes what the CLI sends or must ha
     Workers AI 48 per model; NVIDIA and OpenRouter none). A recovered model returns to
     `available`. Isolates cache the snapshot for 5 s. Without the binding (the Node server) health
     is shared through KV instead, up to about a minute old.
+  - A pool whose shared budget refused a reservation (`pool_exhausted`) is `busy` until the next
+    minute (rpm/tpm) or `blurred` until UTC midnight (rpd/tpd), with that time as
+    `available_again_at`, until a reservation on it succeeds again. Each isolate knows the refusals
+    it saw (src/pool-budget.js): exact on the Node server, per isolate on Workers. A model's status
+    considers only the tiers the caller can use.
 - `auto` advertises the smallest context window among its candidates (it can fail over to any).
 - `GET /v1/models/status` (same optional auth as `/v1/models`) returns
   `{object:'list', checked_at, poll_interval_seconds:30, data:[{id, available, unavailable_reason,
@@ -366,7 +376,9 @@ RFC 8628 shape. Errors use the §3.3 envelope with `error.code` set to the RFC n
 - Polling: `400 authorization_pending` (keep polling every `interval` s), `400 slow_down` with
   `error.interval` (the new interval; +5 s, at most 60 s), `400 expired_token`, `400 access_denied`,
   `400 invalid_grant` (unknown or already used: a device code yields exactly one session).
-  `/auth/device/code` answers `429 rate_limited` with `Retry-After` when an IP asks too often.
+  `/auth/device/code` answers `429 rate_limited` with `Retry-After` when an IP asks too often, or
+  holds 5 unexpired pending codes (then `Retry-After` is the time until the oldest one expires).
+  The local Node server also serves the approval page at `/device`.
 - The session is the same account-backed `ses_` session as `/auth/cli/session` (same TTL, listed
   for revoke-all). Refresh tokens are a later amendment; until then an expired session means
   running `neuron login` again.

@@ -14,6 +14,14 @@ import { closeAllPglite, closePglite, getPgliteHandle, migrate } from './src/db/
 import { DEV_BOOTSTRAP_SQL } from './src/db/bootstrap.js';
 import { listMigrations, readMigration } from './src/db/migrations.js';
 import { connectionEnv, maskUrl, migrationScript } from './scripts/apply-migrations.mjs';
+import { Hono } from 'hono';
+import { createChatHandler } from './src/chat-handler.js';
+import { RoutingEngine } from './src/router.js';
+import { ProviderHealthTracker } from './src/provider-health.js';
+import { estimatePromptTokens } from './src/pricing.js';
+import { RESERVED_OUTPUT_TOKENS } from './src/capacity.js';
+import { resetPoolBudgets } from './src/pool-budget.js';
+import { v1ModelsPayload } from './src/routes/plans.js';
 
 const root = dirname(fileURLToPath(import.meta.url));
 const env = { DATABASE_DRIVER: 'pglite' };
@@ -101,10 +109,10 @@ try {
     'Worker-bundled modules stay free of Node built-ins');
   const migrations = await listMigrations();
   assert.deepEqual(handle.applied, migrations.map(migration => migration.version), 'all migrations applied in version order');
-  assert.deepEqual(migrations.slice(-6).map(migration => migration.file), [
+  assert.deepEqual(migrations.slice(-7).map(migration => migration.file), [
     '20261016000000_business_schema.sql', '20261016000100_business_quota.sql',
     '20261016000200_business_billing.sql', '20261016000300_business_sessions_admin.sql',
-    '20261019000000_device_auth.sql', '20261019120000_provider_discovery.sql']);
+    '20261019000000_device_auth.sql', '20261019120000_provider_discovery.sql', '20261021000000_device_pending_retry.sql']);
   assert.equal((await sql('SELECT count(*)::int AS n FROM supabase_migrations.schema_migrations'))[0].n, migrations.length);
   await assert.rejects(rpc(env, 'zerox_does_not_exist', {}), error =>
     error instanceof AccountDatabaseError && error.code === 'PGRST202');
@@ -482,6 +490,84 @@ try {
   assert.equal((await reserve(poolUsers[2], { p_model: 'pool/unlimited', p_pool: { rpm: null, tpd: null } })).status, 'ok');
   assert.equal((await poolRow('pool/unlimited', 'free', 'day')).requests, 2, 'counters are kept even without limits');
   ok('pool_exhausted for rpm/tpm/rpd/tpd shared across users, retry hints, per-tier pools, unlimited budgets');
+
+  // ---------------------------------------------------------------- Groq free pool: turns per minute
+  // E2E finding (2026-10-21): a Groq reservation held the prompt plus max_tokens fitted to the
+  // 8K TPM budget, i.e. the whole minute for every user, so a 3-turn tool task on gpt-oss-120b got
+  // 503 capacity_exhausted from its second turn. Through the chat handler and the real RPCs: each
+  // turn holds its prompt plus a bounded output allowance and settles to the real usage.
+  await clockHeadroom(20);
+  {
+    resetPoolBudgets();
+    // An unused minute for the model: the RPC section above reserved on it and the admin overview
+    // section below counts that, so its counters are set aside and put back afterwards.
+    await db.exec(`CREATE TEMP TABLE groq_pool_saved AS SELECT * FROM public.zerox_pool_usage
+      WHERE model = 'groq/openai/gpt-oss-120b' AND tier = 'free';
+      DELETE FROM public.zerox_pool_usage WHERE model = 'groq/openai/gpt-oss-120b' AND tier = 'free';`);
+    const groqUser = await newUser('max');
+    const chatEnv = { ...env, GROQ_API_KEY: 'groq-free-test-key' };
+    const session = { account_backed: true, user_id: groqUser, plan: 'max' };
+    const tracker = new ProviderHealthTracker();
+    const app = new Hono();
+    app.post('/v1/chat/completions', createChatHandler({
+      validateSession: async c => (c.req.header('Authorization') === 'Bearer ses_groq' ? { token: 'ses_groq', session } : null),
+      setSession: async () => {}, getSession: async () => null, planLimits: async () => ({}),
+      router: new RoutingEngine(tracker), healthTracker: tracker,
+    }));
+    const realFetch = globalThis.fetch;
+    const upstreamMax = [];
+    globalThis.fetch = async (input, options = {}) => {
+      if (!String(input).startsWith('https://api.groq.com/')) return realFetch(input, options);
+      const body = JSON.parse(options.body);
+      upstreamMax.push(body.max_completion_tokens ?? body.max_tokens);
+      return Response.json({ id: 'up', object: 'chat.completion', choices: [{ index: 0,
+        message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 1200, completion_tokens: 300, total_tokens: 1500 } });
+    };
+    const turn = [{ role: 'system', content: 'You are Neuron. '.repeat(300) }, { role: 'user', content: 'Read a.js and b.js.' }];
+    const prompt = estimatePromptTokens(turn);
+    const warnings = [];
+    const warn = console.warn;
+    console.warn = (...args) => warnings.push(args);
+    const statuses = [];
+    let refused = null;
+    try {
+      for (let index = 0; index < 5; index++) {
+        const response = await app.request('http://127.0.0.1/v1/chat/completions', { method: 'POST',
+          headers: { Authorization: 'Bearer ses_groq', 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model: 'groq/openai/gpt-oss-120b', messages: turn, max_tokens: 8192 }) }, chatEnv);
+        statuses.push(response.status);
+        if (response.status !== 200) refused = (await response.json()).error;
+      }
+    } finally {
+      globalThis.fetch = realFetch;
+      console.warn = warn;
+    }
+    assert.ok(prompt > 1000 && prompt < 2400, `a Neuron-sized prompt (${prompt} tokens)`);
+    assert.deepEqual(upstreamMax, Array(4).fill(8000 - prompt), 'the upstream max_tokens still fits the 8K minute');
+    assert.deepEqual(statuses, [200, 200, 200, 200, 503], 'four turns fit in one minute; the fifth exceeds 8K TPM');
+    const reserved = await sql('SELECT reserved_tokens FROM public.zerox_reservations WHERE user_id = $1', [groqUser]);
+    assert.deepEqual(reserved.map(row => Number(row.reserved_tokens)), Array(4).fill(prompt + RESERVED_OUTPUT_TOKENS),
+      `each turn holds its prompt plus ${RESERVED_OUTPUT_TOKENS} output tokens, not the whole 8,000-token minute it held before`);
+    const minute = await poolRow('groq/openai/gpt-oss-120b', 'free', 'minute');
+    assert.deepEqual([Number(minute.requests), Number(minute.tokens)], [4, 6000], 'settled to the real usage (4 x 1,500)');
+    assert.equal(refused.code, 'capacity_exhausted');
+    assert.ok(refused.retry_after_seconds >= 1 && refused.retry_after_seconds <= 60);
+    const logged = warnings.filter(([message]) => message === 'Neuron pool budget exhausted');
+    assert.equal(logged.length, 1);
+    assert.deepEqual({ ...logged[0][1], request_id: undefined }, { pool: 'groq:openai/gpt-oss-120b:free',
+      model: 'groq/openai/gpt-oss-120b', budget: 'rpm|tpm', retry_after_seconds: refused.retry_after_seconds, request_id: undefined });
+    assert.ok(!JSON.stringify(warnings).includes('groq-free-test-key'), 'no key in the logs');
+    // /v1/models shows the spent budget until the next minute.
+    const listed = await v1ModelsPayload({ env: chatEnv, req: { raw: new Request('http://127.0.0.1/v1/models') } }, session);
+    const groqModel = listed.data.find(model => model.id === 'groq/openai/gpt-oss-120b');
+    assert.equal(groqModel.status, 'busy');
+    assert.ok(Math.abs(Date.parse(groqModel.available_again_at) - (Date.now() + refused.retry_after_seconds * 1000)) < 2000);
+    resetPoolBudgets();
+    await db.exec(`DELETE FROM public.zerox_pool_usage WHERE model = 'groq/openai/gpt-oss-120b' AND tier = 'free';
+      INSERT INTO public.zerox_pool_usage SELECT * FROM groq_pool_saved; DROP TABLE groq_pool_saved;`);
+  }
+  ok('Groq free pool: four Neuron-sized turns in one minute (prompt + 1,024 held, settled to usage); the fifth is refused, logged with its pool and budget, and shown busy');
 
   // ---------------------------------------------------------------- stale release and housekeeping
   const staleUser = await newUser('free');
