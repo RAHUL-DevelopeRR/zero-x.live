@@ -26,6 +26,7 @@ import { registerSessionIndex, registerSessionRoutes, sessionClient, unregisterS
 import { registerDeviceRoutes } from './routes/device.js';
 import { registerDiscoveryRoutes } from './routes/discovery.js';
 import { RELEASE_MANIFEST_PATH, registerReleaseRoutes } from './routes/releases.js';
+import { registerChangelogRoutes } from './routes/changelog.js';
 import { runDiscoveryTick } from './discovery/jobs.js';
 // Durable Object classes are exported from the Worker entry (wrangler.toml [[durable_objects]]).
 export { HealthHub } from './health-hub.js';
@@ -61,6 +62,9 @@ const CONTENT_SECURITY_POLICY = [
   "base-uri 'self'",
 ].join('; ');
 
+// Public, cacheable API answers (everything else under /api/ is no-store).
+const PUBLIC_API_PATHS = ['/api/plans', '/api/changelog.json'];
+
 app.use('*', async (c, next) => {
   const url = new URL(c.req.url);
   const path = routePath(url.pathname);
@@ -79,7 +83,7 @@ app.use('*', async (c, next) => {
     c.header('Cache-Control', 'no-store');
     c.header('Referrer-Policy', url.pathname.startsWith('/neuroncli/login/') ? 'origin' : 'no-referrer');
   }
-  if (['/api/', '/admin/', '/webhooks/'].some(prefix => path.startsWith(prefix)) && path !== '/api/plans') {
+  if (['/api/', '/admin/', '/webhooks/'].some(prefix => path.startsWith(prefix)) && !PUBLIC_API_PATHS.includes(path)) {
     c.header('Cache-Control', 'no-store');
   }
   if (url.hostname === 'dashboard.zero-x.live' || url.pathname.startsWith('/neuroncli/') || path === '/health' ||
@@ -100,7 +104,7 @@ async function notFoundPage(c) {
 
 // Pages served from https://zero-x.live/<page> (clean URLs).
 const SITE_PAGES = ['/about', '/privacy', '/terms', '/find-files-by-content', '/wheres-that-file',
-  '/pricing', '/neuron-cli', '/docs', '/docs/trust', '/download', '/refund', '/contact', '/shipping'];
+  '/pricing', '/neuron-cli', '/docs', '/docs/trust', '/download', '/changelog', '/refund', '/contact', '/shipping'];
 
 // Hostname-based subdomain routing middleware
 app.use('*', async (c, next) => {
@@ -183,8 +187,9 @@ app.use('*', async (c, next) => {
     }
   }
 
-  // Release manifests are answered by the API (R2 first, then the committed copy).
-  if (RELEASE_MANIFEST_PATH.test(path)) return next();
+  // Release manifests are answered by the API (R2 first, then the committed copy), and API paths
+  // with a dot (/api/changelog.json) are routes, not files.
+  if (RELEASE_MANIFEST_PATH.test(path) || isApiRoute(routePath(path))) return next();
 
   const isAsset = path.startsWith('/Assets/') || path.startsWith('/assets/') ||
     (path.includes('.') && !path.endsWith('/'));
@@ -879,6 +884,7 @@ registerWebhookRoutes(api);
 registerAdminRoutes(api);
 registerDiscoveryRoutes(api);
 registerReleaseRoutes(api);
+registerChangelogRoutes(api);
 
 app.route(API_MOUNT, api);
 app.route('/', api);
