@@ -115,8 +115,10 @@ try {
     assert.equal(options.headers.Authorization, undefined);
     if (url.endsWith('/zerox_plan_policies')) return Response.json([{ policies: DEVELOPMENT_PLANS }]);
     const args = JSON.parse(options.body);
+    // Session activity (last used, sliding expiry) runs after the response and is keyed by hash.
+    if (url.endsWith('/zerox_session_touch')) return Response.json([{ present: true, expires_at: null }]);
     assert.equal(args.p_user_id, userId);
-    if (url.endsWith('/zerox_session_index_add')) {
+    if (url.endsWith('/zerox_session_register') || url.endsWith('/zerox_session_index_add')) {
       assert.match(args.p_token_hash, /^[0-9a-f]{64}$/);
       return Response.json([{ token_hash: args.p_token_hash }]);
     }
