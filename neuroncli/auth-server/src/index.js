@@ -27,9 +27,12 @@ import { registerDeviceRoutes } from './routes/device.js';
 import { registerDiscoveryRoutes } from './routes/discovery.js';
 import { RELEASE_MANIFEST_PATH, registerReleaseRoutes } from './routes/releases.js';
 import { registerChangelogRoutes } from './routes/changelog.js';
+import { registerPushRoutes } from './routes/push.js';
+import { registerRelayRoutes } from './routes/relay.js';
 import { runDiscoveryTick } from './discovery/jobs.js';
 // Durable Object classes are exported from the Worker entry (wrangler.toml [[durable_objects]]).
 export { HealthHub } from './health-hub.js';
+export { RelayRoom } from './relay.js';
 import { registerWebhookRoutes } from './routes/webhooks.js';
 
 const SERVICE = 'neuroncli-gateway-worker';
@@ -45,7 +48,7 @@ app.onError((error, c) => {
 
 // Paths are served both at the root and under the legacy /neuroncli/auth-server mount.
 const routePath = pathname => pathname.startsWith(API_MOUNT + '/') ? pathname.slice(API_MOUNT.length) : pathname;
-const isApiRoute = path => ['/auth/', '/api/', '/v1/', '/admin/', '/webhooks/'].some(prefix => path.startsWith(prefix)) ||
+const isApiRoute = path => ['/auth/', '/api/', '/v1/', '/admin/', '/webhooks/', '/relay/'].some(prefix => path.startsWith(prefix)) ||
   path === '/health' || path === '/ready';
 
 // ── Security headers ──
@@ -69,6 +72,9 @@ app.use('*', async (c, next) => {
   const url = new URL(c.req.url);
   const path = routePath(url.pathname);
   await next();
+  // A WebSocket upgrade (the relay, src/routes/relay.js) comes back from its Durable Object with
+  // immutable headers, and headers mean nothing on it.
+  if (c.res.status === 101 || c.res.webSocket) return;
   c.header('X-Content-Type-Options', 'nosniff');
   c.header('Referrer-Policy', 'strict-origin-when-cross-origin');
   c.header('X-Frame-Options', 'DENY');
@@ -83,11 +89,11 @@ app.use('*', async (c, next) => {
     c.header('Cache-Control', 'no-store');
     c.header('Referrer-Policy', url.pathname.startsWith('/neuroncli/login/') ? 'origin' : 'no-referrer');
   }
-  if (['/api/', '/admin/', '/webhooks/'].some(prefix => path.startsWith(prefix)) && !PUBLIC_API_PATHS.includes(path)) {
+  if (['/api/', '/admin/', '/webhooks/', '/relay/'].some(prefix => path.startsWith(prefix)) && !PUBLIC_API_PATHS.includes(path)) {
     c.header('Cache-Control', 'no-store');
   }
   if (url.hostname === 'dashboard.zero-x.live' || url.pathname.startsWith('/neuroncli/') || path === '/health' ||
-      ['/auth/', '/api/', '/v1/', '/admin/', '/webhooks/'].some(prefix => path.startsWith(prefix))) {
+      ['/auth/', '/api/', '/v1/', '/admin/', '/webhooks/', '/relay/'].some(prefix => path.startsWith(prefix))) {
     c.header('X-Robots-Tag', 'noindex, nofollow');
   }
 });
@@ -218,7 +224,9 @@ const openCors = cors({
 });
 app.use('*', async (c, next) => {
   const path = routePath(new URL(c.req.url).pathname);
-  if (path.startsWith('/auth/') || path.startsWith('/api/')) return identityCors(c, next);
+  // WebSockets are not subject to CORS; the relay authenticates them itself.
+  if (path.startsWith('/relay/') && c.req.header('Upgrade')?.toLowerCase() === 'websocket') return next();
+  if (path.startsWith('/auth/') || path.startsWith('/api/') || path.startsWith('/relay/')) return identityCors(c, next);
   if (path.startsWith('/v1/') || path === '/health' || path === '/ready') return openCors(c, next);
   return next();
 });
@@ -885,6 +893,8 @@ registerAdminRoutes(api);
 registerDiscoveryRoutes(api);
 registerReleaseRoutes(api);
 registerChangelogRoutes(api);
+registerPushRoutes(api);
+registerRelayRoutes(api);
 
 app.route(API_MOUNT, api);
 app.route('/', api);

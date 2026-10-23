@@ -85,6 +85,16 @@ class_name = "HealthHub"
 tag = "v1-health-hub"
 new_sqlite_classes = ["HealthHub"]
 
+# RelayRoom (src/relay.js, docs/RELAY.md): one Durable Object per account that relays end-to-end
+# encrypted frames between a computer running Neuron and the user's phone or browser.
+[[durable_objects.bindings]]
+name = "RELAY"
+class_name = "RelayRoom"
+
+[[migrations]]
+tag = "v2-relay"
+new_sqlite_classes = ["RelayRoom"]
+
 # Releases stale quota reservations and applies subscription expiry (src/routes/admin.js), and
 # runs provider discovery: each public model list once a day, OmniRoute and research once a week
 # (src/discovery/jobs.js).

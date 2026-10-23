@@ -1,6 +1,7 @@
 import { databaseConfigured, missingFunction, rpc, rpcRows } from '../account-store.js';
 import { ApiError, bearerToken, INTERACTIVE_CREDENTIALS, SESSION_TOKEN_PATTERN, withCaller } from '../auth-context.js';
 import { deleteRecordByHash, sha256Hex } from '../session-store.js';
+import { closeRelaySessions } from './relay.js';
 
 // Device details a client reports at sign-in (display only; never trusted for anything else).
 const deviceText = (value, max) => typeof value === 'string'
@@ -137,6 +138,7 @@ export function registerSessionRoutes(api) {
       throw new ApiError(400, 'invalid_request', '`api_keys` must be a boolean.', { param: 'api_keys' });
     }
     const revoked = await revokeAllSessions(c.env, caller.user_id);
+    await closeRelaySessions(c.env, caller.user_id, 'all');
     if (options.api_keys !== true) return c.json({ revoked });
     return c.json({ revoked, api_keys_revoked: await revokeAllApiKeys(c.env, caller.user_id) });
   }));
@@ -154,6 +156,7 @@ export function registerSessionRoutes(api) {
     if (!SESSION_ID_PATTERN.test(id)) throw new ApiError(400, 'invalid_request', '`id` must be a session id from GET /api/sessions.', { param: 'id' });
     const revoked = await revokeSession(c.env, caller.user_id, id);
     if (!revoked) throw new ApiError(404, 'not_found', 'No such session. It may already be signed out.');
+    await closeRelaySessions(c.env, caller.user_id, [id]);
     return c.json({ status: 'revoked', current: revoked.hash === await currentHash(c) });
   }));
 }

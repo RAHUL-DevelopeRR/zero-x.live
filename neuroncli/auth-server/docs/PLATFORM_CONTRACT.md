@@ -479,3 +479,61 @@ update notice.
 `/download` used to redirect to the NeuCockpit downloads; `/start` still does. The privacy
 policy states that the gateway stores usage metadata only, never prompt or response text, and
 the retention of each record type.
+
+## 10. v1.5 amendments (linked devices, changelog, relay, 2026-10-23)
+
+Feature-parity plan rows A9, A10, A12, A13 and A11. Migrations
+`20261023000000_session_devices.sql` and `20261023000100_push_tokens.sql`.
+
+### 10.1 Linked devices (`/api/sessions`)
+
+- `GET /api/sessions` (website or CLI sign-in; API keys get 403) →
+  `{sessions:[{id, device_name, os, client:{name, version}, created_at, last_used_at, expires_at,
+  current}]}`, most recently used first. `id` is 24 hex characters derived from the token hash;
+  `current` marks the CLI session making the request.
+- `DELETE /api/sessions/:id` → `{status:'revoked', current}`; `404 not_found` for an unknown or
+  another account's session. It also closes that session's relay sockets.
+- Sign-in records the device: `POST /auth/cli/session` accepts optional `device_name`, `os`,
+  `client_name`, `client_version` (or `version`); the device flow uses what `/auth/device/code`
+  reported. Display data only.
+- Without the migration the list falls back to `zerox_session_index_list` (device fields `null`).
+
+### 10.2 Sliding session expiry
+
+A CLI session in use stays `CLI_SESSION_TTL_HOURS` (720 h) ahead of its last use: on use it is
+extended at most once a day, never beyond `CLI_SESSION_MAX_DAYS` (90) after sign-in. The new
+expiry shows in `GET /auth/session` `expires_at` and `GET /api/account` `session_expires_at`.
+"Last used" updates at most every 5 minutes. Both run after the response (`waitUntil`). The
+session index decides: the record is rewritten only while the index row exists, and checked again
+afterwards, so a sign-out or revoke that races an extension always wins. Without the migration,
+sessions keep their fixed lifetime. (Rotating refresh tokens remain unnecessary.)
+
+### 10.3 Changelog
+
+`GET /api/changelog.json?product=cli|desktop|mobile&limit=1..50` (public, `max-age=300`) →
+`{object:'list', repository, updated_at, stale, data:[{product, version, tag, title,
+published_at, prerelease, url, notes}]}` from the `RAHUL-DevelopeRR/neuron-v2` GitHub releases:
+tag `v<semver>` is the CLI, `desktop-v<semver>` and `mobile-v<semver>` the apps. `notes` is the
+release's Markdown as plain text (max 20,000 characters). GitHub is read at most every 15 minutes;
+the last copy is served for a day when it fails (`stale: true`), else `503` with `Retry-After`.
+The page is `https://zero-x.live/changelog`. Optional secret `GITHUB_RELEASES_TOKEN`.
+
+### 10.4 Relay and push
+
+Protocol, limits, close codes and push rules: `docs/RELAY.md`. Endpoints `wss://zero-x.live/relay/v1/host`,
+`/relay/v1/client`, `POST /relay/v1/ticket`, `GET /relay/v1/hosts`, and `POST|GET /api/push/tokens`,
+`DELETE /api/push/tokens/:id`. Durable Object binding `RELAY` (class `RelayRoom`). Optional secret
+`EXPO_ACCESS_TOKEN`.
+
+### 10.5 RPCs
+
+| RPC | args | returns (row) |
+|-----|------|---------------|
+| `zerox_session_register` | `p_user_id, p_token_hash, p_expires_at, p_client jsonb {device_name, os, client_name, client_version}, p_device_grant_id uuid` | like `zerox_session_index_add`; stores the device |
+| `zerox_session_list` | `p_user_id` | rows `{token_hash, created_at, last_used_at, expires_at, device_name, device_os, client_name, client_version}` |
+| `zerox_session_touch` | `p_token_hash, p_expires_at timestamptz = null` | `{present, expires_at}` (marks use; extends, never shortens, max 400 days after sign-in) |
+| `zerox_session_revoke` | `p_user_id, p_token_hash` | `{revoked boolean}` |
+| `zerox_push_register` | `p_user_id, p_token, p_platform, p_device_name, p_needs_input, p_finished` | token row without the token |
+| `zerox_push_list` | `p_user_id` | rows including `token` (server use only) |
+| `zerox_push_delete` | `p_user_id, p_id` | `{deleted boolean}` |
+| `zerox_push_delivered` | `p_sent uuid[], p_unregistered text[]` | `{sent, removed}` |
