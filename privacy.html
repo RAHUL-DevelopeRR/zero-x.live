@@ -42,13 +42,13 @@
   <main id="main" class="zx-container zx-legal zx-section--tight">
     <nav class="zx-breadcrumb" aria-label="Breadcrumb"><a href="/">Zero-X</a> / Privacy Policy</nav>
     <h1>Privacy Policy</h1>
-    <p class="zx-updated">Effective date: 16 October 2026. Replaces the policy dated 3 October 2026.</p>
+    <p class="zx-updated">Effective date: 23 October 2026. Replaces the policy dated 16 October 2026; this version states exactly what the gateway stores and for how long.</p>
     <p>This policy covers the Zero-X website (zero-x.live and its subdomains), the account dashboard, the Zero-X gateway used by Neuron CLI, paid plans and the cloud features of NeuCockpit. Zero-X, 6/2, N. Pugalur, Karur 639113, Tamil Nadu, India, decides how this information is used.</p>
 
     <h2 id="summary">Summary</h2>
     <ul>
       <li>We keep the account, usage and payment records needed to run the service and bill you.</li>
-      <li>When you use Neuron CLI through Zero-X, the content of each request is sent to the model provider that serves it. The gateway is designed not to store prompt or response text.</li>
+      <li>When you use Neuron through Zero-X, the content of each request is sent to the model provider that serves it. The gateway stores usage metadata only (time, model, token counts, cost and status). It does not store the text of your prompts, files or the model's responses.</li>
       <li>Free tiers of some providers may use prompts to improve their models and may let humans review them. Do not send secrets or code you are not allowed to share on the Free plan.</li>
       <li>We do not sell personal data and do not use your prompts or code to train models.</li>
     </ul>
@@ -68,7 +68,8 @@
     <p>If you email us, we keep the conversation to answer you and to handle refunds, disputes or legal requests.</p>
 
     <h2 id="prompts">Prompts, code and model responses</h2>
-    <p>Neuron CLI runs on your computer and decides which file contents, command output and messages to include in each request. Those requests travel to the Zero-X gateway, which forwards them to an upstream model provider and returns the response. The gateway records the usage metadata listed above; it is not designed to store the text of prompts or responses in our database or application logs.</p>
+    <p>Neuron CLI runs on your computer and decides which file contents, command output and messages to include in each request. Those requests travel to the Zero-X gateway, which forwards them to an upstream model provider and returns the response.</p>
+    <p id="gateway-logging"><strong>The gateway stores usage metadata only.</strong> It records the usage records listed above and nothing else about a request. The text of prompts, files, command output and model responses is held in memory only while the request is forwarded, and is never written to our database or logs. The one exception is for Google Gemini models: the gateway keeps the opaque continuation tokens Gemini returns with tool calls (not your text) in memory for up to 6 hours, so a multi-step conversation can continue.</p>
     <p>The upstream provider processes the request under its own terms. <strong>Free tiers may use prompts and responses to improve their models and may allow human review.</strong> Paid plans can route requests to paid provider tiers when free capacity is unavailable. If you connect your own provider key directly in Neuron, those requests do not pass through Zero-X at all.</p>
     <p>NeuCockpit's local search and local AI features process the documents you choose on your own computer. Its optional cloud AI features send the message and any included document text through the same gateway.</p>
 
@@ -96,7 +97,11 @@
 
     <h2 id="retention">How long we keep it</h2>
     <ul>
-      <li><strong>Account, usage and key records:</strong> while your account exists. After a verified deletion request we delete them within 30 days.</li>
+      <li><strong>Account, usage metadata and key records:</strong> while your account exists. After a verified deletion request we delete them within 30 days.</li>
+      <li><strong>Prompt and response text:</strong> not stored. It exists on the gateway only in memory while a request is in flight (Gemini continuation tokens: up to 6 hours in memory).</li>
+      <li><strong>Operational logs:</strong> request IDs, model, provider, status and error codes, never prompt or response text or keys. Kept for at most 7 days.</li>
+      <li><strong>Device sign-in requests:</strong> the device name, IP address and approximate location shown on the approval page, deleted one day after the request expires (requests expire after 10 minutes).</li>
+      <li><strong>Payment notifications from Razorpay:</strong> 90 days, used to process each payment event once.</li>
       <li><strong>Payment records:</strong> for as long as Indian tax and accounting law requires, even after account deletion.</li>
       <li><strong>CLI sessions:</strong> expire after 30 days or when you sign out or use "Sign out all CLI sessions". API keys last until you revoke them.</li>
       <li><strong>Browser sign-in cookies:</strong> up to 30 days; signing out clears them.</li>

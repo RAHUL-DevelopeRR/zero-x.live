@@ -2,7 +2,7 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:video="http://www.google.com/schemas/sitemap-video/1.1">
   <url>
     <loc>https://zero-x.live/</loc>
-    <lastmod>2026-10-16</lastmod>
+    <lastmod>2026-10-20</lastmod>
   </url>
   <url>
     <loc>https://zero-x.live/neuron-cli</loc>
@@ -17,8 +17,14 @@
     <lastmod>2026-10-16</lastmod>
   </url>
   <url>
+    <loc>https://zero-x.live/docs/trust</loc>
+  </url>
+  <url>
+    <loc>https://zero-x.live/download</loc>
+  </url>
+  <url>
     <loc>https://neuron.zero-x.live/</loc>
-    <lastmod>2026-10-04</lastmod>
+    <lastmod>2026-10-20</lastmod>
   </url>
   <url>
     <loc>https://zero-x.live/about</loc>

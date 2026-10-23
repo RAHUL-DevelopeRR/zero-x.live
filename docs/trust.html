@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Security and trust | Neuron by Zero-X</title>
+  <meta name="description" content="Why Neuron asks before it works in a folder, what it can do on your computer, what leaves your machine, what the Zero-X gateway stores, and how to report a security problem.">
+  <meta name="robots" content="index,follow,max-image-preview:large">
+  <link rel="canonical" href="https://zero-x.live/docs/trust">
+  <meta name="theme-color" content="#0A0A0C">
+  <link rel="icon" type="image/png" sizes="32x32" href="/Assets/zerox-favicon-32.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/Assets/zerox-apple-touch-icon.png">
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="Zero-X">
+  <meta property="og:title" content="Neuron security and trust">
+  <meta property="og:description" content="Folder trust, permissions, what leaves your computer and what Zero-X stores.">
+  <meta property="og:url" content="https://zero-x.live/docs/trust">
+  <meta property="og:image" content="https://zero-x.live/Assets/zerox-favicon-centered.png">
+  <meta property="og:image:alt" content="Zero-X logo">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="Neuron security and trust">
+  <meta name="twitter:description" content="Folder trust, permissions, what leaves your computer and what Zero-X stores.">
+  <meta name="twitter:image" content="https://zero-x.live/Assets/zerox-favicon-centered.png">
+  <meta name="twitter:image:alt" content="Zero-X logo">
+  <link rel="stylesheet" href="/site-fonts.css">
+  <link rel="stylesheet" href="/zx-tokens.css">
+  <script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"TechArticle","@id":"https://zero-x.live/docs/trust#article","headline":"Neuron security and trust","url":"https://zero-x.live/docs/trust","publisher":{"@id":"https://zero-x.live/#organization"},"inLanguage":"en"},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Zero-X","item":"https://zero-x.live/"},{"@type":"ListItem","position":2,"name":"Docs","item":"https://zero-x.live/docs"},{"@type":"ListItem","position":3,"name":"Security and trust","item":"https://zero-x.live/docs/trust"}]}]}</script>
+</head>
+<body>
+  <a class="zx-skip" href="#main">Skip to content</a>
+  <header class="zx-header">
+    <div class="zx-container zx-header__inner">
+      <a class="zx-brand" href="/"><img src="/Assets/zerox-favicon-32.png" width="28" height="28" alt="">Zero-X</a>
+      <nav class="zx-nav" aria-label="Main">
+        <a href="/neuron-cli">Neuron CLI</a>
+        <a href="/pricing">Pricing</a>
+        <a href="/docs">Docs</a>
+        <a class="zx-btn zx-btn--sm" href="https://dashboard.zero-x.live/">Dashboard</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main" class="zx-container">
+    <div class="zx-hero">
+      <nav class="zx-breadcrumb" aria-label="Breadcrumb"><a href="/">Zero-X</a> / <a href="/docs">Docs</a> / Security and trust</nav>
+      <h1>Security and trust</h1>
+      <p class="zx-lead">Neuron can open, change and run files in your projects. This page explains when it asks first, what it sends where, and what Zero-X keeps.</p>
+    </div>
+    <div class="zx-docs">
+      <nav class="zx-toc" aria-label="On this page">
+        <ol>
+          <li><a href="#folder-trust">Trusting a folder</a></li>
+          <li><a href="#permissions">Permissions while it works</a></li>
+          <li><a href="#data">What leaves your computer</a></li>
+          <li><a href="#gateway">What Zero-X stores</a></li>
+          <li><a href="#account">Your account and devices</a></li>
+          <li><a href="#report">Report a security problem</a></li>
+        </ol>
+      </nav>
+      <article>
+        <section id="folder-trust" aria-labelledby="folder-trust-title">
+          <h2 id="folder-trust-title">Trusting a folder</h2>
+          <p>The first time you start Neuron in a folder, it asks whether you trust it. A project can ship its own Neuron settings (<code>.neuron.json</code> or <code>.neuron/settings.json</code>), and those settings can:</p>
+          <ul>
+            <li>run <strong>hooks</strong>: commands that run before or after Neuron uses a tool;</li>
+            <li>start <strong>MCP servers</strong>: programs that give Neuron extra tools;</li>
+            <li>add <strong>permission rules</strong> that let Neuron do more without asking;</li>
+            <li>choose which model provider your requests go to.</li>
+          </ul>
+          <p>A repository you cloned from someone else could use these to run code on your computer. Until you trust the folder, Neuron ignores all four. Trust a folder only if you created the project or trust where it came from.</p>
+          <ul>
+            <li>Trust is saved for the folder's git root, in <code>trusted_dirs.txt</code> in your Neuron home folder (<code>~/.neuron</code> by default). Remove a line there to stop trusting that folder.</li>
+            <li>You can trust every project under a folder you own with <code>trustedRoots</code> in your <em>user</em> settings (<code>~/.neuron/settings.json</code>). Project settings cannot do this.</li>
+            <li>For scripts and CI, <code>NEURON_TRUST_WORKSPACE=1</code> trusts the current folder for that run only.</li>
+          </ul>
+        </section>
+
+        <section id="permissions" aria-labelledby="permissions-title">
+          <h2 id="permissions-title">Permissions while it works</h2>
+          <p>Trusting a folder does not let Neuron do anything it likes. The permission mode decides what it may do on its own:</p>
+          <div class="zx-table-wrap">
+            <table class="zx-table">
+              <thead><tr><th scope="col">Mode</th><th scope="col">What Neuron may do without asking</th></tr></thead>
+              <tbody>
+                <tr><th scope="row"><code>read-only</code></th><td>Read and search files, and run read-only commands such as <code>git status</code>. It cannot edit files or run other commands.</td></tr>
+                <tr><th scope="row"><code>workspace-write</code></th><td>Also edit files in the project. Any other command asks for your approval first.</td></tr>
+                <tr><th scope="row"><code>danger-full-access</code></th><td>Edit files and run any command without asking. Use it only in a disposable environment.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <ul class="zx-mt">
+            <li>Whatever the model reads is sent to the model provider. Neuron therefore always asks before it reads <code>.env</code> files and settings or credential files, in every mode, and directory searches skip them.</li>
+            <li>When Neuron asks, the prompt shows the command it wants to run or the file it wants to change.</li>
+            <li>Switch modes with <code>/permissions</code> or start with <code>neuron --permission-mode &lt;mode&gt;</code>.</li>
+          </ul>
+        </section>
+
+        <section id="data" aria-labelledby="data-title">
+          <h2 id="data-title">What leaves your computer</h2>
+          <ul>
+            <li><strong>Your requests.</strong> Each turn sends your message, the conversation so far and whatever files or command output Neuron included, to the model provider you chose. When you sign in with Zero-X, that goes through the Zero-X gateway to the provider that serves the model. With your own provider key, it goes straight to that provider and never passes through Zero-X.</li>
+            <li><strong>Sign-in.</strong> <code>neuron auth login</code> opens Zero-X in your browser and stores a session token on your computer.</li>
+            <li><strong>No analytics.</strong> Neuron does not send usage analytics or crash reports to Zero-X. Sessions and history stay on your computer.</li>
+            <li><strong>Free model tiers.</strong> Some providers' free tiers may use prompts to improve their models and may let people review them. The <a href="/privacy#processors">privacy policy</a> lists every provider. Do not send secrets or code you may not share on the Free plan.</li>
+          </ul>
+        </section>
+
+        <section id="gateway" aria-labelledby="gateway-title">
+          <h2 id="gateway-title">What Zero-X stores</h2>
+          <p>The gateway stores <strong>usage metadata only</strong>: time, model, provider, status, token counts, cost, latency and a request ID. It does not store the text of your prompts, files or the model's responses; request content is held in memory only while it is forwarded. Retention periods are in the <a href="/privacy#retention">privacy policy</a>.</p>
+          <p>Provider API keys stay on the gateway and are never sent to Neuron or the website. CLI sessions and API keys are stored only as SHA-256 hashes.</p>
+        </section>
+
+        <section id="account" aria-labelledby="account-title">
+          <h2 id="account-title">Your account and devices</h2>
+          <ul>
+            <li>When Neuron asks to sign in, the browser page shows the device name, its IP address and location, and warns you if the request comes from another country. Approve only a request you started.</li>
+            <li>Signed-in CLI sessions last 30 days. <a href="https://dashboard.zero-x.live/#sessions">Sign out of every CLI session</a> from the dashboard if a computer is lost or a token may have leaked.</li>
+            <li>API keys are shown once. Revoke one from the <a href="https://dashboard.zero-x.live/#keys">dashboard</a> and it stops working at once.</li>
+          </ul>
+        </section>
+
+        <section id="report" aria-labelledby="report-title">
+          <h2 id="report-title">Report a security problem</h2>
+          <p>Email <a href="mailto:support@zero-x.live">support@zero-x.live</a> with "Security" in the subject. Describe what you found, how to reproduce it and what it affects. Please do not test against other people's accounts or data, and give us a reasonable time to fix the problem before you publish it. We reply within 2 business days.</p>
+          <p>For anything else, see <a href="/docs#support">help and support</a>.</p>
+        </section>
+      </article>
+    </div>
+  </main>
+
+  <footer class="zx-footer">
+    <div class="zx-container zx-footer__grid">
+      <div>
+        <a class="zx-brand" href="/">Zero-X</a>
+        <p>Neuron CLI and NeuCockpit. Built in Tamil Nadu, India.</p>
+      </div>
+      <nav aria-label="Product">
+        <h2>Product</h2>
+        <a href="/neuron-cli">Neuron CLI</a>
+        <a href="/download">Download</a>
+        <a href="/pricing">Pricing</a>
+        <a href="/docs">Docs</a>
+        <a href="https://dashboard.zero-x.live/">Dashboard</a>
+      </nav>
+      <nav aria-label="Company">
+        <h2>Company</h2>
+        <a href="/about">About</a>
+        <a href="/contact">Contact</a>
+        <a href="https://neuron.zero-x.live/">NeuCockpit</a>
+      </nav>
+      <nav aria-label="Legal">
+        <h2>Legal</h2>
+        <a href="/terms">Terms of Service</a>
+        <a href="/privacy">Privacy Policy</a>
+        <a href="/refund">Cancellation and refunds</a>
+        <a href="/shipping">Shipping and delivery</a>
+      </nav>
+    </div>
+    <p class="zx-container zx-footer__legal">© 2026 Zero-X · <a href="mailto:support@zero-x.live">support@zero-x.live</a></p>
+  </footer>
+</body>
+</html>

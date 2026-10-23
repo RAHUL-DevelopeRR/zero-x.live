@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "product": "cli",
+  "channel": "stable",
+  "version": null,
+  "released_at": null,
+  "notes_url": null,
+  "minimum_version": null,
+  "downloads": [],
+  "checksums_url": null,
+  "install": {
+    "npm": "npm install -g @zero-x.live/neuron",
+    "pip": "python -m pip install neuroncli"
+  }
+}

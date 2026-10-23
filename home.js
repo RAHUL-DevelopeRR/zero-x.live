@@ -139,7 +139,7 @@ function installTabs(doc) {
   select(0, false);
 }
 
-function copyButtons(doc, win) {
+export function copyButtons(doc, win) {
   const live = doc.getElementById('copy-status');
   for (const button of doc.querySelectorAll('[data-copy-target]')) {
     const target = doc.getElementById(button.dataset.copyTarget);

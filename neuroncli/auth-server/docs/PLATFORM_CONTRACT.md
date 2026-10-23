@@ -130,10 +130,11 @@ credential (never an `nzx_` key). Session tokens are stored hashed (SHA-256) in 
   interval:'month', limits:{daily_requests, daily_tokens, rpm, concurrency},
   monthly_credit_usd, tiers, features:[string], highlighted}], topups:[{id, credit_usd,
   price:{usd_cents, inr_paise}}]}`
-- `GET /api/account` → `{user:{id,email,name,image_url}, plan:{id,name}, limits:{...},
+- `GET /api/account` → `{user:{id,email,name,display_name,initials,image_url},
+  session_expires_at, plan:{id,name}, limits:{...},
   usage_today:{requests, tokens, resets_at}, credits:{balance_usd, monthly_grant_usd},
   subscription:null|{status, current_period_end, cancel_at_period_end},
-  flags:{suspended}}`
+  flags:{suspended}}` (`display_name`, `initials` and `session_expires_at`: §9.1)
 - `GET /api/usage?from=YYYY-MM-DD&to=YYYY-MM-DD` (max 92 days, default last 30) →
   `{from, to, series:[{day, requests, prompt_tokens, completion_tokens, cost_usd}],
   by_model:[{model, requests, prompt_tokens, completion_tokens, cost_usd}], totals:{requests,
@@ -438,3 +439,43 @@ by itself, and signing up to a provider stays manual. Code: `src/discovery/`, re
   the adapter, key, hosting flag and shared budget. They are free pools only, never chosen by
   `auto`, never replace a code-defined id, and `*_MODELS` still narrows them. A demoted, rejected or
   failed candidate stops being offered within the 60 s cache.
+
+## 9. v1.4 amendments (Neuron apps, 2026-10-23)
+
+For the account row and menu, update notices, downloads and trust screens in the terminal UI,
+desktop and mobile apps (feature-parity plan WP5, rows A3, A6, A7, A8, A17).
+
+### 9.1 Account fields (`GET /api/account`)
+
+- `user.display_name`: the profile name, else first and last name, else the username, else the
+  email's local part, else `"Zero-X user"`. Control and format characters are removed, whitespace
+  is collapsed, and it is capped at 80 characters. Clients render it as text.
+- `user.initials`: one letter for a one-word name, otherwise the first letters of the first and
+  last words, upper-cased (`"Alice Example"` → `AE`, `"rahul.s"` → `RS`; dots, dashes and
+  underscores separate words). `"?"` when the name has no letter or digit.
+- `session_expires_at`: ISO time when the credential used for this request stops working, for
+  "sign in again" warnings (warn 3 days before). A `ses_` CLI session reports its stored expiry
+  (720 h after sign-in by default); a website access token reports its JWT `exp`; API keys and
+  dev identities report `null` (they do not expire). `user.name` keeps its old meaning.
+
+### 9.2 Release manifests
+
+`GET /releases/cli/latest.json` and `GET /releases/desktop/latest.json`: public, no
+credentials, `Cache-Control: public, max-age=300`, `Access-Control-Allow-Origin: *`. Schema,
+validation, serving order (R2 bucket `RELEASES`, then the committed copy, then a built-in
+"nothing released" manifest) and the publishing steps for the release workflows are in
+`docs/RELEASE_MANIFESTS.md`. `version: null` means nothing is published yet: clients show no
+update notice.
+
+### 9.3 Public pages the clients link to
+
+| URL | Used by |
+|---|---|
+| `https://zero-x.live/download` | account menu *Download Neuron*, update notices (D6, D23, T23) |
+| `https://zero-x.live/docs/trust` | folder trust screens (T1, D9) |
+| `https://zero-x.live/docs#support` | *Help and support* (D6) |
+| `https://zero-x.live/privacy#gateway-logging` | privacy screens (T30, D35, M8) |
+
+`/download` used to redirect to the NeuCockpit downloads; `/start` still does. The privacy
+policy states that the gateway stores usage metadata only, never prompt or response text, and
+the retention of each record type.
