@@ -12,7 +12,7 @@ import {
   sessionEncryptionConfigured,
 } from './session-store.js';
 import {
-  ApiError, bearerToken, claimsPlan, devAuthEnabled, devEmailFromToken, devRuntimeEnabled, devUserId, errorResponse,
+  ApiError, backgroundRunner, bearerToken, claimsPlan, devAuthEnabled, devEmailFromToken, devRuntimeEnabled, devUserId, errorResponse,
   identityProfileFromUser, INVALID_SESSION, isLoopbackHost, loadCliSession, readIdentityConfig, resolveCaller,
   SERVICE_UNAVAILABLE, SESSION_TOKEN_PATTERN, syncAccount, syncDevAccount, verifySupabaseToken,
 } from './auth-context.js';
@@ -22,7 +22,7 @@ import { registerAdminRoutes, runScheduledMaintenance } from './routes/admin.js'
 import { registerBillingRoutes } from './routes/billing.js';
 import { registerKeyRoutes } from './routes/keys.js';
 import { registerPlanRoutes, v1ModelsPayload, v1ModelStatusPayload } from './routes/plans.js';
-import { registerSessionIndex, registerSessionRoutes, unregisterSessionIndex } from './routes/sessions.js';
+import { registerSessionIndex, registerSessionRoutes, sessionClient, unregisterSessionIndex } from './routes/sessions.js';
 import { registerDeviceRoutes } from './routes/device.js';
 import { registerDiscoveryRoutes } from './routes/discovery.js';
 import { RELEASE_MANIFEST_PATH, registerReleaseRoutes } from './routes/releases.js';
@@ -309,7 +309,7 @@ async function userResponse(c, user, fallbackUserId = "") {
 
 // ── Session persistence: hashed keys (raw-key read fallback), sealed provider keys ──
 async function getSession(c, token) {
-  return loadCliSession(c.env, token);
+  return loadCliSession(c.env, token, { waitUntil: backgroundRunner(c) });
 }
 
 async function setSession(c, token, session) {
@@ -359,7 +359,7 @@ async function validateSession(c, { apiKeys = false } = {}) {
   if (token.startsWith('dev_')) return devAuthEnabled(c) ? credentialSession(c, token, 'dev') : null;
   if (!SESSION_TOKEN_PATTERN.test(token)) return null;
 
-  const session = await loadCliSession(c.env, token);
+  const session = await loadCliSession(c.env, token, { waitUntil: backgroundRunner(c) });
   if (!session) return null;
   if (!session.account_backed) {
     if (session.openrouter_key) session.owned_provider_only = true;
@@ -570,6 +570,7 @@ const createIdentityCliSessionHandler = async (c) => {
   const account = await userResponse(c, user, auth.userId);
   const minted = await mintCliSession(c, account, {
     fingerprint: fp, version: typeof body.version === 'string' ? body.version : 'unknown',
+    client: sessionClient({ client_name: 'neuron-cli', ...body }),
   });
   if (!minted) return errorResponse(c, 503, 'service_unavailable', 'Sign-in could not be completed. Please retry shortly.');
 
@@ -583,10 +584,11 @@ const createIdentityCliSessionHandler = async (c) => {
 };
 
 // Stores a new account-backed ses_ session for `account` (a userResponse) and indexes it for
-// revoke-all. Shared by the browser login and the device flow. Returns null when the index
-// write fails: a session missing from the index could not be signed out by revoke-all, so it
-// is dropped and sign-in fails (the client retries).
-async function mintCliSession(c, account, { fingerprint, version }) {
+// revoke-all and the linked-devices list, with the device it belongs to (`client`, or the
+// device-flow grant `deviceGrantId`). Shared by the browser login and the device flow. Returns
+// null when the index write fails: a session missing from the index could not be signed out by
+// revoke-all, so it is dropped and sign-in fails (the client retries).
+async function mintCliSession(c, account, { fingerprint, version, client = null, deviceGrantId = null }) {
   const token = newSessionToken();
   const { created, expires, ttlSeconds } = newSessionTimes(c.env);
   await setSession(c, token, {
@@ -604,7 +606,7 @@ async function mintCliSession(c, account, { fingerprint, version }) {
     tokens_used: account.usage.tokens_used,
     provider_used: null,
   });
-  if (!await registerSessionIndex(c.env, account.user_id, token, expires)) {
+  if (!await registerSessionIndex(c.env, account.user_id, token, expires, { client, deviceGrantId })) {
     await deleteSession(c, token).catch(() => {});
     return null;
   }

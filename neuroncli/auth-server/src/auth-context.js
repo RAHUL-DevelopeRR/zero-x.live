@@ -1,6 +1,7 @@
 import { provisionDevIdentity, rpc } from './account-store.js';
 import { normalizePlanId } from './plan-policy.js';
 import { sha256Hex, readRecord, deleteRecord, openSession, rearmRecord, sessionExpiry } from './session-store.js';
+import { trackSessionUse } from './session-activity.js';
 
 // ── OpenAI-shaped errors (docs/PLATFORM_CONTRACT.md §3.3) ──
 export class ApiError extends Error {
@@ -250,9 +251,19 @@ export async function verifyApiKey(env, token) {
   return row?.user_id ? { key_id: row.key_id ?? row.id ?? null, user_id: row.user_id } : null;
 }
 
+// Work that may finish after the response: the request's waitUntil on Workers, null on Node
+// (Hono's executionCtx getter throws when there is no execution context).
+export function backgroundRunner(c) {
+  try {
+    const ctx = c.executionCtx;
+    return promise => ctx.waitUntil(promise);
+  } catch { return null; }
+}
+
 // Loads a CLI session record: hashed key first, raw-key fallback for older sessions.
-// Expired records are removed. Returns the decrypted session or null.
-export async function loadCliSession(env, token) {
+// Expired records are removed. Returns the decrypted session or null. A loaded session's use is
+// recorded after the response (last used, sliding expiry: src/session-activity.js).
+export async function loadCliSession(env, token, { waitUntil = null } = {}) {
   if (!SESSION_TOKEN_PATTERN.test(token)) return null;
   const stored = await readRecord(env, token);
   if (!stored || typeof stored !== 'object' || !Number.isFinite(stored.created)) return null;
@@ -262,6 +273,7 @@ export async function loadCliSession(env, token) {
   }
   try { await rearmRecord(env, token, stored); }
   catch (error) { console.warn('Session lifetime could not be extended', { message: error?.message }); }
+  if (stored.account_backed === true) trackSessionUse(env, token, stored, waitUntil);
   return openSession(env, token, stored);
 }
 
@@ -324,7 +336,7 @@ export async function resolveCaller(c, { allow = ALL_CREDENTIALS } = {}) {
       throw new ApiError(403, 'session_not_allowed',
         'Create API keys from the dashboard at https://zero-x.live/dashboard while signed in on the website.');
     }
-    const session = await database(() => loadCliSession(env, token));
+    const session = await database(() => loadCliSession(env, token, { waitUntil: backgroundRunner(c) }));
     if (!session?.account_backed || typeof session.user_id !== 'string') throw invalidSession();
     const account = await database(() => rpc(env, 'zerox_get_account', { p_user_id: session.user_id }));
     if (!account) throw invalidSession();
