@@ -243,6 +243,23 @@ export function normalizeKeys(data) {
   }));
 }
 
+// Linked devices (GET /api/sessions). Device names come from the devices themselves: plain text only.
+export function normalizeSessions(data) {
+  return (data && Array.isArray(data.sessions) ? data.sessions : []).filter(session => session && /^[0-9a-f]{24}$/.test(session.id || '')).map(session => {
+    const client = session.client && typeof session.client === 'object' ? session.client : {};
+    return {
+      id: session.id,
+      device: text(session.device_name, 128) || 'Unnamed device',
+      os: text(session.os, 64),
+      client: [text(client.name, 64), text(client.version, 64)].filter(Boolean).join(' '),
+      created_at: text(session.created_at, 40),
+      last_used_at: text(session.last_used_at, 40),
+      expires_at: text(session.expires_at, 40),
+      current: session.current === true,
+    };
+  });
+}
+
 export function keyStatus(key) {
   return key && key.revoked_at ? 'revoked' : 'active';
 }
@@ -311,7 +328,7 @@ export function createDashboard({ doc = globalThis.document, win = globalThis.wi
   const host = () => (win.location ? win.location.hostname : '');
   const state = {
     tab: 'overview', profile: null, account: null, loaded: new Set(), metric: 'requests', usage: null,
-    cursors: [null], page: 0, keys: [], billing: null, catalog: PLAN_CATALOG, revisions: {}, gated: false,
+    cursors: [null], page: 0, keys: [], sessions: [], billing: null, catalog: PLAN_CATALOG, revisions: {}, gated: false,
     paymentLocked: false, // a payment Razorpay took is not confirmed yet: no further purchases
     paymentLock: null, // the ApiError describing it (payment_unverified or payment_pending)
   };
@@ -862,6 +879,50 @@ export function createDashboard({ doc = globalThis.document, win = globalThis.wi
 
   /* Sessions and sign out */
 
+  function renderSessions() {
+    const body = $('sessions-list');
+    body.replaceChildren(...(state.sessions.length ? state.sessions.map(session => el('tr', {},
+      el('th', { scope: 'row' }, session.device, session.os ? el('span', { class: 'zx-muted', text: ' · ' + session.os }) : null,
+        session.current ? ' ' : null, session.current ? badge('This device', 'accent') : null),
+      cell(session.client || '—'),
+      cell(formatDate(session.created_at)),
+      cell(session.last_used_at ? formatDateTime(session.last_used_at) : '—'),
+      cell(formatDate(session.expires_at)),
+      el('td', {}, el('button', {
+        class: 'zx-btn zx-btn--danger zx-btn--sm', type: 'button', text: 'Sign out',
+        'aria-label': 'Sign out ' + session.device, 'data-session-id': session.id, onclick: () => revokeSession(session),
+      })))) : [emptyRow(6, 'No device is signed in. Run neuron auth login on a computer to sign it in.')]));
+  }
+
+  async function loadSessions() {
+    const current = revision('sessions');
+    setAlert('sessions-error', '');
+    try {
+      const data = await api('/api/sessions');
+      if (!current()) return;
+      state.sessions = normalizeSessions(data);
+      renderSessions();
+    } catch (error) {
+      if (current()) handleError(error, 'sessions-error', loadSessions);
+    }
+  }
+
+  async function revokeSession(session) {
+    const confirmed = await confirmAction({
+      title: 'Sign out this device?',
+      body: '"' + session.device + '" is signed out of Zero-X. Run neuron auth login there to use it again.',
+      confirm: 'Sign out device',
+    });
+    if (!confirmed) return;
+    try {
+      await api('/api/sessions/' + encodeURIComponent(session.id), { method: 'DELETE' });
+      toast('"' + session.device + '" signed out.');
+      await loadSessions();
+    } catch (error) {
+      handleError(error, 'sessions-error');
+    }
+  }
+
   async function revokeSessions() {
     const withKeys = Boolean($('sessions-keys') && $('sessions-keys').checked);
     const confirmed = await confirmAction({
@@ -882,6 +943,7 @@ export function createDashboard({ doc = globalThis.document, win = globalThis.wi
         (withKeys && keys !== null ? ' and revoked ' + formatCount(keys) + ' API key' + (keys === 1 ? '' : 's') : '') +
         '. Run neuron auth login on each computer you still use.');
       if (withKeys) state.loaded.delete('keys'); // the API keys tab reloads when opened
+      await loadSessions();
     } catch (error) {
       handleError(error, 'sessions-error');
     } finally {
@@ -914,7 +976,7 @@ export function createDashboard({ doc = globalThis.document, win = globalThis.wi
     usage: () => Promise.all([loadUsage(), loadEvents(0)]),
     keys: loadKeys,
     billing: () => loadBilling(),
-    sessions: () => Promise.resolve(),
+    sessions: loadSessions,
     account: () => (state.account ? Promise.resolve() : loadAccount()),
   };
 

@@ -9,9 +9,9 @@ const root = new URL('../../', import.meta.url);
 const read = file => readFileSync(new URL(file, root), 'utf8');
 const isFile = file => existsSync(new URL(file, root)) && statSync(new URL(file, root)).isFile();
 
-const PUBLIC_PAGES = ['index.html', 'pricing.html', 'neuron-cli.html', 'docs.html', 'docs/trust.html', 'download.html', 'refund.html', 'contact.html', 'shipping.html', 'privacy.html', 'terms.html'];
+const PUBLIC_PAGES = ['index.html', 'pricing.html', 'neuron-cli.html', 'docs.html', 'docs/trust.html', 'download.html', 'changelog.html', 'refund.html', 'contact.html', 'shipping.html', 'privacy.html', 'terms.html'];
 const PRIVATE_PAGES = ['dashboard.html', '404.html', 'neuroncli/index.html'];
-const SITE_SCRIPTS = ['dashboard.js', 'pricing.js', 'billing-checkout.js', 'home.js', 'download.js'];
+const SITE_SCRIPTS = ['dashboard.js', 'pricing.js', 'billing-checkout.js', 'home.js', 'download.js', 'changelog.js'];
 const RELEASE_MANIFESTS = ['releases/cli/latest.json', 'releases/desktop/latest.json'];
 const SITE_FILES = [...PUBLIC_PAGES, ...PRIVATE_PAGES, ...SITE_SCRIPTS, ...RELEASE_MANIFESTS, 'zx-tokens.css', 'home.css', 'zerox-auth.js', 'neuroncli/login/index.html', 'neuroncli/callback/index.html'];
 const BASES = {'dashboard.html': 'https://dashboard.zero-x.live/', '404.html': 'https://zero-x.live/404', 'neuroncli/index.html': 'https://zero-x.live/neuroncli/'};
@@ -672,6 +672,30 @@ assert.equal(checkout.normalizeCurrency('EUR'), 'USD');
   assert.deepEqual(view.downloads.map(entry => [entry.platform, entry.size]), [['windows-x64', '30 MB']], 'unsafe or malformed entries are never shown');
   assert.equal(download.releaseView({schema_version: 1, product: 'cli', version: '0.2.0', downloads: []}, 'desktop'), null, 'product must match');
   assert.equal(download.releaseView({schema_version: 2, product: 'cli', version: '1.0.0'}, 'cli'), null, 'unknown schema versions are ignored');
+}
+
+{
+  const changelog = await import(new URL('changelog.js', root));
+  assert.match(read('changelog.html'), /<body data-changelog>/);
+  for (const id of ['changelog-status', 'changelog-list']) assert.ok(ids(read('changelog.html')).includes(id), 'changelog.html #' + id);
+  assert.deepEqual(changelog.inlineParts('Run `neuron update` or see [the docs](https://zero-x.live/docs) **now**'), [
+    {type: 'text', text: 'Run '}, {type: 'code', text: 'neuron update'}, {type: 'text', text: ' or see '},
+    {type: 'link', text: 'the docs', href: 'https://zero-x.live/docs'}, {type: 'text', text: ' '}, {type: 'strong', text: 'now'}]);
+  assert.deepEqual(changelog.inlineParts('[bad](javascript:alert(1)) <img src=x onerror=alert(1)>'),
+    [{type: 'text', text: '[bad](javascript:alert(1)) <img src=x onerror=alert(1)>'}], 'only https links; HTML stays text');
+  assert.deepEqual(changelog.markdownBlocks(['## Added', '- Trust screen', '- `/usage` panel', '', 'Fixes a crash', 'on resume.', '### Notes', 'text'].join('\n')), [
+    {type: 'heading', level: 3, parts: [{type: 'text', text: 'Added'}]},
+    {type: 'list', items: [[{type: 'text', text: 'Trust screen'}], [{type: 'code', text: '/usage'}, {type: 'text', text: ' panel'}]]},
+    {type: 'paragraph', parts: [{type: 'text', text: 'Fixes a crash on resume.'}]},
+    {type: 'heading', level: 4, parts: [{type: 'text', text: 'Notes'}]},
+    {type: 'paragraph', parts: [{type: 'text', text: 'text'}]}]);
+  assert.deepEqual(changelog.markdownBlocks(''), []);
+  assert.equal(changelog.changelogView({nope: 1}), null);
+  const view = changelog.changelogView({data: [
+    {product: 'cli', version: '6.3.0', title: 'Neuron 6.3.0', published_at: '2026-11-02T09:30:00Z', prerelease: false, url: 'https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/tag/v6.3.0', notes: '- New'},
+    {product: 'neucockpit', version: '1.0.0', url: 'https://github.com/x'}, {product: 'cli', version: '1.0.0', url: 'https://evil.example/'}]});
+  assert.equal(view.length, 1, 'unknown products and foreign links are dropped');
+  assert.equal(view[0].published, 'November 2, 2026');
 }
 
 console.log('PASS: ' + (PUBLIC_PAGES.length + PRIVATE_PAGES.length) + ' pages: structure, landmarks, aria references, robots, resolvable links, legal sections, contract prices/limits/error codes, CSP origins, pinned SDK, no secrets or unsafe sinks; download, trust and support pages and the gateway logging policy; pure helpers for formatting, chart scaling, normalisation, routing, checkout validation and release manifests');

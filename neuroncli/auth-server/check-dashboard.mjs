@@ -285,7 +285,9 @@ function dashboardRoutes(state) {
     'POST /api/billing/cancel': () => { state.cancelled = true; return {status: 'cancel_scheduled', current_period_end: '2026-11-01T00:00:00Z'}; },
     'POST /api/billing/topup': call => ({provider: 'razorpay', key_id: 'rzp_test_AbCdEf123456', order_id: 'order_TEST123456', amount_minor: call.body.currency === 'INR' ? 44900 : 500, currency: call.body.currency, name: 'Zero-X', description: 'Credits', prefill: {email: 'owner@example.com', name: 'Owner'}}),
     'POST /api/billing/verify': {status: 'ok', account: {}},
-    'POST /api/sessions/revoke-all': call => (call.body && call.body.api_keys ? {revoked: 3, api_keys_revoked: 2} : {revoked: 3}),
+    'POST /api/sessions/revoke-all': call => { state.sessions = []; return call.body && call.body.api_keys ? {revoked: 3, api_keys_revoked: 2} : {revoked: 3}; },
+    'GET /api/sessions': () => ({sessions: state.sessions}),
+    'DELETE /api/sessions/*': call => { const id = call.path.split('/').pop(); state.sessions = state.sessions.filter(s => s.id !== id); return {status: 'revoked', current: false}; },
   };
 }
 
@@ -298,6 +300,14 @@ async function mountDashboard({profile = PROFILE, hash = '', state = {}, routes 
   const shared = {keys: [
     {id: 'k-1', name: 'Laptop', prefix: 'nzx_Qw12', created_at: '2026-10-01T00:00:00Z', last_used_at: '2026-10-15T00:00:00Z', revoked_at: null},
     {id: 'k-0', name: 'Old CI', prefix: 'nzx_Zz99', created_at: '2026-09-01T00:00:00Z', last_used_at: null, revoked_at: '2026-09-10T00:00:00Z'}],
+  sessions: [
+    {id: 'aaaaaaaaaaaaaaaaaaaaaaaa', device_name: XSS, os: 'Windows 11', client: {name: 'neuron-cli', version: '6.3.0'}, created_at: '2026-10-01T00:00:00Z',
+      last_used_at: '2026-10-16T17:00:00Z', expires_at: '2026-11-15T17:00:00Z', current: true},
+    {id: 'bbbbbbbbbbbbbbbbbbbbbbbb', device_name: 'studio', os: 'macOS 15', client: {name: 'neuron-desktop', version: '0.2.0'}, created_at: '2026-10-02T00:00:00Z',
+      last_used_at: null, expires_at: '2026-11-01T00:00:00Z', current: false},
+    {id: 'cccccccccccccccccccccccc', device_name: null, os: null, client: {name: null, version: null}, created_at: '2026-10-03T00:00:00Z',
+      last_used_at: null, expires_at: '2026-11-02T00:00:00Z', current: false},
+    {id: '../../admin', device_name: 'forged'}],
   cancelled: false, account: () => accountPayload(), ...state};
   const doc = parseDocument(DASHBOARD_HTML);
   const auth = makeAuth(profile);
@@ -496,9 +506,30 @@ async function mountDashboard({profile = PROFILE, hash = '', state = {}, routes 
   assert.equal($('billing-status').textContent, 'Checkout closed. You have not been charged.');
   assert.equal($('billing-error').textContent, '');
 
-  // Sessions.
+  // Sessions: the signed-in devices list (A9), signing out one device, then all of them.
   win.location.hash = '#sessions';
   await settle();
+  assert.ok(calls.some(call => call.method === 'GET' && call.path === '/api/sessions'));
+  const deviceRows = () => [...$('sessions-list').querySelectorAll('tr')];
+  assert.equal(deviceRows().length, 3, 'one row per signed-in device');
+  assert.ok(deviceRows()[0].textContent.includes(XSS), 'device names are shown as text');
+  assert.ok(deviceRows()[0].textContent.includes('This device'));
+  assert.ok(deviceRows()[1].textContent.includes('neuron-desktop 0.2.0'));
+  assert.ok(deviceRows()[2].textContent.includes('Unnamed device'), 'a session without a reported device still lists');
+  const signOutDevice = () => $('sessions-list').querySelector('button[data-session-id="bbbbbbbbbbbbbbbbbbbbbbbb"]');
+  signOutDevice().click();
+  await settle();
+  assert.match($('confirm-body').textContent, /"studio" is signed out of Zero-X/);
+  $('confirm-cancel').click();
+  await settle();
+  assert.ok(!calls.some(call => call.method === 'DELETE' && call.path.startsWith('/api/sessions/')), 'cancelling keeps the device signed in');
+  signOutDevice().click();
+  await settle();
+  $('confirm-ok').click();
+  await settle();
+  assert.ok(calls.some(call => call.method === 'DELETE' && call.path === '/api/sessions/bbbbbbbbbbbbbbbbbbbbbbbb'));
+  assert.equal(signOutDevice(), null, 'the list reloads without the signed-out device');
+  assert.equal(deviceRows().length, 2);
   $('sessions-revoke').click();
   await settle();
   $('confirm-ok').click();
@@ -506,6 +537,7 @@ async function mountDashboard({profile = PROFILE, hash = '', state = {}, routes 
   assert.ok(calls.some(call => call.method === 'POST' && call.path === '/api/sessions/revoke-all'));
   assert.match($('sessions-status').textContent, /Signed out 3 CLI sessions\./);
   assert.deepEqual(calls.filter(call => call.path === '/api/sessions/revoke-all').at(-1).body, {});
+  assert.match($('sessions-list').textContent, /No device is signed in/, 'the list reloads after signing out everywhere');
   // Review P3 (integration): revoke-all can also revoke every API key (a leaked session can mint keys).
   $('sessions-keys').checked = true;
   $('sessions-revoke').click();

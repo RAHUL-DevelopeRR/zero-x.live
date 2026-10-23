@@ -347,12 +347,20 @@ try {
   assert.equal((await request('/api/usage', { token: apiKey })).status, 200, 'nzx_ keys read usage');
   assert.equal((await request('/api/usage/events', { token: apiKey })).status, 200);
   for (const [method, path, body] of [['GET', '/api/keys'], ['POST', '/api/keys', { name: 'x' }], ['DELETE', `/api/keys/${storedKey.id}`],
-    ['POST', '/api/sessions/revoke-all'], ['GET', '/api/billing'], ['POST', '/api/billing/checkout', { plan: 'pro', currency: 'INR' }],
+    ['POST', '/api/sessions/revoke-all'], ['GET', '/api/sessions'], ['DELETE', `/api/sessions/${'a'.repeat(24)}`], ['GET', '/api/billing'], ['POST', '/api/billing/checkout', { plan: 'pro', currency: 'INR' }],
     ['POST', '/api/billing/topup', { pack: 'credits_5', currency: 'INR' }], ['POST', '/api/billing/verify', {}], ['POST', '/api/billing/cancel']]) {
     const denied = await json(await request(path, { method, token: apiKey, body }));
     assertOpenAIError(denied, 403, 'api_key_not_allowed');
     assert.equal(denied.body.error.type, 'permission_error');
   }
+  // Linked devices on a database without the session_devices migration: the list falls back to
+  // the plain session index (no device details) and sign-in still works (A9).
+  const fallbackList = await json(await request('/api/sessions', { token: sessionToken }));
+  assert.equal(fallbackList.status, 200);
+  const fallbackCurrent = fallbackList.body.sessions.find(session => session.current);
+  assert.ok(fallbackCurrent, 'the calling session is marked current');
+  assert.deepEqual([fallbackCurrent.device_name, fallbackCurrent.os, fallbackCurrent.client], [null, null, { name: null, version: null }]);
+  assert.ok(db.calls.some(call => call.name === 'zerox_session_register'), 'sign-in tries the device-aware registration first');
   assertOpenAIError(await json(await request('/auth/cli/session', { method: 'POST', token: apiKey, body: {} })), 401, 'invalid_session');
   assertOpenAIError(await json(await request('/auth/session', { token: apiKey })), 401, 'invalid_session');
   assert.equal((await request('/v1/models', { token: apiKey, bindings: { ...env, ALLOW_ANONYMOUS_SESSIONS: 'true' } })).status, 200,

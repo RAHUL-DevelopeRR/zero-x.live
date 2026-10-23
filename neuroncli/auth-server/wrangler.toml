@@ -41,9 +41,12 @@ AZURE_OPENAI_ENDPOINT = "https://rahul-mok8ryyn-eastus2.services.ai.azure.com"
 AZURE_API_VERSION = "2024-05-01-preview"
 OPENROUTER_CLIENT_ID = "neuroncli"
 OPENROUTER_CALLBACK_URL = "https://zero-x.live/neuroncli/callback/"
-# Lifetime of CLI sessions from sign-in (stored under sha256(token)). SESSION_TTL_HOURS only
-# applies to sessions created before hashed storage.
+# Lifetime of CLI sessions (stored under sha256(token)): CLI_SESSION_TTL_HOURS after the last
+# use, extended at most once a day, never beyond CLI_SESSION_MAX_DAYS after sign-in (needs the
+# 20261023000000_session_devices migration; without it sessions end CLI_SESSION_TTL_HOURS after
+# sign-in). SESSION_TTL_HOURS only applies to sessions created before hashed storage.
 CLI_SESSION_TTL_HOURS = "720"
+CLI_SESSION_MAX_DAYS = "90"
 SESSION_TTL_HOURS = "24"
 MAX_REQUESTS_PER_SESSION = "1000"
 PRICING_URL = "https://zero-x.live/pricing"
@@ -81,6 +84,16 @@ class_name = "HealthHub"
 [[migrations]]
 tag = "v1-health-hub"
 new_sqlite_classes = ["HealthHub"]
+
+# RelayRoom (src/relay.js, docs/RELAY.md): one Durable Object per account that relays end-to-end
+# encrypted frames between a computer running Neuron and the user's phone or browser.
+[[durable_objects.bindings]]
+name = "RELAY"
+class_name = "RelayRoom"
+
+[[migrations]]
+tag = "v2-relay"
+new_sqlite_classes = ["RelayRoom"]
 
 # Releases stale quota reservations and applies subscription expiry (src/routes/admin.js), and
 # runs provider discovery: each public model list once a day, OmniRoute and research once a week

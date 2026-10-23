@@ -103,7 +103,8 @@
       <li><strong>Device sign-in requests:</strong> the device name, IP address and approximate location shown on the approval page, deleted one day after the request expires (requests expire after 10 minutes).</li>
       <li><strong>Payment notifications from Razorpay:</strong> 90 days, used to process each payment event once.</li>
       <li><strong>Payment records:</strong> for as long as Indian tax and accounting law requires, even after account deletion.</li>
-      <li><strong>CLI sessions:</strong> expire after 30 days or when you sign out or use "Sign out all CLI sessions". API keys last until you revoke them.</li>
+      <li><strong>CLI sessions:</strong> the device name, operating system and app version a device reports at sign-in, and when it was last used. A session ends 30 days after its last use (at most 90 days after sign-in), when you sign the device out, or when you use "Sign out all CLI sessions". API keys last until you revoke them.</li>
+      <li><strong>Phone push tokens:</strong> until you turn notifications off in the app, remove the phone, or the push service reports the app uninstalled. Notifications say only that a computer needs you or finished; they never contain your sessions.</li>
       <li><strong>Browser sign-in cookies:</strong> up to 30 days; signing out clears them.</li>
       <li><strong>Upstream providers:</strong> keep request data according to their own policies, for example for abuse monitoring.</li>
     </ul>

@@ -323,7 +323,7 @@ export function registerDeviceRoutes(api, deps) {
       logStepFailure('load_user', error);
       return errorResponse(c, 503, 'service_unavailable', databaseMessage);
     }
-    const minted = await mintCliSession(c, account, { fingerprint: 'device-flow', version: 'neuron-cli' });
+    const minted = await mintCliSession(c, account, { fingerprint: 'device-flow', version: 'neuron-cli', deviceGrantId: grant.id });
     if (!minted) {
       logStepFailure('mint_session', 'no session was stored');
       return errorResponse(c, 503, 'service_unavailable', databaseMessage);

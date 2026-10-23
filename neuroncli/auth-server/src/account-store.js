@@ -1,6 +1,6 @@
-import { AccountDatabaseError } from './db/errors.js';
+import { AccountDatabaseError, missingFunction } from './db/errors.js';
 
-export { AccountDatabaseError };
+export { AccountDatabaseError, missingFunction };
 
 const FUNCTION_NAME = /^[a-z_][a-z0-9_]{0,62}$/;
 

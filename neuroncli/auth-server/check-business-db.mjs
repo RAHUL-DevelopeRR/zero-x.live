@@ -109,10 +109,11 @@ try {
     'Worker-bundled modules stay free of Node built-ins');
   const migrations = await listMigrations();
   assert.deepEqual(handle.applied, migrations.map(migration => migration.version), 'all migrations applied in version order');
-  assert.deepEqual(migrations.slice(-7).map(migration => migration.file), [
+  assert.deepEqual(migrations.slice(-9).map(migration => migration.file), [
     '20261016000000_business_schema.sql', '20261016000100_business_quota.sql',
     '20261016000200_business_billing.sql', '20261016000300_business_sessions_admin.sql',
-    '20261019000000_device_auth.sql', '20261019120000_provider_discovery.sql', '20261021000000_device_pending_retry.sql']);
+    '20261019000000_device_auth.sql', '20261019120000_provider_discovery.sql', '20261021000000_device_pending_retry.sql',
+    '20261023000000_session_devices.sql', '20261023000100_push_tokens.sql']);
   assert.equal((await sql('SELECT count(*)::int AS n FROM supabase_migrations.schema_migrations'))[0].n, migrations.length);
   await assert.rejects(rpc(env, 'zerox_does_not_exist', {}), error =>
     error instanceof AccountDatabaseError && error.code === 'PGRST202');
@@ -1132,7 +1133,11 @@ try {
     'zerox_session_index_list', 'zerox_session_index_revoke_all', 'zerox_admin_overview',
     // v1.1 extensions (contract section 6)
     'zerox_webhook_release', 'zerox_webhook_complete', 'zerox_billing_subscriptions', 'zerox_billing_record_checkout',
-    'zerox_billing_revoke_subscription', 'zerox_payment_by_provider_id', 'zerox_session_index_remove', 'zerox_session_rearm'];
+    'zerox_billing_revoke_subscription', 'zerox_payment_by_provider_id', 'zerox_session_index_remove', 'zerox_session_rearm',
+    // v1.5 linked devices and sliding expiry (contract section 10)
+    'zerox_session_register', 'zerox_session_list', 'zerox_session_touch', 'zerox_session_revoke',
+    // v1.5 push tokens for the relay (contract section 10)
+    'zerox_push_register', 'zerox_push_list', 'zerox_push_delete', 'zerox_push_delivered'];
   for (const name of contractRpcs) assert.ok(functions.some(row => row.proname === name), `${name} exists`);
   for (const row of functions) {
     assert.equal(row.prosecdef, false, `${row.signature} is SECURITY INVOKER`);
@@ -1148,7 +1153,7 @@ try {
         AND has_table_privilege('service_role', c.oid, 'UPDATE') AND has_table_privilege('service_role', c.oid, 'DELETE') AS service_all
     FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relkind = 'r'`);
   for (const name of ['zerox_reservations', 'zerox_usage_events', 'zerox_usage_daily', 'zerox_pool_usage', 'zerox_api_keys',
-    'zerox_subscriptions', 'zerox_payments', 'zerox_credit_ledger', 'zerox_webhook_events', 'zerox_session_index']) {
+    'zerox_subscriptions', 'zerox_payments', 'zerox_credit_ledger', 'zerox_webhook_events', 'zerox_session_index', 'zerox_push_tokens']) {
     assert.ok(tables.some(row => row.relname === name), `${name} exists`);
   }
   for (const row of tables) {
