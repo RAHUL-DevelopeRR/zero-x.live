@@ -25,6 +25,7 @@ import { registerPlanRoutes, v1ModelsPayload, v1ModelStatusPayload } from './rou
 import { registerSessionIndex, registerSessionRoutes, unregisterSessionIndex } from './routes/sessions.js';
 import { registerDeviceRoutes } from './routes/device.js';
 import { registerDiscoveryRoutes } from './routes/discovery.js';
+import { RELEASE_MANIFEST_PATH, registerReleaseRoutes } from './routes/releases.js';
 import { runDiscoveryTick } from './discovery/jobs.js';
 // Durable Object classes are exported from the Worker entry (wrangler.toml [[durable_objects]]).
 export { HealthHub } from './health-hub.js';
@@ -99,7 +100,7 @@ async function notFoundPage(c) {
 
 // Pages served from https://zero-x.live/<page> (clean URLs).
 const SITE_PAGES = ['/about', '/privacy', '/terms', '/find-files-by-content', '/wheres-that-file',
-  '/pricing', '/neuron-cli', '/docs', '/refund', '/contact', '/shipping'];
+  '/pricing', '/neuron-cli', '/docs', '/docs/trust', '/download', '/refund', '/contact', '/shipping'];
 
 // Hostname-based subdomain routing middleware
 app.use('*', async (c, next) => {
@@ -142,7 +143,7 @@ app.use('*', async (c, next) => {
       if (path !== clean) target = clean;
     }
     else if (['/neuron','/neucockpit','/legacy'].includes(clean)) target = 'https://neuron.zero-x.live/';
-    else if (['/start','/download'].includes(clean)) { target = 'https://neuron.zero-x.live/'; fragment = '#downloads'; }
+    else if (clean === '/start') { target = 'https://neuron.zero-x.live/'; fragment = '#downloads'; }
     else if (clean === '/features') { target = 'https://neuron.zero-x.live/'; fragment = '#features'; }
     else if (clean === '/dashboard') target = 'https://dashboard.zero-x.live/';
     else if (clean === '/neuroncli') target = site + '/neuron-cli';
@@ -181,6 +182,9 @@ app.use('*', async (c, next) => {
       }
     }
   }
+
+  // Release manifests are answered by the API (R2 first, then the committed copy).
+  if (RELEASE_MANIFEST_PATH.test(path)) return next();
 
   const isAsset = path.startsWith('/Assets/') || path.startsWith('/assets/') ||
     (path.includes('.') && !path.endsWith('/'));
@@ -872,6 +876,7 @@ registerBillingRoutes(api);
 registerWebhookRoutes(api);
 registerAdminRoutes(api);
 registerDiscoveryRoutes(api);
+registerReleaseRoutes(api);
 
 app.route(API_MOUNT, api);
 app.route('/', api);

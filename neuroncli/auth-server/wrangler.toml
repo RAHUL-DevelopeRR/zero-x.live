@@ -57,6 +57,13 @@ RAZORPAY_KEY_ID = ""
 # Set to "true" once Content-Security-Policy-Report-Only shows no violations.
 CSP_ENFORCE = "false"
 
+# Neuron release manifests (docs/RELEASE_MANIFESTS.md). Off until the bucket exists: create it
+# with `wrangler r2 bucket create neuron-releases`, then uncomment. Without it the Worker serves
+# the committed releases/<product>/latest.json.
+# [[r2_buckets]]
+# binding = "RELEASES"
+# bucket_name = "neuron-releases"
+
 [[kv_namespaces]]
 binding = "SESSIONS_KV"
 id = "717e03bfc7cf4efa84648ccd82e4c9ed"

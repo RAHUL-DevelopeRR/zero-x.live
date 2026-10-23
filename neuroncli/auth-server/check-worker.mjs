@@ -26,10 +26,18 @@ assert.equal(productAlias.headers.get('location'), 'https://neuron.zero-x.live/'
 for (const [path,target] of [
   ['/about/', 'https://zero-x.live/about'], ['/about.html','https://zero-x.live/about'],
   ['/legacy.html','https://neuron.zero-x.live/'], ['/index2.html','https://zero-x.live/'],
-  ['/download?utm_source=test','https://neuron.zero-x.live/?utm_source=test#downloads'],
+  ['/start?utm_source=test','https://neuron.zero-x.live/?utm_source=test#downloads'],
+  ['/download.html','https://zero-x.live/download'], ['/download/','https://zero-x.live/download'],
+  ['/docs/trust.html','https://zero-x.live/docs/trust'], ['/docs/trust/','https://zero-x.live/docs/trust'],
 ]) {
   const response = await app.request('https://zero-x.live'+path, {}, env);
   assert.equal(response.status,301); assert.equal(response.headers.get('location'),target);
+}
+// The Neuron download page and the trust page the apps link to (A6, A8) are served, not redirected.
+for (const [path, file] of [['/download', '/download.html'], ['/docs/trust', '/docs/trust.html']]) {
+  const response = await app.request('https://zero-x.live' + path, {}, env);
+  assert.equal(response.status, 200, path);
+  assert.equal(await response.text(), file);
 }
 const https = await app.request('http://zero-x.live/auth/config?test=1', {}, env);
 assert.equal(https.status,308); assert.equal(https.headers.get('location'),'https://zero-x.live/auth/config?test=1');

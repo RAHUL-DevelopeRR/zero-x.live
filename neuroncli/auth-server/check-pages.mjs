@@ -9,10 +9,11 @@ const root = new URL('../../', import.meta.url);
 const read = file => readFileSync(new URL(file, root), 'utf8');
 const isFile = file => existsSync(new URL(file, root)) && statSync(new URL(file, root)).isFile();
 
-const PUBLIC_PAGES = ['index.html', 'pricing.html', 'neuron-cli.html', 'docs.html', 'refund.html', 'contact.html', 'shipping.html', 'privacy.html', 'terms.html'];
+const PUBLIC_PAGES = ['index.html', 'pricing.html', 'neuron-cli.html', 'docs.html', 'docs/trust.html', 'download.html', 'refund.html', 'contact.html', 'shipping.html', 'privacy.html', 'terms.html'];
 const PRIVATE_PAGES = ['dashboard.html', '404.html', 'neuroncli/index.html'];
-const SITE_SCRIPTS = ['dashboard.js', 'pricing.js', 'billing-checkout.js', 'home.js'];
-const SITE_FILES = [...PUBLIC_PAGES, ...PRIVATE_PAGES, ...SITE_SCRIPTS, 'zx-tokens.css', 'home.css', 'zerox-auth.js', 'neuroncli/login/index.html', 'neuroncli/callback/index.html'];
+const SITE_SCRIPTS = ['dashboard.js', 'pricing.js', 'billing-checkout.js', 'home.js', 'download.js'];
+const RELEASE_MANIFESTS = ['releases/cli/latest.json', 'releases/desktop/latest.json'];
+const SITE_FILES = [...PUBLIC_PAGES, ...PRIVATE_PAGES, ...SITE_SCRIPTS, ...RELEASE_MANIFESTS, 'zx-tokens.css', 'home.css', 'zerox-auth.js', 'neuroncli/login/index.html', 'neuroncli/callback/index.html'];
 const BASES = {'dashboard.html': 'https://dashboard.zero-x.live/', '404.html': 'https://zero-x.live/404', 'neuroncli/index.html': 'https://zero-x.live/neuroncli/'};
 const CSP = {
   script: ['https://cdn.jsdelivr.net', 'https://checkout.razorpay.com'],
@@ -165,7 +166,7 @@ for (const file of [...PUBLIC_PAGES, ...PRIVATE_PAGES]) for (const script of inl
 for (const file of SITE_SCRIPTS) {
   for (const m of read(file).matchAll(/fetch\(/g)) assert.equal(file, 'billing-checkout.js', `${file}: network calls must go through apiFetch`);
 }
-assert.match(read('billing-checkout.js'), /API_PATH = \/\^\\\/\(\?:api\|v1\|auth\)\\\//, 'apiFetch only allows same-origin gateway paths');
+assert.match(read('billing-checkout.js'), /API_PATH = \/\^\\\/\(\?:api\|v1\|auth\|releases\)\\\//, 'apiFetch only allows same-origin gateway paths and release manifests');
 
 /* ───────────── CSP-compatible origins ───────────── */
 
@@ -206,7 +207,7 @@ assert.match(read('zerox-auth.js'), /getAccessToken: getAccessToken/);
 {
   const patterns = read('.assetsignore').split(/\r?\n/).map(line => line.trim()).filter(line => line && !line.startsWith('#'));
   const toRegex = pattern => new RegExp('^' + pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*\*\//g, '(?:.*/)?').replace(/\*/g, '[^/]*') + (pattern.endsWith('/') ? '' : '$'));
-  for (const file of [...PUBLIC_PAGES, ...PRIVATE_PAGES, ...SITE_SCRIPTS, 'zx-tokens.css', 'site-fonts.css', 'home.css']) {
+  for (const file of [...PUBLIC_PAGES, ...PRIVATE_PAGES, ...SITE_SCRIPTS, ...RELEASE_MANIFESTS, 'zx-tokens.css', 'site-fonts.css', 'home.css']) {
     assert.ok(!patterns.some(pattern => toRegex(pattern).test(file)), `${file} is excluded from the Worker assets`);
   }
 }
@@ -602,4 +603,75 @@ assert.equal(checkout.normalizeCurrency('EUR'), 'USD');
   assert.equal(home.pollSeconds(null), 30);
 }
 
-console.log('PASS: ' + (PUBLIC_PAGES.length + PRIVATE_PAGES.length) + ' pages: structure, landmarks, aria references, robots, resolvable links, legal sections, contract prices/limits/error codes, CSP origins, pinned SDK, no secrets or unsafe sinks; pure helpers for formatting, chart scaling, normalisation, routing and checkout validation');
+/* Download page (A6), trust page and support (A8), gateway logging policy (A17) */
+{
+  const html = read('download.html');
+  for (const command of ['irm https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/latest/download/install.ps1 | iex',
+    'curl -fsSL https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/latest/download/install.sh | sh',
+    'npm install -g @zero-x.live/neuron', 'python -m pip install neuroncli', 'Get-FileHash', 'shasum -a 256', 'gh attestation verify']) {
+    assert.ok(html.includes(command), 'download.html shows ' + command);
+  }
+  for (const id of ['desktop', 'cli', 'mobile', 'verify', 'desktop-note', 'cli-release-note', 'cli-binaries', 'checksums-link', 'copy-status']) {
+    assert.ok(ids(html).includes(id), 'download.html #' + id);
+  }
+  for (const os of ['windows', 'macos', 'linux']) {
+    const card = html.match(new RegExp(`<article class="zx-card" id="desktop-${os}"[\\s\\S]*?</article>`))?.[0] || '';
+    assert.ok(card.includes('data-status') && card.includes('data-links') && /data-your-os hidden/.test(card), 'download.html desktop card ' + os);
+  }
+  assert.match(text('download.html'), /Mobile app Coming soon/);
+  assert.match(html, /<body data-download>/);
+  for (const button of tags(html, 'button').filter(b => 'data-copy-target' in b)) assert.ok(ids(html).includes(button['data-copy-target']), 'copy target ' + button['data-copy-target']);
+
+  const trust = read('docs/trust.html');
+  for (const id of ['folder-trust', 'permissions', 'data', 'gateway', 'account', 'report']) assert.ok(ids(trust).includes(id), 'docs/trust.html #' + id);
+  assert.match(text('docs/trust.html'), /stores usage metadata only/);
+  assert.match(text('docs/trust.html'), /Until you trust the folder, Neuron ignores all four/);
+  assert.match(trust, /support@zero-x\.live/);
+  assert.match(read('docs.html'), /<section id="support"[\s\S]*support@zero-x\.live[\s\S]*href="\/docs\/trust#report"/, 'docs.html help and support section');
+
+  const privacy = text('privacy.html');
+  assert.ok(ids(read('privacy.html')).includes('gateway-logging'), 'privacy: gateway logging paragraph');
+  assert.match(privacy, /The gateway stores usage metadata only/);
+  assert.match(privacy, /never written to our database or logs/);
+  assert.match(privacy, /Prompt and response text: not stored/);
+  assert.match(privacy, /Operational logs: [^.]*never prompt or response text[^.]*\. Kept for at most 7 days/);
+}
+
+{
+  const download = await import(new URL('download.js', root));
+  assert.deepEqual(download.MANIFEST_PATHS, {cli: '/releases/cli/latest.json', desktop: '/releases/desktop/latest.json'});
+  for (const path of Object.values(download.MANIFEST_PATHS)) assert.ok(isFile('.' + path), path + ' is committed');
+  assert.equal(download.detectOs('Mozilla/5.0 (Windows NT 10.0; Win64; x64)'), 'windows');
+  assert.equal(download.detectOs('', 'macOS'), 'macos');
+  assert.equal(download.detectOs('Mozilla/5.0 (X11; Linux x86_64)'), 'linux');
+  assert.equal(download.detectOs('Mozilla/5.0 (Linux; Android 14; Pixel 8)'), 'android', 'Android is not desktop Linux');
+  assert.equal(download.detectOs('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)'), 'ios', 'iPhones are not Macs');
+  assert.equal(download.detectOs(''), null);
+  assert.equal(download.safeDownloadUrl('https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v6.3.0/x.exe'), 'https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v6.3.0/x.exe');
+  for (const bad of ['http://github.com/x', 'https://evil.example/x', 'https://github.com.evil.example/x', 'https://user:pw@github.com/x', 'javascript:alert(1)', 'https://github.com:8443/x', null]) {
+    assert.equal(download.safeDownloadUrl(bad), '', String(bad));
+  }
+  assert.equal(download.formatBytes(31457280), '30 MB');
+  assert.equal(download.formatBytes(5 * 1024 * 1024 + 1), '5.0 MB');
+  assert.equal(download.formatBytes(2048), '2 KB');
+  assert.equal(download.formatBytes(-1), '');
+  assert.equal(download.formatReleaseDate('2026-11-02T09:30:00Z'), 'Nov 2, 2026');
+  assert.equal(download.releaseView(JSON.parse(read('releases/cli/latest.json')), 'cli'), null, 'nothing released yet');
+  assert.equal(download.releaseView(JSON.parse(read('releases/desktop/latest.json')), 'desktop'), null);
+  const sha = 'ab'.repeat(32);
+  const view = download.releaseView({schema_version: 1, product: 'desktop', version: '0.2.0', released_at: '2026-11-02T09:30:00Z',
+    notes_url: 'https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/tag/desktop-v0.2.0', checksums_url: 'https://evil.example/SHA256SUMS', downloads: [
+      {platform: 'windows-x64', kind: 'installer', file: 'Neuron_0.2.0_x64-setup.exe', url: 'https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/desktop-v0.2.0/Neuron_0.2.0_x64-setup.exe', sha256: sha, size: 31457280},
+      {platform: 'macos-universal', kind: 'installer', file: 'Neuron.dmg', url: 'https://evil.example/Neuron.dmg', sha256: sha},
+      {platform: 'linux-x64', kind: 'installer', file: 'neuron.AppImage', url: 'https://github.com/x/neuron.AppImage', sha256: 'not-a-hash'},
+      {platform: 'plan9', kind: 'installer', file: 'x', url: 'https://github.com/x/x', sha256: sha},
+    ]}, 'desktop');
+  assert.equal(view.version, '0.2.0');
+  assert.equal(view.released, 'Nov 2, 2026');
+  assert.equal(view.checksumsUrl, '', 'off-allowlist links are dropped');
+  assert.deepEqual(view.downloads.map(entry => [entry.platform, entry.size]), [['windows-x64', '30 MB']], 'unsafe or malformed entries are never shown');
+  assert.equal(download.releaseView({schema_version: 1, product: 'cli', version: '0.2.0', downloads: []}, 'desktop'), null, 'product must match');
+  assert.equal(download.releaseView({schema_version: 2, product: 'cli', version: '1.0.0'}, 'cli'), null, 'unknown schema versions are ignored');
+}
+
+console.log('PASS: ' + (PUBLIC_PAGES.length + PRIVATE_PAGES.length) + ' pages: structure, landmarks, aria references, robots, resolvable links, legal sections, contract prices/limits/error codes, CSP origins, pinned SDK, no secrets or unsafe sinks; download, trust and support pages and the gateway logging policy; pure helpers for formatting, chart scaling, normalisation, routing, checkout validation and release manifests');

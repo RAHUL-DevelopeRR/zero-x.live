@@ -57,15 +57,16 @@
           <li><a href="#limits">Limits</a></li>
           <li><a href="#api-keys">API keys</a></li>
           <li><a href="#billing">Billing FAQ</a></li>
+          <li><a href="#support">Help and support</a></li>
         </ol>
       </nav>
       <article>
         <section id="quickstart" aria-labelledby="quickstart-title">
           <h2 id="quickstart-title">Quickstart</h2>
           <ol>
-            <li>Install: <code>npm install -g @zero-x.live/neuron</code> (or <code>python -m pip install neuroncli</code>).</li>
+            <li>Install: <code>npm install -g @zero-x.live/neuron</code> (or <code>python -m pip install neuroncli</code>). Every install method is on the <a href="/download">download page</a>.</li>
             <li>Sign in: <code>neuron auth login</code> opens the browser; sign in and choose <strong>Connect this account</strong>.</li>
-            <li>Run <code>neuron</code> inside a project and review the trust prompt.</li>
+            <li>Run <code>neuron</code> inside a project and review the trust prompt. <a href="/docs/trust">Security and trust</a> explains what trusting a folder allows.</li>
           </ol>
           <div class="zx-code"><pre><code>npm install -g @zero-x.live/neuron
 neuron auth login
@@ -267,6 +268,17 @@ neuron</code></pre></div>
               <p>Cancel from the Billing tab; access continues until the end of the paid period. Refunds follow the <a href="/refund">cancellation and refund policy</a>.</p>
             </details>
           </div>
+        </section>
+
+        <section id="support" aria-labelledby="support-title">
+          <h2 id="support-title">Help and support</h2>
+          <ul>
+            <li>Inside Neuron, run <code>/doctor</code> to check your setup and connection, and <code>neuron auth status</code> to see which credential is in use.</li>
+            <li>Email <a href="mailto:support@zero-x.live">support@zero-x.live</a> from your account address. Include the <code>x-request-id</code> of a failed request and the output of <code>neuron --version</code>. We reply within 2 business days.</li>
+            <li>Security problems: see <a href="/docs/trust#report">reporting a security problem</a>.</li>
+            <li>Installers, install commands and checksums: <a href="/download">download Neuron</a>.</li>
+            <li>Plans, usage and API keys: the <a href="https://dashboard.zero-x.live/">dashboard</a>. Billing questions: the <a href="/refund">cancellation and refund policy</a> or the <a href="/contact">contact page</a>.</li>
+          </ul>
         </section>
       </article>
     </div>

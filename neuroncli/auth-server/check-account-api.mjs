@@ -10,6 +10,7 @@ import { devToken, devUserId, resolveCaller } from './src/auth-context.js';
 import { openSession, rearmRecord, sealSession } from './src/session-store.js';
 import { runScheduledMaintenance } from './src/routes/admin.js';
 import { v1ModelsPayload } from './src/routes/plans.js';
+import { credentialExpiresAt, displayName, initials } from './src/routes/account.js';
 import { overviewPools } from './src/routes/admin.js';
 import { ProviderHealthTracker, FailureKind } from './src/provider-health.js';
 import { B1_KEY_PREFIX, planPolicyRows } from './contract-rows.mjs';
@@ -232,9 +233,16 @@ try {
   assert.equal(account.status, 200);
   await request('/api/account', { token: 'supabase-token-user-a' });
   assert.equal(identity.calls - callsBefore, 1, 'Supabase verification is cached for 60 s');
-  assert.deepEqual(account.body.user, { id: userA.id, email: 'alice@example.test', name: 'Alice Example', image_url: 'https://img.example.test/a.png' });
+  assert.deepEqual(account.body.user, { id: userA.id, email: 'alice@example.test', name: 'Alice Example', display_name: 'Alice Example',
+    initials: 'AE', image_url: 'https://img.example.test/a.png' });
+  assert.equal(account.body.session_expires_at, null, 'a website token without a readable exp claim has no expiry');
   assert.equal(db.calls.filter(call => call.name === 'zerox_sync_account' && call.args.p_user_id === userA.id).length, 1,
     'the account is synced once per cached credential');
+  // A website access token (a JWT) reports its exp claim, for "sign in again" warnings (A3).
+  const jwtExp = Math.floor(Date.now() / 1000) + 3600;
+  const jwtToken = ['eyJhbGciOiJIUzI1NiJ9', Buffer.from(JSON.stringify({ sub: userA.id, exp: jwtExp })).toString('base64url'), 'c2lnbmF0dXJl'].join('.');
+  addUser(jwtToken, userA);
+  assert.equal((await json(await request('/api/account', { token: jwtToken }))).body.session_expires_at, new Date(jwtExp * 1000).toISOString());
 
   identity.down = true;
   assertOpenAIError(await json(await request('/api/account', { token: 'supabase-token-unknown-while-down' })), 503, 'service_unavailable');
@@ -333,7 +341,9 @@ try {
   assert.deepEqual(Object.keys(listed.body.keys[0]).sort(), ['created_at', 'id', 'last_used_at', 'name', 'prefix', 'revoked_at']);
   assert.ok(!JSON.stringify(listed.body).includes(apiKey) && !JSON.stringify(listed.body).includes(storedKey.hash), 'secret shown once');
 
-  assert.equal((await request('/api/account', { token: apiKey })).status, 200, 'nzx_ keys read the account');
+  const keyAccount = await json(await request('/api/account', { token: apiKey }));
+  assert.equal(keyAccount.status, 200, 'nzx_ keys read the account');
+  assert.equal(keyAccount.body.session_expires_at, null, 'API keys do not expire');
   assert.equal((await request('/api/usage', { token: apiKey })).status, 200, 'nzx_ keys read usage');
   assert.equal((await request('/api/usage/events', { token: apiKey })).status, 200);
   for (const [method, path, body] of [['GET', '/api/keys'], ['POST', '/api/keys', { name: 'x' }], ['DELETE', `/api/keys/${storedKey.id}`],
@@ -385,6 +395,7 @@ try {
   assert.equal(devAccount.status, 200);
   assert.equal(devAccount.body.user.id, devId);
   assert.equal(devAccount.body.user.email, devEmail);
+  assert.deepEqual([devAccount.body.user.display_name, devAccount.body.user.initials, devAccount.body.session_expires_at], ['dev.user', 'DU', null]);
   assert.ok(db.calls.some(call => call.name === 'zerox_sync_account' && call.args.p_user_id === devId && call.args.p_plan === 'free'),
     'the dev account is created through zerox_sync_account');
   assert.equal((await request('/api/account', { ...local, base: 'http://localhost:8787', token: dev })).status, 200);
@@ -514,7 +525,9 @@ try {
   Object.assign(db.accounts.get(userA.id), { credit_balance_microusd: 1234567, daily_requests: 7, daily_tokens_used: 7000 });
   account = await json(await request('/api/account', { token: sessionToken }));
   assert.deepEqual(account.body, {
-    user: { id: userA.id, email: 'alice@example.test', name: 'Alice Example', image_url: 'https://img.example.test/a.png' },
+    user: { id: userA.id, email: 'alice@example.test', name: 'Alice Example', display_name: 'Alice Example', initials: 'AE',
+      image_url: 'https://img.example.test/a.png' },
+    session_expires_at: minted.body.expires_at,
     plan: { id: 'free', name: 'Free' },
     limits: { daily_requests: 100, daily_tokens: 500000, rpm: 10, concurrency: 2 },
     usage_today: { requests: 7, tokens: 7000, resets_at: `${dayOffset(1)}T00:00:00.000Z` },
@@ -541,6 +554,25 @@ try {
   db.fail.add('zerox_account_overview');
   assertOpenAIError(await json(await request('/api/account', { token: sessionToken })), 503, 'service_unavailable');
   db.fail.delete('zerox_account_overview');
+  // display_name and initials fall back from the profile name to the email (A3).
+  addUser('supabase-token-nameless', { id: '33333333-3333-4333-8333-333333333333', email: 'rahul.s@example.test', user_metadata: {}, app_metadata: {} });
+  const namelessAccount = (await json(await request('/api/account', { token: 'supabase-token-nameless' }))).body;
+  assert.deepEqual([namelessAccount.user.name, namelessAccount.user.display_name, namelessAccount.user.initials], ['', 'rahul.s', 'RS']);
+  assert.equal(displayName({ name: '  Rahul\u0000  S​ ' }), 'Rahul S', 'control and format characters are removed');
+  assert.equal(displayName({ first_name: 'Ada', last_name: 'Lovelace' }), 'Ada Lovelace');
+  assert.equal(displayName({ username: 'octocat' }), 'octocat');
+  assert.equal(displayName({}, { email: 'x@example.test' }), 'x');
+  assert.equal(displayName({}), 'Zero-X user');
+  assert.equal(Array.from(displayName({ name: '\u{1F600}'.repeat(200) })).length, 80, 'display names are capped');
+  assert.deepEqual(['Alice Example', 'bob', 'Mary Ann Smith', 'rahul_s', 'élodie durand', '李 小龙', '\u{1F600}', '', '42 Labs'].map(initials),
+    ['AE', 'B', 'MS', 'RS', 'ÉD', '李小', '?', '?', '4L']);
+  assert.equal(credentialExpiresAt({}, { kind: 'session', session: { created: 0, expires: 86400000 } }), '1970-01-02T00:00:00.000Z');
+  assert.equal(credentialExpiresAt({ SESSION_TTL_HOURS: '24' }, { kind: 'session', session: { created: 0 } }), '1970-01-02T00:00:00.000Z',
+    'sessions created before hashed storage keep their 24 h lifetime');
+  for (const token of ['', 'opaque', 'a.b.c', 'a.' + Buffer.from('{"exp":"soon"}').toString('base64url') + '.c']) {
+    assert.equal(credentialExpiresAt({}, { kind: 'supabase' }, token), null, token);
+  }
+  assert.equal(credentialExpiresAt({}, { kind: 'api_key' }, jwtToken), null);
 
   // ── 6. GET /api/usage ──
   db.usage.series = [
