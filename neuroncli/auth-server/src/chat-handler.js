@@ -290,9 +290,9 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
     };
     // Every outcome is also published for the whole gateway: to the HealthHub Durable Object,
     // or through KV without it (health-hub-client.js). A client abort says nothing about the pool.
-    const recordFailure = (key, kind, retryAfterSeconds, latencyMs, phase = null) => {
+    const recordFailure = (key, kind, retryAfterSeconds, latencyMs, phase = null, dailyQuota = false) => {
       if (!key) return;
-      const outcome = { success: false, kind, retryAfterSeconds: retryAfterSeconds || 0, latencyMs, phase, caller };
+      const outcome = { success: false, kind, retryAfterSeconds: retryAfterSeconds || 0, latencyMs, phase, caller, dailyQuota };
       const record = healthTracker.recordFailure(key, outcome);
       if (record && kind !== FailureKind.ABORTED) publishHealth(c, env, key, record, outcome);
     };
@@ -351,7 +351,7 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
       } catch (error) {
         const kind = clientSignal?.aborted ? FailureKind.ABORTED : error?.kind || FailureKind.SERVER;
         const latencyMs = Date.now() - startedAt;
-        recordFailure(key, kind, error?.retryAfterSeconds, latencyMs, error?.phase ?? null);
+        recordFailure(key, kind, error?.retryAfterSeconds, latencyMs, error?.phase ?? null, error?.dailyQuota === true);
         if (kind !== FailureKind.ABORTED) {
           console.error('Neuron upstream request failed', { ...log, kind });
           logUpstreamDetail(log, kind, error?.summary);
@@ -360,7 +360,7 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
       }
       if (!started.ok) {
         const failure = classifyUpstreamFailure(started.status, started.bodyText, started.headers);
-        recordFailure(key, failure.kind, failure.retryAfterSeconds, started.latencyMs);
+        recordFailure(key, failure.kind, failure.retryAfterSeconds, started.latencyMs, null, failure.dailyQuota);
         console.error('Neuron upstream rejected request', { ...log, status: started.status, kind: failure.kind });
         logUpstreamDetail(log, failure.kind, upstreamErrorSummary(started.status, started.bodyText, { secrets }));
         return { ok: false, ...failure, latencyMs: started.latencyMs, errorCode: ERROR_CODES_BY_KIND[failure.kind] };
@@ -387,7 +387,8 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
         onToolSignature, restorer,
         onFinish: async outcome => {
           if (outcome.status !== 'ok') {
-            recordFailure(key, outcome.kind, outcome.retryAfterSeconds, Date.now() - startedAt, outcome.phase ?? null);
+            recordFailure(key, outcome.kind, outcome.retryAfterSeconds, Date.now() - startedAt, outcome.phase ?? null,
+              outcome.dailyQuota === true);
             if (outcome.kind !== FailureKind.ABORTED) {
               console.error('Neuron stream interrupted', { ...log, kind: outcome.kind });
               logUpstreamDetail(log, outcome.kind, outcome.upstream);

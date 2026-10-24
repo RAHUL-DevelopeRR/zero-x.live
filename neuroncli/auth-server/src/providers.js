@@ -707,6 +707,8 @@ export function classifyUpstreamFailure(status, body = '', headers = null, fallb
     kind,
     status: effective,
     retryAfterSeconds: kind === FailureKind.RATE_LIMITED || effective === 413 ? retryDelay(headers, info) : null,
+    // The provider says a daily quota is spent (health: QUOTA_EXHAUSTED rather than RATE_LIMITED).
+    dailyQuota: kind === FailureKind.RATE_LIMITED && (info.workersCode === 3036 || info.dailyQuota === true),
   };
 }
 
@@ -730,6 +732,7 @@ export class UpstreamStreamError extends Error {
     const classified = classifyUpstreamFailure(Number.isInteger(status) ? status : null, body, null, fallbackKind);
     this.kind = classified.kind;
     this.retryAfterSeconds = classified.retryAfterSeconds;
+    this.dailyQuota = classified.dailyQuota;
     // Sanitized for operator logs (no raw provider text is kept on the error).
     this.summary = upstreamErrorSummary(Number.isInteger(status) ? status : null, body);
   }
@@ -1115,6 +1118,7 @@ export function createCompletionStream({ reader, first, model, controller, clien
         await reader.cancel();
         await finish({ status: 'error', kind: client ? FailureKind.ABORTED : error.kind || FailureKind.SERVER,
           phase: timeout ? error.phase : null, retryAfterSeconds: error.retryAfterSeconds ?? null,
+          dailyQuota: error.dailyQuota === true,
           errorCode: client ? 'client_disconnected' : timeout ? 'upstream_timeout' : 'upstream_error',
           upstream: error.summary ?? null });
         if (client) {

@@ -149,7 +149,8 @@ export class ProviderHealthTracker {
     return rec;
   }
 
-  recordFailure(key, { kind = FailureKind.SERVER, latencyMs = 0, retryAfterSeconds = 0, phase = null, caller = null } = {}) {
+  recordFailure(key, { kind = FailureKind.SERVER, latencyMs = 0, retryAfterSeconds = 0, phase = null, caller = null,
+    dailyQuota = false } = {}) {
     if (kind === FailureKind.ABORTED) return this.records.get(key) || null;
     const rec = this.getRecord(key);
     const now = Date.now();
@@ -170,7 +171,9 @@ export class ProviderHealthTracker {
       if (!alreadyOpen) rec.rate_limit_strikes = recent ? Math.min(MAX_RATE_LIMIT_STRIKES, rec.rate_limit_strikes + 1) : 1;
       else rec.rate_limit_strikes = Math.max(1, rec.rate_limit_strikes);
       rec.last_rate_limited_at = now;
-      rec.status = HealthState.RATE_LIMITED;
+      // A spent daily quota (Gemini per-day quota, Workers AI's daily neurons; classified by
+      // providers.js classifyUpstreamFailure) is not a burst: the pool stays out until it resets.
+      rec.status = dailyQuota ? HealthState.QUOTA_EXHAUSTED : HealthState.RATE_LIMITED;
       const backoff = Math.min(this.rateLimitMaxBackoffMs, this.defaultCooldownMs * 2 ** (rec.rate_limit_strikes - 1));
       const hinted = retryAfterSeconds > 0 ? retryAfterSeconds * 1000 : 0;
       // The upstream's delay is honoured as given on the first strike; repeated strikes back off

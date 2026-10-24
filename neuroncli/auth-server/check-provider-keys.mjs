@@ -336,6 +336,9 @@ try {
     put: async (key, value) => { saved.set(key, structuredClone(value)); }, getAlarm: async () => 1, setAlarm: async () => {} } };
   const base = Date.now();
   let offset = 0;
+  // Canaries off: this step counts the per-key list checks (canaries: check-oiop.mjs). Set on the
+  // same env object, which the vault caches its keys by.
+  env.HEALTH_CANARIES = 'false';
   const hub = new HealthHub(state, env, { now: () => base + offset });
   await hub.ready;
   calls.length = 0;

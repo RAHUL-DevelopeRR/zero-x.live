@@ -7,7 +7,9 @@ import { rpcRows } from './src/account-store.js';
 import { closeAllPglite, getPgliteHandle } from './src/db/pglite.js';
 import { CATALOG, catalogEntry, listModelsForCaller, poolKey } from './src/catalog.js';
 import { RoutingEngine } from './src/router.js';
-import { FailureKind, globalHealthTracker, ProviderHealthTracker } from './src/provider-health.js';
+import { FailureKind, globalHealthTracker, HealthState, ProviderHealthTracker } from './src/provider-health.js';
+import { canaryBudget, canaryIntervalMs, HealthHub, PROBE_DAILY_CAPS } from './src/health-hub.js';
+import { classifyUpstreamFailure } from './src/providers.js';
 import { refreshModelsDevFacts, resetModelsDevCache } from './src/oiop/models-dev.js';
 import { conversationKey, createChatHandler, requestNeeds } from './src/chat-handler.js';
 import { callerPolicy, DEFAULT_TRUST_TIERS, TRAINING_HEADER, TRUST_HEADER } from './src/oiop/policy.js';
@@ -636,7 +638,112 @@ try {
     ok('catalog push: /v1/models/stream emits catalog.updated (id = status ETag) at start and on every change, keep-alives otherwise, ends after its lifetime, resumes by Last-Event-ID and follows the caller policy');
   }
 
-  console.log(`\nPASS: OIOP (${passed.length} groups): offers, lifecycle, terms review, audit, manifests, signing, admin API, routing policy, headers, secret scrubber, catalog, push`);
+  // ── Health: canaries, rolling metrics, spent daily quotas ──
+  {
+    const env = { GROQ_API_KEY: 'groq-key', GROQ_MODELS: 'openai/gpt-oss-120b' };
+    const entry = catalogEntry('groq/openai/gpt-oss-120b');
+    const key = poolKey(entry, entry.pools[0]);
+    const saved = new Map();
+    const state = { blockConcurrencyWhile: fn => fn(), storage: { get: async name => saved.get(name),
+      put: async (name, value) => { saved.set(name, structuredClone(value)); }, getAlarm: async () => 1, setAlarm: async () => {} } };
+    const base = Date.UTC(2026, 9, 24, 6);
+    let offset = 0;
+    let canaryReply = 'tool';
+    const canaryBodies = [];
+    const encoder = new TextEncoder();
+    const sse = events => new Response(new ReadableStream({ start(controller) {
+      for (const event of events) controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+      controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+      controller.close();
+    } }), { headers: { 'Content-Type': 'text/event-stream' } });
+    const upstream = async (input, init = {}) => {
+      const url = String(input?.url ?? input);
+      if (url === 'https://api.groq.com/openai/v1/models') return Response.json({ data: [{ id: 'openai/gpt-oss-120b' }] });
+      if (url === 'https://groqstatus.com/api/v2/summary.json') return Response.json({ components: [] });
+      if (url === 'https://api.groq.com/openai/v1/chat/completions') {
+        canaryBodies.push(JSON.parse(init.body));
+        if (canaryReply === 'text') return sse([{ choices: [{ index: 0, delta: { content: 'OK' }, finish_reason: 'stop' }] }]);
+        return sse([
+          { choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 'c1', type: 'function',
+            function: { name: 'record_result', arguments: '{"status":"ok",' } }] }, finish_reason: null }] },
+          { choices: [{ index: 0, delta: { tool_calls: [{ index: 0, function: { arguments: '"value":42}' } }] }, finish_reason: 'tool_calls' }] },
+        ]);
+      }
+      throw new Error(`Unexpected outbound request: ${url}`);
+    };
+    globalThis.fetch = upstream;
+    const hub = new HealthHub(state, env, { fetchImpl: upstream, now: () => base + offset });
+    await hub.ready;
+    await hub.alarm();
+    assert.equal(canaryBodies.length, 1, 'one canary for the idle pool');
+    assert.equal(canaryBodies[0].stream, true);
+    assert.equal(canaryBodies[0].tools[0].function.name, 'record_result');
+    let row = hub.snapshot().pools[key];
+    assert.deepEqual([row.status, row.canary.ok, row.canary.tool_call], ['available', true, true]);
+    offset += 30_000;
+    await hub.alarm();
+    assert.equal(canaryBodies.length, 1, 'not again within the interval');
+    assert.equal(canaryIntervalMs(PROBE_DAILY_CAPS.groq), 2 * 3600_000, 'Groq: 12 canaries a day, every 2 h');
+    assert.equal(canaryIntervalMs(PROBE_DAILY_CAPS.gemini), 8 * 3600_000, 'Gemini: 3 a day, every 8 h');
+    offset += 2 * 3600_000;
+    hub.report([{ key, success: true, latencyMs: 400 }]);
+    await hub.alarm();
+    assert.equal(canaryBodies.length, 1, 'real traffic in the last 15 minutes already proves the pool');
+    offset += 16 * 60_000;
+    canaryReply = 'text';
+    await hub.alarm();
+    assert.equal(canaryBodies.length, 2);
+    row = hub.snapshot().pools[key];
+    assert.deepEqual([row.canary.ok, row.canary.tool_call, row.status], [false, false, 'degraded'],
+      'a stream without the tool call degrades the pool');
+    hub.tracker.recordSuccess(key);
+    hub.probes.canaries[key] = canaryBudget(PROBE_DAILY_CAPS.groq);
+    offset += 3 * 3600_000;
+    canaryReply = 'tool';
+    await hub.alarm();
+    assert.equal(canaryBodies.length, 2, 'never more than half the daily cap');
+    const restored = new HealthHub(state, env, { fetchImpl: upstream, now: () => base + offset });
+    await restored.ready;
+    assert.equal(restored.snapshot().pools[key].canary.ok, false, 'canary results survive a restart');
+    const quiet = new HealthHub({ ...state, storage: { ...state.storage, get: async () => undefined } },
+      { ...env, HEALTH_CANARIES: 'false' }, { fetchImpl: upstream, now: () => base + offset });
+    await quiet.ready;
+    await quiet.alarm();
+    assert.equal(canaryBodies.length, 2, 'HEALTH_CANARIES=false sends none');
+
+    const metrics = new HealthHub({ ...state, storage: { ...state.storage, get: async () => undefined } }, env,
+      { fetchImpl: upstream, now: () => base });
+    await metrics.ready;
+    metrics.report([100, 200, 300, 400, 500, 600, 700, 800].map(latencyMs => ({ key, success: true, latencyMs })));
+    metrics.report([{ key, success: false, kind: FailureKind.SERVER }, { key, success: false, kind: FailureKind.SERVER },
+      { key, success: false, kind: FailureKind.INVALID }]);
+    row = metrics.snapshot().pools[key];
+    assert.deepEqual([row.samples, row.error_rate, row.p50_ms, row.p95_ms], [10, 0.2, 500, 800],
+      'error rate over pool-level outcomes only (an invalid request is the caller\'s)');
+    const router = new RoutingEngine(new ProviderHealthTracker());
+    const routed = router.route({ env: { GROQ_API_KEY: 'k' }, requestedModel: 'auto', promptTokens: 1000, maxTokens: 2048,
+      needs: { tools: true }, sharedHealth: new Map([[key, { status: 'available', until: 0, samples: 20, error_rate: 0.3 }]]) });
+    assert.notEqual(routed.candidates[0].entry.id, 'groq/openai/gpt-oss-120b', 'a pool failing 30% of recent requests goes after the others');
+
+    const perDay = JSON.stringify({ error: { code: 429, status: 'RESOURCE_EXHAUSTED', message: 'quota', details: [
+      { '@type': 'type.googleapis.com/google.rpc.QuotaFailure',
+        violations: [{ quotaId: 'GenerateRequestsPerDayPerProjectPerModel-FreeTier', quotaValue: '250' }] }] } });
+    const daily = classifyUpstreamFailure(429, perDay);
+    assert.deepEqual([daily.kind, daily.dailyQuota], [FailureKind.RATE_LIMITED, true]);
+    assert.equal(classifyUpstreamFailure(429, '{"error":{"message":"slow down"}}').dailyQuota, false);
+    const tracker = new ProviderHealthTracker();
+    tracker.recordFailure('gemini:gemini-2.5-flash:free', { kind: daily.kind, retryAfterSeconds: daily.retryAfterSeconds, dailyQuota: true });
+    tracker.recordFailure('groq:x:free', { kind: FailureKind.RATE_LIMITED, retryAfterSeconds: 20 });
+    assert.deepEqual([tracker.getRecord('gemini:gemini-2.5-flash:free').status, tracker.getRecord('groq:x:free').status],
+      [HealthState.QUOTA_EXHAUSTED, HealthState.RATE_LIMITED]);
+    const spentRouter = new RoutingEngine(tracker);
+    assert.equal(spentRouter.route({ env: { GEMINI_API_KEY: 'g', ALLOW_UNKNOWN_COUNTRY: 'true' }, requestedModel: 'gemini/gemini-2.5-flash',
+      promptTokens: 100, maxTokens: 1024 }).error, 'capacity_exhausted', 'a spent daily quota answers capacity_exhausted');
+    globalThis.fetch = async input => { throw new Error(`Unexpected outbound request: ${String(input?.url ?? input)}`); };
+    ok('health: idle healthy pools get a streamed tool-call canary within half the daily cap (Groq every 2 h, Gemini 8 h), skipped while real traffic flows, degrading on failure, persisted, switchable off; rolling p50/p95 and error rate feed routing; per-day 429s mark QUOTA_EXHAUSTED');
+  }
+
+  console.log(`\nPASS: OIOP (${passed.length} groups): offers, lifecycle, terms review, audit, manifests, signing, admin API, routing policy, headers, secret scrubber, catalog, push, health`);
 } finally {
   globalThis.fetch = realFetch;
   await closeAllPglite();

@@ -46,6 +46,7 @@ export function publishHealth(c, env, key, record, outcome, now = Date.now()) {
     const body = { outcomes: [{
       key, success: Boolean(outcome.success), kind: outcome.kind ?? null,
       retryAfterSeconds: outcome.retryAfterSeconds ?? 0, latencyMs: outcome.latencyMs ?? 0,
+      dailyQuota: outcome.dailyQuota === true,
       phase: outcome.phase ?? null, caller: await callerTag(outcome.caller),
     }] };
     const response = await hub.fetch(`${HUB_ORIGIN}/report`, {

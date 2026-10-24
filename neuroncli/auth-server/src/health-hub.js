@@ -12,7 +12,14 @@
  *   2. provider status pages (free): Groq lists each model, Cloudflare lists Workers AI;
  *   3. a real one-line request, only for a pool whose cooldown has ended (half-open) and that
  *      no real request has touched for two minutes, within a small daily cap per model.
- *      NVIDIA and OpenRouter get none: their free quotas are too small to spend on checks.
+ *      NVIDIA and OpenRouter get none: their free quotas are too small to spend on checks;
+ *   4. a canary (OIOP, docs/OIOP.md "Health") for a healthy pool that real traffic has left alone
+ *      for 15 minutes: one streamed tool call (Groq, Gemini), which proves streaming and tool
+ *      calling together, or a one-line request (Workers AI). Canaries use at most half of the
+ *      pool's daily cap, spread over the day (Groq about every 2 h, Gemini every 8 h);
+ *      HEALTH_CANARIES=false turns them off.
+ * Real outcomes also feed a rolling window per pool (last 50): p50/p95 latency to the first
+ * byte and the error rate, which the snapshot carries for routing (router.js penalty).
  * /v1/models reads a snapshot from here; the KV path in health-share.js remains for the Node
  * server, which has no Durable Objects.
  *
@@ -22,8 +29,9 @@
 import { FailureKind, HealthState, ProviderHealthTracker } from './provider-health.js';
 import { publicStatus } from './health-share.js';
 import { entryPools, loadCatalogDbModels, offeredEntries, poolConfigured, poolKey, poolSecret } from './catalog.js';
-import { classifyUpstreamFailure, requestCompletion } from './providers.js';
+import { ADAPTERS, buildUpstreamPayload, classifyUpstreamFailure, requestCompletion, upstreamErrorSummary } from './providers.js';
 import { loadVaultKeys } from './provider-keys.js';
+import { readStream, TEST_TOOL } from './discovery/verify.js';
 
 export const ALARM_INTERVAL_MS = 30_000;
 const CHECK_INTERVAL_MS = 60_000; // each list, key or status page check at most once a minute
@@ -35,6 +43,20 @@ const FETCH_TIMEOUT_MS = 8_000;
 // Test requests per pool (model and key) per UTC day: about 2.4% of Groq's 1,000 requests, under
 // 4% of the Workers AI daily neurons, a handful for Gemini's small free RPD. 0 = never.
 export const PROBE_DAILY_CAPS = Object.freeze({ groq: 24, gemini: 6, cloudflare: 48, nvidia: 0, openrouter: 0 });
+const CANARY_IDLE_MS = 15 * 60_000; // real traffic within this already proves the pool
+const CANARIES_PER_ALARM = 1;
+const WINDOW = 50;                  // outcomes and latencies kept per pool
+// Failures that say something about the request, not the pool.
+const REQUEST_KINDS = new Set([FailureKind.CONTEXT, FailureKind.INVALID, FailureKind.MODEL_ERROR, FailureKind.ABORTED]);
+
+// Canaries per pool per day (half the cap) and the spacing between them.
+export const canaryBudget = cap => Math.floor(cap / 2);
+export const canaryIntervalMs = cap => Math.max(CANARY_IDLE_MS, Math.floor(86_400_000 / Math.max(1, canaryBudget(cap))));
+
+const percentile = (values, fraction) => {
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.min(sorted.length - 1, Math.floor(fraction * sorted.length))];
+};
 
 // Free model lists. A `header` list is read with each key and judges only that key's free pools
 // (a paid key's pool is not checked); a public list (no header) is read once for all of them.
@@ -90,7 +112,10 @@ export class HealthHub {
     // Last real (user) attempt per pool: test requests wait for idleness.
     this.realAt = new Map();
     this.checks = {};
-    this.probes = { day: null, counts: {} };
+    this.probes = { day: null, counts: {}, canaries: {} };
+    // OIOP: last canary per pool and rolling windows of real outcomes ({ out: [1|0], lat: [ms] }).
+    this.canaries = {};
+    this.windows = {};
     this.dirty = false;
     this.ready = state.blockConcurrencyWhile(async () => {
       const saved = await state.storage.get('hub');
@@ -98,7 +123,9 @@ export class HealthHub {
       if (saved?.seen) for (const [key, at] of Object.entries(saved.seen)) this.seen.set(key, at);
       if (saved?.realAt) for (const [key, at] of Object.entries(saved.realAt)) this.realAt.set(key, at);
       if (saved?.checks) this.checks = saved.checks;
-      if (saved?.probes) this.probes = saved.probes;
+      if (saved?.probes) this.probes = { canaries: {}, ...saved.probes };
+      if (saved?.canaries) this.canaries = saved.canaries;
+      if (saved?.windows) this.windows = saved.windows;
       if (!await state.storage.getAlarm()) await state.storage.setAlarm(this.now() + ALARM_INTERVAL_MS);
     });
   }
@@ -112,6 +139,8 @@ export class HealthHub {
       realAt: Object.fromEntries(this.realAt),
       checks: this.checks,
       probes: this.probes,
+      canaries: this.canaries,
+      windows: this.windows,
     });
   }
 
@@ -124,13 +153,36 @@ export class HealthHub {
       else {
         this.tracker.recordFailure(outcome.key, {
           kind: outcome.kind || FailureKind.SERVER, retryAfterSeconds: Number(outcome.retryAfterSeconds) || 0,
+          dailyQuota: outcome.dailyQuota === true,
           latencyMs: Number(outcome.latencyMs) || 0, phase: outcome.phase ?? null, caller: outcome.caller ?? null,
         });
       }
       this.seen.set(outcome.key, now);
       this.realAt.set(outcome.key, now);
+      if (outcome.success || !REQUEST_KINDS.has(outcome.kind)) {
+        const window = this.windows[outcome.key] ||= { out: [], lat: [] };
+        window.out = [...window.out, outcome.success ? 0 : 1].slice(-WINDOW);
+        if (outcome.success && Number(outcome.latencyMs) > 0) window.lat = [...window.lat, Number(outcome.latencyMs)].slice(-WINDOW);
+      }
       this.dirty = true;
     }
+  }
+
+  // Rolling metrics of a pool for the snapshot (nothing until there are samples).
+  metrics(key) {
+    const window = this.windows[key];
+    const out = {};
+    if (window?.out.length) {
+      out.samples = window.out.length;
+      out.error_rate = Number((window.out.reduce((sum, value) => sum + value, 0) / window.out.length).toFixed(3));
+    }
+    if (window?.lat.length) {
+      out.p50_ms = percentile(window.lat, 0.5);
+      out.p95_ms = percentile(window.lat, 0.95);
+    }
+    const canary = this.canaries[key];
+    if (canary) out.canary = { at: canary.at, ok: canary.ok, tool_call: canary.tool_call ?? null, first_byte_ms: canary.first_byte_ms ?? null };
+    return out;
   }
 
   snapshot() {
@@ -138,7 +190,10 @@ export class HealthHub {
     const pools = {};
     for (const [key, record] of this.tracker.records) {
       const { status, until } = publicStatus(record, now);
-      pools[key] = { status, until, at: this.seen.get(key) ?? record.last_attempt_at ?? null };
+      pools[key] = { status, until, at: this.seen.get(key) ?? record.last_attempt_at ?? null, ...this.metrics(key) };
+    }
+    for (const key of Object.keys(this.canaries)) {
+      pools[key] ||= { status: 'available', until: 0, at: this.seen.get(key) ?? null, ...this.metrics(key) };
     }
     return { generated_at: now, pools };
   }
@@ -235,6 +290,7 @@ export class HealthHub {
       else await this.checkStatusPage(unit.provider, unit.pools, now);
     }
     await this.runProbes(byProvider, now);
+    await this.runCanaries(byProvider, now);
   }
 
   async getJson(url, headers = {}) {
@@ -321,7 +377,8 @@ export class HealthHub {
   }
 
   mark(key, now, failure) {
-    this.tracker.recordFailure(key, { kind: failure.kind, retryAfterSeconds: failure.retryAfterSeconds || 0 });
+    this.tracker.recordFailure(key, { kind: failure.kind, retryAfterSeconds: failure.retryAfterSeconds || 0,
+      dailyQuota: failure.dailyQuota === true });
     this.seen.set(key, now);
     this.dirty = true;
   }
@@ -346,6 +403,86 @@ export class HealthHub {
         sent++;
         await this.probe(entry, pool, key, now);
       }
+    }
+  }
+
+  // Canaries for healthy pools nobody has used for 15 minutes, oldest first, within half the
+  // daily cap (the other half stays for half-open probes).
+  async runCanaries(byProvider, now) {
+    if (this.env?.HEALTH_CANARIES === 'false') return;
+    const day = utcDay(now);
+    if (this.probes.day !== day) this.probes = { day, counts: {}, canaries: {} };
+    this.probes.canaries ||= {};
+    const due = [];
+    for (const [provider, pools] of byProvider) {
+      const cap = PROBE_DAILY_CAPS[provider] ?? 0;
+      if (!canaryBudget(cap)) continue;
+      for (const item of pools) {
+        const record = this.tracker.records.get(item.key);
+        if (record && (record.status !== HealthState.HEALTHY || record.circuit_open_until > now)) continue;
+        if (now - (this.realAt.get(item.key) || 0) < CANARY_IDLE_MS) continue;
+        const last = this.canaries[item.key]?.at || 0;
+        if (now - last < canaryIntervalMs(cap)) continue;
+        if ((this.probes.canaries[item.key] || 0) >= canaryBudget(cap) || (this.probes.counts[item.key] || 0) >= cap) continue;
+        due.push({ ...item, last });
+      }
+    }
+    for (const item of due.sort((a, b) => a.last - b.last).slice(0, CANARIES_PER_ALARM)) {
+      this.probes.canaries[item.key] = (this.probes.canaries[item.key] || 0) + 1;
+      this.probes.counts[item.key] = (this.probes.counts[item.key] || 0) + 1;
+      this.dirty = true;
+      await this.canary(item.entry, item.pool, item.key, now);
+    }
+  }
+
+  // One streamed tool call through the adapter real traffic uses: passes when the stream carries
+  // the test tool call with valid arguments. Workers AI streams a native format, so it gets the
+  // one-line request instead.
+  async canary(entry, pool, key, now) {
+    if (entry.provider === 'cloudflare' || !ADAPTERS[entry.provider]) {
+      await this.probe(entry, pool, key, now);
+      const record = this.tracker.records.get(key);
+      this.canaries[key] = { at: now, ok: record?.status === HealthState.HEALTHY, kind: 'completion' };
+      return;
+    }
+    const payload = buildUpstreamPayload(entry, {
+      messages: [
+        { role: 'system', content: 'You are a connectivity test. Answer only by calling the record_result tool.' },
+        { role: 'user', content: 'Call record_result with status "ok" and value 42.' },
+      ],
+      tools: [TEST_TOOL], tool_choice: 'auto', stream: true,
+    }, 256);
+    const started = this.now();
+    const result = { at: now, ok: false, kind: 'stream_tool_call' };
+    try {
+      const response = await ADAPTERS[entry.provider].chatCompletion(this.env, {}, entry, payload, AbortSignal.timeout(30_000), pool);
+      if (!response.ok) {
+        const text = (await response.text().catch(() => '')).slice(0, 8192);
+        const failure = classifyUpstreamFailure(response.status, text, response.headers);
+        this.mark(key, now, failure);
+        this.canaries[key] = { ...result, http_status: response.status,
+          error: upstreamErrorSummary(response.status, text, { secrets: [poolSecret(this.env, pool)] }) };
+        return;
+      }
+      const stream = await readStream(response, started);
+      const call = stream.calls.find(item => item.name === TEST_TOOL.function.name);
+      let args = null;
+      try { args = call ? JSON.parse(call.arguments || '{}') : null; } catch { /* reported below */ }
+      const ok = args?.status === 'ok';
+      this.canaries[key] = { ...result, ok, tool_call: Boolean(call), first_byte_ms: stream.firstByteMs,
+        latency_ms: this.now() - started, finish_reason: stream.finish,
+        ...(ok ? {} : { error: { message: call ? 'The tool call arguments were not valid.' : 'The stream ended without the test tool call.' } }) };
+      if (ok) {
+        this.tracker.recordSuccess(key, { latencyMs: stream.firstByteMs ?? this.now() - started });
+        this.seen.set(key, now);
+      } else {
+        // Tools stopped working on this pool: degraded first, down after repeated failures.
+        this.mark(key, now, { kind: FailureKind.SERVER });
+      }
+    } catch (error) {
+      const timeout = error?.name === 'TimeoutError';
+      this.mark(key, now, { kind: timeout ? FailureKind.TIMEOUT : FailureKind.SERVER });
+      this.canaries[key] = { ...result, error: { message: timeout ? 'No complete answer within 30 s.' : 'The request failed.' } };
     }
   }
 

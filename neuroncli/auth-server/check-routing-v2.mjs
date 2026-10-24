@@ -850,7 +850,7 @@ try {
     assert.equal(gw.tracker.isAvailable('groq:openai/gpt-oss-120b:free'), false, 'the chat handler passes the timeout phase and the caller');
   });
 
-  await test('Workers AI binding errors are rate limits and late streams are cancelled (review B2 P3)', async () => {
+  await test('Workers AI binding errors are rate limits (daily quota) and late streams are cancelled (review B2 P3)', async () => {
     const gw = gateway();
     gw.addSession('ses_anon', {});
     reset({});
@@ -858,7 +858,7 @@ try {
     const limited = await expectError(await gw.call(env, { model: '@cf/meta/llama-3.3-70b-instruct-fp8-fast', messages }), 503, 'capacity_exhausted');
     assert.ok(limited.retry_after_seconds > 0);
     const record = gw.tracker.getRecord('cloudflare:@cf/meta/llama-3.3-70b-instruct-fp8-fast:free');
-    assert.equal(record.status, HealthState.RATE_LIMITED);
+    assert.equal(record.status, HealthState.QUOTA_EXHAUSTED, '3036 is the spent daily allocation');
     const untilMidnight = (Math.floor(Date.now() / 86400000) + 1) * 86400000 - Date.now();
     assert.ok(Math.abs(gw.tracker.cooldownRemainingMs(record.key) - untilMidnight) < 5000, 'parked until 00:00 UTC');
     assert.equal(gw.session('ses_anon').requests, 0, 'refunded');

@@ -116,8 +116,11 @@ export class RoutingEngine {
   penalty(item, sharedHealth, budgetState, now) {
     let score = 0;
     const record = this.healthTracker.records?.get(item.key);
-    if (record?.status === HealthState.DEGRADED || sharedHealth?.get(item.key)?.status === 'degraded') score += 2;
-    if (record && record.total_attempts >= 5 && record.successful_attempts / record.total_attempts < 0.8) score += 1;
+    const shared = sharedHealth?.get(item.key);
+    if (record?.status === HealthState.DEGRADED || shared?.status === 'degraded') score += 2;
+    // Error rate over the hub's recent window (every isolate's traffic), else this isolate's.
+    if (shared?.samples >= 10 ? shared.error_rate >= 0.2
+      : record && record.total_attempts >= 5 && record.successful_attempts / record.total_attempts < 0.8) score += 1;
     if ((budgetState?.(item.key, now)?.until || 0) > now) score += 3;
     return score;
   }
@@ -207,7 +210,8 @@ export class RoutingEngine {
     if (unhealthy.length) {
       const waits = unhealthy.map(item => this.healthTracker.cooldownRemainingMs(item.key, now));
       const retryAfterSeconds = Math.max(1, Math.ceil(Math.min(...waits) / 1000));
-      const limited = unhealthy.some(item => this.healthTracker.getRecord(item.key).status === HealthState.RATE_LIMITED);
+      const limited = unhealthy.some(item => [HealthState.RATE_LIMITED, HealthState.QUOTA_EXHAUSTED]
+        .includes(this.healthTracker.getRecord(item.key).status));
       return failure(limited ? 'capacity_exhausted' : 'upstream_error', { retryAfterSeconds, pools: unhealthy.map(item => item.key) });
     }
     const locked = configured.filter(item => item.fits && !(item.inPlan && item.region));
