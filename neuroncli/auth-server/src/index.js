@@ -33,6 +33,7 @@ import { registerRelayRoutes } from './routes/relay.js';
 import { runDiscoveryTick } from './discovery/jobs.js';
 import { registerProviderKeyRoutes } from './routes/provider-keys.js';
 import { registerOfferRoutes } from './routes/offers.js';
+import { registerCreditRoutes } from './routes/credits.js';
 import { loadVaultKeys, vaultConfigured } from './provider-keys.js';
 import { accessConfigured, passedAccess } from './access-auth.js';
 // Durable Object classes are exported from the Worker entry (wrangler.toml [[durable_objects]]).
@@ -993,6 +994,7 @@ registerPushRoutes(api);
 registerRelayRoutes(api);
 registerProviderKeyRoutes(api);
 registerOfferRoutes(api);
+registerCreditRoutes(api);
 
 app.route(API_MOUNT, api);
 app.route('/', api);

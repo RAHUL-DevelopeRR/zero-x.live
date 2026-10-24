@@ -114,6 +114,9 @@ Nothing below needs Supabase, Razorpay or provider accounts.
   disables free-tier provider keys (`/admin/providers/keys`, contract §11.1). Keys are stored
   AES-GCM-encrypted under `PROVIDER_KEYS_KEK`, become one pool each, and never leave the server. `GET /v1/providers/health` adds upstream
   discovery, per-pool health and ignored `*_MODELS` entries.
+- Free credit programs (contract §12.6): `GET /admin/credits` lists what the weekly discovery
+  found, with quoted evidence and the next step for each; record applications and grants with
+  `POST /admin/credits/:id/transition`.
 - OIOP offers (`docs/OIOP.md`, contract §12): `GET /admin/offers` lists the offers behind every
   pool with their terms, trust tier and lifecycle; `POST /admin/offers/:id/transition` suspends,
   approves or retires one (audited in `zerox_offer_events`); `POST /admin/offers/:id/manifest`

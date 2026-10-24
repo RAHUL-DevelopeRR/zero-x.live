@@ -323,7 +323,8 @@ try {
     usage: { input_tokens: 50000, output_tokens: 3000, server_tool_use: { web_search_requests: 4 } },
   });
   upstream.set('https://api.anthropic.com/v1/messages', (url, init) => { anthropicCalls.push(JSON.parse(init.body)); return researchReply(); });
-  const researchEnv = { ...listEnv, ANTHROPIC_API_KEY: 'sk-ant-test' };
+  // DISCOVERY_CREDITS=false: this run counts the provider research call only (credits: check-credits.mjs).
+  const researchEnv = { ...listEnv, ANTHROPIC_API_KEY: 'sk-ant-test', DISCOVERY_CREDITS: 'false' };
   const research = (await runDiscoveryTick(researchEnv)).ran;
   assert.deepEqual(research.map(item => item.job), ['research'], 'research is due once a key is set; the lists are not');
   assert.equal(research[0].ok, true, research[0].error);
@@ -338,6 +339,12 @@ try {
   assert.equal((await candidate('freshai', 'fresh-coder')).status, 'new');
   assert.equal((await candidate('freshai')).record.sources[0], 'https://freshai.example/pricing');
   assert.equal((await candidate('scrapeit', 's1')).status, 'excluded');
+  // Providers it found are proposed as OIOP offers: discovered, untrusted, unknown terms.
+  const [proposed] = await rpcRows(DB, 'zerox_offers_list', {}).then(rows => rows.filter(row => row.id === 'freshai.free'));
+  assert.deepEqual([proposed?.lifecycle, proposed?.trust_tier, proposed?.redistribution], ['discovered', 'T3', 'unknown']);
+  assert.equal(proposed.evidence[0].url, 'https://freshai.example/pricing');
+  assert.ok(!(await rpcRows(DB, 'zerox_offers_list', {})).some(row => row.id === 'scrapeit.free'), 'excluded providers are not proposed');
+  assert.deepEqual(research[0].summary.proposed_offers, ['freshai.free']);
   const researchState = await job('research');
   assert.equal(Number(researchState.spent_microusd), 46500, 'list-price spend is recorded');
   assert.ok(Math.abs(researchState.due_in - WEEK) < 120);

@@ -160,11 +160,31 @@ modalities, list prices; refreshed by the cron at most daily into KV). The calle
 a ruled-out model is `unavailable_reason: policy_restricted`. `GET /v1/models/stream` pushes
 `catalog.updated` events (id = `/v1/models/status` ETag) on every change.
 
-## 9. Not in Phase 1
+## 9. Discovery: endpoints and credits
 
-- **Phase 2 — onboarding from the web**: crawler output becomes offers; the terms analyser fetches
-  pages itself, extracts into a fixed schema with exact quotes (page text never triggers actions),
-  hashes the terms and re-crawls daily; legitimacy checks (domain age, company identity, scam lists,
+Discovery (`src/discovery/`, contract §8.4) runs on the 10-minute cron and only ever proposes:
+
+- **Free endpoints.** Daily public model lists and the weekly Claude web-search research queue
+  free models as candidates; providers the research finds are also created as offers
+  (`<provider>.free`) in `discovered`, untrusted (`T3`) with unknown terms, so they serve
+  nothing until the operator approves them through the lifecycle.
+- **Credit programs.** The weekly `credits` job (`src/discovery/credits.js`) finds free cloud
+  and AI credit programs (startup programs, trial credits, developer programs, subsidised
+  compute). It runs in two calls so that page text never drives the extraction: a search call
+  whose answer carries citations (page URL + up to 150 characters quoted verbatim), then a
+  tool-free call under a fixed JSON schema that names citation numbers per fact. Stored evidence
+  quotes are the citations' own text; programs with no cited fact are dropped; a program on a
+  known page keeps its row. The operator reviews `GET /admin/credits` (each program with its next
+  step), applies outside the gateway (never automated), and records `approved` → `applied` →
+  `granted` (amount, expiry) or `rejected`; `expired` when it ends. Granted credits then fund an
+  offer: an LLM API key for the vendor's offer, or a GPU for a `self_deploy` offer.
+  `DISCOVERY_CREDITS=false` turns the job off; it shares the research spend cap.
+
+## 10. Not in Phase 1
+
+- **Phase 2 — onboarding from the web**: the provider research moves to the same
+  search-then-extract pattern as the credits job (exact quotes per term), the terms analyser
+  hashes terms pages and re-crawls them daily; legitimacy checks (domain age, company identity, scam lists,
   pay-before-access); the admin queue shows quoted clauses and a next-step checklist, with e-mail
   or webhook notices; self-deploy plans (vLLM/Ollama image, GPU, monthly cost); keys for any
   OpenAI-compatible offer through a generic adapter (the vault and catalog templates cover Groq,

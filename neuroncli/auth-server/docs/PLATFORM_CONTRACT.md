@@ -666,3 +666,27 @@ migration `20261024000200_oiop_offers.sql`; checks `check-oiop.mjs`, `check-quot
 - `QUOTA_EXHAUSTED` marks a spent daily quota (Gemini per-day `QuotaFailure`, Workers AI 3036);
   routing answers `capacity_exhausted` for it like a rate limit.
 
+### 12.6 Credit programs (operator)
+
+- Weekly `credits` discovery job (with `ANTHROPIC_API_KEY`; `DISCOVERY_CREDITS=false` turns it
+  off; spend capped with the research by `DISCOVERY_RESEARCH_MAX_USD`): a web-search call with
+  citations, then a tool-free `json_schema` extraction. Rows (`zerox_credit_programs`) carry
+  `kind` (`startup_credits | trial_credit | free_tier | grant | subsidized_compute |
+  developer_program | other`), `amount_usd`/`amount_text`, `validity_days`, `self_serve`,
+  `requires_funding`, `requires_card`, `india_eligible`, `usable_for` (`gpu | managed_llm_api |
+  free_llm_api | cpu | storage | other`), `gpu_access` (`yes | no | quota_gated | unknown`) and
+  `evidence[{field, source, url, quote}]` with page quotes. Seeded with 14 programs (2026-10-24).
+- Status: `new → approved | rejected | excluded`, `approved → applied | rejected`,
+  `applied → granted | rejected`, `granted → expired`; `rejected | expired | excluded → new`.
+  A program reported as ended moves from `new`/`approved` to `expired`; decisions are kept.
+- `GET /admin/credits[?status=]` (programs with `next_states`, `next_step`; `totals.granted_usd`,
+  `to_review`, `self_serve_unclaimed_usd`), `GET /admin/credits/:id` (with `events`),
+  `PUT /admin/credits/:id` (add or correct facts by hand), `POST /admin/credits/:id/transition
+  {to, note, granted_usd, expires_at}` (409 `invalid_transition`). Same operator auth as §12.1.
+- RPCs: `zerox_credit_programs_upsert(p_rows, p_source, p_actor)`,
+  `zerox_credit_program_transition(p_id, p_to, p_actor, p_note, p_granted_usd, p_expires_at)`,
+  `zerox_credit_programs_list(p_status)`, `zerox_credit_program_events_list(p_id, p_limit)`,
+  `zerox_credit_can_transition(p_from, p_to)`.
+- Provider research also proposes offers: each provider it finds becomes `<provider>.free` in
+  `discovered` (`T3`, unknown terms) unless an offer with that id exists.
+

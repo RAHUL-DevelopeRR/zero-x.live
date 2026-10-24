@@ -46,6 +46,7 @@ secret store, never in a committed file. `.dev.vars.example` lists them with com
 | `OIOP_SIGNING_JWK` | **secret** | unset | Ed25519 private JWK for signing offer manifests (`node scripts/oiop-keygen.mjs`); its public half is served at `/oiop/keys.json`. Unset: manifests can be viewed but not signed. |
 | `OIOP_SCRUB` | var | `all` | Prompt secret scrubber: `all`, `untrusted` (T2/T3 offers only) or `off` (contract §12.3). |
 | `HEALTH_CANARIES` | var | on | `false` stops HealthHub's canary requests (contract §12.5). |
+| `DISCOVERY_CREDITS` | var | on | With `ANTHROPIC_API_KEY`, the weekly job that finds free cloud and AI credit programs (contract §12.6); `false` turns it off. |
 | `CSP_ENFORCE` | var | `false` | `true` sends `Content-Security-Policy` instead of `-Report-Only`. |
 | `PRICING_URL` | var | `https://zero-x.live/pricing` | `upgrade_url` in errors (https only). |
 
@@ -168,7 +169,8 @@ Work through these in order; nothing in this repository does them for you.
    `SESSION_ENCRYPTION_KEY` and `PROVIDER_KEYS_KEK` (each `openssl rand -base64 32`) as GitHub
    Actions secrets. Keep a copy of `PROVIDER_KEYS_KEK`: without it the vault's keys cannot be read.
    **OIOP offers:** apply `migrations/20261024000200_oiop_offers.sql` (backfills the offers of the
-   code catalog, so nothing stops serving) and set `OIOP_SIGNING_JWK` to sign manifests.
+   code catalog, so nothing stops serving) and `migrations/20261024000300_credit_programs.sql`
+   (credit programs, seeded), and set `OIOP_SIGNING_JWK` to sign manifests.
    **Provider key vault:** apply `migrations/20261024000000_provider_keys.sql` and
    `migrations/20261024000100_provider_key_budgets.sql` (per-key budgets) before deploying. In Cloudflare Zero
    Trust, add a self-hosted Access application for `dashboard.zero-x.live` with path `admin` (it
