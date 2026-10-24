@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
+import { readdirSync, readFileSync } from 'node:fs';
 import app from './src/index.js';
-import { ADAPTERS, modelCatalog, providerConfiguration, providerHealth, requestCompletion, resolveModelCatalog } from './src/providers.js';
+import { ADAPTERS, classifyUpstreamFailure, modelCatalog, providerConfiguration, providerHealth, requestCompletion,
+  resolveModelCatalog, startCompletion } from './src/providers.js';
 import { CATALOG } from './src/catalog.js';
 
 const originalFetch = globalThis.fetch;
@@ -22,7 +24,7 @@ try {
     const provider = Object.keys(providers).find(name => url === `${providers[name][0]}/models`);
     assert.ok(provider, `Unexpected URL ${url}`);
     assert.equal(options.headers.Authorization, `Bearer ${env[providers[provider][1]]}`);
-    assert.equal(options.redirect, 'error');
+    assert.equal(options.redirect, 'manual');
     assert.ok(options.signal);
     return Response.json({ data: [{ id: 'chat-model', supported_parameters: ['tools'], pricing: { prompt: '0', completion: '0' } },
       { id: 'unknown-capabilities', pricing: { prompt: '0', completion: '0' } },
@@ -70,12 +72,32 @@ try {
     assert.ok(provider, `Unexpected URL ${url}`);
     assert.equal(options.headers.Authorization, `Bearer ${env[providers[provider][1]]}`);
     assert.equal(JSON.parse(options.body).model, 'chat-model');
-    assert.equal(options.redirect, 'error');
+    assert.equal(options.redirect, 'manual');
     return Response.json({ choices: [{ message: { content: 'OK' } }], usage: { total_tokens: 3 } });
   };
   for (const provider of Object.keys(providers)) {
     const entry = { id: `${provider}/chat-model`, provider, upstream: 'chat-model' };
     assert.equal((await requestCompletion(env, {}, entry, { messages: [{ role: 'user', content: 'Hello' }], max_tokens: 8 })).status, 200);
+  }
+
+  // A redirect is never followed with the key: the 3xx comes back and fails the attempt.
+  globalThis.fetch = async (url, options) => {
+    assert.equal(options.redirect, 'manual');
+    return new Response(null, { status: 302, headers: { Location: 'https://elsewhere.example/' } });
+  };
+  const redirected = await startCompletion(env, {}, { id: 'groq/chat-model', provider: 'groq', upstream: 'chat-model' },
+    null, { messages: [{ role: 'user', content: 'Hello' }], max_tokens: 8 });
+  assert.equal(redirected.ok, false);
+  assert.equal(redirected.status, 302);
+  assert.equal(classifyUpstreamFailure(redirected.status, redirected.bodyText).kind, 'server');
+
+  // The Workers runtime throws on fetch(..., { redirect: 'error' }) ("does not make sense at the
+  // edge"), which failed every Groq, Gemini, NVIDIA and OpenRouter call in production.
+  const sources = readdirSync(new URL('./src/', import.meta.url), { recursive: true })
+    .filter(file => String(file).endsWith('.js'));
+  for (const file of sources) {
+    const text = readFileSync(new URL(`./src/${String(file).replaceAll('\\', '/')}`, import.meta.url), 'utf8');
+    assert.ok(!/redirect:\s*['"]error['"]/.test(text), `src/${file} uses redirect: 'error', which Workers rejects`);
   }
   const paidEnv = { GROQ_API_KEY: 'groq-free', GROQ_PAID_API_KEY: 'groq-paid' };
   const paidEntry = CATALOG.find(entry => entry.id === 'groq/openai/gpt-oss-120b');
