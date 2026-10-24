@@ -21,6 +21,7 @@ for (const page of pages) {
   const scripts=[...html.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)];
   assert.ok(scripts.length,page.file+': schema');
   for (const m of scripts) {assert.equal(JSON.parse(m[1])['@context'],'https://schema.org');assert.doesNotMatch(m[1],/"(?:aggregateRating|reviewCount|awards|foundingDate|numberOfEmployees)"/);}
+  for (const m of scripts) {const data=JSON.parse(m[1]);for (const node of data['@graph']||[data]) for (const offer of [].concat(node.offers||[])) {assert.match(String(offer.price),/^\d+(?:\.\d{2})?$/,page.file+': offer price');assert.match(offer.priceCurrency||'',/^(?:USD|INR)$/,page.file+': offer currency');}}
   for (const m of html.matchAll(/<img\b[^>]*>/g)) {const a=attrs(m[0]);assert.ok('alt' in a && Number(a.width)>0 && Number(a.height)>0,page.file+': image dimensions/alt');}
 }
 const home=docs.get('https://zero-x.live/');
@@ -43,7 +44,12 @@ const robots=await readFile(new URL('robots.txt',root),'utf8'), sitemap=await re
 assert.match(robots,/Allow: \/\r?\n/);assert.match(robots,/Sitemap: https:\/\/zero-x.live\/sitemap.xml/);
 assert.doesNotMatch(robots,/Disallow: \/(?:Assets|assets|\*)/);
 assert.deepEqual([...sitemap.matchAll(/<loc>([^<]+)<\/loc>/g)].map(m=>m[1]),pages.map(p=>p.url));
-assert.doesNotMatch(sitemap,/<loc>[^<]*(?:dashboard|auth\/|\.html|\?|localhost)/);
+assert.doesNotMatch(sitemap,/<loc>[^<]*(?:dashboard|auth\/|\.html|\?|localhost|404|neuroncli)/);
+for (const file of ['dashboard.html','404.html','neuroncli/index.html']) {
+  const html=await readFile(new URL(file,root),'utf8');
+  assert.match(metadata(html).robots||'',/noindex/,file+': private page must be noindex');
+  assert.ok(!pages.some(p=>p.file===file),file+': private page listed for indexing');
+}
 assert.match(sitemap,/<video:publication_date>2026-10-01T16:09:34Z<\/video:publication_date>/);
 if (process.argv.includes('--live')) {
   for (const page of pages) {const r=await fetch(page.url);assert.equal(r.status,200,page.url);assert.equal(r.url,page.url);assert.ok(!r.headers.get('x-robots-tag')?.includes('noindex'));const html=await r.text();assert.equal(metadata(html)['og:url'],page.url);assert.ok(html.includes(`rel="canonical" href="${page.url}"`));}
@@ -60,9 +66,15 @@ if (process.argv.includes('--live')) {
     ['https://www.zero-x.live/terms','https://zero-x.live/terms'],
     ['https://neuron.zero-x.live/find-files-by-content','https://zero-x.live/find-files-by-content'],
     ['https://zero-x.live/download','https://neuron.zero-x.live/#downloads'],
+    ['https://zero-x.live/pricing.html','https://zero-x.live/pricing'],
+    ['https://www.zero-x.live/pricing','https://zero-x.live/pricing'],
+    ['https://zero-x.live/neuron-cli/','https://zero-x.live/neuron-cli'],
+    ['https://zero-x.live/docs.html','https://zero-x.live/docs'],
+    ['https://zero-x.live/refund.html','https://zero-x.live/refund'],
   ]) {const r=await fetch(url,{redirect:'manual'});assert.equal(r.status,301,url);assert.equal(r.headers.get('location'),target,url);}
   assert.ok((await fetch('https://dashboard.zero-x.live/')).headers.get('x-robots-tag')?.includes('noindex'));
   for(const path of ['/does-not-exist-seo-check','/neuroncli/auth-server/wrangler.toml'])assert.equal((await fetch('https://zero-x.live'+path)).status,404,path);
+  {const r=await fetch('https://zero-x.live/does-not-exist-seo-check');assert.match(r.headers.get('content-type')||'',/text\/html/);assert.match(await r.text(),/<meta name="robots" content="noindex/,'404 page is noindex');}
   for(const path of ['/robots.txt','/sitemap.xml','/Assets/neucockpit-semantic-search-480.webp','/videos/neucockpit-wheres-that-file.mp4'])assert.equal((await fetch('https://zero-x.live'+path,{method:'HEAD'})).status,200,path);
 }
 console.log('PASS: '+pages.length+' public pages, unique metadata, entity graph, links, images, robots and sitemap'+(process.argv.includes('--live')?'; live redirects, private noindex and source exclusion':''));

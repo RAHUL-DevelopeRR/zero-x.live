@@ -1,4 +1,6 @@
-﻿/**
+﻿import { normalizeProviderRequest } from './provider-request.js';
+
+/**
  * ProviderAdapter - Common interface for upstream AI model providers.
  */
 export class ProviderAdapter {
@@ -75,11 +77,14 @@ export class OpenAICompatibleAdapter extends ProviderAdapter {
     return this.defaultBase;
   }
 
-  getApiKey(env, session = {}) {
-    if (this.id === 'openrouter' && !session.account_backed && session.openrouter_key) {
+  // A caller's own OpenRouter key (BYOK) is used only for sessions that are not
+  // provisioned accounts; every hosted pool names its own server-side key variable.
+  getApiKey(env, session = {}, pool = null) {
+    if (this.id === 'openrouter' && !session.account_backed && session.openrouter_key &&
+        (!pool || pool.tier === 'byok')) {
       return session.openrouter_key;
     }
-    return env[this.keyVar];
+    return env[pool?.key_var || this.keyVar];
   }
 
   isConfigured(env, session = {}) {
@@ -117,13 +122,20 @@ export class OpenAICompatibleAdapter extends ProviderAdapter {
         (!this.toolModelsVar || env[this.toolModelsVar] === undefined)
       );
     }
+    const contextWindow = Number(metadata?.context_length);
+    const maxOutput = Number(metadata?.top_provider?.max_completion_tokens);
     return {
       id,
       upstream,
+      upstream_model: upstream,
       provider: this.id,
+      display_name: typeof metadata?.name === 'string' ? metadata.name.slice(0, 120) : upstream,
       tools,
+      supports_tools: tools,
       supports_streaming: true,
       supports_parallel_tools: tools,
+      context_window: Number.isSafeInteger(contextWindow) && contextWindow > 0 ? contextWindow : 131072,
+      max_output_tokens: Number.isSafeInteger(maxOutput) && maxOutput > 0 ? maxOutput : 16384,
     };
   }
 
@@ -204,15 +216,27 @@ export class OpenAICompatibleAdapter extends ProviderAdapter {
     }
   }
 
-  async chatCompletion(env, session, entry, payload, signal) {
+  // `request.signatureFor` restores Gemini thought signatures (see provider-request.js).
+  async chatCompletion(env, session, entry, payload, signal, pool = null, request = {}) {
     let url = `${this.getBaseUrl(env)}/chat/completions`;
     if (this.id === 'azure') {
       url = `${env.AZURE_OPENAI_ENDPOINT.replace(/\/$/, '')}/models/chat/completions?api-version=${encodeURIComponent(env.AZURE_API_VERSION || '2024-05-01-preview')}`;
     }
-    const key = this.getApiKey(env, session);
-    const body = { ...payload, model: entry.upstream || entry.id };
+    const key = this.getApiKey(env, session, pool);
+    // Messages and tool calls in the subset this upstream accepts (provider-request.js).
+    const body = {
+      ...normalizeProviderRequest(this.id, payload, { signatureFor: request.signatureFor }),
+      model: entry.upstream_model || entry.upstream || entry.id,
+    };
     if (payload.stream) {
-      body.stream_options = { include_usage: true };
+      // Usage is required for settlement; OpenAI-compatible upstreams send it on request.
+      body.stream_options = { ...(payload.stream_options || {}), include_usage: true };
+    } else {
+      delete body.stream_options;
+    }
+    if (this.id === 'openrouter') {
+      // Never route prompts to OpenRouter endpoints that retain or train on them.
+      body.provider = { ...(payload.provider || {}), data_collection: 'deny' };
     }
     return fetch(url, {
       method: 'POST',

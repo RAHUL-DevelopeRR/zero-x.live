@@ -7,6 +7,14 @@
   const COOKIE_PART_SUFFIX = '.parts';
   const COOKIE_CHUNK_SIZE = 3500;
   const COOKIE_TTL_SECONDS = 60 * 60 * 24 * 30;
+  // Pinned Supabase browser SDK (loaded on demand when the page has not included it).
+  // The integrity hash is the SHA-384 of dist/umd/supabase.js in the npm tarball.
+  const SUPABASE_JS_VERSION = '2.117.2';
+  const SUPABASE_JS_SRC = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@' + SUPABASE_JS_VERSION + '/dist/umd/supabase.js';
+  const SUPABASE_JS_INTEGRITY = 'sha384-Rj26LVGvoeRVR6+mwQmFfcR3QOBEwT+ZmuCWpuiqeTzJpCs0ER4ITAWGb4Hiy3Ok';
+  // Local development identity (Node gateway with DEV_AUTH_ENABLED=true on loopback only).
+  const DEV_TOKEN_KEY = 'zx-dev-token';
+  const DEV_EMAIL_PATTERN = /^[^\s@]{1,64}@[^\s@]{1,190}\.[^\s@]{2,}$/;
 
   const state = {
     client: null,
@@ -17,7 +25,104 @@
     callbacks: [],
     modal: null,
     redirectTo: null,
+    navigating: false,
+    dev: false,
+    sdkPromise: null,
   };
+
+  function isLoopbackHost(hostname) {
+    return hostname === '127.0.0.1' || hostname === 'localhost' || hostname === '[::1]' || hostname === '::1';
+  }
+
+  function isDevConfig(config) {
+    return !!config && config.provider === 'dev' && config.dev === true;
+  }
+
+  function devStorage() {
+    try { return window.sessionStorage || null; }
+    catch { return null; }
+  }
+
+  function readDevToken() {
+    const storage = devStorage();
+    try { return storage ? storage.getItem(DEV_TOKEN_KEY) || '' : ''; }
+    catch { return ''; }
+  }
+
+  function clearDevToken() {
+    const storage = devStorage();
+    try { if (storage) storage.removeItem(DEV_TOKEN_KEY); }
+    catch { /* Storage can be blocked; nothing to clear then. */ }
+  }
+
+  function base64UrlEncode(text) {
+    let binary = '';
+    new TextEncoder().encode(text).forEach(function (byte) { binary += String.fromCharCode(byte); });
+    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+
+  function base64UrlDecode(value) {
+    const padded = value.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((value.length + 3) % 4);
+    const binary = atob(padded);
+    return new TextDecoder('utf-8', { fatal: true }).decode(Uint8Array.from(binary, function (c) { return c.charCodeAt(0); }));
+  }
+
+  function devTokenForEmail(email) {
+    return 'dev_' + base64UrlEncode(email);
+  }
+
+  function emailFromDevToken(token) {
+    if (!/^dev_[A-Za-z0-9_-]{6,400}$/.test(token || '')) return '';
+    try {
+      const email = base64UrlDecode(token.slice(4));
+      return DEV_EMAIL_PATTERN.test(email) ? email : '';
+    } catch { return ''; }
+  }
+
+  function devUser(email) {
+    return {
+      id: '',
+      email: email,
+      user_metadata: {},
+      app_metadata: { provider: 'dev', providers: ['dev'] },
+      created_at: '',
+    };
+  }
+
+  function restoreDevUser() {
+    const token = readDevToken();
+    const email = emailFromDevToken(token);
+    if (token && !email) clearDevToken();
+    state.user = email ? devUser(email) : null;
+    state.session = email ? { access_token: token, user: state.user } : null;
+    return state.user;
+  }
+
+  function loadSupabaseSdk() {
+    if (window.supabase && window.supabase.createClient) return Promise.resolve();
+    if (!state.sdkPromise) {
+      state.sdkPromise = new Promise(function (resolve, reject) {
+        const script = document.createElement('script');
+        const failed = function () { reject(new Error('Supabase JS SDK did not load.')); };
+        const timer = setTimeout(failed, 15000);
+        script.src = SUPABASE_JS_SRC;
+        script.integrity = SUPABASE_JS_INTEGRITY;
+        script.crossOrigin = 'anonymous';
+        script.referrerPolicy = 'no-referrer';
+        script.onload = function () {
+          clearTimeout(timer);
+          if (window.supabase && window.supabase.createClient) resolve();
+          else failed();
+        };
+        script.onerror = function () { clearTimeout(timer); failed(); };
+        document.head.appendChild(script);
+      }).catch(function (error) {
+        state.sdkPromise = null;
+        throw error;
+      });
+    }
+    return state.sdkPromise;
+  }
 
   function sharedCookieDomain(hostname) {
     if (
@@ -249,6 +354,8 @@
     };
   }
 
+  // navigating: this document is about to reload or navigate (dev and SMS sign-in), so
+  // subscribers should leave follow-up work (such as a pending checkout) to the next page.
   function notifyAuthChange(eventName) {
     const profile = buildProfile(state.user);
     state.callbacks.forEach(function (callback) {
@@ -258,6 +365,7 @@
           session: state.session,
           user: state.user,
           profile: profile,
+          navigating: !!state.navigating,
         });
       } catch (err) {
         console.error('Auth change callback failed:', err);
@@ -279,6 +387,16 @@
       throw new Error(data.message || data.error || 'Failed to load authentication config.');
     }
     return data;
+  }
+
+  async function loadAuthConfig() {
+    const config = await fetchAuthConfig();
+    config.providers = normalizeProviders(config.providers);
+    // A development identity is only meaningful on this computer; never honor it on public hosts.
+    if (isDevConfig(config) && !isLoopbackHost(window.location.hostname)) {
+      return { configured: false, providers: [] };
+    }
+    return config;
   }
 
   async function refreshState() {
@@ -309,14 +427,17 @@
     if (state.initPromise) return state.initPromise;
 
     state.initPromise = (async function () {
-      if (!window.supabase || !window.supabase.createClient) {
-        throw new Error('Supabase JS SDK did not load.');
+      state.config = await loadAuthConfig();
+      state.dev = isDevConfig(state.config);
+
+      if (state.dev) {
+        state.client = null;
+        restoreDevUser();
+        return { configured: true, dev: true };
       }
 
-      state.config = await fetchAuthConfig();
-      state.config.providers = normalizeProviders(state.config.providers);
-
       if (state.config.configured) {
+        await loadSupabaseSdk();
         state.client = window.supabase.createClient(
           state.config.supabase_url,
           state.config.supabase_key,
@@ -374,7 +495,8 @@
     }
     const title = options && options.title ? options.title : 'Sign in';
     const subtitle = options && options.subtitle ? options.subtitle : 'Continue with your ZeroX account';
-    const providers = state.config?.providers || [];
+    const devMode = !!state.dev;
+    const providers = devMode ? [] : (state.config?.providers || []).filter(function (provider) { return provider !== 'dev'; });
 
     if (!state.modal) {
       const modal = document.createElement('dialog');
@@ -408,6 +530,12 @@
             '<input id="zerox-auth-code" inputmode="numeric" autocomplete="one-time-code" required pattern="[0-9]{6}" maxlength="6"/>' +
             '<button type="submit">Verify and sign in</button>' +
           '</form>' +
+          '<form data-auth-dev-wrap="true" hidden style="margin-top:20px">' +
+            '<label for="zerox-auth-dev-email">Developer email</label>' +
+            '<input id="zerox-auth-dev-email" type="email" autocomplete="email" required placeholder="dev@example.com"/>' +
+            '<button type="submit" data-auth-dev-submit="true">Sign in locally</button>' +
+            '<p style="font-size:12px;color:#A6A6B2;margin-top:10px">Local development identity. Only a gateway running on this computer with DEV_AUTH_ENABLED=true accepts it.</p>' +
+          '</form>' +
         '</div>';
 
       modal.addEventListener('click', function (event) {
@@ -428,6 +556,7 @@
     const emailSubmit = state.modal.querySelector('[data-auth-email-submit="true"]');
     const phoneWrap = state.modal.querySelector('[data-auth-phone-wrap="true"]');
     const verifyWrap = state.modal.querySelector('[data-auth-verify-wrap="true"]');
+    const devWrap = state.modal.querySelector('[data-auth-dev-wrap="true"]');
 
     titleEl.textContent = title;
     subtitleEl.textContent = subtitle;
@@ -478,6 +607,13 @@
     }
     phoneWrap.hidden = !providers.includes('phone');
     verifyWrap.hidden = true;
+    devWrap.hidden = !devMode;
+    devWrap.onsubmit = async function (event) {
+      event.preventDefault();
+      await runAuthAction(devWrap.querySelector('[data-auth-dev-submit="true"]'), function () {
+        return signInWithDevIdentity(state.modal.querySelector('#zerox-auth-dev-email').value);
+      });
+    };
     state.pendingPhone = null;
     state.modal.querySelector('#zerox-auth-code').value = '';
     phoneWrap.onsubmit = async function (event) {
@@ -500,8 +636,19 @@
         const token = state.modal.querySelector('#zerox-auth-code').value.trim();
         if (!state.pendingPhone || !/^\d{6}$/.test(token)) throw new Error('Enter the six-digit code from your SMS.');
         const client = await requireConfiguredClient();
-        const result = await client.auth.verifyOtp({ phone: state.pendingPhone, token, type: 'sms' });
-        if (result.error) throw result.error;
+        // The SIGNED_IN notification fires during verifyOtp; the page reloads right after it.
+        state.navigating = true;
+        let result;
+        try {
+          result = await client.auth.verifyOtp({ phone: state.pendingPhone, token, type: 'sms' });
+        } catch (error) {
+          state.navigating = false;
+          throw error;
+        }
+        if (result.error) {
+          state.navigating = false;
+          throw result.error;
+        }
         window.location.reload();
       });
     };
@@ -579,13 +726,34 @@
     setModalMessage('Magic link sent. Check your inbox and return here after signing in.', 'success');
   }
 
+  async function signInWithDevIdentity(email) {
+    await init();
+    if (!state.dev) throw new Error('Local development sign-in is not enabled.');
+    const address = String(email || '').trim().toLowerCase();
+    if (!DEV_EMAIL_PATTERN.test(address)) throw new Error('Enter a valid email address.');
+    const storage = devStorage();
+    if (!storage) throw new Error('Browser session storage is unavailable.');
+    const token = devTokenForEmail(address);
+    storage.setItem(DEV_TOKEN_KEY, token);
+    state.user = devUser(address);
+    state.session = { access_token: token, user: state.user };
+    const target = state.redirectTo;
+    closeAuthModal();
+    state.navigating = true;
+    notifyAuthChange('SIGNED_IN');
+    if (target) window.location.assign(target);
+    else window.location.reload();
+  }
+
   async function openAuthModal(options) {
     let error;
     try {
       await init();
-      state.config = await fetchAuthConfig();
-      state.config.providers = normalizeProviders(state.config.providers);
-      if (state.config.configured && !state.client) {
+      state.config = await loadAuthConfig();
+      if (isDevConfig(state.config) !== state.dev) {
+        state.initPromise = null;
+        await init();
+      } else if (state.config.configured && !state.client && !state.dev) {
         state.initPromise = null;
         await init();
       }
@@ -595,6 +763,8 @@
     if (!state.modal.open) state.modal.showModal();
     if (error || !state.config?.configured) {
       setModalMessage('Sign-in is temporarily unavailable. Downloads do not require an account. Please try again later.');
+    } else if (state.dev) {
+      setModalMessage('Local development mode: sign in with any email address.', 'success');
     } else if (!state.config.providers.length) {
       setModalMessage('No sign-in method is currently available. Please try again later.');
     }
@@ -715,6 +885,8 @@
   }
 
   async function signOut(options) {
+    // Always drop a local development identity, even when Supabase is the active provider.
+    clearDevToken();
     if (state.client) {
       const result = await state.client.auth.signOut();
       if (result.error) {
@@ -741,6 +913,10 @@
 
   async function getAccessToken() {
     await init();
+    if (state.dev) {
+      restoreDevUser();
+      return state.session ? state.session.access_token : '';
+    }
     if (!state.client) return '';
     const sessionResult = await state.client.auth.getSession();
     if (sessionResult.error) throw sessionResult.error;
@@ -767,5 +943,9 @@
     mountUserButton: mountUserButton,
     signOut: signOut,
     onAuthStateChange: onAuthStateChange,
+    isDevMode: function () { return !!state.dev; },
+    isNavigating: function () { return !!state.navigating; },
+    devTokenKey: DEV_TOKEN_KEY,
+    sdkVersion: SUPABASE_JS_VERSION,
   };
 })();

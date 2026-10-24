@@ -61,19 +61,24 @@ for (const route of ['/auth/session', '/auth/azure/exchange']) {
 assert.equal(await (await app.request('https://neuron.zero-x.live/site.min.css', {}, env)).text(), '/site.min.css');
 const originalFetch = globalThis.fetch;
 try {
-  globalThis.fetch = async () => Response.json({ external: { email: true, google: false, phone: false, azure: false, github: false } });
-  let config = await (await app.request('https://www.zero-x.live/auth/config', {}, env)).json();
+  // Provider settings are cached per environment for 60 s, so each scenario uses a fresh env.
+  let settingsCalls = 0;
+  globalThis.fetch = async () => { settingsCalls++; return Response.json({ external: { email: true, google: false, phone: false, azure: false, github: false } }); };
+  const cachedEnv = { ...env };
+  let config = await (await app.request('https://www.zero-x.live/auth/config', {}, cachedEnv)).json();
   assert.equal(config.configured, true);
   assert.deepEqual(config.providers, ['email']);
+  await app.request('https://www.zero-x.live/auth/config', {}, cachedEnv);
+  assert.equal(settingsCalls, 1, 'Supabase settings must be cached between requests');
   globalThis.fetch = async () => Response.json({ external: { email: true, google: true, phone: true, azure: true, github: true } });
-  config = await (await app.request('https://www.zero-x.live/auth/config', {}, env)).json();
+  config = await (await app.request('https://www.zero-x.live/auth/config', {}, { ...env })).json();
   assert.deepEqual(config.providers, ['google', 'email', 'phone', 'azure', 'github']);
   config = await (await app.request('https://www.zero-x.live/auth/config', {}, {
     ...env, SUPABASE_AUTH_PROVIDERS: 'email,github',
   })).json();
   assert.deepEqual(config.providers, ['email', 'github']);
   globalThis.fetch = async () => { throw new Error('Unavailable'); };
-  config = await (await app.request('https://www.zero-x.live/auth/config', {}, env)).json();
+  config = await (await app.request('https://www.zero-x.live/auth/config', {}, { ...env })).json();
   assert.equal(config.configured, false);
   assert.deepEqual(config.providers, []);
   const adminKey = `header.${btoa(JSON.stringify({role:'service_role'}))}.signature`;
@@ -103,6 +108,10 @@ try {
     if (url.endsWith('/zerox_plan_policies')) return Response.json([{ policies: DEVELOPMENT_PLANS }]);
     const args = JSON.parse(options.body);
     assert.equal(args.p_user_id, userId);
+    if (url.endsWith('/zerox_session_index_add')) {
+      assert.match(args.p_token_hash, /^[0-9a-f]{64}$/);
+      return Response.json([{ token_hash: args.p_token_hash }]);
+    }
     if (url.endsWith('/zerox_sync_account')) {
       assert.equal(args.p_plan, 'free');
       assert.equal(args.p_profile.email, 'verified@example.test');
@@ -126,7 +135,12 @@ try {
   }, databaseEnv)).json();
   assert.equal(usage.usage.requests, 8);
   assert.equal(usage.usage.tokens_used, 144);
-  const health = await (await app.request('https://www.zero-x.live/health', {}, databaseEnv)).json();
+  const publicHealth = await (await app.request('https://www.zero-x.live/health', {}, databaseEnv)).json();
+  assert.deepEqual(Object.keys(publicHealth).sort(), ['service', 'status', 'version'], 'Anonymous health exposes no configuration');
+  const operatorToken = 'operator-token-'.padEnd(40, 'x');
+  const health = await (await app.request('https://www.zero-x.live/health', {
+    headers: { Authorization: `Bearer ${operatorToken}` },
+  }, { ...databaseEnv, GATEWAY_ADMIN_TOKEN: operatorToken })).json();
   assert.equal(health.database_configured, true);
   assert.ok(!JSON.stringify(health).includes(databaseEnv.SUPABASE_SECRET_KEY));
   globalThis.fetch = async () => new Response('down', { status: 503 });

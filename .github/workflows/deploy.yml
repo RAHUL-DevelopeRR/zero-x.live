@@ -30,6 +30,49 @@ jobs:
           npm run check:database
           npm audit --omit=dev
 
+      # MANUAL STEP: this workflow never touches the database. Before merging a change that adds
+      # files under neuroncli/auth-server/migrations/, apply them to the production Supabase
+      # project yourself (in order, e.g. `supabase db push` or the SQL editor), then merge.
+      # The Worker expects the RPCs listed in neuroncli/auth-server/docs/PLATFORM_CONTRACT.md §4.
+      - name: Database migrations (manual)
+        run: echo "::notice title=Database migrations::Migrations are applied manually before merge. This workflow does not run them."
+
+      # The original provider secrets stay required. Billing, admin, paid-pool and session
+      # encryption secrets are optional: a missing one is skipped (its feature stays disabled)
+      # instead of failing the deploy. Only secret names are printed, never values.
+      - name: Select configured Worker secrets
+        id: worker-secrets
+        env:
+          REQUIRED_SECRETS: SUPABASE_SECRET_KEY GROQ_API_KEY OPENROUTER_API_KEY GEMINI_API_KEY NVIDIA_API_KEY
+          OPTIONAL_SECRETS: RAZORPAY_KEY_SECRET RAZORPAY_WEBHOOK_SECRET GATEWAY_ADMIN_TOKEN GROQ_PAID_API_KEY GEMINI_PAID_API_KEY SESSION_ENCRYPTION_KEY DEVICE_APPROVAL_SECRET
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          RAZORPAY_KEY_SECRET: ${{ secrets.RAZORPAY_KEY_SECRET }}
+          RAZORPAY_WEBHOOK_SECRET: ${{ secrets.RAZORPAY_WEBHOOK_SECRET }}
+          GATEWAY_ADMIN_TOKEN: ${{ secrets.GATEWAY_ADMIN_TOKEN }}
+          GROQ_PAID_API_KEY: ${{ secrets.GROQ_PAID_API_KEY }}
+          GEMINI_PAID_API_KEY: ${{ secrets.GEMINI_PAID_API_KEY }}
+          SESSION_ENCRYPTION_KEY: ${{ secrets.SESSION_ENCRYPTION_KEY }}
+          DEVICE_APPROVAL_SECRET: ${{ secrets.DEVICE_APPROVAL_SECRET }}
+        run: |
+          names=""
+          for name in $REQUIRED_SECRETS; do
+            if [ -z "${!name}" ]; then echo "::error::Required secret $name is not set"; exit 1; fi
+            names="${names}${name}"$'\n'
+          done
+          for name in $OPTIONAL_SECRETS; do
+            if [ -n "${!name}" ]; then names="${names}${name}"$'\n'
+            else echo "::warning::Optional secret $name is not set; the feature that needs it stays disabled"; fi
+          done
+          {
+            echo 'names<<ZX_SECRET_NAMES'
+            printf '%s' "$names"
+            echo 'ZX_SECRET_NAMES'
+          } >> "$GITHUB_OUTPUT"
+
       - name: Deploy Worker
         uses: cloudflare/wrangler-action@v3
         with:
@@ -37,15 +80,17 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: 'neuroncli/auth-server'
-          secrets: |
-            SUPABASE_SECRET_KEY
-            GROQ_API_KEY
-            OPENROUTER_API_KEY
-            GEMINI_API_KEY
-            NVIDIA_API_KEY
+          secrets: ${{ steps.worker-secrets.outputs.names }}
         env:
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          RAZORPAY_KEY_SECRET: ${{ secrets.RAZORPAY_KEY_SECRET }}
+          RAZORPAY_WEBHOOK_SECRET: ${{ secrets.RAZORPAY_WEBHOOK_SECRET }}
+          GATEWAY_ADMIN_TOKEN: ${{ secrets.GATEWAY_ADMIN_TOKEN }}
+          GROQ_PAID_API_KEY: ${{ secrets.GROQ_PAID_API_KEY }}
+          GEMINI_PAID_API_KEY: ${{ secrets.GEMINI_PAID_API_KEY }}
+          SESSION_ENCRYPTION_KEY: ${{ secrets.SESSION_ENCRYPTION_KEY }}
+          DEVICE_APPROVAL_SECRET: ${{ secrets.DEVICE_APPROVAL_SECRET }}

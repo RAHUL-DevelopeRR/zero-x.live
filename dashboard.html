@@ -1,785 +1,323 @@
-<!DOCTYPE html>
-<html class="dark" lang="en">
+<!doctype html>
+<html lang="en">
 <head>
-  <meta charset="utf-8"/>
-  <meta content="width=device-width,initial-scale=1" name="viewport"/>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Dashboard | Zero-X</title>
-  <meta name="robots" content="noindex, nofollow"/>
-  <meta name="description" content="Zero-X account, gateway session, and current usage."/>
-  <meta name="theme-color" content="#0A0A0C"/>
-
-  <!-- Favicons -->
-  <link rel="icon" type="image/png" sizes="32x32" href="./Assets/zerox-favicon-32.png"/>
-  <link rel="shortcut icon" type="image/x-icon" href="./Assets/zerox-favicon-centered.ico"/>
-  <link rel="apple-touch-icon" sizes="180x180" href="./Assets/zerox-apple-touch-icon.png"/>
-
-  <!-- Fonts -->
-  <link rel="preconnect" href="https://fonts.googleapis.com"/>
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
-  <link href="https://api.fontshare.com/v2/css?f[]=cabinet-grotesk@800,700,500,400&f[]=satoshi@700,500,400&display=swap" rel="stylesheet"/>
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"/>
-  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
-
-  <!-- Supabase Authentication -->
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="./zerox-auth.js"></script>
-
-  <style>
-    *{box-sizing:border-box;margin:0;padding:0}
-    body{background:#0A0A0C;color:#E8E8EC;font-family:'Satoshi',sans-serif;-webkit-font-smoothing:antialiased;min-height:100vh}
-    h1,h2,h3,h4,h5,h6{font-family:'Cabinet Grotesk',sans-serif;font-weight:700}
-    :focus-visible{outline:3px solid #00E5FF;outline-offset:4px}
-    button{min-width:44px;min-height:44px}
-    .dash-main{min-width:0}
-    .dash-section{max-width:100%;overflow-x:auto}
-    ::selection{background:rgba(0,229,255,.15);color:#00E5FF}
-    ::-webkit-scrollbar{width:6px}
-    ::-webkit-scrollbar-track{background:#0A0A0C}
-    ::-webkit-scrollbar-thumb{background:#2A2A32;border-radius:3px}
-
-    /* ═══ Layout ═══ */
-    .dash-layout{display:flex;min-height:100vh}
-
-    /* ═══ Sidebar ═══ */
-    .dash-sidebar{
-      width:260px;min-height:100vh;background:#09090B;border-right:1px solid rgba(255,255,255,0.06);
-      display:flex;flex-direction:column;position:fixed;left:0;top:0;z-index:50;
-      transition:transform .3s ease;
-    }
-    .dash-sidebar-header{padding:20px 20px 16px;border-bottom:1px solid rgba(255,255,255,0.04)}
-    .dash-sidebar-logo{height:28px;mix-blend-mode:lighten}
-    .dash-sidebar-nav{flex:1;padding:12px;display:flex;flex-direction:column;gap:2px}
-    .dash-nav-item{
-      display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:8px;
-      font-size:13px;color:#8A8A96;cursor:pointer;transition:all .15s ease;border:none;background:none;width:100%;text-align:left;
-    }
-    .dash-nav-item:hover{color:#E8E8EC;background:rgba(255,255,255,0.04)}
-    .dash-nav-item.active{color:#fff;background:rgba(0,229,255,0.08);font-weight:500}
-    .dash-nav-item .material-symbols-outlined{font-size:18px}
-    .dash-nav-section{font-size:10px;color:#9999A5;text-transform:uppercase;letter-spacing:1.2px;padding:16px 12px 6px;font-weight:600}
-    .dash-sidebar-footer{padding:16px;border-top:1px solid rgba(255,255,255,0.04)}
-
-    /* ═══ Main Content ═══ */
-    .dash-main{margin-left:260px;flex:1;min-height:100vh}
-    .dash-topbar{
-      height:56px;border-bottom:1px solid rgba(255,255,255,0.06);display:flex;align-items:center;
-      justify-content:space-between;padding:0 28px;background:rgba(10,10,12,0.8);
-      backdrop-filter:blur(16px);position:sticky;top:0;z-index:40;
-    }
-    .dash-topbar-title{font-size:14px;color:#8A8A96;font-weight:500}
-    .dash-content{padding:28px;max-width:1100px}
-
-    /* ═══ Cards ═══ */
-    .dash-card{
-      background:#111114;border:1px solid rgba(255,255,255,0.06);border-radius:12px;
-      padding:24px;transition:border-color .2s ease;
-    }
-    .dash-card:hover{border-color:rgba(255,255,255,0.1)}
-    .dash-card-label{font-size:11px;color:#9999A5;text-transform:uppercase;letter-spacing:1px;margin-bottom:12px;font-weight:600}
-    .dash-card-title{font-size:16px;color:#fff;font-weight:600;margin-bottom:4px}
-    .dash-card-subtitle{font-size:13px;color:#8A8A96}
-
-    /* ═══ Grid ═══ */
-    .dash-grid{display:grid;gap:16px}
-    .dash-grid-3{grid-template-columns:repeat(3,1fr)}
-    .dash-grid-2{grid-template-columns:repeat(2,1fr)}
-    .dash-grid-12{grid-template-columns:repeat(12,1fr)}
-
-    /* ═══ Stat Numbers ═══ */
-    .dash-stat{font-size:32px;font-weight:700;color:#fff;font-family:'Cabinet Grotesk',sans-serif;line-height:1}
-    .dash-stat-sm{font-size:13px;color:#8A8A96;margin-top:4px}
-    .dash-stat-unit{font-size:14px;font-weight:500;color:#8A8A96}
-
-    /* ═══ Progress Bar ═══ */
-    .dash-progress{height:6px;background:rgba(255,255,255,0.04);border-radius:3px;overflow:hidden;margin:12px 0}
-    .dash-progress-fill{height:100%;border-radius:3px;transition:width .6s ease}
-    .dash-progress-cyan{background:linear-gradient(90deg,#00B8D4,#00E5FF)}
-    .dash-progress-purple{background:linear-gradient(90deg,#6C3FE8,#7C4DFF)}
-
-    /* ═══ Badge ═══ */
-    .dash-badge{
-      display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:600;
-      padding:3px 8px;border-radius:4px;text-transform:uppercase;letter-spacing:.5px;
-    }
-    .dash-badge-free{background:rgba(255,255,255,0.06);color:#8A8A96}
-    .dash-badge-pro{background:rgba(0,229,255,0.1);color:#00E5FF;border:1px solid rgba(0,229,255,0.2)}
-    .dash-badge-ultra{background:rgba(124,77,255,0.1);color:#7C4DFF;border:1px solid rgba(124,77,255,0.2)}
-
-    /* ═══ Table ═══ */
-    .dash-table{width:100%;border-collapse:collapse}
-    .dash-table th{text-align:left;font-size:11px;color:#9999A5;text-transform:uppercase;letter-spacing:.8px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.04);font-weight:600}
-    .dash-table td{font-size:13px;color:#E8E8EC;padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.03)}
-    .dash-table tr:last-child td{border-bottom:none}
-    .dash-table .mono{font-family:'JetBrains Mono',monospace;font-size:12px}
-
-    /* ═══ Model Chip ═══ */
-    .model-chip{
-      display:inline-flex;align-items:center;gap:6px;padding:6px 10px;
-      background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);
-      border-radius:6px;font-size:12px;color:#E8E8EC;font-family:'JetBrains Mono',monospace;
-    }
-    .model-chip-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
-    .model-chip-dot.green{background:#34d399}
-    .model-chip-dot.amber{background:#fbbf24}
-    .model-chip-dot.red{background:#f87171}
-    
-    .model-unavailable-row {
-      opacity: 0.25;
-      filter: grayscale(100%);
-    }
-    .model-unavailable-badge {
-      display: inline-block;
-      padding: 2px 8px;
-      border-radius: 12px;
-      font-size: 11px;
-      font-weight: 600;
-      background: rgba(248, 113, 113, 0.15);
-      color: #f87171;
-      border: 1px solid rgba(248, 113, 113, 0.3);
-    }
-
-    /* ═══ API Key ═══ */
-    .api-key-box{
-      display:flex;align-items:center;gap:8px;padding:10px 14px;
-      background:#09090B;border:1px solid rgba(255,255,255,0.06);border-radius:8px;
-      font-family:'JetBrains Mono',monospace;font-size:12px;color:#8A8A96;
-    }
-    .api-key-box button{
-      background:none;border:1px solid rgba(255,255,255,0.1);color:#8A8A96;
-      padding:4px 10px;border-radius:4px;font-size:11px;cursor:pointer;transition:all .15s;
-    }
-    .api-key-box button:hover{color:#fff;border-color:rgba(255,255,255,0.2)}
-
-    /* ═══ User Profile ═══ */
-    .dash-avatar{width:48px;height:48px;border-radius:50%;border:2px solid rgba(0,229,255,0.3);object-fit:cover}
-    .dash-user-card{display:flex;align-items:center;gap:14px;padding:12px;border-radius:8px;cursor:pointer;transition:background .15s}
-    .dash-user-card:hover{background:rgba(255,255,255,0.04)}
-
-    /* ═══ Sign-in Gate ═══ */
-    .dash-gate{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:80vh;text-align:center}
-    .dash-gate-btn{
-      background:#fff;color:#0A0A0C;border:none;padding:12px 28px;border-radius:8px;
-      font-size:14px;font-weight:600;cursor:pointer;transition:all .2s;margin-top:24px;
-    }
-    .dash-gate-btn:hover{background:#E8E8EC;transform:translateY(-1px)}
-
-    /* ═══ Loading ═══ */
-    .dash-spinner{width:32px;height:32px;border:3px solid rgba(255,255,255,0.04);border-top-color:#00E5FF;border-radius:50%;animation:dspin 1s linear infinite}
-    @keyframes dspin{to{transform:rotate(360deg)}}
-
-    /* ═══ Activity dot ═══ */
-    .activity-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
-    .activity-dot.success{background:#34d399}
-    .activity-dot.pending{background:#fbbf24}
-    .activity-dot.error{background:#f87171}
-
-    /* ═══ Section Spacing ═══ */
-    .dash-section{margin-bottom:28px}
-    .dash-section-title{font-size:15px;font-weight:600;color:#fff;margin-bottom:14px;display:flex;align-items:center;gap:8px}
-    .dash-section-title .material-symbols-outlined{font-size:18px;color:#00E5FF}
-
-    /* ═══ Responsive ═══ */
-    @media(max-width:900px){
-      .dash-sidebar{transform:translateX(-100%)}
-      .dash-sidebar.open{transform:translateX(0)}
-      .dash-main{margin-left:0}
-      .dash-grid-3{grid-template-columns:1fr}
-      .dash-grid-2{grid-template-columns:1fr}
-      .mob-menu-btn{display:flex!important}
-    }
-    .mob-menu-btn{display:none;background:none;border:none;color:#fff;cursor:pointer}
-  </style>
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="description" content="Your Zero-X account: plan, daily usage, API keys, billing and Neuron CLI sessions.">
+  <meta name="theme-color" content="#0A0A0C">
+  <link rel="icon" type="image/png" sizes="32x32" href="/Assets/zerox-favicon-32.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/Assets/zerox-apple-touch-icon.png">
+  <link rel="stylesheet" href="/site-fonts.css">
+  <link rel="stylesheet" href="/zx-tokens.css">
+  <script src="/zerox-auth.js" defer></script>
+  <script type="module" src="/dashboard.js"></script>
 </head>
 <body>
+  <a class="zx-skip" href="#main">Skip to content</a>
+  <header class="zx-header">
+    <div class="zx-container zx-header__inner">
+      <a class="zx-brand" href="https://zero-x.live/" data-site-path="/"><img src="/Assets/zerox-favicon-32.png" width="28" height="28" alt="">Zero-X</a>
+      <nav class="zx-nav" aria-label="Main">
+        <a href="https://zero-x.live/neuron-cli" data-site-path="/neuron-cli">Neuron CLI</a>
+        <a href="https://zero-x.live/pricing" data-site-path="/pricing">Pricing</a>
+        <a href="https://zero-x.live/docs" data-site-path="/docs">Docs</a>
+      </nav>
+    </div>
+  </header>
 
-<!-- ═══ SIDEBAR ═══ -->
-<aside class="dash-sidebar" id="sidebar">
-  <div class="dash-sidebar-header">
-    <a href="./index.html" id="logo-link"><img src="./Assets/Zero-xBnW.png" alt="Zero-X" class="dash-sidebar-logo"/></a>
-  </div>
-  <div class="dash-sidebar-nav">
-    <div class="dash-nav-section">Overview</div>
-    <button class="dash-nav-item active" data-tab="overview">
-      <span class="material-symbols-outlined">dashboard</span>Overview
-    </button>
-    <button class="dash-nav-item" data-tab="usage">
-      <span class="material-symbols-outlined">bar_chart</span>Usage
-    </button>
-
-    <div class="dash-nav-section">Account</div>
-    <button class="dash-nav-item" data-tab="subscription">
-      <span class="material-symbols-outlined">credit_card</span>Subscription
-    </button>
-    <button class="dash-nav-item" data-tab="models">
-      <span class="material-symbols-outlined">model_training</span>Models
-    </button>
-    <button class="dash-nav-item" data-tab="api-keys">
-      <span class="material-symbols-outlined">key</span>API Keys
-    </button>
-
-    <div class="dash-nav-section">Settings</div>
-    <button class="dash-nav-item" data-tab="profile">
-      <span class="material-symbols-outlined">person</span>Profile
-    </button>
-    <button class="dash-nav-item" data-tab="activity">
-      <span class="material-symbols-outlined">history</span>Activity Log
-    </button>
-  </div>
-  <div class="dash-sidebar-footer">
-    <div class="dash-user-card" id="sidebar-user" style="display:none">
-      <img class="dash-avatar" id="sidebar-avatar" src="" alt=""/>
+  <main id="main" class="zx-container" data-dashboard-root tabindex="-1">
+    <div class="zx-dash-head">
       <div>
-        <div style="font-size:13px;font-weight:600;color:#fff" id="sidebar-name">—</div>
-        <div style="font-size:11px;color:#8A8A96" id="sidebar-email">—</div>
+        <p class="zx-eyebrow">Dashboard</p>
+        <h1>Your Zero-X account</h1>
+        <p class="zx-muted" id="dash-subtitle">Plan, usage, API keys and billing for Neuron CLI.</p>
       </div>
     </div>
-  </div>
-</aside>
 
-<!-- ═══ MAIN ═══ -->
-<div class="dash-main">
-  <!-- Topbar -->
-  <div class="dash-topbar">
-    <div style="display:flex;align-items:center;gap:12px">
-      <button class="mob-menu-btn" id="mobMenuBtn" aria-label="Toggle account navigation" aria-controls="sidebar" aria-expanded="false"><span class="material-symbols-outlined">menu</span></button>
-      <span class="dash-topbar-title" id="topbar-title">Overview</span>
-    </div>
-    <div style="display:flex;align-items:center;gap:12px">
-      <div id="user-button"></div>
-      <a href="./neuron.html" id="topbar-neuron-link" style="font-size:12px;color:#00E5FF;border:1px solid rgba(0,229,255,0.2);padding:5px 12px;border-radius:6px;transition:all .15s">Neuron ↗</a>
-    </div>
-  </div>
+    <section id="dash-loading" aria-live="polite">
+      <p class="zx-muted">Checking your sign-in…</p>
+      <noscript><p class="zx-alert zx-alert--warning">The dashboard needs JavaScript. Enable it and reload the page.</p></noscript>
+    </section>
 
-  <!-- Loading State -->
-  <div class="dash-content" id="loading-state" style="display:flex;align-items:center;justify-content:center;min-height:60vh">
-    <div style="text-align:center">
-      <div class="dash-spinner" style="margin:0 auto 16px"></div>
-      <p style="font-size:13px;color:#8A8A96">Initializing secure session…</p>
-    </div>
-  </div>
+    <section id="dash-gate" class="zx-card" aria-labelledby="gate-title" hidden>
+      <h2 id="gate-title">Sign in to view your dashboard</h2>
+      <p class="zx-muted">Use the same Zero-X account you connect with <code>neuron auth login</code>.</p>
+      <div id="gate-error" class="zx-alert zx-alert--error zx-mb" role="alert"></div>
+      <div class="zx-row">
+        <button id="gate-signin" class="zx-btn zx-btn--primary" type="button">Sign in</button>
+        <a class="zx-btn" href="https://zero-x.live/pricing" data-site-path="/pricing">See plans</a>
+      </div>
+    </section>
 
-  <!-- Sign-in Gate -->
-  <div class="dash-content" id="signin-gate" style="display:none">
-    <div class="dash-gate">
-      <span class="material-symbols-outlined" style="font-size:48px;color:#4E4E5A;margin-bottom:16px">lock</span>
-      <h2 style="font-size:24px;margin-bottom:8px">Sign in to access your dashboard</h2>
-      <p style="font-size:14px;color:#8A8A96;max-width:400px">View your account, current usage, and gateway API access.</p>
-      <button class="dash-gate-btn" id="gate-signin-btn">Sign In with Zero-X</button>
-    </div>
-  </div>
+    <div id="dash-app" hidden>
+      <div id="dash-alert" class="zx-alert zx-alert--error zx-mb" role="alert"></div>
 
-  <!-- ═══ TAB: Overview ═══ -->
-  <div class="dash-content dash-tab" id="tab-overview" style="display:none">
-    <div class="dash-section">
-      <h1 style="font-size:24px;margin-bottom:4px">Welcome back, <span id="greeting-name">Developer</span></h1>
-      <p style="font-size:14px;color:#8A8A96">Here's your account overview for today.</p>
-      <p id="account-status" role="status" aria-live="polite" style="font-size:13px;color:#A6A6B2;margin-top:12px"></p>
-      <button id="refresh-account" type="button" class="dash-gate-btn" style="margin-top:8px">Refresh account</button>
-    </div>
+      <div class="zx-tabs" role="tablist" aria-label="Dashboard sections" id="dash-tabs">
+        <button class="zx-tab" type="button" role="tab" id="tab-overview" aria-controls="panel-overview" aria-selected="true" tabindex="0">Overview</button>
+        <button class="zx-tab" type="button" role="tab" id="tab-usage" aria-controls="panel-usage" aria-selected="false" tabindex="-1">Usage</button>
+        <button class="zx-tab" type="button" role="tab" id="tab-keys" aria-controls="panel-keys" aria-selected="false" tabindex="-1">API keys</button>
+        <button class="zx-tab" type="button" role="tab" id="tab-billing" aria-controls="panel-billing" aria-selected="false" tabindex="-1">Billing</button>
+        <button class="zx-tab" type="button" role="tab" id="tab-sessions" aria-controls="panel-sessions" aria-selected="false" tabindex="-1">Sessions</button>
+        <button class="zx-tab" type="button" role="tab" id="tab-account" aria-controls="panel-account" aria-selected="false" tabindex="-1">Account</button>
+      </div>
 
-    <!-- Stats Row -->
-    <div class="dash-section dash-grid dash-grid-3">
-      <div class="dash-card">
-        <div class="dash-card-label">Tokens Used Today</div>
-        <div class="dash-stat" id="stat-tokens">0</div>
-        <div class="dash-progress"><div class="dash-progress-fill dash-progress-cyan" id="tokens-bar" style="width:0%"></div></div>
-        <div style="display:flex;justify-content:space-between;font-size:11px;color:#9999A5">
-          <span id="tokens-used-label">0 / 256,000</span>
-          <span id="tokens-pct">0%</span>
+      <section class="zx-tabpanel" role="tabpanel" id="panel-overview" aria-labelledby="tab-overview" tabindex="0">
+        <div class="zx-row zx-row--between">
+          <h2>Overview</h2>
+          <button id="ov-refresh" class="zx-btn zx-btn--sm" type="button">Refresh</button>
         </div>
-      </div>
-      <div class="dash-card">
-        <div class="dash-card-label">API Requests Today</div>
-        <div class="dash-stat" id="stat-requests">0</div>
-        <div class="dash-progress"><div class="dash-progress-fill dash-progress-purple" id="requests-bar" style="width:0%"></div></div>
-        <div style="display:flex;justify-content:space-between;font-size:11px;color:#9999A5">
-          <span id="requests-label">0 / 2,000</span>
-          <span id="requests-pct">0%</span>
+        <div id="overview-error" class="zx-alert zx-alert--error zx-mb" role="alert"></div>
+        <div class="zx-grid zx-grid--4">
+          <article class="zx-card" aria-labelledby="ov-plan-label">
+            <p class="zx-card__label" id="ov-plan-label">Plan</p>
+            <p class="zx-stat" id="ov-plan">—</p>
+            <p class="zx-help" id="ov-plan-detail"></p>
+            <a id="ov-upgrade" class="zx-btn zx-btn--primary zx-btn--sm zx-mt" href="https://zero-x.live/pricing" data-site-path="/pricing" hidden>Upgrade</a>
+          </article>
+          <article class="zx-card" aria-labelledby="ov-requests-label">
+            <p class="zx-card__label" id="ov-requests-label">Requests today</p>
+            <p class="zx-stat" id="ov-requests">—</p>
+            <div class="zx-progress" id="ov-requests-bar" role="progressbar" aria-labelledby="ov-requests-label" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span class="zx-progress__bar"></span></div>
+            <p class="zx-help" id="ov-requests-detail"></p>
+          </article>
+          <article class="zx-card" aria-labelledby="ov-tokens-label">
+            <p class="zx-card__label" id="ov-tokens-label">Tokens today</p>
+            <p class="zx-stat" id="ov-tokens">—</p>
+            <div class="zx-progress" id="ov-tokens-bar" role="progressbar" aria-labelledby="ov-tokens-label" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span class="zx-progress__bar"></span></div>
+            <p class="zx-help" id="ov-tokens-detail"></p>
+          </article>
+          <article class="zx-card" aria-labelledby="ov-credits-label">
+            <p class="zx-card__label" id="ov-credits-label">Credit balance</p>
+            <p class="zx-stat" id="ov-credits">—</p>
+            <p class="zx-help" id="ov-credits-detail"></p>
+          </article>
         </div>
-      </div>
-      <div class="dash-card">
-        <div class="dash-card-label">Current Plan</div>
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
-          <div class="dash-stat" id="stat-plan">Free</div>
-          <span class="dash-badge dash-badge-free" id="plan-badge">FREE</span>
-        </div>
-        <div class="dash-stat-sm" id="plan-desc">256K tokens/day • Active Free Models</div>
-        <p style="margin-top:12px;font-size:12px;color:#8A8A96">Paid plan changes are not available on this website yet.</p>
-      </div>
-    </div>
+        <p class="zx-muted zx-mt" id="ov-reset">Daily limits reset at 00:00 UTC.</p>
 
-    <!-- Model Access + Recent Activity -->
-    <div class="dash-section dash-grid dash-grid-2">
-      <div class="dash-card">
-        <div class="dash-card-label">Included Models</div>
-        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px" id="models-chips">
-          <!-- Populated by JS -->
-        </div>
-      </div>
-      <div class="dash-card">
-        <div class="dash-card-label">Recent Activity</div>
-        <div id="recent-activity" style="margin-top:4px">
-          <!-- Populated by JS -->
-        </div>
-      </div>
-    </div>
-  </div>
+        <section class="zx-card zx-card--flat zx-mt" aria-labelledby="qs-title">
+          <h3 id="qs-title">Quick start</h3>
+          <p class="zx-muted">Install Neuron CLI, sign in once, then run <code>neuron</code> in any project.</p>
+          <div class="zx-code zx-code--copy"><span class="zx-code__label">Install</span><pre><code id="qs-install">npm install -g @zero-x.live/neuron</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="qs-install" data-copy-label="Install command">Copy</button></div>
+          <div class="zx-code zx-code--copy"><span class="zx-code__label">Sign in</span><pre><code id="qs-login">neuron auth login</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="qs-login" data-copy-label="Login command">Copy</button></div>
+          <div class="zx-code zx-code--copy"><span class="zx-code__label">OpenAI-compatible base URL</span><pre><code id="qs-base">https://zero-x.live/v1</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="qs-base" data-copy-label="Base URL">Copy</button></div>
+          <p class="zx-help">Need more? Read the <a href="https://zero-x.live/docs" data-site-path="/docs">documentation</a>.</p>
+        </section>
+      </section>
 
-  <!-- ═══ TAB: Usage ═══ -->
-  <div class="dash-content dash-tab" id="tab-usage" style="display:none">
-    <div class="dash-section">
-      <h2 style="font-size:20px;margin-bottom:4px">Usage Analytics</h2>
-      <p style="font-size:13px;color:#8A8A96">Today's usage returned by the gateway. Historical usage is not available.</p>
-    </div>
-
-    <!-- Usage Chart (ASCII-style bar chart) -->
-    <div class="dash-section dash-card">
-      <div class="dash-card-label">Today's Token Usage</div>
-      <div id="usage-chart" style="display:flex;align-items:flex-end;gap:8px;height:160px;margin-top:16px;padding-top:8px">
-        <!-- Populated by JS -->
-      </div>
-      <div style="display:flex;justify-content:space-between;margin-top:8px;font-size:11px;color:#9999A5" id="chart-labels"></div>
-    </div>
-
-  </div>
-
-  <!-- ═══ TAB: Subscription ═══ -->
-  <div class="dash-content dash-tab" id="tab-subscription" style="display:none">
-    <div class="dash-section">
-      <h2 style="font-size:20px;margin-bottom:4px">Subscription & Billing</h2>
-      <p style="font-size:13px;color:#8A8A96">Your current gateway plan. Billing and paid plan changes are not available here yet.</p>
-    </div>
-
-    <div class="dash-section dash-card" style="border-color:rgba(0,229,255,0.15)">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:16px">
-        <div>
-          <div class="dash-card-label">Current Plan</div>
-          <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">
-            <span style="font-size:28px;font-weight:700;color:#fff" id="sub-plan-name">Free</span>
-            <span class="dash-badge dash-badge-free" id="sub-badge">ACTIVE</span>
+      <section class="zx-tabpanel" role="tabpanel" id="panel-usage" aria-labelledby="tab-usage" tabindex="0" hidden>
+        <div class="zx-row zx-row--between">
+          <h2>Usage</h2>
+          <div class="zx-row">
+            <div class="zx-segmented" role="group" aria-label="Chart metric">
+              <button type="button" data-metric="requests" aria-pressed="true">Requests</button>
+              <button type="button" data-metric="tokens" aria-pressed="false">Tokens</button>
+            </div>
+            <button id="usage-refresh" class="zx-btn zx-btn--sm" type="button">Refresh</button>
           </div>
-          <div style="font-size:13px;color:#8A8A96" id="sub-details">256K tokens/day • Active Free Models & Tools</div>
         </div>
-        <div>
-          <a href="mailto:rahultech72216@gmail.com" style="color:#00E5FF">Contact Zero-X about plans</a>
+        <div id="usage-error" class="zx-alert zx-alert--error zx-mb" role="alert"></div>
+        <div class="zx-grid zx-grid--4">
+          <div class="zx-card"><p class="zx-card__label">Requests, 30 days</p><p class="zx-stat" id="usage-total-requests">—</p></div>
+          <div class="zx-card"><p class="zx-card__label">Prompt tokens</p><p class="zx-stat" id="usage-total-prompt">—</p></div>
+          <div class="zx-card"><p class="zx-card__label">Completion tokens</p><p class="zx-stat" id="usage-total-completion">—</p></div>
+          <div class="zx-card"><p class="zx-card__label">Credits spent</p><p class="zx-stat" id="usage-total-cost">—</p></div>
         </div>
-      </div>
-    </div>
+        <figure class="zx-card zx-figure">
+          <figcaption id="usage-chart-caption" class="zx-card__label">Requests per day, last 30 days</figcaption>
+          <div class="zx-chart" id="usage-chart"><p class="zx-muted">Loading usage…</p></div>
+          <details class="zx-mt">
+            <summary>Show daily usage as a table</summary>
+            <div class="zx-table-wrap zx-mt">
+              <table class="zx-table">
+                <caption class="zx-visually-hidden">Daily usage, newest first</caption>
+                <thead><tr><th scope="col">Day</th><th scope="col" class="zx-num">Requests</th><th scope="col" class="zx-num">Prompt tokens</th><th scope="col" class="zx-num">Completion tokens</th><th scope="col" class="zx-num">Cost</th></tr></thead>
+                <tbody id="usage-days"></tbody>
+              </table>
+            </div>
+          </details>
+        </figure>
 
-  </div>
-
-  <!-- ═══ TAB: Models ═══ -->
-  <div class="dash-content dash-tab" id="tab-models" style="display:none">
-    <div class="dash-section">
-      <h2 style="font-size:20px;margin-bottom:4px">Model Access</h2>
-      <p style="font-size:13px;color:#8A8A96">Models included in your gateway plan. Provider availability can vary.</p>
-    </div>
-
-    <div class="dash-section" id="models-table-section">
-      <table class="dash-table">
-        <thead>
-          <tr><th>Model</th><th>Type</th><th>Daily Limit</th><th>Status</th></tr>
-        </thead>
-        <tbody id="models-tbody">
-          <!-- Populated by JS -->
-        </tbody>
-      </table>
-    </div>
-  </div>
-
-  <!-- ═══ TAB: API Keys ═══ -->
-  <div class="dash-content dash-tab" id="tab-api-keys" style="display:none">
-    <div class="dash-section">
-      <h2 style="font-size:20px;margin-bottom:4px">API Keys</h2>
-      <p style="font-size:13px;color:#8A8A96">Manage keys for programmatic access to Neuron APIs.</p>
-    </div>
-
-    <div class="dash-section dash-card">
-      <div class="dash-card-label">Session Token</div>
-      <p style="font-size:13px;color:#8A8A96;margin-bottom:12px">Your active NeuronCLI gateway session token, minted from your authenticated Zero-X session.</p>
-  <div class="api-key-box">
-        <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" id="session-token-display">Session unavailable</span>
-        <button onclick="copyToken()" id="copy-token-btn" disabled>Copy</button>
-      </div>
-    </div>
-
-    <div class="dash-section dash-card">
-      <div class="dash-card-label">API Endpoint</div>
-      <p style="font-size:13px;color:#8A8A96;margin-bottom:12px">Base URL for all Neuron API requests.</p>
-      <div class="api-key-box">
-        <span style="flex:1;color:#00E5FF;overflow-wrap:anywhere">https://zero-x.live/v1/chat/completions</span>
-        <button onclick="copyValue(this,'https://zero-x.live/v1/chat/completions')">Copy</button>
-      </div>
-    </div>
-
-    <div class="dash-section dash-card">
-      <div class="dash-card-label">Quick Start</div>
-      <pre style="background:#09090B;border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:16px;font-family:'JetBrains Mono',monospace;font-size:12px;color:#a3e635;overflow-x:auto;margin-top:8px">curl https://zero-x.live/v1/chat/completions \
-  -H "Authorization: Bearer YOUR_SESSION_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "auto",
-    "messages": [{"role": "user", "content": "Hello!"}]
-  }'</pre>
-    </div>
-  </div>
-
-  <!-- ═══ TAB: Profile ═══ -->
-  <div class="dash-content dash-tab" id="tab-profile" style="display:none">
-    <div class="dash-section">
-      <h2 style="font-size:20px;margin-bottom:4px">Profile Settings</h2>
-      <p style="font-size:13px;color:#8A8A96">Your account information synced from authentication.</p>
-    </div>
-
-    <div class="dash-section dash-card">
-      <div style="display:flex;align-items:center;gap:20px;margin-bottom:24px">
-        <img class="dash-avatar" id="profile-avatar" src="" alt="" style="width:72px;height:72px"/>
-        <div>
-          <div style="font-size:20px;font-weight:700;color:#fff" id="profile-name">—</div>
-          <div style="font-size:13px;color:#00E5FF" id="profile-email">—</div>
+        <h3>By model</h3>
+        <div class="zx-table-wrap">
+          <table class="zx-table">
+            <caption class="zx-visually-hidden">Usage by model, last 30 days</caption>
+            <thead><tr><th scope="col">Model</th><th scope="col" class="zx-num">Requests</th><th scope="col" class="zx-num">Prompt tokens</th><th scope="col" class="zx-num">Completion tokens</th><th scope="col" class="zx-num">Cost</th></tr></thead>
+            <tbody id="usage-models"></tbody>
+          </table>
         </div>
+
+        <h3 class="zx-mt-lg">Recent requests</h3>
+        <div id="events-error" class="zx-alert zx-alert--error zx-mb" role="alert"></div>
+        <div class="zx-table-wrap">
+          <table class="zx-table">
+            <caption class="zx-visually-hidden">Recent requests, newest first</caption>
+            <thead><tr><th scope="col">Time</th><th scope="col">Model</th><th scope="col">Pool</th><th scope="col">Status</th><th scope="col" class="zx-num">Tokens</th><th scope="col" class="zx-num">Cost</th><th scope="col" class="zx-num">Latency</th><th scope="col">Request ID</th></tr></thead>
+            <tbody id="usage-events"></tbody>
+          </table>
+        </div>
+        <nav class="zx-pager" aria-label="Recent requests pages">
+          <span class="zx-help" id="events-page" aria-live="polite">Page 1</span>
+          <button id="events-newer" class="zx-btn zx-btn--sm" type="button" disabled>Newer</button>
+          <button id="events-older" class="zx-btn zx-btn--sm" type="button" disabled>Older</button>
+        </nav>
+      </section>
+
+      <section class="zx-tabpanel" role="tabpanel" id="panel-keys" aria-labelledby="tab-keys" tabindex="0" hidden>
+        <h2>API keys</h2>
+        <p class="zx-muted">Use an API key to run Neuron in CI or on a server without a browser: set <code>NEURON_TOKEN</code> to the key. Keys can call <code>/v1</code> and read usage; they cannot manage keys, sessions or billing.</p>
+        <div id="keys-error" class="zx-alert zx-alert--error zx-mb" role="alert"></div>
+        <form id="key-form" class="zx-card zx-card--flat" novalidate>
+          <div class="zx-form-row">
+            <div class="zx-field">
+              <label for="key-name">Key name</label>
+              <input id="key-name" name="name" class="zx-input" maxlength="64" required autocomplete="off" aria-describedby="keys-count key-name-error" placeholder="GitHub Actions">
+              <p class="zx-help" id="keys-count">Up to 10 active keys.</p>
+              <p class="zx-field-error" id="key-name-error"></p>
+            </div>
+            <button class="zx-btn zx-btn--primary" type="submit" id="key-create">Create key</button>
+          </div>
+        </form>
+        <div id="key-secret" class="zx-alert zx-alert--success zx-mt" hidden>
+          <h3>Copy your new key now</h3>
+          <p>This is the only time the full key is shown. Store it as a secret, for example in your CI settings.</p>
+          <code class="zx-secret" id="key-secret-value"></code>
+          <div class="zx-row zx-mt">
+            <button id="key-secret-copy" class="zx-btn zx-btn--primary zx-btn--sm" type="button">Copy key</button>
+            <button id="key-secret-done" class="zx-btn zx-btn--sm" type="button">I have saved it</button>
+          </div>
+        </div>
+        <div class="zx-table-wrap zx-mt">
+          <table class="zx-table">
+            <caption class="zx-visually-hidden">Your API keys</caption>
+            <thead><tr><th scope="col">Name</th><th scope="col">Key</th><th scope="col">Created</th><th scope="col">Last used</th><th scope="col">Status</th><th scope="col"><span class="zx-visually-hidden">Actions</span></th></tr></thead>
+            <tbody id="keys-list"><tr><td colspan="6" class="zx-empty">Loading keys…</td></tr></tbody>
+          </table>
+        </div>
+        <div class="zx-code zx-mt"><span class="zx-code__label">Headless example</span><pre><code>export NEURON_TOKEN=nzx_your_key
+export NEURON_API_BASE=https://zero-x.live/v1
+neuron -p "Run the tests and summarise failures"</code></pre></div>
+      </section>
+
+      <section class="zx-tabpanel" role="tabpanel" id="panel-billing" aria-labelledby="tab-billing" tabindex="0" hidden>
+        <div class="zx-row zx-row--between">
+          <h2>Billing</h2>
+          <button id="billing-refresh" class="zx-btn zx-btn--sm" type="button">Refresh</button>
+        </div>
+        <div id="billing-error" class="zx-alert zx-alert--error zx-mb" role="alert"></div>
+        <p id="billing-status" class="zx-muted" role="status" aria-live="polite"></p>
+        <div id="billing-notice" class="zx-alert zx-alert--info" hidden><p>Online payments are not enabled yet. Email <a href="mailto:support@zero-x.live">support@zero-x.live</a> to upgrade your plan.</p></div>
+        <div class="zx-grid zx-grid--2 zx-mt">
+          <article class="zx-card" aria-labelledby="sub-title">
+            <h3 id="sub-title">Subscription</h3>
+            <dl class="zx-kv">
+              <dt>Plan</dt><dd id="sub-plan">—</dd>
+              <dt>Status</dt><dd id="sub-status">—</dd>
+              <dt id="sub-period-label">Period</dt><dd id="sub-period">—</dd>
+            </dl>
+            <p id="sub-note" class="zx-help zx-mt"></p>
+            <div class="zx-row">
+              <a id="sub-upgrade" class="zx-btn zx-btn--primary" href="https://zero-x.live/pricing" data-site-path="/pricing">See plans</a>
+              <button id="sub-cancel" class="zx-btn zx-btn--danger" type="button" hidden>Cancel subscription</button>
+            </div>
+          </article>
+          <article class="zx-card" aria-labelledby="topup-title">
+            <h3 id="topup-title">Add credits</h3>
+            <p class="zx-muted">Top-up credits pay for paid-capacity models on Pro and Max. Free-pool requests never use credits.</p>
+            <div class="zx-field zx-mb zx-field--short">
+              <label for="topup-currency">Pay in</label>
+              <select id="topup-currency" class="zx-select"><option value="USD">USD</option><option value="INR">INR</option></select>
+            </div>
+            <div class="zx-row">
+              <button class="zx-btn" type="button" data-topup="credits_5">Add $5 credit</button>
+              <button class="zx-btn" type="button" data-topup="credits_20">Add $20 credit</button>
+            </div>
+            <p id="topup-note" class="zx-help zx-mt" hidden></p>
+          </article>
+        </div>
+        <h3 class="zx-mt-lg">Payment history</h3>
+        <div class="zx-table-wrap">
+          <table class="zx-table">
+            <caption class="zx-visually-hidden">Payments, newest first</caption>
+            <thead><tr><th scope="col">Date</th><th scope="col">Item</th><th scope="col" class="zx-num">Amount</th><th scope="col">Status</th><th scope="col">Payment ID</th><th scope="col">Invoice</th></tr></thead>
+            <tbody id="payments-list"><tr><td colspan="6" class="zx-empty">Loading payments…</td></tr></tbody>
+          </table>
+        </div>
+        <p class="zx-help zx-mt">See the <a href="https://zero-x.live/refund" data-site-path="/refund">cancellation and refund policy</a>. Billing questions: <a href="mailto:support@zero-x.live">support@zero-x.live</a>.</p>
+      </section>
+
+      <section class="zx-tabpanel" role="tabpanel" id="panel-sessions" aria-labelledby="tab-sessions" tabindex="0" hidden>
+        <h2>CLI sessions</h2>
+        <p class="zx-muted">Each <code>neuron auth login</code> creates a CLI session that lasts up to 30 days. If a computer is lost or a session token was exposed, sign out every CLI session at once.</p>
+        <div id="sessions-error" class="zx-alert zx-alert--error zx-mb" role="alert"></div>
+        <p class="zx-mb"><input id="sessions-keys" type="checkbox"> <label for="sessions-keys">Also revoke every API key (do this if a session token may have leaked, since a session can create keys)</label></p>
+        <div class="zx-row">
+          <button id="sessions-revoke" class="zx-btn zx-btn--danger" type="button">Sign out all CLI sessions</button>
+        </div>
+        <p id="sessions-status" class="zx-muted zx-mt" role="status" aria-live="polite"></p>
+        <p class="zx-help">This does not sign out this browser, and API keys keep working unless you tick the box above. Single keys can be revoked from the API keys tab.</p>
+      </section>
+
+      <section class="zx-tabpanel" role="tabpanel" id="panel-account" aria-labelledby="tab-account" tabindex="0" hidden>
+        <h2>Account</h2>
+        <div id="account-error" class="zx-alert zx-alert--error zx-mb" role="alert"></div>
+        <div class="zx-card">
+          <div class="zx-row zx-mb">
+            <img id="acct-avatar" class="zx-avatar" src="/Assets/zerox-favicon-centered.png" width="56" height="56" alt="">
+            <div>
+              <p class="zx-stat zx-stat--sm" id="acct-name">—</p>
+              <p class="zx-muted" id="acct-email">—</p>
+            </div>
+          </div>
+          <dl class="zx-kv">
+            <dt>User ID</dt><dd class="zx-mono" id="acct-id">—</dd>
+            <dt>Sign-in method</dt><dd id="acct-provider">—</dd>
+            <dt>Plan</dt><dd id="acct-plan">—</dd>
+          </dl>
+        </div>
+        <div class="zx-row zx-mt">
+          <button id="acct-signout" class="zx-btn" type="button">Sign out</button>
+        </div>
+        <p class="zx-help zx-mt">To export or delete your data, email <a href="mailto:support@zero-x.live">support@zero-x.live</a> from your account address. See the <a href="https://zero-x.live/privacy" data-site-path="/privacy">privacy policy</a>.</p>
+      </section>
+    </div>
+
+    <dialog id="confirm-dialog" class="zx-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-body">
+      <h2 id="confirm-title">Are you sure?</h2>
+      <p id="confirm-body"></p>
+      <div class="zx-row">
+        <button id="confirm-ok" class="zx-btn zx-btn--danger" type="button">Confirm</button>
+        <button id="confirm-cancel" class="zx-btn" type="button">Keep it</button>
       </div>
+    </dialog>
+    <div id="toasts" class="zx-toasts" role="status" aria-live="polite"></div>
+  </main>
 
-      <table class="dash-table">
-        <tbody>
-          <tr><td style="color:#8A8A96;width:180px">User ID</td><td class="mono" id="profile-uid">—</td></tr>
-          <tr><td style="color:#8A8A96">Username</td><td id="profile-username">—</td></tr>
-          <tr><td style="color:#8A8A96">Member Since</td><td id="profile-created">—</td></tr>
-          <tr><td style="color:#8A8A96">Connected Accounts</td><td id="profile-providers">—</td></tr>
-          <tr><td style="color:#8A8A96">Plan</td><td id="profile-plan">Free</td></tr>
-        </tbody>
-      </table>
+  <footer class="zx-footer">
+    <div class="zx-container zx-footer__grid">
+      <div>
+        <a class="zx-brand" href="https://zero-x.live/" data-site-path="/">Zero-X</a>
+        <p>Questions about your account: <a href="mailto:support@zero-x.live">support@zero-x.live</a></p>
+      </div>
+      <nav aria-label="Product">
+        <h2>Product</h2>
+        <a href="https://zero-x.live/neuron-cli" data-site-path="/neuron-cli">Neuron CLI</a>
+        <a href="https://zero-x.live/pricing" data-site-path="/pricing">Pricing</a>
+        <a href="https://zero-x.live/docs" data-site-path="/docs">Docs</a>
+      </nav>
+      <nav aria-label="Company">
+        <h2>Company</h2>
+        <a href="https://zero-x.live/about" data-site-path="/about">About</a>
+        <a href="https://zero-x.live/contact" data-site-path="/contact">Contact</a>
+      </nav>
+      <nav aria-label="Legal">
+        <h2>Legal</h2>
+        <a href="https://zero-x.live/terms" data-site-path="/terms">Terms of Service</a>
+        <a href="https://zero-x.live/privacy" data-site-path="/privacy">Privacy Policy</a>
+        <a href="https://zero-x.live/refund" data-site-path="/refund">Cancellation and refunds</a>
+      </nav>
     </div>
-
-    <div class="dash-section">
-      <button onclick="if(window.ZeroXAuth)window.ZeroXAuth.signOut({redirectUrl:window.location.origin})" style="background:none;border:1px solid rgba(248,113,113,0.3);color:#f87171;padding:10px 20px;border-radius:8px;font-size:13px;cursor:pointer;transition:all .15s">Sign Out</button>
-    </div>
-  </div>
-
-  <!-- ═══ TAB: Activity ═══ -->
-  <div class="dash-content dash-tab" id="tab-activity" style="display:none">
-    <div class="dash-section">
-      <h2 style="font-size:20px;margin-bottom:4px">Activity Log</h2>
-      <p style="font-size:13px;color:#8A8A96">Successful account requests from this browser session. Server history is not available.</p>
-    </div>
-
-    <div class="dash-section dash-card">
-      <table class="dash-table">
-        <thead><tr><th>Status</th><th>Endpoint</th><th>Model</th><th>Tokens</th><th>Time</th></tr></thead>
-        <tbody id="activity-tbody">
-          <!-- Populated by JS -->
-        </tbody>
-      </table>
-    </div>
-  </div>
-</div>
-
-<script>
-/* ═══ Tab Navigation ═══ */
-const tabNames = {overview:'Overview',usage:'Usage Analytics',subscription:'Subscription',models:'Models',
-  'api-keys':'API Keys',profile:'Profile',activity:'Activity Log'};
-
-document.querySelectorAll('.dash-nav-item[data-tab]').forEach(btn=>{
-  btn.addEventListener('click',()=>{
-    document.querySelectorAll('.dash-nav-item').forEach(b=>b.classList.remove('active'));
-    btn.classList.add('active');
-    document.querySelectorAll('.dash-tab').forEach(t=>t.style.display='none');
-    const tab=document.getElementById('tab-'+btn.dataset.tab);
-    if(tab)tab.style.display='block';
-    document.getElementById('topbar-title').textContent=tabNames[btn.dataset.tab]||'Dashboard';
-    if(innerWidth<=900){document.getElementById('sidebar').classList.remove('open');syncSidebar();document.getElementById('mobMenuBtn').focus();}
-  });
-});
-
-/* ═══ Mobile Menu ═══ */
-const sidebarMedia=matchMedia('(max-width:900px)');
-function syncSidebar(){
-  const sidebar=document.getElementById('sidebar');
-  const open=sidebar.classList.contains('open');
-  sidebar.inert=sidebarMedia.matches&&!open;
-  document.getElementById('mobMenuBtn').setAttribute('aria-expanded',String(open));
-}
-sidebarMedia.addEventListener('change',syncSidebar);
-syncSidebar();
-document.getElementById('mobMenuBtn').addEventListener('click',()=>{
-  const open = document.getElementById('sidebar').classList.toggle('open');
-  syncSidebar();
-  if(open)document.querySelector('.dash-nav-item').focus();
-});
-document.addEventListener('keydown',event=>{
-  if(event.key==='Escape' && document.getElementById('sidebar').classList.contains('open')){
-    document.getElementById('sidebar').classList.remove('open');
-    syncSidebar();
-    document.getElementById('mobMenuBtn').focus();
-  }
-});
-
-/* Account data returned by the gateway. */
-const planLimits = {free:{tokens:256000,requests:2000},pro:{tokens:2000000,requests:20000},ultrawork:{tokens:2000000,requests:20000}};
-let dashboardState = {
-  plan: 'free',
-  usage: {tokens: 0, requests: 0},
-  limits: planLimits.free,
-  models: null,
-  accountAvailable: false,
-  catalog: {},
-  activity: [],
-};
-function escapeHtml(value){return String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
-function finiteCount(value){return Number.isFinite(Number(value))?Math.max(0,Number(value)):0;}
-
-function populateDashboard(user) {
-  const userPlan = dashboardState.plan || 'free';
-  const limits = dashboardState.limits || planLimits[userPlan] || planLimits.free;
-  const usage = dashboardState.usage || {tokens:0,requests:0};
-  const available = dashboardState.accountAvailable;
-  const pct_t = limits.tokens>0?Math.min(100,Math.round(usage.tokens/limits.tokens*100)):0;
-  const pct_r = limits.requests>0?Math.min(100,Math.round(usage.requests/limits.requests*100)):0;
-
-  // Overview stats
-  document.getElementById('stat-tokens').textContent=available?(usage.tokens||0).toLocaleString():'Unavailable';
-  document.getElementById('tokens-bar').style.width=pct_t+'%';
-  document.getElementById('tokens-used-label').textContent=available?(usage.tokens||0).toLocaleString()+' / '+limits.tokens.toLocaleString():'Unavailable';
-  document.getElementById('tokens-pct').textContent=available?pct_t+'%':'';
-
-  document.getElementById('stat-requests').textContent=available?(usage.requests||0).toLocaleString():'Unavailable';
-  document.getElementById('requests-bar').style.width=pct_r+'%';
-  document.getElementById('requests-label').textContent=available?(usage.requests||0).toLocaleString()+' / '+limits.requests.toLocaleString():'Unavailable';
-  document.getElementById('requests-pct').textContent=available?pct_r+'%':'';
-
-  // Plan
-  const planNames={free:'Free',pro:'Pro',ultrawork:'Ultrawork',[userPlan]:userPlan.charAt(0).toUpperCase()+userPlan.slice(1)};
-  const modelCount=(dashboardState.models||[]).length;
-  const planDescription=available?limits.tokens.toLocaleString()+' tokens/day • '+modelCount+' included '+(modelCount===1?'model':'models'):'Account data unavailable';
-  document.getElementById('stat-plan').textContent=available?planNames[userPlan]:'Unavailable';
-  document.getElementById('plan-desc').textContent=planDescription;
-  const badge=document.getElementById('plan-badge');
-  badge.textContent=available?planNames[userPlan].toUpperCase():'UNAVAILABLE';
-  badge.className='dash-badge dash-badge-'+userPlan;
-  document.getElementById('sub-plan-name').textContent=available?planNames[userPlan]:'Unavailable';
-  document.getElementById('sub-badge').textContent=available?'CURRENT':'UNAVAILABLE';
-  document.getElementById('sub-badge').className='dash-badge dash-badge-'+userPlan;
-  document.getElementById('sub-details').textContent=planDescription;
-
-  // Models chips (overview)
-  const models = (dashboardState.models||[]).map(id=>{
-    const metadata=dashboardState.catalog[id]||{};
-    return {name:escapeHtml(id),limit:escapeHtml(limits.tokens.toLocaleString()+' shared/day'),status:metadata.available===false?'unavailable':'included',type:escapeHtml(metadata.provider||metadata.owned_by||'Gateway')+(metadata.capabilities?.tools?' · Tools':'')};
-  });
-    
-  document.getElementById('models-chips').innerHTML=models.slice(0,6).map(m=>
-    m.status==='unavailable'
-      ? `<div class="model-chip model-unavailable-row"><span class="model-chip-dot red"></span>${m.name}</div>`
-      : `<div class="model-chip"><span class="model-chip-dot green"></span>${m.name}</div>`
-  ).join('')+(models.length>6?`<div class="model-chip" style="color:#8A8A96">+${models.length-6} more</div>`:'');
-
-  // Models table
-  document.getElementById('models-tbody').innerHTML=models.map(m=>
-    m.status==='unavailable'
-      ? `<tr class="model-unavailable-row"><td style="font-weight:600">${m.name}</td><td class="mono" style="color:#8A8A96">${m.type}</td><td class="mono">${m.limit}</td><td><span class="model-unavailable-badge">Provider unavailable</span></td></tr>`
-      : `<tr><td style="font-weight:600">${m.name}</td><td class="mono" style="color:#8A8A96">${m.type}</td><td class="mono">${m.limit}</td><td><span style="color:#34d399;font-size:12px">Included in plan</span></td></tr>`
-  ).join('');
-
-  const activity = dashboardState.activity;
-  if(!models.length){const empty=dashboardState.models===null?'Model data unavailable':'No providers are currently available for this plan.';document.getElementById('models-chips').textContent=empty;document.getElementById('models-tbody').innerHTML='<tr><td colspan="4">'+empty+'</td></tr>';}
-
-  // Recent activity (overview)
-  document.getElementById('recent-activity').innerHTML=activity.slice(0,4).map(a=>`<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.03);font-size:12px"><span class="activity-dot ${a.status}"></span><span style="flex:1;color:#E8E8EC;font-family:'JetBrains Mono',monospace">${a.endpoint}</span><span style="color:#8A8A96">${a.time}</span></div>`).join('');
-
-  // Activity log table
-  document.getElementById('activity-tbody').innerHTML=activity.map(a=>`<tr><td><span class="activity-dot ${a.status}" style="display:inline-block;margin-right:6px"></span>${a.status}</td><td class="mono">${a.endpoint}</td><td style="color:#8A8A96">${a.model}</td><td class="mono">${a.tokens}</td><td style="color:#8A8A96">${a.time}</td></tr>`).join('')||'<tr><td colspan="5">No account requests recorded in this browser session.</td></tr>';
-  if(!activity.length)document.getElementById('recent-activity').textContent='No account requests recorded in this browser session.';
-
-  // Usage chart
-  const chartUsage=available?[{day:'Today',tokens:usage.tokens||0}]:[];
-  const maxT=Math.max(1,...chartUsage.map(d=>d.tokens));
-  document.getElementById('usage-chart').innerHTML=chartUsage.map(d=>{
-    const h=Math.max(8,Math.round(d.tokens/maxT*140));
-    return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px"><div style="font-size:10px;color:#8A8A96;font-family:'JetBrains Mono',monospace">${(d.tokens/1000).toFixed(1)}K</div><div style="width:100%;height:${h}px;background:linear-gradient(180deg,#00E5FF,rgba(0,229,255,0.3));border-radius:4px 4px 0 0;transition:height .4s"></div></div>`;
-  }).join('');
-  if(!chartUsage.length)document.getElementById('usage-chart').textContent='Usage data unavailable';
-  document.getElementById('chart-labels').innerHTML=chartUsage.map(d=>`<span style="flex:1;text-align:center">${d.day}</span>`).join('');
-
-  // Profile
-  if(user){
-    document.getElementById('profile-avatar').src=/^https?:\/\//.test(user.imageUrl||'')?user.imageUrl:'./Assets/Zero-xBnW.png';
-    document.getElementById('profile-name').textContent=user.fullName||'Developer';
-    document.getElementById('profile-email').textContent=user.email||'—';
-    document.getElementById('profile-uid').textContent=user.id;
-    document.getElementById('profile-username').textContent=user.username||'—';
-    document.getElementById('profile-created').textContent=user.createdAt ? new Date(user.createdAt).toLocaleDateString('en-US',{year:'numeric',month:'long',day:'numeric'}) : '—';
-    document.getElementById('profile-providers').textContent=user.providersDisplay||'Email';
-    document.getElementById('profile-plan').textContent=available?planNames[userPlan]:'Unavailable';
-  }
-}
-
-async function dashboardAuthFetch(path, token, options = {}) {
-  const res = await fetch(path, {
-    signal:AbortSignal.timeout(10000),
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: 'Bearer '+token,
-      ...(options.headers || {}),
-    },
-  });
-  const data = await res.json().catch(()=>({}));
-  if(!res.ok){const error=new Error(data.message || (typeof data.error==='string'?data.error:data.error?.message) || res.statusText || 'Gateway request failed');error.status=res.status;throw error;}
-  return data;
-}
-
-function applyAccountState(account) {
-  if(!account || account.status==='skipped') return;
-  const plan = typeof account.plan==='string'?account.plan:dashboardState.plan;
-  dashboardState = {
-    plan,
-    usage: {
-      tokens: finiteCount(account.usage?.tokens_used ?? account.tokens_used ?? account.quota?.used ?? dashboardState.usage.tokens),
-      requests: finiteCount(account.usage?.requests ?? account.requests ?? dashboardState.usage.requests),
-    },
-    limits: {tokens:finiteCount(account.limits?.tokens ?? account.quota?.daily ?? dashboardState.limits.tokens),requests:finiteCount(account.limits?.requests ?? dashboardState.limits.requests)},
-    models: Array.isArray(account.models)?account.models.filter(id=>typeof id==='string'):dashboardState.models,
-    accountAvailable: true,
-    catalog: dashboardState.catalog,
-    activity: dashboardState.activity,
-  };
-}
-
-async function syncDashboardAccount(user, accessToken) {
-  const profile = {
-    email: user.email || '',
-    firstName: user.firstName || '',
-    lastName: user.lastName || '',
-    name: user.fullName || '',
-    username: user.username || '',
-    imageUrl: user.imageUrl || '',
-  };
-
-  const cliSession = await dashboardAuthFetch('/auth/cli/session', accessToken, {
-    method:'POST',
-    body: JSON.stringify({
-      ...profile,
-      machine_fingerprint: 'dashboard-'+user.id,
-      version: 'dashboard',
-    }),
-  });
-  if(!/^ses_[A-Za-z0-9_-]+$/.test(cliSession.session_token||''))throw new Error('Gateway did not return a valid session');
-  applyAccountState(cliSession);dashboardState.activity.push({status:'success',endpoint:'/auth/cli/session',model:'Gateway',tokens:0,time:'now'});
-  return cliSession;
-}
-
-/* ═══ Copy Token ═══ */
-let sessionToken='';
-let currentProfile=null;
-let accountRefresh=0;
-async function refreshAccount(){
-  if(!currentProfile)return;
-  const revision=++accountRefresh;
-  const refreshButton=document.getElementById('refresh-account');
-  const status=document.getElementById('account-status');
-  refreshButton.disabled=true;status.textContent='Loading gateway account…';
-  try{
-    let account;
-    if(sessionToken){
-      try{account=await dashboardAuthFetch('/auth/session',sessionToken);}
-      catch(error){if(error.status!==401)throw error;sessionToken='';}
-    }
-    if(!account){
-      const accessToken=await window.ZeroXAuth.getAccessToken();
-      if(!accessToken)throw new Error('Sign in again to create a gateway session.');
-      account=await syncDashboardAccount(currentProfile,accessToken);
-    }
-    if(revision!==accountRefresh)return;
-    sessionToken=account.session_token||sessionToken;
-    applyAccountState(account);
-    try{
-      const catalog=await dashboardAuthFetch('/v1/models',sessionToken);
-      if(revision!==accountRefresh)return;
-      dashboardState.catalog=Object.fromEntries((catalog.data||[]).filter(model=>typeof model.id==='string').map(model=>[model.id,model]));
-      status.textContent='Account updated.';
-    }catch(error){status.textContent='Account updated. Model details unavailable: '+error.message;}
-  }catch(error){
-    if(revision!==accountRefresh)return;
-    status.textContent=(dashboardState.accountAvailable?'Showing the last loaded account. ':'')+(error.name==='TimeoutError'?'Gateway timed out.':error.message)+' Use Refresh account to retry.';
-  }finally{
-    if(revision===accountRefresh){
-      document.getElementById('session-token-display').textContent=sessionToken?sessionToken.slice(0,12)+'••••••••'+sessionToken.slice(-6):'Session unavailable';
-      document.getElementById('copy-token-btn').disabled=!sessionToken;
-      populateDashboard(currentProfile);refreshButton.disabled=false;
-    }
-  }
-}
-async function copyValue(button,value){
-  const label=button.textContent;
-  try{await navigator.clipboard.writeText(value);button.textContent='Copied!';}
-  catch{button.textContent='Copy unavailable';}
-  setTimeout(()=>{button.textContent=label;},2000);
-}
-function copyToken(){
-  if(sessionToken)copyValue(document.getElementById('copy-token-btn'),sessionToken);
-}
-
-/* Supabase account initialization. */
-window.addEventListener('load',async()=>{
-  const loadEl=document.getElementById('loading-state');
-  const gateEl=document.getElementById('signin-gate');
-
-  // Dynamic links
-  const isLocal=['localhost','127.0.0.1'].includes(window.location.hostname);
-  document.getElementById('logo-link').href=isLocal?'./index.html':'https://zero-x.live';
-  document.getElementById('topbar-neuron-link').href=isLocal?'./neuron.html':'https://neuron.zero-x.live';
-
-  let profile = null;
-  try {
-    await window.ZeroXAuth.init();
-    const user = await window.ZeroXAuth.getUser();
-    profile = await window.ZeroXAuth.getProfile(user);
-  } catch (authErr) {
-    console.warn('Supabase Auth init failed:', authErr);
-  }
-
-  if (!profile) {
-    loadEl.style.display = 'none';
-    gateEl.style.display = 'block';
-    document.getElementById('gate-signin-btn').addEventListener('click', async () => {
-      try {
-        await window.ZeroXAuth.openAuthModal({
-          title: 'Sign in',
-          subtitle: 'to continue to Zero-X Dashboard',
-        });
-      } catch (err) {
-        console.error('Supabase sign-in error:', err);
-        alert(err.message || 'Authentication service could not load. Please refresh and try again.');
-      }
-    });
-    return;
-  }
-
-  // Sidebar user info — show card now that user is authenticated
-  const sidebarUser = document.getElementById('sidebar-user');
-  sidebarUser.style.display = 'flex';
-  document.getElementById('sidebar-avatar').src = /^https?:\/\//.test(profile.imageUrl||'')?profile.imageUrl:'./Assets/Zero-xBnW.png';
-  document.getElementById('sidebar-name').textContent = profile.fullName || 'Developer';
-  document.getElementById('sidebar-email').textContent = profile.email || 'Signed in';
-  document.getElementById('greeting-name').textContent = (profile.firstName || profile.fullName || 'Account');
-
-  // Mount minimal user button if available
-  if (window.ZeroXAuth && typeof window.ZeroXAuth.mountUserButton === 'function') {
-    try { window.ZeroXAuth.mountUserButton(document.getElementById('user-button'), { afterSignOutUrl: window.location.href }); } catch (e) {}
-  }
-
-  populateDashboard(profile);
-  loadEl.style.display = 'none';
-  document.getElementById('tab-overview').style.display = 'block';
-
-  currentProfile=profile;
-  document.getElementById('refresh-account').addEventListener('click',refreshAccount);
-  if(typeof window.ZeroXAuth.onAuthStateChange==='function')window.ZeroXAuth.onAuthStateChange(({event})=>{
-    if(event==='SIGNED_OUT'){accountRefresh++;sessionToken='';currentProfile=null;window.location.reload();}
-  });
-  await refreshAccount();
-});
-
-</script>
+  </footer>
 </body>
 </html>

@@ -7,10 +7,12 @@
   <meta name="robots" content="noindex">
   <title>Connect NeuronCLI | Zero-X</title>
   <link rel="icon" href="../../Assets/zerox-favicon-32.png">
+  <link rel="stylesheet" href="/site-fonts.css">
+  <link rel="stylesheet" href="/zx-tokens.css">
   <style>
-    *{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;background:#08070b;color:#f0f0f0;font-family:Inter,-apple-system,'Segoe UI',sans-serif}.card{width:min(480px,90%);padding:40px;text-align:center;border:1px solid rgba(255,255,255,.08);border-radius:20px;background:rgba(255,255,255,.03)}h1{font-size:24px}p{color:#a6a6b2;line-height:1.7;overflow-wrap:anywhere}button{min-height:44px;padding:12px 24px;border:0;border-radius:8px;background:#5e6ad2;color:white;font:inherit;cursor:pointer}button:disabled{opacity:.6;cursor:wait}button:focus-visible,a:focus-visible{outline:2px solid #00e5ff;outline-offset:4px}a{color:#00e5ff}#account{color:#f0f0f0}
+    body{display:grid;place-items:center;padding:16px}.card{width:min(480px,100%);padding:32px 24px;text-align:center;border:1px solid var(--zx-border);border-radius:var(--zx-radius-lg);background:var(--zx-surface)}h1{font-size:1.75rem}p{color:var(--zx-muted);overflow-wrap:anywhere}#account{color:var(--zx-heading);font-weight:600}button{min-height:44px;padding:12px 24px;border:0;border-radius:999px;background:var(--zx-accent);color:var(--zx-on-accent);font:600 1rem var(--zx-font-body);cursor:pointer}button:hover{background:var(--zx-accent-h)}button:disabled{opacity:.6;cursor:wait}button:focus-visible{outline:none;box-shadow:var(--zx-focus)}
   </style>
-  <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js" integrity="sha384-Rj26LVGvoeRVR6+mwQmFfcR3QOBEwT+ZmuCWpuiqeTzJpCs0ER4ITAWGb4Hiy3Ok" crossorigin="anonymous"></script>
   <script defer src="../../zerox-auth.js"></script>
   <script defer src="./login.js"></script>
 </head>

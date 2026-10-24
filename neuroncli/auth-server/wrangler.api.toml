@@ -10,3 +10,13 @@ binding = "AI"
 
 [observability]
 enabled = true
+
+[vars]
+CLI_SESSION_TTL_HOURS = "720"
+PRICING_URL = "https://zero-x.live/pricing"
+NVIDIA_HOSTED = "false"
+OPENROUTER_HOSTED = "false"
+RAZORPAY_KEY_ID = ""
+
+[triggers]
+crons = ["*/10 * * * *"]

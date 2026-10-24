@@ -1,11 +1,30 @@
 import { ProviderAdapter } from './provider-adapter.js';
+import { normalizeProviderRequest } from './provider-request.js';
 
-const CF_DEFAULTS = ['@cf/meta/llama-3.3-70b-instruct-fp8-fast', '@cf/meta/llama-3.1-8b-instruct'];
-const CF_TOOL_MODELS = new Set([CF_DEFAULTS[0]]);
+// Workers AI binding errors are thrown as plain Errors whose message starts with the platform
+// error code (e.g. "3036: Account limited: ..."). Only that leading code is read (the rest can
+// quote the request); it becomes a REST-shaped error response so the gateway classifies it
+// like any other upstream failure (3036/3040 are rate limits; other known codes map through
+// WORKERS_AI_ERRORS in providers.js; unknown 3xxx codes are 5xx, unknown 5xxx request errors).
+const BINDING_ERROR_CODE = /^\s*(?:[A-Za-z]*Error:\s*)?(\d{4})\b/;
+export function bindingErrorResponse(error) {
+  const match = BINDING_ERROR_CODE.exec(String(error?.message ?? ''));
+  const code = match ? Number(match[1]) : null;
+  const status = code !== null && code >= 5000 ? 400 : 500;
+  return Response.json({ success: false, errors: [{ code: code ?? 0, message: 'Workers AI request failed' }] }, { status });
+}
+
+// Workers AI accepts only these chat parameters (the rest are dropped upstream of here).
+const WORKERS_AI_PARAMS = ['messages', 'tools', 'max_tokens', 'stream', 'temperature', 'top_p', 'seed',
+  'presence_penalty', 'frequency_penalty'];
 
 export class CloudflareWorkersAIAdapter extends ProviderAdapter {
   constructor() {
     super('cloudflare');
+  }
+
+  capabilities() {
+    return { ...super.capabilities(), tools: true };
   }
 
   isConfigured(env, session = {}) {
@@ -17,47 +36,32 @@ export class CloudflareWorkersAIAdapter extends ProviderAdapter {
     return 'allowlist';
   }
 
-  parseModelIds(value, fallback = []) {
-    return value === undefined ? fallback : String(value).split(',').map(id => id.trim()).filter(Boolean);
-  }
-
-  listStaticModels(env, session = {}) {
-    if (!this.isConfigured(env, session)) return [];
-    const models = [];
-    const configuredModels = this.parseModelIds(env.CLOUDFLARE_MODELS, CF_DEFAULTS);
-    const toolModels = this.parseModelIds(env.CLOUDFLARE_TOOL_MODELS);
-    for (const id of configuredModels) {
-      if (!id.startsWith('@cf/') && !id.startsWith('@hf/')) continue;
-      models.push({
-        id,
-        upstream: id,
-        provider: 'cloudflare',
-        tools: CF_TOOL_MODELS.has(id) || toolModels.includes(id),
-        supports_streaming: true,
-        supports_parallel_tools: CF_TOOL_MODELS.has(id) || toolModels.includes(id),
-      });
-    }
-    return models;
-  }
-
-  async discoverModels(env, session = {}) {
-    return {
-      provider: 'cloudflare',
-      status: 'binding_configured',
-      discovery: false,
-      models: this.listStaticModels(env, session),
-    };
+  requestBody(payload) {
+    const body = {};
+    const normalized = normalizeProviderRequest(this.id, payload);
+    for (const name of WORKERS_AI_PARAMS) if (normalized[name] !== undefined) body[name] = normalized[name];
+    // Workers AI takes bare function definitions instead of OpenAI tool wrappers.
+    if (body.tools) body.tools = body.tools.map(tool => tool.function);
+    return body;
   }
 
   async chatCompletion(env, session, entry, payload, signal, normalizeCompletion) {
-    const body = { ...payload, model: entry.upstream || entry.id };
-    if (body.tools) {
-      body.tools = body.tools.map(tool => tool.function);
-    }
-    delete body.stream_options;
+    const model = entry.upstream_model || entry.upstream || entry.id;
+    const body = this.requestBody(payload);
 
     if (env.AI) {
-      const result = await env.AI.run(entry.id, body);
+      let result;
+      try {
+        result = await env.AI.run(model, body);
+      } catch (error) {
+        return bindingErrorResponse(error);
+      }
+      // The binding takes no abort signal: when the attempt was abandoned (first-byte timeout
+      // or client disconnect) while run() was pending, stop the generation it started.
+      if (signal?.aborted) {
+        if (typeof result?.cancel === 'function') result.cancel().catch(() => {});
+        throw signal.reason ?? new DOMException('The operation was aborted', 'AbortError');
+      }
       if (payload.stream) {
         if (typeof result?.getReader !== 'function') {
           throw new Error('Workers AI did not return a stream');
@@ -68,7 +72,7 @@ export class CloudflareWorkersAIAdapter extends ProviderAdapter {
     }
 
     const response = await fetch(
-      `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(env.CLOUDFLARE_ACCOUNT_ID)}/ai/run/${entry.id}`,
+      `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(env.CLOUDFLARE_ACCOUNT_ID)}/ai/run/${model}`,
       {
         method: 'POST',
         headers: {
