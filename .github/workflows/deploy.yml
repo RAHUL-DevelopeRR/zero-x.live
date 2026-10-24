@@ -94,3 +94,12 @@ jobs:
           GEMINI_PAID_API_KEY: ${{ secrets.GEMINI_PAID_API_KEY }}
           SESSION_ENCRYPTION_KEY: ${{ secrets.SESSION_ENCRYPTION_KEY }}
           DEVICE_APPROVAL_SECRET: ${{ secrets.DEVICE_APPROVAL_SECRET }}
+
+      # Ask Bing and the other IndexNow engines to recrawl the public pages this push changed.
+      # The key file at the site root is public by design. A failed ping never fails the deploy.
+      - name: Notify IndexNow
+        continue-on-error: true
+        working-directory: neuroncli/auth-server
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+        run: node submit-indexnow.mjs --since "$BEFORE_SHA"

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {readFile, stat} from 'node:fs/promises';
+import {readFile, readdir, stat} from 'node:fs/promises';
 const root = new URL('../../', import.meta.url);
 const pages = JSON.parse(await readFile(new URL('seo-pages.json', root), 'utf8'));
 const docs = new Map(), titles = new Set(), descriptions = new Set();
@@ -51,6 +51,15 @@ for (const file of ['dashboard.html','404.html','neuroncli/index.html']) {
   assert.ok(!pages.some(p=>p.file===file),file+': private page listed for indexing');
 }
 assert.match(sitemap,/<video:publication_date>2026-10-01T16:09:34Z<\/video:publication_date>/);
+// llms.txt summarises the site for AI assistants: its site links must be canonical pages and its Neuron version current.
+const llms=await readFile(new URL('llms.txt',root),'utf8');
+assert.match(llms,/^# Zero-X\r?\n/);
+for (const m of llms.matchAll(/\]\((https:\/\/zero-x\.live[^)]*)\)/g)) assert.ok(pages.some(p=>p.url===m[1]),'llms.txt: not a canonical page '+m[1]);
+assert.ok(llms.includes(graph.find(n=>n['@id']==='https://zero-x.live/#neuron').softwareVersion),'llms.txt: Neuron version matches the homepage');
+// IndexNow ownership: exactly one <key>.txt at the root whose content is the key (read by submit-indexnow.mjs).
+const keyFiles=(await readdir(root)).filter(name=>/^[0-9a-f]{32}\.txt$/.test(name));
+assert.equal(keyFiles.length,1,'one IndexNow key file');
+assert.equal((await readFile(new URL(keyFiles[0],root),'utf8')).trim(),keyFiles[0].slice(0,-4),'IndexNow key file content');
 if (process.argv.includes('--live')) {
   for (const page of pages) {const r=await fetch(page.url);assert.equal(r.status,200,page.url);assert.equal(r.url,page.url);assert.ok(!r.headers.get('x-robots-tag')?.includes('noindex'));const html=await r.text();assert.equal(metadata(html)['og:url'],page.url);assert.ok(html.includes(`rel="canonical" href="${page.url}"`));}
   for (const [url,target] of [
@@ -80,6 +89,6 @@ if (process.argv.includes('--live')) {
   assert.equal((await fetch('https://neuron.zero-x.live/device',{redirect:'manual'})).status,200,'device sign-in page');
   for(const path of ['/does-not-exist-seo-check','/neuroncli/auth-server/wrangler.toml'])assert.equal((await fetch('https://zero-x.live'+path)).status,404,path);
   {const r=await fetch('https://zero-x.live/does-not-exist-seo-check');assert.match(r.headers.get('content-type')||'',/text\/html/);assert.match(await r.text(),/<meta name="robots" content="noindex/,'404 page is noindex');}
-  for(const path of ['/robots.txt','/sitemap.xml','/Assets/neucockpit-semantic-search-480.webp','/videos/neucockpit-wheres-that-file.mp4'])assert.equal((await fetch('https://zero-x.live'+path,{method:'HEAD'})).status,200,path);
+  for(const path of ['/robots.txt','/sitemap.xml','/llms.txt','/'+keyFiles[0],'/Assets/neucockpit-semantic-search-480.webp','/videos/neucockpit-wheres-that-file.mp4'])assert.equal((await fetch('https://zero-x.live'+path,{method:'HEAD'})).status,200,path);
 }
 console.log('PASS: '+pages.length+' public pages, unique metadata, entity graph, links, images, robots and sitemap'+(process.argv.includes('--live')?'; live redirects, private noindex and source exclusion':''));
