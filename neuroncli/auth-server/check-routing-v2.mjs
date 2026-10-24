@@ -237,8 +237,8 @@ try {
     assert.deepEqual(byId.auto.capabilities, { tools: true, streaming: true, vision: false, reasoning: true });
     const flash = byId['gemini/gemini-2.5-flash'];
     assert.deepEqual(Object.keys(flash).sort(), ['available', 'capabilities', 'context_length', 'context_window', 'created',
-      'display_name', 'id', 'max_output_tokens', 'object', 'owned_by', 'pricing', 'reasoning_efforts', 'tiers',
-      'unavailable_reason']);
+      'display_name', 'id', 'max_output_tokens', 'models_dev_id', 'object', 'offers', 'owned_by', 'pricing', 'provider',
+      'reasoning_efforts', 'tiers', 'unavailable_reason']);
     assert.deepEqual(flash.capabilities, { tools: true, streaming: true, vision: true, reasoning: true });
     assert.equal(flash.context_length, flash.context_window);
     assert.equal(flash.available, true);

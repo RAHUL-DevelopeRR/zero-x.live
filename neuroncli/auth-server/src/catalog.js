@@ -5,6 +5,8 @@ import { databaseConfigured, rpcRows } from './account-store.js';
 import { priceFromCost, publicPricing } from './pricing.js';
 import { vaultKeys, vaultKeySecret } from './provider-keys.js';
 import { offerForPool, servesOperatorPools } from './oiop/offers.js';
+import { DEFAULT_POLICY, policyBlock } from './oiop/policy.js';
+import { modelsDevId, providerInfo } from './oiop/models-dev.js';
 
 // EU-27 plus Iceland, Liechtenstein and Norway.
 export const EEA_COUNTRIES = Object.freeze(['AT', 'BE', 'BG', 'HR', 'CY', 'CZ', 'DK', 'EE', 'FI', 'FR',
@@ -612,12 +614,19 @@ export function planPolicy(env, plan, policies) {
   return source[id] || source.free || BUILTIN_PLANS.free;
 }
 
-// ── GET /v1/models (contract §3.2) ──
-function describeEntry(env, entry, tiers, country) {
+// ── GET /v1/models (contract §3.2, §11.4) ──
+// The caller's data policy (src/oiop/policy.js) removes pools whose offer it rules out; a model
+// whose configured pools are all ruled out is unavailable with reason policy_restricted.
+function describeEntry(env, entry, tiers, country, policy) {
   const verdicts = poolVerdicts(env, entry, tiers, country);
-  const configured = verdicts.filter(verdict => verdict.configured).map(verdict => verdict.pool);
-  const reason = unavailableReason(verdicts);
+  const permitted = verdicts.map(verdict => ({ ...verdict, configured: verdict.configured && !policyBlock(verdict.offer, policy) }));
+  const configured = permitted.filter(verdict => verdict.configured).map(verdict => verdict.pool);
+  const reason = verdicts.some(verdict => verdict.configured) && !configured.length ? 'policy_restricted' : unavailableReason(permitted);
   const paid = configured.find(pool => pool.tier === 'paid' && pool.price);
+  const shown = configured.length ? permitted.filter(verdict => verdict.configured) : verdicts;
+  const offers = [...new Map(shown.filter(verdict => verdict.offer).map(({ offer, pool }) => [offer.id, {
+    id: offer.id, tier: pool.tier, owner: offer.owner, trust_tier: offer.trust_tier, trains_on_inputs: offer.trains_on_inputs,
+  }])).values()];
   return {
     id: entry.id,
     object: 'model',
@@ -637,6 +646,10 @@ function describeEntry(env, entry, tiers, country) {
     available: reason === null,
     unavailable_reason: reason,
     pricing: publicPricing(paid?.price),
+    // OIOP (contract §11.4): who serves the model, under which offers, and its models.dev id.
+    provider: providerInfo(entry.provider, shown.find(verdict => verdict.offer)?.offer),
+    offers,
+    models_dev_id: modelsDevId(entry),
   };
 }
 
@@ -646,7 +659,7 @@ function describeAuto(models) {
   const pool = available.length ? available : candidates;
   const reasons = candidates.map(model => model.unavailable_reason);
   const reason = available.length ? null : !candidates.length ? 'not_configured'
-    : ['upgrade_required', 'region_unavailable', 'not_configured'].find(value => reasons.includes(value));
+    : ['upgrade_required', 'region_unavailable', 'policy_restricted', 'not_configured'].find(value => reasons.includes(value));
   return {
     id: AUTO_MODEL_ID,
     object: 'model',
@@ -668,14 +681,17 @@ function describeAuto(models) {
     available: reason === null,
     unavailable_reason: reason,
     pricing: null,
+    provider: { id: 'zero-x', name: 'Zero-X', logo_url: null, logo_fallback_url: null },
+    offers: [],
+    models_dev_id: null,
   };
 }
 
-// Catalog for a caller's plan and country; anonymous callers are on the free plan.
-export function listModelsForCaller(env = {}, { plan = 'free', country = null, tiers } = {}) {
+// Catalog for a caller's plan, country and data policy; anonymous callers are on the free plan.
+export function listModelsForCaller(env = {}, { plan = 'free', country = null, tiers, policy = DEFAULT_POLICY } = {}) {
   warnIgnoredModels(env);
   const allowed = Array.isArray(tiers) ? tiers : planPolicy(env, plan).tiers;
   const code = normalizeCountry(country);
-  const data = offeredEntries(env).map(entry => describeEntry(env, entry, allowed, code));
+  const data = offeredEntries(env).map(entry => describeEntry(env, entry, allowed, code, policy));
   return { object: 'list', data: [describeAuto(data), ...data] };
 }

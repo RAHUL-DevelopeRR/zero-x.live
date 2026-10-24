@@ -7,7 +7,8 @@ import { rpcRows } from './src/account-store.js';
 import { closeAllPglite, getPgliteHandle } from './src/db/pglite.js';
 import { CATALOG, catalogEntry, listModelsForCaller, poolKey } from './src/catalog.js';
 import { RoutingEngine } from './src/router.js';
-import { ProviderHealthTracker } from './src/provider-health.js';
+import { FailureKind, globalHealthTracker, ProviderHealthTracker } from './src/provider-health.js';
+import { refreshModelsDevFacts, resetModelsDevCache } from './src/oiop/models-dev.js';
 import { conversationKey, createChatHandler, requestNeeds } from './src/chat-handler.js';
 import { callerPolicy, DEFAULT_TRUST_TIERS, TRAINING_HEADER, TRUST_HEADER } from './src/oiop/policy.js';
 import { findSecrets, scrubMode, scrubRequest, scrubsOffer, SecretRestorer } from './src/oiop/scrub.js';
@@ -518,7 +519,124 @@ try {
     ok('scrubber end to end: the upstream sees placeholders, the client sees its own secrets (JSON and streamed content and tool arguments), X-OIOP-Redacted counts them; OIOP_SCRUB off/untrusted respected');
   }
 
-  console.log(`\nPASS: OIOP (${passed.length} groups): offers, lifecycle, terms review, audit, manifests, signing, admin API, routing policy, headers, secret scrubber`);
+  // ── Catalog: providers, logos, offers, policy, models.dev facts ──
+  {
+    const kvData = new Map();
+    const kv = {
+      get: async (key, type) => (kvData.has(key) ? (type === 'json' ? JSON.parse(kvData.get(key)) : kvData.get(key)) : null),
+      put: async (key, value) => { kvData.set(key, value); },
+    };
+    const env = { GROQ_API_KEY: 'groq-key', GEMINI_API_KEY: 'gemini-key', ALLOW_UNKNOWN_COUNTRY: 'true', SESSIONS_KV: kv };
+    const list = async (headers = {}, callEnv = env) => (await app.request('https://zero-x.live/v1/models', { headers }, callEnv)).json();
+    resetModelsDevCache();
+    const before = await list();
+    const groq = before.data.find(model => model.id === 'groq/openai/gpt-oss-120b');
+    assert.deepEqual(groq.provider, { id: 'groq', name: 'Groq', logo_url: 'https://models.dev/logos/groq.svg',
+      logo_fallback_url: 'https://groq.com/favicon.ico' });
+    assert.deepEqual(groq.offers, [{ id: 'groq.free', tier: 'free', owner: 'operator', trust_tier: 'T1', trains_on_inputs: 'unknown' }]);
+    assert.equal(groq.models_dev_id, 'groq/openai/gpt-oss-120b');
+    assert.equal(groq.facts, null, 'no facts until the cron stored them');
+    assert.equal(before.data.find(model => model.id === 'gemini/gemini-2.5-flash').provider.logo_url, 'https://models.dev/logos/google.svg');
+    const t1 = await list({ [TRUST_HEADER]: 'T1' });
+    const flash = t1.data.find(model => model.id === 'gemini/gemini-2.5-flash');
+    assert.deepEqual([flash.available, flash.unavailable_reason], [false, 'policy_restricted']);
+    assert.equal(t1.data.find(model => model.id === 'auto').available, true, 'auto still has Groq');
+
+    const document = {
+      groq: { models: { 'openai/gpt-oss-120b': { name: 'GPT OSS 120B', family: 'gpt-oss', release_date: '2025-08-05',
+        knowledge: '2024-06', open_weights: true, reasoning: true, structured_output: true,
+        modalities: { input: ['text'], output: ['text'] }, cost: { input: 0.15, output: 0.6 }, extra: 'dropped' } } },
+      google: { models: { 'gemini-2.5-flash': { name: 'Gemini 2.5 Flash', open_weights: false } } },
+    };
+    let fetches = 0;
+    const fetchImpl = async url => {
+      fetches++;
+      assert.equal(url, 'https://models.dev/api.json');
+      return Response.json(document);
+    };
+    const refreshed = await refreshModelsDevFacts(env, CATALOG, { fetchImpl });
+    assert.deepEqual(refreshed, { refreshed: true, models: 2 });
+    assert.deepEqual(await refreshModelsDevFacts(env, CATALOG, { fetchImpl }), { skipped: 'fresh' });
+    assert.equal(fetches, 1, 'once a day');
+    const withFacts = await list();
+    assert.deepEqual(withFacts.data.find(model => model.id === 'groq/openai/gpt-oss-120b').facts, {
+      models_dev_id: 'groq/openai/gpt-oss-120b', name: 'GPT OSS 120B', family: 'gpt-oss', canonical_model_id: null,
+      release_date: '2025-08-05', knowledge: '2024-06', open_weights: true, reasoning: true, structured_output: true,
+      modalities: { input: ['text'], output: ['text'] }, list_price_per_million: { input: 0.15, output: 0.6 } });
+    const day = Date.now() + 25 * 3600_000;
+    const warn = console.warn;
+    console.warn = () => {};
+    try {
+      assert.deepEqual(await refreshModelsDevFacts(env, CATALOG, { now: day, fetchImpl: async () => new Response('', { status: 502 }) }),
+        { refreshed: false });
+    } finally { console.warn = warn; }
+    resetModelsDevCache();
+    assert.equal((await list()).data.find(model => model.id === 'groq/openai/gpt-oss-120b').facts.name, 'GPT OSS 120B',
+      'a failed refresh keeps the last facts');
+    assert.deepEqual(await refreshModelsDevFacts(env, CATALOG, { now: day + 60_000, fetchImpl }), { skipped: 'fresh' }, 'retried after an hour');
+    assert.deepEqual(await refreshModelsDevFacts(env, CATALOG, { now: day + 3601_000, fetchImpl }), { refreshed: true, models: 2 });
+    assert.deepEqual(await refreshModelsDevFacts({}, CATALOG, { fetchImpl }), { skipped: 'no_kv' });
+    resetModelsDevCache();
+    ok('catalog: every model names its provider with a models.dev logo and favicon fallback, its offers (tier, trust tier, training) and models.dev id; the caller policy marks ruled-out models policy_restricted; models.dev facts refreshed daily into KV, kept on failure, retried after an hour');
+  }
+
+  // ── Catalog push: GET /v1/models/stream ──
+  {
+    const env = { GROQ_API_KEY: 'groq-key', GEMINI_API_KEY: 'gemini-key', ALLOW_UNKNOWN_COUNTRY: 'true',
+      MODELS_STREAM_INTERVAL_MS: '40', MODELS_STREAM_LIFETIME_MS: '600' };
+    const groqEntry = catalogEntry('groq/openai/gpt-oss-120b');
+    const groqKey = poolKey(groqEntry, groqEntry.pools[0]);
+    const readEvents = async (response, onEvent) => {
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      const events = [];
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let cut;
+        while ((cut = buffer.indexOf('\n\n')) >= 0) {
+          const raw = buffer.slice(0, cut);
+          buffer = buffer.slice(cut + 2);
+          const event = Object.fromEntries(raw.split('\n').filter(line => !line.startsWith(':') && line.includes(':'))
+            .map(line => [line.slice(0, line.indexOf(':')), line.slice(line.indexOf(':') + 1).trim()]));
+          event.comment = raw.startsWith(':');
+          events.push(event);
+          await onEvent?.(event, events);
+        }
+      }
+      return events;
+    };
+    const response = await app.request('https://zero-x.live/v1/models/stream', {}, env);
+    assert.equal(response.headers.get('content-type'), 'text/event-stream');
+    let failed = false;
+    const events = await readEvents(response, event => {
+      if (event.event === 'catalog.updated' && !failed) {
+        failed = true;
+        globalHealthTracker.recordFailure(groqKey, { kind: FailureKind.AUTH });
+      }
+    });
+    globalHealthTracker.reset(groqKey);
+    const updates = events.filter(event => event.event === 'catalog.updated');
+    assert.equal(events[0].retry, '5000');
+    assert.equal(updates.length, 2, 'one event at the start, one when Groq went down; keep-alives in between');
+    assert.ok(events.some(event => event.comment), 'keep-alive comments while nothing changes');
+    const [firstUpdate, secondUpdate] = updates.map(event => JSON.parse(event.data));
+    assert.equal(firstUpdate.data.find(model => model.id === groqEntry.id).status, 'available');
+    assert.equal(secondUpdate.data.find(model => model.id === groqEntry.id).status, 'blurred');
+    assert.notEqual(updates[0].id, updates[1].id, 'each event carries the status ETag as its id');
+    const resumed = await readEvents(await app.request('https://zero-x.live/v1/models/stream',
+      { headers: { 'Last-Event-ID': updates[0].id } }, env));
+    assert.equal(resumed.filter(event => event.event === 'catalog.updated').length, 0, 'a reconnect with the current ETag gets no repeat');
+    const t1 = await readEvents(await app.request('https://zero-x.live/v1/models/stream', { headers: { [TRUST_HEADER]: 'T1' } },
+      { ...env, MODELS_STREAM_LIFETIME_MS: '50' }));
+    assert.equal(JSON.parse(t1.find(event => event.event === 'catalog.updated').data).data
+      .find(model => model.id === 'gemini/gemini-2.5-flash').unavailable_reason, 'policy_restricted', 'the stream follows the caller policy');
+    ok('catalog push: /v1/models/stream emits catalog.updated (id = status ETag) at start and on every change, keep-alives otherwise, ends after its lifetime, resumes by Last-Event-ID and follows the caller policy');
+  }
+
+  console.log(`\nPASS: OIOP (${passed.length} groups): offers, lifecycle, terms review, audit, manifests, signing, admin API, routing policy, headers, secret scrubber, catalog, push`);
 } finally {
   globalThis.fetch = realFetch;
   await closeAllPglite();

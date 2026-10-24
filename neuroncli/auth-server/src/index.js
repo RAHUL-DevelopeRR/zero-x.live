@@ -2,7 +2,8 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { accountRpc, databaseConfigured } from './account-store.js';
 import { modelCatalog, resolveModelCatalog, providerHealth, providerConfiguration } from './providers.js';
-import { callerCountry, catalogWarnings, inheritCallerCountry } from './catalog.js';
+import { callerCountry, catalogEntries, catalogWarnings, inheritCallerCountry, loadCatalogDbModels } from './catalog.js';
+import { refreshModelsDevFacts } from './oiop/models-dev.js';
 import { globalHealthTracker } from './provider-health.js';
 import { createChatHandler } from './chat-handler.js';
 import { loadPlanLimits } from './plan-policy.js';
@@ -810,6 +811,54 @@ api.get('/v1/models/status', async (c) => {
   return c.json(body);
 });
 
+// GET /v1/models/stream (contract §11.4): a server-sent event stream that emits
+// `catalog.updated` with the /v1/models/status body whenever it changes (availability, health,
+// offers and policy), checked every 15 s, with a keep-alive comment otherwise. The stream ends
+// after 10 minutes; EventSource clients reconnect with Last-Event-ID (the ETag) and get an event
+// only if the catalog changed meanwhile.
+const sleep = (ms, signal) => new Promise(resolve => {
+  const timer = setTimeout(resolve, ms);
+  signal?.addEventListener('abort', () => { clearTimeout(timer); resolve(); }, { once: true });
+});
+api.get('/v1/models/stream', async (c) => {
+  const caller = await modelsCaller(c);
+  if (caller.response) return caller.response;
+  const intervalMs = Math.max(20, Number(c.env?.MODELS_STREAM_INTERVAL_MS) || 15_000);
+  const lifetimeMs = Math.max(intervalMs, Number(c.env?.MODELS_STREAM_LIFETIME_MS) || 600_000);
+  const signal = c.req.raw.signal;
+  const encoder = new TextEncoder();
+  let last = c.req.header('Last-Event-ID') || null;
+  let closed = false;
+  const body = new ReadableStream({
+    start(controller) {
+      const send = text => { if (!closed) controller.enqueue(encoder.encode(text)); };
+      (async () => {
+        const started = Date.now();
+        send('retry: 5000\n\n');
+        try {
+          while (!closed && !signal?.aborted && Date.now() - started < lifetimeMs) {
+            const { etag, body: status } = await v1ModelStatusPayload(c, caller.session);
+            if (etag !== last) {
+              last = etag;
+              send(`id: ${etag}\nevent: catalog.updated\ndata: ${JSON.stringify(status)}\n\n`);
+            } else {
+              send(': keepalive\n\n');
+            }
+            await sleep(Math.min(intervalMs, lifetimeMs - (Date.now() - started)), signal);
+          }
+        } catch (error) {
+          console.warn('Model stream stopped', { name: error?.name });
+        } finally {
+          if (!closed) { closed = true; try { controller.close(); } catch { /* already closed */ } }
+        }
+      })();
+    },
+    cancel() { closed = true; },
+  });
+  return new Response(body, { headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache',
+    'X-Accel-Buffering': 'no' } });
+});
+
 api.get('/v1/providers/health', async (c) => {
   if (!await isOperator(c)) return errorResponse(c, 401, 'invalid_session', 'Operator authentication required.');
   c.header('Cache-Control', 'no-store');
@@ -995,7 +1044,11 @@ app.scheduled = (controller, env, ctx) => {
   const discovery = runDiscoveryTick(env).catch(error => {
     console.warn('Discovery tick failed', { message: String(error?.message).slice(0, 200) });
   });
-  const task = Promise.allSettled([runScheduledMaintenance(env), discovery]).then(([maintenance]) => {
+  // models.dev facts for /v1/models, at most once a day (src/oiop/models-dev.js).
+  const facts = loadCatalogDbModels(env).then(() => refreshModelsDevFacts(env, catalogEntries(env))).catch(error => {
+    console.warn('models.dev facts refresh failed', { message: String(error?.message).slice(0, 200) });
+  });
+  const task = Promise.allSettled([runScheduledMaintenance(env), discovery, facts]).then(([maintenance]) => {
     if (maintenance.status === 'rejected') throw maintenance.reason;
     return maintenance.value;
   });

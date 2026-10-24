@@ -319,8 +319,8 @@ try {
 
   // ── 3. /v1/models with plan-aware availability ──
   const modelKeys = ['available', 'available_again_at', 'capabilities', 'checked_at', 'context_length', 'context_window',
-    'created', 'display_name', 'id', 'max_output_tokens', 'object', 'owned_by', 'pricing', 'reasoning_efforts', 'status',
-    'tiers', 'unavailable_reason'];
+    'created', 'display_name', 'facts', 'id', 'max_output_tokens', 'models_dev_id', 'object', 'offers', 'owned_by', 'pricing',
+    'provider', 'reasoning_efforts', 'status', 'tiers', 'unavailable_reason'];
   const models = async token => {
     const listed = await call('/v1/models', { token });
     assert.equal(listed.status, 200);

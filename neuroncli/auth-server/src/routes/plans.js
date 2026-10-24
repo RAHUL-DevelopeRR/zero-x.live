@@ -9,6 +9,9 @@ import { withHealth } from '../health-share.js';
 import { hubHealthRows } from '../health-hub-client.js';
 import { globalHealthTracker } from '../provider-health.js';
 import { poolBudgetState } from '../pool-budget.js';
+import { loadOffers } from '../oiop/offers.js';
+import { callerPolicy } from '../oiop/policy.js';
+import { modelsDevFacts } from '../oiop/models-dev.js';
 
 export const microusdToUsd = value => {
   const micro = Number(value);
@@ -52,10 +55,13 @@ export async function v1ModelsPayload(c, session = {}) {
   const country = callerCountry(c.req.raw, env);
   if (isOwnedSession(session)) return listModelsForSession(env, { session, country });
   const plan = session?.plan || 'free';
-  const [policies] = await Promise.all([loadPlanPolicies(env), loadCatalogDbModels(env)]);
+  const [policies, , , facts] = await Promise.all([loadPlanPolicies(env), loadCatalogDbModels(env), loadOffers(env),
+    modelsDevFacts(env)]);
   const policy = planPolicy(env, plan, policies);
   const tiers = sessionTiers(env, session, policy);
-  const payload = listModelsForCaller(env, { plan, country, tiers });
+  const payload = listModelsForCaller(env, { plan, country, tiers, policy: callerPolicy(c.req.raw.headers) });
+  // models.dev facts (refreshed daily by the cron; null until then or for models it lacks).
+  for (const model of payload.data) model.facts = model.id === AUTO_MODEL_ID ? null : facts[model.id] ?? null;
   // Runtime health: the pools behind each model (one per provider key) in the tiers listed for
   // it that the caller can use (all listed tiers when it can use none), read from the HealthHub
   // Durable Object (KV on the Node server or when the hub does not answer), plus pool budgets
