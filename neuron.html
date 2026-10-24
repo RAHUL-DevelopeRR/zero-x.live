@@ -254,13 +254,14 @@
       "alternateName": ["ZeroX"],
       "url": "https://zero-x.live/",
       "logo": "https://zero-x.live/Assets/zerox-favicon-centered.png",
-      "description": "Desktop tools for semantic file search and local AI, built in Tamil Nadu, India.",
+      "description": "Zero-X builds Neuron, an AI coding agent for the terminal, and NeuCockpit, local AI file search for desktop. Built in Tamil Nadu, India.",
       "sameAs": [
-        "https://www.instagram.com/zerox.corporation/"
+        "https://www.instagram.com/zerox.corporation/",
+        "https://github.com/RAHUL-DevelopeRR/neuron-v2"
       ],
       "contactPoint": {
         "@type": "ContactPoint",
-        "email": "rahultech72216@gmail.com",
+        "email": "support@zero-x.live",
         "contactType": "customer support"
       }
     }
@@ -380,13 +381,14 @@
 
       <nav class="hidden md:flex items-center gap-7" aria-label="Main navigation">
         <a href="https://zero-x.live/" id="nav-company-link" class="text-[14px] text-zx-muted hover:text-white transition-colors">Company</a>
-        <a href="#" class="text-[14px] text-white font-medium">NeuCockpit</a>
+        <a href="https://zero-x.live/neuron-cli" class="text-[14px] text-zx-muted hover:text-white transition-colors">Neuron CLI</a>
+        <a href="#main-content" aria-current="page" class="text-[14px] text-white font-medium">NeuCockpit</a>
         <a href="#features" class="text-[14px] text-zx-muted hover:text-white transition-colors">Features</a>
         <a href="#downloads" class="text-[14px] text-zx-muted hover:text-white transition-colors">Downloads</a>
       </nav>
 
       <div class="flex items-center gap-3">
-        <a href="#" id="signin-btn" class="hidden md:block text-[14px] text-zx-muted hover:text-white transition-colors mr-2">Sign In</a>
+        <a href="https://dashboard.zero-x.live/" id="signin-btn" class="hidden md:block text-[14px] text-zx-muted hover:text-white transition-colors mr-2">Sign In</a>
         <div id="user-button"></div>
         <a href="#downloads" class="hidden md:block bg-zx-accent text-black font-semibold text-[13px] px-4 py-[6px] rounded-full hover:bg-zx-accent-h transition-colors">Download</a>
         <button id="mobBtn" aria-label="Open menu" aria-controls="mobileNav" aria-expanded="false" class="md:hidden text-white"><span class="material-symbols-outlined" aria-hidden="true">menu</span></button>
@@ -398,6 +400,7 @@
   <dialog id="mobileNav" aria-label="Navigation" class="fixed inset-0 z-[60] flex-col items-center justify-center gap-6">
     <button id="mobClose" aria-label="Close menu" class="absolute top-4 right-5 text-white"><span class="material-symbols-outlined text-3xl" aria-hidden="true">close</span></button>
     <a href="https://zero-x.live/" onclick="closeMob()" class="text-xl text-white">Company</a>
+    <a href="https://zero-x.live/neuron-cli" onclick="closeMob()" class="text-xl text-white">Neuron CLI</a>
     <a href="#demo" onclick="closeMob()" class="text-xl text-white">Demo</a>
     <a href="#features" onclick="closeMob()" class="text-xl text-white">Features</a>
     <a href="#downloads" onclick="closeMob()" class="text-xl text-white">Downloads</a>
@@ -481,7 +484,7 @@
 
         <!-- Description -->
         <div>
-          <a class="inline-flex items-center gap-2 text-zx-accent-h text-[13px] font-medium tracking-wide mb-6">Product Demo&ensp;→</a>
+          <p class="inline-flex items-center gap-2 text-zx-accent-h text-[13px] font-medium tracking-wide mb-6">Product Demo</p>
           <h2 class="text-[clamp(24px,3.5vw,36px)] font-medium tracking-[-0.02em] leading-[1.15] text-white mb-5 font-display">
             Semantic Search Across<br>Your Files
           </h2>
@@ -598,7 +601,7 @@
   <section class="py-32 md:py-40 px-5 border-t border-white/[0.04]" id="features">
     <div class="max-w-[1100px] mx-auto">
       <div class="text-center mb-20 reveal">
-        <a class="inline-flex items-center gap-2 text-zx-accent-h text-[13px] font-medium tracking-wide mb-6">1.0&ensp;Capabilities&ensp;→</a>
+        <p class="inline-flex items-center gap-2 text-zx-accent-h text-[13px] font-medium tracking-wide mb-6">1.0&ensp;Capabilities</p>
         <h2 class="text-[clamp(28px,4vw,40px)] font-medium tracking-[-0.02em] leading-[1.15] text-white mb-5 font-display">Search document contents.<br><span class="text-zx-muted">Use AI on your computer.</span></h2>
         <p class="text-[16px] text-zx-muted max-w-lg mx-auto leading-relaxed">Index a folder, describe what you remember, and inspect the matching file.</p>
       </div>
@@ -663,7 +666,7 @@
 
     <div class="max-w-[1100px] mx-auto relative z-10">
       <div class="text-center mb-16 reveal">
-        <a class="inline-flex items-center gap-2 text-zx-accent-h text-[13px] font-medium tracking-wide mb-6">2.0&ensp;Downloads&ensp;→</a>
+        <p class="inline-flex items-center gap-2 text-zx-accent-h text-[13px] font-medium tracking-wide mb-6">2.0&ensp;Downloads</p>
         <h2 class="text-[clamp(28px,4vw,40px)] font-medium tracking-[-0.02em] leading-[1.15] text-white mb-5 font-display">Download NeuCockpit v1.0</h2>
         <p class="text-[16px] text-zx-muted max-w-lg mx-auto leading-relaxed">Choose your platform and CPU architecture to download the installer.</p>
       </div>
@@ -715,9 +718,6 @@
 
         <!-- Windows (FEATURED) -->
         <div class="glass-card rounded-2xl p-8 flex flex-col items-center text-center featured-glow relative">
-          <!-- Recommended badge -->
-          <div class="absolute -top-3 left-1/2 -translate-x-1/2 bg-zx-accent text-black text-[10px] font-bold px-3 py-1 rounded-full uppercase tracking-wider whitespace-nowrap">Available Now</div>
-
           <!-- Platform Logo -->
           <div class="w-16 h-16 rounded-2xl bg-zx-accent/[0.08] flex items-center justify-center mb-6">
             <svg class="w-8 h-8 text-zx-accent" viewBox="0 0 24 24" fill="currentColor"><path d="M3 12V6.75l6-1.32v6.48L3 12zm17-9v8.75l-10 .15V5.21L20 3zM3 13l6 .09v6.81l-6-1.15V13zm17 .25V22l-10-1.91V13.1l10 .15z"/></svg>
@@ -805,7 +805,7 @@
   <!-- ═══════════════════════════ ARCHITECTURE ═══════════════════════════ -->
   <section class="py-32 md:py-40 px-5 border-t border-white/[0.04]" id="architecture">
     <div class="max-w-[900px] mx-auto reveal">
-      <a class="inline-flex items-center gap-2 text-zx-accent-h text-[13px] font-medium tracking-wide mb-6">3.0&ensp;Under the Hood&ensp;→</a>
+      <p class="inline-flex items-center gap-2 text-zx-accent-h text-[13px] font-medium tracking-wide mb-6">3.0&ensp;Under the Hood</p>
       <h2 class="text-[clamp(28px,4vw,40px)] font-medium tracking-[-0.02em] leading-[1.15] text-white mb-5 font-display">Layered architecture</h2>
       <p class="text-[16px] text-zx-muted max-w-lg leading-relaxed mb-12">The desktop interface connects to local indexing, retrieval, and model services.</p>
 
@@ -900,7 +900,7 @@
       <li>Choose a folder containing files you are allowed to process and let indexing complete. Start with a small folder to check the results.</li>
       <li>Describe a document's contents, inspect the returned path and open the original file to verify the match. AI summaries need the same source check.</li>
     </ol>
-    <p><a href="https://zero-x.live/find-files-by-content">Read the guide to finding a file when you forgot its name</a>. For setup help, email <a href="mailto:rahultech72216@gmail.com?subject=NeuCockpit%20setup%20help">the developer</a> with your operating system and the step where you got stuck. Do not send private documents.</p>
+    <p><a href="https://zero-x.live/find-files-by-content">Read the guide to finding a file when you forgot its name</a>. For setup help, email <a href="mailto:support@zero-x.live?subject=NeuCockpit%20setup%20help">Zero-X support</a> with your operating system and the step where you got stuck. Do not send private documents.</p>
     <h2>Indexing and document support</h2>
     <p>The indexing pipeline extracts readable content from supported files, creates local embeddings and stores a searchable index. Supported parsers include PDF, DOCX, PPTX, XLSX and common text and source-code files. A scanned image-only PDF, encrypted document or unsupported format may not produce searchable text. Media file views do not mean every image, audio clip or video can be understood by content.</p>
     <p>New or edited files need the index to refresh before their latest contents can appear. Search quality depends on the text extracted, the query and the contents of your selected folders. Semantic search can return a related document that is not the one you intended.</p>
@@ -939,7 +939,7 @@
     <div class="max-w-[1100px] mx-auto grid grid-cols-2 md:grid-cols-5 gap-10">
       <div class="col-span-2">
         <a href="https://zero-x.live/" class="block mb-4"><img width="255" height="112" src="./Assets/zerox-wordmark.webp" alt="Zero-X" class="h-5" style="mix-blend-mode:lighten;width:auto"/></a>
-        <p class="text-[13px] text-zx-faint leading-relaxed max-w-[260px]">Engineering products from zero to extraordinary.</p>
+        <p class="text-[13px] text-zx-faint leading-relaxed max-w-[260px]">Neuron CLI and NeuCockpit. Built in Tamil Nadu, India.</p>
       </div>
       <div class="flex flex-col gap-2.5">
         <span class="text-[13px] font-medium text-white mb-1">Product</span>
@@ -959,13 +959,13 @@
       </div>
       <div class="flex flex-col gap-2.5">
         <span class="text-[13px] font-medium text-white mb-1">Connect</span>
-        <a href="mailto:rahultech72216@gmail.com" class="text-[13px] text-zx-muted hover:text-white transition-colors">Email</a>
+        <a href="mailto:support@zero-x.live" class="text-[13px] text-zx-muted hover:text-white transition-colors">Email</a>
         <a href="https://github.com/RAHUL-DevelopeRR/deepseekfs" class="text-[13px] text-zx-muted hover:text-white transition-colors">NeuCockpit source code</a>
         <a href="https://www.instagram.com/zerox.corporation/" class="text-[13px] text-zx-muted hover:text-white transition-colors">Zero-X on Instagram</a>
       </div>
     </div>
     <div class="max-w-[1100px] mx-auto mt-14 pt-6 border-t border-white/[0.04]">
-      <p class="text-[12px] text-zx-faint">© <script>document.write(new Date().getFullYear())</script> Zero-X. Built by builders.</p>
+      <p class="text-[12px] text-zx-faint">© 2026 Zero-X · <a href="mailto:support@zero-x.live" class="text-zx-muted hover:text-white transition-colors">support@zero-x.live</a></p>
     </div>
   <p class="max-w-[1100px] mx-auto mt-6 text-[14px] text-zx-muted"><a href="https://zero-x.live/find-files-by-content" class="text-zx-accent hover:text-white underline">Guide: find a file when you forgot its name</a></p>
 </footer>
