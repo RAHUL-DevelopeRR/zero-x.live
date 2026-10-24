@@ -83,6 +83,10 @@ for (const file of PUBLIC_PAGES) assert.ok(seoPages.some(page => page.file === f
 assert.match(read('neuroncli/index.html'), /<meta http-equiv="refresh" content="0; url=\/neuron-cli">/, 'Old /neuroncli/ page points to /neuron-cli');
 assert.match(read('neuroncli/index.html'), /<link rel="canonical" href="https:\/\/zero-x.live\/neuron-cli">/);
 
+// Neuron 7.0.0-alpha.1 is a GitHub pre-release, so the installers must name its version (as written in HTML).
+const INSTALL_SH = 'curl -fsSL https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.1/install.sh | sh -s -- --version 7.0.0-alpha.1';
+const INSTALL_PS1 = '&amp; ([scriptblock]::Create((irm https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.1/install.ps1))) -Version 7.0.0-alpha.1';
+
 /* Dashboard specifics: tabs, alerts, no hardcoded limits */
 {
   const html = read('dashboard.html');
@@ -99,8 +103,8 @@ assert.match(read('neuroncli/index.html'), /<link rel="canonical" href="https:\/
   }
   assert.match(html, /role="progressbar"[^>]*aria-valuemin="0" aria-valuemax="100"/);
   assert.doesNotMatch(html, /256,000|500K|10M|50M|2,000|10,000|44K/, 'Dashboard must not hardcode plan limits');
-  assert.match(html, /npm install -g @zero-x\.live\/neuron/);
-  assert.match(html, /neuron auth login/);
+  assert.ok(html.includes(INSTALL_SH) && html.includes(INSTALL_PS1), 'Dashboard quick start uses the pinned release installers');
+  assert.match(html, /<code id="qs-login">neuron login<\/code>/);
   assert.match(html, /https:\/\/zero-x\.live\/v1/);
   assert.doesNotMatch(read('dashboard.js'), /alert\(|confirm\(/, 'No alert()/confirm() dialogs');
 }
@@ -552,8 +556,15 @@ assert.equal(checkout.normalizeCurrency('EUR'), 'USD');
 /* Homepage: install commands, plan slots, live model list and its helpers */
 {
   const html = read('index.html');
-  for (const command of ['npm install -g @zero-x.live/neuron', 'python -m pip install neuroncli', 'neuron auth login', 'curl https://zero-x.live/v1/models']) {
+  for (const command of [INSTALL_SH, INSTALL_PS1, 'npm install --global @zero-x.live/neuron@next', 'neuron login', 'curl https://zero-x.live/v1/models']) {
     assert.ok(html.includes(command), 'index.html shows ' + command);
+  }
+  // npm without @next installs the unsupported 6.2.0 and PyPI has only the unsupported 6.2.4.
+  for (const file of ['index.html', 'neuron-cli.html', 'docs.html', 'dashboard.html', 'pricing.html']) {
+    const page = read(file);
+    assert.doesNotMatch(page, /@zero-x\.live\/neuron(?!@next)/, file + ': npm package named without @next');
+    assert.doesNotMatch(page, /pip install neuroncli/, file + ': pip install of the old PyPI package');
+    assert.doesNotMatch(page, /install script is not published|installer is not published/, file + ': stale installer notice');
   }
   for (const id of ['get-started', 'features', 'models', 'pricing', 'docs', 'faq', 'products']) assert.ok(ids(html).includes(id), 'index.html section #' + id);
   for (const plan of ['free', 'pro', 'max']) assert.match(html, new RegExp(`data-plan-price="${plan}"`), 'index.html hydrates the ' + plan + ' price');

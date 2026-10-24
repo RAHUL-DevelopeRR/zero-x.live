@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Zero-X | Neuron, the AI Coding Agent for Your Terminal</title>
-  <meta name="description" content="Neuron by Zero-X is an AI coding agent for the terminal. It reads your repository, edits files and runs your tests with your permission. Install with npm or pip and start free on hosted models.">
+  <meta name="description" content="Neuron by Zero-X is an AI coding agent for the terminal. It reads your repository, edits files and runs your tests with your permission. Install the 7.0.0-alpha.1 release with one command on macOS, Linux or Windows and start free on hosted models.">
   <meta name="robots" content="index,follow,max-image-preview:large">
   <link rel="canonical" href="https://zero-x.live/">
   <meta name="theme-color" content="#0A0A0C">
@@ -25,7 +25,7 @@
   <link rel="stylesheet" href="/site-fonts.css">
   <link rel="stylesheet" href="/zx-tokens.css">
   <link rel="stylesheet" href="/home.css">
-  <script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"Organization","@id":"https://zero-x.live/#organization","name":"Zero-X","alternateName":["ZeroX"],"url":"https://zero-x.live/","logo":"https://zero-x.live/Assets/zerox-favicon-centered.png","description":"Zero-X builds Neuron, an AI coding agent for the terminal, and NeuCockpit, local AI file search for desktop. Built in Tamil Nadu, India.","sameAs":["https://www.instagram.com/zerox.corporation/","https://github.com/RAHUL-DevelopeRR/neuron-v2"],"contactPoint":{"@type":"ContactPoint","email":"support@zero-x.live","contactType":"customer support"}},{"@type":"WebSite","@id":"https://zero-x.live/#website","name":"Zero-X","alternateName":["Neuron by Zero-X","ZeroX"],"url":"https://zero-x.live/","publisher":{"@id":"https://zero-x.live/#organization"}},{"@type":"WebPage","@id":"https://zero-x.live/#webpage","url":"https://zero-x.live/","name":"Zero-X | Neuron, the AI Coding Agent for Your Terminal","isPartOf":{"@id":"https://zero-x.live/#website"},"about":{"@id":"https://zero-x.live/#neuron"}},{"@type":"SoftwareApplication","@id":"https://zero-x.live/#neuron","name":"Neuron CLI","applicationCategory":"DeveloperApplication","operatingSystem":"Windows, macOS, Linux","url":"https://zero-x.live/neuron-cli","description":"An AI coding agent for the terminal that reads, edits and tests code in your repository with your permission.","publisher":{"@id":"https://zero-x.live/#organization"},"offers":{"@type":"Offer","name":"Free","price":"0","priceCurrency":"USD","url":"https://zero-x.live/pricing#plan-free"},"downloadUrl":"https://www.npmjs.com/package/@zero-x.live/neuron"},{"@type":"SoftwareApplication","@id":"https://zero-x.live/#neucockpit","name":"NeuCockpit","applicationCategory":"UtilitiesApplication","operatingSystem":"Windows, macOS, Linux","url":"https://neuron.zero-x.live/","description":"NeuCockpit local AI file search for desktop: find files by meaning and summarize your own documents.","publisher":{"@id":"https://zero-x.live/#organization"}}]}</script>
+  <script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"Organization","@id":"https://zero-x.live/#organization","name":"Zero-X","alternateName":["ZeroX"],"url":"https://zero-x.live/","logo":"https://zero-x.live/Assets/zerox-favicon-centered.png","description":"Zero-X builds Neuron, an AI coding agent for the terminal, and NeuCockpit, local AI file search for desktop. Built in Tamil Nadu, India.","sameAs":["https://www.instagram.com/zerox.corporation/","https://github.com/RAHUL-DevelopeRR/neuron-v2"],"contactPoint":{"@type":"ContactPoint","email":"support@zero-x.live","contactType":"customer support"}},{"@type":"WebSite","@id":"https://zero-x.live/#website","name":"Zero-X","alternateName":["Neuron by Zero-X","ZeroX"],"url":"https://zero-x.live/","publisher":{"@id":"https://zero-x.live/#organization"}},{"@type":"WebPage","@id":"https://zero-x.live/#webpage","url":"https://zero-x.live/","name":"Zero-X | Neuron, the AI Coding Agent for Your Terminal","isPartOf":{"@id":"https://zero-x.live/#website"},"about":{"@id":"https://zero-x.live/#neuron"}},{"@type":"SoftwareApplication","@id":"https://zero-x.live/#neuron","name":"Neuron CLI","applicationCategory":"DeveloperApplication","operatingSystem":"Windows, macOS, Linux","url":"https://zero-x.live/neuron-cli","description":"An AI coding agent for the terminal that reads, edits and tests code in your repository with your permission.","publisher":{"@id":"https://zero-x.live/#organization"},"offers":{"@type":"Offer","name":"Free","price":"0","priceCurrency":"USD","url":"https://zero-x.live/pricing#plan-free"},"softwareVersion":"7.0.0-alpha.1","downloadUrl":"https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/tag/v7.0.0-alpha.1"},{"@type":"SoftwareApplication","@id":"https://zero-x.live/#neucockpit","name":"NeuCockpit","applicationCategory":"UtilitiesApplication","operatingSystem":"Windows, macOS, Linux","url":"https://zero-x.live/neucockpit","description":"NeuCockpit local AI file search for desktop: find files by meaning and summarize your own documents.","publisher":{"@id":"https://zero-x.live/#organization"}}]}</script>
   <script type="module" src="/pricing.js"></script>
   <script type="module" src="/home.js"></script>
 </head>
@@ -52,15 +52,23 @@
         <p class="zx-lead">Neuron reads your project, plans the change, edits files and runs your tests, and asks before it does anything you have not allowed. Sign in once to use hosted models from providers like Google Gemini and Groq on the Free plan, or bring your own API key.</p>
 
         <div class="zx-home-install" data-install-tabs>
+          <section class="zx-install" id="install-sh" data-tab-label="macOS and Linux" aria-labelledby="install-sh-title">
+            <h2 class="zx-visually-hidden" id="install-sh-title">Install on macOS and Linux</h2>
+            <div class="zx-code zx-code--copy"><pre><code id="cmd-sh">curl -fsSL https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.1/install.sh | sh -s -- --version 7.0.0-alpha.1</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="cmd-sh" data-copy-label="macOS and Linux install command">Copy</button></div>
+            <p class="zx-help">Installs <code>neuron</code> and <code>neuron-tui</code> to <code>~/.local/bin</code> and checks their SHA-256 checksums. Linux needs glibc 2.35 or later (Ubuntu 22.04, Debian 12, Fedora 36 or newer).</p>
+          </section>
+          <section class="zx-install" id="install-ps1" data-tab-label="Windows" aria-labelledby="install-ps1-title">
+            <h2 class="zx-visually-hidden" id="install-ps1-title">Install on Windows with PowerShell</h2>
+            <div class="zx-code zx-code--copy"><pre><code id="cmd-ps1">&amp; ([scriptblock]::Create((irm https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.1/install.ps1))) -Version 7.0.0-alpha.1</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="cmd-ps1" data-copy-label="Windows install command">Copy</button></div>
+            <p class="zx-help">Windows PowerShell 5.1 or PowerShell 7. Installs to <code>%LOCALAPPDATA%\Programs\Neuron\bin</code>; add <code>-AddToPath</code> at the end to put that folder on your user PATH.</p>
+          </section>
           <section class="zx-install" id="install-npm" data-tab-label="npm" aria-labelledby="install-npm-title">
             <h2 class="zx-visually-hidden" id="install-npm-title">Install with npm</h2>
-            <div class="zx-code zx-code--copy"><pre><code id="cmd-npm">npm install -g @zero-x.live/neuron</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="cmd-npm" data-copy-label="npm install command">Copy</button></div>
-            <p class="zx-help">Needs Node.js. Downloads the native binary for your platform and checks its SHA-256.</p>
+            <p class="zx-help">Not yet. Once the alpha is published to npm, it will be <code>npm install --global @zero-x.live/neuron@next</code> (Node.js 22.14 or later). Without <code>@next</code>, npm installs the old 6.2.0 build, which is not supported.</p>
           </section>
           <section class="zx-install" id="install-pip" data-tab-label="pip" aria-labelledby="install-pip-title">
             <h2 class="zx-visually-hidden" id="install-pip-title">Install with pip</h2>
-            <div class="zx-code zx-code--copy"><pre><code id="cmd-pip">python -m pip install neuroncli</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="cmd-pip" data-copy-label="pip install command">Copy</button></div>
-            <p class="zx-help">Needs Python 3.9 or later. PyPI releases can trail npm; check with <code>neuron --version</code>.</p>
+            <p class="zx-help">Not available for the alpha. PyPI uploads are paused and the Python launcher will follow later. The <code>neuroncli</code> 6.2.4 package on PyPI is an old build and is not supported.</p>
           </section>
           <section class="zx-install" id="install-source" data-tab-label="From source" aria-labelledby="install-source-title">
             <h2 class="zx-visually-hidden" id="install-source-title">Build from source</h2>
@@ -78,7 +86,7 @@ cargo build --release -p rusty-claude-cli</code></pre><button class="zx-btn zx-b
           <a class="zx-btn zx-btn--ghost" href="/pricing">Compare plans</a>
         </div>
         <ul class="zx-home-facts" aria-label="At a glance">
-          <li>Windows, macOS and Linux</li>
+          <li>Alpha release 7.0.0-alpha.1 for macOS, Linux and Windows (<a href="https://github.com/RAHUL-DevelopeRR/neuron-v2/blob/HEAD/CHANGELOG.md">known limitations</a>)</li>
           <li>Free plan: <span data-plan-limit="free:daily_requests">100</span> requests and <span data-plan-limit="free:daily_tokens">500K</span> tokens a day</li>
           <li>Provider keys stay on Zero-X servers</li>
         </ul>
@@ -97,7 +105,7 @@ cargo build --release -p rusty-claude-cli</code></pre><button class="zx-btn zx-b
 <span class="zx-term__ok">test result: ok. 14 passed; 0 failed</span>
 
 The expiry check compared with &lt;= instead of &lt;. I fixed it and added <span class="zx-term__code">tests/expired_token.rs</span>; all 14 auth tests pass.</pre>
-        <figcaption id="term-caption">Example session: Neuron reads, edits and tests, then reports what changed.</figcaption>
+        <figcaption id="term-caption">Illustration, not a screenshot: a task drawn in the style of the line REPL (<code>neuron --no-tui</code>). On a terminal, plain <code>neuron</code> opens the full-screen UI instead.</figcaption>
       </figure>
     </section>
 
@@ -107,19 +115,19 @@ The expiry check compared with &lt;= instead of &lt;. I fixed it and added <span
       <ol class="zx-steps zx-home-steps">
         <li>
           <h3>Install</h3>
-          <div class="zx-code zx-code--copy"><pre><code id="step-install">npm install -g @zero-x.live/neuron</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="step-install" data-copy-label="Install command">Copy</button></div>
-          <p class="zx-muted">Or use pip or build from source, as shown above.</p>
+          <div class="zx-code zx-code--copy"><pre><code id="step-install">curl -fsSL https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.1/install.sh | sh -s -- --version 7.0.0-alpha.1</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="step-install" data-copy-label="Install command">Copy</button></div>
+          <p class="zx-muted">That is the macOS and Linux installer. On Windows, use the PowerShell command from the Windows tab above, or build from source.</p>
         </li>
         <li>
           <h3>Sign in once</h3>
-          <div class="zx-code zx-code--copy"><pre><code id="step-login">neuron auth login</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="step-login" data-copy-label="Sign-in command">Copy</button></div>
-          <p class="zx-muted">Neuron opens Zero-X in your browser. Sign in with Google, GitHub or email and approve the request; the terminal continues on its own. Your provider keys never leave Zero-X.</p>
+          <div class="zx-code zx-code--copy"><pre><code id="step-login">neuron login</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="step-login" data-copy-label="Sign-in command">Copy</button></div>
+          <p class="zx-muted">Neuron prints a link, <code>https://neuron.zero-x.live/device</code>, and a short code, and opens the link in your browser when it can. Sign in with Google, GitHub or email, check that the code matches and approve it; the terminal continues on its own. No local port is opened, so this also works over SSH, in WSL and in containers. Your provider keys never leave Zero-X.</p>
         </li>
         <li>
           <h3>Ask in your project</h3>
           <div class="zx-code zx-code--copy"><pre><code id="step-run">cd path/to/your-project
 neuron</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="step-run" data-copy-label="Run commands">Copy</button></div>
-          <p class="zx-muted">Ask for something concrete, like “explain how requests are authenticated, then add a test for an expired token”. Switch models with <code>/model</code>, change what Neuron may do with <code>/permissions</code> and check today's limits with <code>/usage</code>.</p>
+          <p class="zx-muted">On a terminal, <code>neuron</code> opens the full-screen UI. Ask for something concrete, like “explain how requests are authenticated, then add a test for an expired token”. Switch models with <code>/model</code>, change what Neuron may do with <code>/permissions</code> and check today's limits with <code>/usage</code>.</p>
         </li>
       </ol>
     </section>
@@ -130,11 +138,11 @@ neuron</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-
       <div class="zx-grid zx-grid--4">
         <article class="zx-card zx-feature"><h3>Repo-aware agent loop</h3><p class="zx-muted">Explores the files that matter, makes a plan, edits code and checks the result with your tests or build before it reports back.</p></article>
         <article class="zx-card zx-feature"><h3>Real tools</h3><p class="zx-muted">Reads, writes and edits files, searches with glob and grep, runs shell or PowerShell commands, fetches web pages and keeps a task list for long jobs.</p></article>
-        <article class="zx-card zx-feature"><h3>You stay in control</h3><p class="zx-muted">Choose <code>read-only</code>, <code>workspace-write</code> or <code>danger-full-access</code>. Neuron asks before edits in a new folder and before commands that need more access.</p></article>
-        <article class="zx-card zx-feature"><h3>Sessions you can resume</h3><p class="zx-muted">Conversations are saved in <code>.neuron/sessions/</code>. Continue with <code>neuron --resume</code> and shrink long ones with <code>/compact</code>.</p></article>
+        <article class="zx-card zx-feature"><h3>You stay in control</h3><p class="zx-muted">The default mode, <code>workspace-write</code>, edits files in your workspace and runs read-only commands; switch to <code>read-only</code> or <code>danger-full-access</code> with <code>--permission-mode</code>. Anything else needs your approval: allow once, allow for the session, deny, or deny with a note.</p></article>
+        <article class="zx-card zx-feature"><h3>Full-screen terminal UI</h3><p class="zx-muted">On a terminal, <code>neuron</code> opens <code>neuron-tui</code>: streamed replies, tool calls with their output, a permission dialog, a model picker and a footer with model, git state, tokens and context. <code>neuron --continue</code> reopens your latest chat; <code>neuron --no-tui</code> keeps the line REPL.</p></article>
         <article class="zx-card zx-feature"><h3>MCP servers and subagents</h3><p class="zx-muted">Plug in Model Context Protocol servers for extra tools, and hand focused jobs like code search or review to subagents with their own context.</p></article>
         <article class="zx-card zx-feature"><h3>Headless and CI</h3><p class="zx-muted">Run one-shot tasks with <code>neuron -p "…"</code>. Create an API key in the dashboard and set <code>NEURON_TOKEN</code> on servers without a browser.</p></article>
-        <article class="zx-card zx-feature"><h3>Hosted models, no keys to manage</h3><p class="zx-muted">Sign in and Neuron routes through the Zero-X gateway. Provider keys stay on the server; the CLI keeps only an encrypted session.</p></article>
+        <article class="zx-card zx-feature"><h3>Hosted models, no keys to manage</h3><p class="zx-muted">Sign in and Neuron routes through the Zero-X gateway. Provider keys stay on the server; Neuron keeps its login in the macOS Keychain or Windows Credential Manager, and on Linux in <code>~/.neuroncli/credentials.json</code>, readable only by you.</p></article>
         <article class="zx-card zx-feature"><h3>Bring your own key</h3><p class="zx-muted">Prefer your own provider? Set <code>OPENAI_API_KEY</code> and <code>OPENAI_BASE_URL</code> for any OpenAI-compatible endpoint, or connect your own OpenRouter account.</p></article>
       </div>
     </section>
@@ -155,11 +163,17 @@ neuron</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-
       <ul class="zx-models" id="models-list">
         <li class="zx-model" data-tone="ok"><span class="zx-model__dot" aria-hidden="true"></span><span class="zx-model__name">Auto (best available model)</span><code class="zx-model__id">auto</code><span class="zx-model__meta">Zero-X · Fits request</span><span class="zx-model__tags"><span class="zx-badge">Reasoning</span></span><span class="zx-model__status">Available</span></li>
         <li class="zx-model" data-tone="ok"><span class="zx-model__dot" aria-hidden="true"></span><span class="zx-model__name">Gemini 2.5 Flash</span><code class="zx-model__id">gemini/gemini-2.5-flash</code><span class="zx-model__meta">Google Gemini · 1M context</span><span class="zx-model__tags"><span class="zx-badge">Reasoning</span><span class="zx-badge">Images</span></span><span class="zx-model__status">Available</span></li>
+        <li class="zx-model" data-tone="ok"><span class="zx-model__dot" aria-hidden="true"></span><span class="zx-model__name">Gemini 3.5 Flash</span><code class="zx-model__id">gemini/gemini-3.5-flash</code><span class="zx-model__meta">Google Gemini · 1M context</span><span class="zx-model__tags"><span class="zx-badge">Reasoning</span><span class="zx-badge">Images</span></span><span class="zx-model__status">Available</span></li>
         <li class="zx-model" data-tone="ok"><span class="zx-model__dot" aria-hidden="true"></span><span class="zx-model__name">Gemini 3.6 Flash</span><code class="zx-model__id">gemini/gemini-3.6-flash</code><span class="zx-model__meta">Google Gemini · 1M context</span><span class="zx-model__tags"><span class="zx-badge">Reasoning</span><span class="zx-badge">Images</span></span><span class="zx-model__status">Available</span></li>
         <li class="zx-model" data-tone="ok"><span class="zx-model__dot" aria-hidden="true"></span><span class="zx-model__name">GPT-OSS 120B (Groq)</span><code class="zx-model__id">groq/openai/gpt-oss-120b</code><span class="zx-model__meta">Groq · 131K context</span><span class="zx-model__tags"><span class="zx-badge">Reasoning</span></span><span class="zx-model__status">Available</span></li>
         <li class="zx-model" data-tone="ok"><span class="zx-model__dot" aria-hidden="true"></span><span class="zx-model__name">Qwen 3.8 27B (Groq)</span><code class="zx-model__id">groq/qwen/qwen3.8-27b</code><span class="zx-model__meta">Groq · 131K context</span><span class="zx-model__tags"><span class="zx-badge">Reasoning</span></span><span class="zx-model__status">Available</span></li>
+        <li class="zx-model" data-tone="ok"><span class="zx-model__dot" aria-hidden="true"></span><span class="zx-model__name">GPT-OSS 20B (Groq)</span><code class="zx-model__id">groq/openai/gpt-oss-20b</code><span class="zx-model__meta">Groq · 131K context</span><span class="zx-model__tags"><span class="zx-badge">Reasoning</span></span><span class="zx-model__status">Available</span></li>
         <li class="zx-model" data-tone="ok"><span class="zx-model__dot" aria-hidden="true"></span><span class="zx-model__name">Llama 3.3 70B (Workers AI)</span><code class="zx-model__id">@cf/meta/llama-3.3-70b-instruct-fp8-fast</code><span class="zx-model__meta">Cloudflare Workers AI · 24K context</span><span class="zx-model__tags"></span><span class="zx-model__status">Available</span></li>
-        <li class="zx-model" data-tone="locked"><span class="zx-model__dot" aria-hidden="true"></span><span class="zx-model__name">Gemini 2.5 Pro</span><code class="zx-model__id">gemini/gemini-2.5-pro</code><span class="zx-model__meta">Google Gemini · 1M context</span><span class="zx-model__tags"><span class="zx-badge">Reasoning</span><span class="zx-badge">Images</span><span class="zx-badge">Pro and Max</span></span><span class="zx-model__status">Pro and Max plans</span></li>
+        <li class="zx-model" data-tone="ok"><span class="zx-model__dot" aria-hidden="true"></span><span class="zx-model__name">GPT-OSS 20B (NVIDIA)</span><code class="zx-model__id">nvidia/openai/gpt-oss-20b</code><span class="zx-model__meta">NVIDIA · 131K context</span><span class="zx-model__tags"></span><span class="zx-model__status">Available</span></li>
+        <li class="zx-model" data-tone="ok"><span class="zx-model__dot" aria-hidden="true"></span><span class="zx-model__name">Nemotron 3 Ultra 550B (NVIDIA)</span><code class="zx-model__id">nvidia/nvidia/nemotron-3-ultra-550b-a55b</code><span class="zx-model__meta">NVIDIA · 1M context</span><span class="zx-model__tags"></span><span class="zx-model__status">Available</span></li>
+        <li class="zx-model" data-tone="ok"><span class="zx-model__dot" aria-hidden="true"></span><span class="zx-model__name">Step 5 Preview (NVIDIA)</span><code class="zx-model__id">nvidia/stepfun-ai/step-5-preview</code><span class="zx-model__meta">NVIDIA · 131K context</span><span class="zx-model__tags"></span><span class="zx-model__status">Available</span></li>
+        <li class="zx-model" data-tone="ok"><span class="zx-model__dot" aria-hidden="true"></span><span class="zx-model__name">North Mini Code (OpenRouter, free)</span><code class="zx-model__id">cohere/north-mini-code:free</code><span class="zx-model__meta">OpenRouter · 256K context</span><span class="zx-model__tags"></span><span class="zx-model__status">Available</span></li>
+        <li class="zx-model" data-tone="ok"><span class="zx-model__dot" aria-hidden="true"></span><span class="zx-model__name">MiniMax M3.1 Flash (OpenRouter, free)</span><code class="zx-model__id">minimax/minimax-m3.1-flash:free</code><span class="zx-model__meta">OpenRouter · 1M context</span><span class="zx-model__tags"><span class="zx-badge">Images</span></span><span class="zx-model__status">Available</span></li>
       </ul>
       <p class="zx-help" id="models-note" role="status" aria-live="polite">Default catalog. The live list loads from the Zero-X gateway.</p>
       <div class="zx-code zx-code--copy zx-mt"><span class="zx-code__label">The gateway is OpenAI-compatible</span><pre><code id="cmd-models">curl https://zero-x.live/v1/models</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="cmd-models" data-copy-label="curl command">Copy</button></div>
@@ -237,7 +251,7 @@ neuron</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-
         </details>
         <details>
           <summary>Does it run on Windows, macOS and Linux?</summary>
-          <p>Yes. Release binaries cover Windows x64, Linux x64 and macOS on Apple silicon. On other platforms, build from source with Cargo. On Windows, Neuron can run PowerShell commands as well as shell commands.</p>
+          <p>Yes. Release binaries cover Linux x64 and arm64 (glibc 2.35 or later: Ubuntu 22.04, Debian 12, Fedora 36 or newer), macOS on Apple silicon and Intel, and Windows x64; Windows on Arm runs the x64 build under emulation. On older Linux distributions, build from source with Cargo; musl-based Linux such as Alpine is not supported. The binaries are not code-signed or notarized. On Windows, Neuron can run PowerShell commands as well as shell commands.</p>
         </details>
         <details>
           <summary>Can I use Neuron without a Zero-X account?</summary>
@@ -245,7 +259,7 @@ neuron</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-
         </details>
         <details>
           <summary>Where is the source code?</summary>
-          <p>Neuron is written in Rust and its source is on <a href="https://github.com/RAHUL-DevelopeRR/neuron-v2">GitHub</a>. Report bugs and request features there.</p>
+          <p>Neuron is written in Rust and is MIT-licensed; its full-screen UI (<code>neuron-tui</code>) is derived from Freebuff and is Apache-2.0. The source and releases are on <a href="https://github.com/RAHUL-DevelopeRR/neuron-v2">GitHub</a>. Report bugs and request features there.</p>
         </details>
       </div>
     </section>
@@ -254,26 +268,19 @@ neuron</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-
       <p class="zx-eyebrow">More from Zero-X</p>
       <h2 id="products-title">Other things we build</h2>
       <div class="zx-grid zx-grid--3">
-        <a class="zx-card zx-product" href="https://neuron.zero-x.live/">
+        <a class="zx-card zx-product" href="https://zero-x.live/neucockpit">
           <span class="zx-row"><img src="/Assets/neucockpit-mark.webp" width="112" height="112" alt="" class="zx-product__mark"><span><span class="zx-product__name">NeuCockpit</span> <span class="zx-badge zx-badge--success">Live</span></span></span>
           <span class="zx-muted">NeuCockpit local AI file search for desktop: find files by what they contain and summarize your own documents on Windows, macOS and Linux.</span>
           <span class="zx-product__more">NeuCockpit details and downloads</span>
         </a>
-        <div class="zx-card zx-product">
-          <span class="zx-row"><span class="zx-product__name">LuminaPlayer</span> <span class="zx-badge">In development</span></span>
-          <span class="zx-muted">A media player in development with planned subtitles and audio event detection.</span>
-        </div>
-        <div class="zx-card zx-product">
-          <span class="zx-row"><span class="zx-product__name">Astra Player</span> <span class="zx-badge">In development</span></span>
-          <span class="zx-muted">A desktop media player in development, built with Python and PySide6/Qt6.</span>
-        </div>
       </div>
     </section>
 
     <section class="zx-container zx-section zx-home-cta" aria-labelledby="cta-title">
       <h2 id="cta-title">Start free in under a minute</h2>
-      <div class="zx-code zx-code--copy"><pre><code id="cta-install">npm install -g @zero-x.live/neuron
-neuron auth login</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="cta-install" data-copy-label="Install and sign-in command">Copy</button></div>
+      <div class="zx-code zx-code--copy"><pre><code id="cta-install">curl -fsSL https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.1/install.sh | sh -s -- --version 7.0.0-alpha.1
+neuron login</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="cta-install" data-copy-label="Install and sign-in command">Copy</button></div>
+      <p class="zx-help">On Windows, use the PowerShell installer from the <a href="/neuron-cli#install">install options</a>, then run <code>neuron login</code>.</p>
       <div class="zx-row">
         <a class="zx-btn zx-btn--primary" href="/neuron-cli">Explore Neuron CLI</a>
         <a class="zx-btn" href="https://dashboard.zero-x.live/">Open the dashboard</a>
@@ -299,7 +306,7 @@ neuron auth login</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="bu
         <h2>Company</h2>
         <a href="/about">About</a>
         <a href="/contact">Contact</a>
-        <a href="https://neuron.zero-x.live/">NeuCockpit</a>
+        <a href="https://zero-x.live/neucockpit">NeuCockpit</a>
       </nav>
       <nav aria-label="Legal">
         <h2>Legal</h2>
