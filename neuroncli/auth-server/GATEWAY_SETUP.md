@@ -43,6 +43,9 @@ secret store, never in a committed file. `.dev.vars.example` lists them with com
 | `GATEWAY_ADMIN_TOKEN` | **secret** | unset | ≥ 32 random chars; `/admin/overview`, `/admin/discovery/*`, `/admin/providers/keys`, `/v1/providers/health`, full `/health`. |
 | `PROVIDER_KEYS_KEK` | **secret** | unset | 32 random bytes, base64 (`openssl rand -base64 32`): encrypts the provider key vault (contract §11.1). Unset = no vault; the admin page answers 503. Losing or rotating it means re-adding the keys. |
 | `CF_ACCESS_TEAM_DOMAIN`, `CF_ACCESS_AUD` | var | unset | Cloudflare Access team domain (`<team>.cloudflareaccess.com`) and the audience tag of the Access application on `dashboard.zero-x.live/admin`. When both are set, the key vault page and API also require a valid Access JWT. |
+| `OIOP_SIGNING_JWK` | **secret** | unset | Ed25519 private JWK for signing offer manifests (`node scripts/oiop-keygen.mjs`); its public half is served at `/oiop/keys.json`. Unset: manifests can be viewed but not signed. |
+| `OIOP_SCRUB` | var | `all` | Prompt secret scrubber: `all`, `untrusted` (T2/T3 offers only) or `off` (contract §12.3). |
+| `HEALTH_CANARIES` | var | on | `false` stops HealthHub's canary requests (contract §12.5). |
 | `CSP_ENFORCE` | var | `false` | `true` sends `Content-Security-Policy` instead of `-Report-Only`. |
 | `PRICING_URL` | var | `https://zero-x.live/pricing` | `upgrade_url` in errors (https only). |
 
@@ -164,6 +167,8 @@ Work through these in order; nothing in this repository does them for you.
 5. **Operator secrets.** Set `GATEWAY_ADMIN_TOKEN` (≥ 32 random characters),
    `SESSION_ENCRYPTION_KEY` and `PROVIDER_KEYS_KEK` (each `openssl rand -base64 32`) as GitHub
    Actions secrets. Keep a copy of `PROVIDER_KEYS_KEK`: without it the vault's keys cannot be read.
+   **OIOP offers:** apply `migrations/20261024000200_oiop_offers.sql` (backfills the offers of the
+   code catalog, so nothing stops serving) and set `OIOP_SIGNING_JWK` to sign manifests.
    **Provider key vault:** apply `migrations/20261024000000_provider_keys.sql` and
    `migrations/20261024000100_provider_key_budgets.sql` (per-key budgets) before deploying. In Cloudflare Zero
    Trust, add a self-hosted Access application for `dashboard.zero-x.live` with path `admin` (it

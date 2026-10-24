@@ -94,7 +94,7 @@ credential (never an `nzx_` key). Session tokens are stored hashed (SHA-256) in 
 - `GET /v1/models` (optional auth). `data[]` items:
   `{id, object:'model', created:0, owned_by, display_name, context_window, max_output_tokens,
   capabilities:{tools, streaming}, tiers:['free'|'paid'], available:boolean,
-  unavailable_reason:null|'upgrade_required'|'region_unavailable'|'not_configured',
+  unavailable_reason:null|'upgrade_required'|'region_unavailable'|'policy_restricted'|'not_configured',
   pricing:null|{input_per_mtok_usd, output_per_mtok_usd}}`. Includes a pseudo-model
   `auto`. `available` is computed for the caller's plan (anonymous = free).
 - `POST /v1/chat/completions` — OpenAI body; `model` may be `auto`. Streaming SSE with
@@ -115,6 +115,7 @@ credential (never an `nzx_` key). Session tokens are stored hashed (SHA-256) in 
 | 402 | `insufficient_credits` | insufficient_quota | paid pool needed, credit balance too low (`upgrade_url`) |
 | 403 | `upgrade_required` | permission_error | model not in plan (`upgrade_url`) |
 | 403 | `region_unavailable` | permission_error | geo-blocked free pool and no paid option |
+| 403 | `policy_restricted` | permission_error | no offer of the model meets the caller's data policy (§12.2) |
 | 403 | `account_suspended` | permission_error | account suspended |
 | 429 | `insufficient_quota` | insufficient_quota | daily request/token cap reached (`resets_at`, `upgrade_url`) — clients must NOT retry |
 | 429 | `rate_limited` | rate_limit_error | per-user rpm/concurrency (`retry_after_seconds`) — clients may retry after the delay |
@@ -591,3 +592,77 @@ never sees them.
   (`source` is `vault` or `env`; counters and `limits` are the key's own). The pool's counters
   are the sums over its keys, its `limits` the summed budget and its `health` the best key's. A
   key disabled after serving today stays listed with its counters and `limits`/`health` null.
+
+## 12. v1.7 amendments (OIOP Phase 1, 2026-10-24)
+
+The Open Inference Offer Protocol (`docs/OIOP.md`): offers, their terms and lifecycle, the caller's
+data policy, secret scrubbing, catalog provenance and health. Code: `src/oiop/`, `src/routes/offers.js`;
+migration `20261024000200_oiop_offers.sql`; checks `check-oiop.mjs`, `check-quota-race.mjs`.
+
+### 12.1 Offers (operator)
+
+- Every catalog pool belongs to an offer (`<provider>.<tier>`). A pool counts as configured only
+  while its offer is `active`/`degraded` with `redistribution = permitted`; BYOK offers need only
+  the lifecycle. The nine offers behind the code catalog are backfilled `active`/`permitted`.
+- `GET /admin/offers`, `GET /admin/offers/:id` (with `events`), `PUT /admin/offers/:id` (create or
+  change facts; validated against the offer schema; a new offer starts `discovered`, `analysed` or
+  `pending_approval`), `POST /admin/offers/:id/transition {to, note}` (409 `invalid_transition`),
+  `GET|POST /admin/offers/:id/manifest` (POST signs with `OIOP_SIGNING_JWK`; 503
+  `signing_not_configured`). Bearer `GATEWAY_ADMIN_TOKEN` plus Cloudflare Access when configured;
+  the actor recorded is the Access e-mail or `operator`. Without a database the built-in offers are
+  listed read-only (503 `offers_not_configured` on writes).
+- Public: `GET /oiop/schema/0.1.json`, `GET /oiop/keys.json` (public signing key only).
+- RPCs (`service_role`): `zerox_offers_list()`, `zerox_offer_upsert(p_offer jsonb, p_actor text)`,
+  `zerox_offer_transition(p_id, p_to, p_actor, p_note)`, `zerox_offer_store_manifest(p_id, p_version,
+  p_manifest, p_signature, p_actor)`, `zerox_offer_events_list(p_id, p_limit)`,
+  `zerox_offer_can_transition(p_from, p_to)`. Errors: `offer_not_found`, `invalid_transition: a -> b`,
+  `invalid_offer: ...`, `stale_manifest`.
+
+### 12.2 Caller data policy (`/v1/chat/completions`, `/v1/models`, `/v1/models/stream`)
+
+- Request headers: `X-Neuron-Trust-Tiers` (default `T0,T1,T2`; `T3` never by default; unknown
+  values ignored), `X-Neuron-Allow-Training: false` (only `trains_on_inputs = no`),
+  `X-Neuron-Conversation` (sticky routing key; default: hash of the first system and user message).
+  All three are allowed CORS request headers.
+- A model whose configured pools the policy rules out is `available:false`,
+  `unavailable_reason:'policy_restricted'`; completions answer `403 policy_restricted` (or
+  `upgrade_required` when a paid pool complies).
+
+### 12.3 Completions
+
+- Capability filter: tools, image parts (`image_url`/`input_image`), `stream`, JSON
+  `response_format` (entries with `supports_json_mode:false`). `invalid_request` names the missing
+  capability for an explicit model; `auto` keeps only capable models, so failover stays in class.
+- Response headers (exposed via CORS): `X-OIOP-Offer`, `X-OIOP-Fallback` (`<first model>;
+  offer=<offer>; reason=<kind or reserve status>`) after a reroute, `X-OIOP-Redacted` (count of
+  secrets withheld). None of them on error responses.
+- Secrets in prompts are replaced by `zxsecret_<12 hex>` placeholders upstream and restored in the
+  answer (streamed and not, JSON-escaped in tool arguments). `OIOP_SCRUB`: `all` (default) |
+  `untrusted` | `off`.
+- Ordering within a tier: the conversation's previous model (`auto`), then pools without penalties
+  (degraded here or in HealthHub, error rate >= 20 % over >= 10 recent outcomes, budget seen spent).
+  HealthHub's busy/blurred pools are skipped (snapshot read with a 300 ms budget, <= 60 s stale).
+
+### 12.4 Catalog
+
+- `/v1/models` items add `provider:{id, name, logo_url, logo_fallback_url}`,
+  `offers:[{id, tier, owner, trust_tier, trains_on_inputs}]`, `models_dev_id` and
+  `facts:null|{models_dev_id, name, family, canonical_model_id, release_date, knowledge, open_weights,
+  reasoning, structured_output, modalities:{input, output}, list_price_per_million:{input, output}}`
+  (`auto`: provider `zero-x`, empty offers, null ids and facts). Facts come from models.dev via the
+  cron (at most daily; KV key `oiop:models-dev:v1`).
+- `GET /v1/models/stream` (same auth as `/v1/models`): `text/event-stream`; `retry: 5000`, then
+  `event: catalog.updated` with `id: <status ETag>` and the `/v1/models/status` body at start and
+  on every change, `: keepalive` comments every 15 s, closed after 10 minutes; `Last-Event-ID`
+  equal to the current ETag suppresses the first event.
+
+### 12.5 Health
+
+- HealthHub snapshot rows add `samples`, `error_rate`, `p50_ms`, `p95_ms` (time to first byte of
+  successful real requests, last 50) and `canary:{at, ok, tool_call, first_byte_ms}`.
+- Canaries: a healthy free pool with no real traffic for 15 minutes gets one streamed tool call
+  (Groq, Gemini) or one-line request (Workers AI), at most half of `PROBE_DAILY_CAPS` per pool per
+  UTC day. `HEALTH_CANARIES=false` disables them.
+- `QUOTA_EXHAUSTED` marks a spent daily quota (Gemini per-day `QuotaFailure`, Workers AI 3036);
+  routing answers `capacity_exhausted` for it like a rate limit.
+

@@ -1,4 +1,4 @@
-// OIOP offers (docs/OIOP.md, docs/PLATFORM_CONTRACT.md §11.2, migration
+// OIOP offers (docs/OIOP.md, docs/PLATFORM_CONTRACT.md §12.1, migration
 // 20261024000200_oiop_offers.sql). An offer is one way to reach a provider's models (free tier,
 // paid account, trial, the caller's own key) with the terms that decide who it may serve. Every
 // catalog pool belongs to one offer (offerIdFor). Routing reads offers from here: the database

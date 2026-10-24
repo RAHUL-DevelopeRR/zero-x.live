@@ -87,6 +87,9 @@ Nothing below needs Supabase, Razorpay or provider accounts.
    npm run check:e2e:live   # same journey; chat steps use the real Groq/Gemini free pools
                             # (keys from .dev.vars, at most 10 calls)
    npm run check:vault      # provider key vault: crypto, RPCs, admin API and page, per-key pools
+   npm run check:oiop       # OIOP offers, lifecycle, manifests, routing policy, scrubber, catalog, health
+   RACE_DATABASE_URL=postgresql://... npm run check:race   # 100 parallel reservations on a real,
+                            # disposable Postgres (npm i --no-save pg); skips without one
    node check-worker.mjs && node check-node-server.cjs && node check-auth-storage.mjs \
      && node check-callback.mjs && node check-cli-login.mjs && node check-dashboard.mjs && node check-seo.mjs
    ```
@@ -111,6 +114,10 @@ Nothing below needs Supabase, Razorpay or provider accounts.
   disables free-tier provider keys (`/admin/providers/keys`, contract §11.1). Keys are stored
   AES-GCM-encrypted under `PROVIDER_KEYS_KEK`, become one pool each, and never leave the server. `GET /v1/providers/health` adds upstream
   discovery, per-pool health and ignored `*_MODELS` entries.
+- OIOP offers (`docs/OIOP.md`, contract §12): `GET /admin/offers` lists the offers behind every
+  pool with their terms, trust tier and lifecycle; `POST /admin/offers/:id/transition` suspends,
+  approves or retires one (audited in `zerox_offer_events`); `POST /admin/offers/:id/manifest`
+  signs its manifest with `OIOP_SIGNING_JWK`.
 - Upstream rejections are logged as `Neuron upstream rejected request` (error) plus `Neuron
   upstream error detail` (warn): a sanitized summary with the provider's error code/status,
   quota violations, retry delay and a redacted excerpt of its message (GATEWAY_SETUP.md,

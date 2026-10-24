@@ -614,7 +614,7 @@ export function planPolicy(env, plan, policies) {
   return source[id] || source.free || BUILTIN_PLANS.free;
 }
 
-// ── GET /v1/models (contract §3.2, §11.4) ──
+// ── GET /v1/models (contract §3.2, §12.4) ──
 // The caller's data policy (src/oiop/policy.js) removes pools whose offer it rules out; a model
 // whose configured pools are all ruled out is unavailable with reason policy_restricted.
 function describeEntry(env, entry, tiers, country, policy) {
@@ -646,7 +646,7 @@ function describeEntry(env, entry, tiers, country, policy) {
     available: reason === null,
     unavailable_reason: reason,
     pricing: publicPricing(paid?.price),
-    // OIOP (contract §11.4): who serves the model, under which offers, and its models.dev id.
+    // OIOP (contract §12.4): who serves the model, under which offers, and its models.dev id.
     provider: providerInfo(entry.provider, shown.find(verdict => verdict.offer)?.offer),
     offers,
     models_dev_id: modelsDevId(entry),

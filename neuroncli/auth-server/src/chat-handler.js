@@ -409,7 +409,7 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
     const failures = [];
     const exhausted = [];
     const skipModels = new Set();
-    // The first candidate and why it did not serve, for X-OIOP-Fallback (contract §11.3).
+    // The first candidate and why it did not serve, for X-OIOP-Fallback (contract §12.3).
     const first = route.candidates[0];
     let firstMiss = null;
     let paidDenied = null;

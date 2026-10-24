@@ -1,4 +1,4 @@
-// Prompt secret scrubber (docs/OIOP.md "Secrets", contract §11.3). A coding agent sends files,
+// Prompt secret scrubber (docs/OIOP.md "Secrets", contract §12.3). A coding agent sends files,
 // tool results and terminal output, which often hold credentials. Before a request leaves the
 // gateway, every credential found in message text, text parts and tool-call arguments is replaced
 // by a placeholder (`zxsecret_` + 12 hex digits: an HMAC of the secret under a key that never

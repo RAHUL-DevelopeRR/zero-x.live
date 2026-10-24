@@ -1,7 +1,7 @@
 BEGIN;
 
 -- OIOP offers (Open Inference Offer Protocol; docs/OIOP.md, docs/PLATFORM_CONTRACT.md section
--- 11.2). An offer is one way the gateway can reach a provider's models: a free tier, a paid
+-- 12.1). An offer is one way the gateway can reach a provider's models: a free tier, a paid
 -- account, a trial or a model the operator deployed, with the terms that decide whether it may
 -- serve other people. Every catalog pool belongs to one offer (src/oiop/offers.js offerIdFor).
 --

@@ -1,4 +1,4 @@
-// Caller data policy (docs/PLATFORM_CONTRACT.md §11.3): which offers may see a caller's prompts.
+// Caller data policy (docs/PLATFORM_CONTRACT.md §12.2): which offers may see a caller's prompts.
 // A coding agent sends source code, so callers choose the trust tiers they accept and whether
 // offers that may train on inputs are allowed. The choice travels with each request (the Neuron
 // client keeps it in its settings); the gateway enforces it on routing and /v1/models, and it can

@@ -811,7 +811,7 @@ api.get('/v1/models/status', async (c) => {
   return c.json(body);
 });
 
-// GET /v1/models/stream (contract §11.4): a server-sent event stream that emits
+// GET /v1/models/stream (contract §12.4): a server-sent event stream that emits
 // `catalog.updated` with the /v1/models/status body whenever it changes (availability, health,
 // offers and policy), checked every 15 s, with a keep-alive comment otherwise. The stream ends
 // after 10 minutes; EventSource clients reconnect with Last-Event-ID (the ETag) and get an event

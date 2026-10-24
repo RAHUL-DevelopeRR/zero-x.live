@@ -320,7 +320,7 @@ for (const file of ['pricing.html', 'neuron-cli.html']) {
   // Error codes documented in docs.html match contract §3.3.
   const section = contract.match(/### 3\.3 Errors([\s\S]*?)### 3\.4/)[1];
   const codes = [...section.matchAll(/^\| (\d{3}) \| `([a-z_]+)` \| ([a-z_]+) \|/gm)].map(m => [m[1], m[2], m[3]]);
-  assert.equal(codes.length, 12);
+  assert.equal(codes.length, 13);
   const docs = read('docs.html');
   for (const [status, code, type] of codes) {
     assert.match(docs, new RegExp(`<td>${status}</td><th scope="row"><code>${code}</code></th><td><code>${type}</code></td>`), 'docs.html error row ' + code);

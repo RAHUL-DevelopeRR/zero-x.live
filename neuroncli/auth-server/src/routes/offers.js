@@ -1,4 +1,4 @@
-// OIOP offers (docs/PLATFORM_CONTRACT.md §11.2, docs/OIOP.md). The /admin routes are operator
+// OIOP offers (docs/PLATFORM_CONTRACT.md §12.1, docs/OIOP.md). The /admin routes are operator
 // only: Bearer GATEWAY_ADMIN_TOKEN, plus a valid Cloudflare Access JWT when CF_ACCESS_* is
 // configured. Every change goes through the zerox_offer_* functions, which enforce the lifecycle
 // and write the audit log (zerox_offer_events); the actor is the Access e-mail address when there

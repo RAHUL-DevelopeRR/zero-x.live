@@ -15,6 +15,7 @@
     "check:database": "node check-quota-policy.mjs && node check-session-store.mjs",
     "check:discovery": "node check-discovery.mjs",
     "check:oiop": "node check-oiop.mjs",
+    "check:race": "node check-quota-race.mjs",
     "check:server": "node check-server-policy.mjs && node check-gateway.mjs && node check-providers.mjs && node check-health-share.mjs && node check-health-hub.mjs && node check-provider-keys.mjs && node check-provider-request.mjs && node check-api-server.cjs && node check-phase1-architecture.mjs",
     "check:phase1": "node check-phase1-architecture.mjs",
     "check:business-db": "node check-business-db.mjs",
