@@ -602,6 +602,61 @@ try {
     assert.equal(gw.session('ses_anon').requests, 2, 'a failover is one request');
   });
 
+  // Production (22-24 Oct): Gemini's free daily quota ran out, and `auto` answered
+  // capacity_exhausted although Groq and NVIDIA had capacity. A fresh Workers isolate does not
+  // know Gemini is out, tried the three Gemini pools first, and their 429s used up all three
+  // attempts (ROUTER_MAX_ATTEMPTS) before Groq was reached.
+  await test('auto keeps going past 429s: a spent quota does not use up the attempts', async () => {
+    const gw = gateway(); // a fresh tracker is a fresh isolate
+    gw.addSession('ses_anon', {});
+    const quota = () => new Response(JSON.stringify({ error: { code: 429, status: 'RESOURCE_EXHAUSTED',
+      message: 'You exceeded your current quota' } }), { status: 429, headers: { 'retry-after': '3600' } });
+    reset({ gemini: quota, groq: () => completion({ content: 'from groq' }) });
+    const response = await gw.call({ ...KEYS }, { model: 'auto', messages, tools }, { country: 'US' });
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('x-neuron-model'), 'groq/openai/gpt-oss-120b');
+    assert.deepEqual(upstreamCalls().map(call => call.target), ['gemini', 'gemini', 'gemini', 'groq']);
+    assert.equal(gw.session('ses_anon').requests, 1, 'the refused attempts are one request');
+
+    // Only 429s are free: real failures still stop at ROUTER_MAX_ATTEMPTS.
+    reset({ gemini: () => new Response('{"error":{"message":"boom"}}', { status: 500 }), groq: () => completion({ content: 'x' }) });
+    await expectError(await gateway().call({ ...KEYS }, { model: 'auto', messages, tools }, { token: 'ses_none', country: 'US' }), 401, 'invalid_session');
+    const strict = gateway();
+    strict.addSession('ses_anon', {});
+    await expectError(await strict.call({ ...KEYS }, { model: 'auto', messages, tools }, { country: 'US' }), 502, 'upstream_error');
+    assert.deepEqual(upstreamCalls().map(call => call.target), ['gemini', 'gemini', 'gemini']);
+
+    // ROUTER_MAX_RATE_LIMITED bounds the 429s one request may collect.
+    const capped = gateway();
+    capped.addSession('ses_anon', {});
+    reset({ gemini: quota, groq: quota });
+    await expectError(await capped.call({ ...KEYS, ROUTER_MAX_RATE_LIMITED: '4' }, { model: 'auto', messages, tools }, { country: 'US' }),
+      503, 'capacity_exhausted');
+    assert.equal(upstreamCalls().length, 4);
+  });
+
+  await test('auto tries pools other isolates saw out of quota last', async () => {
+    const gw = gateway();
+    gw.addSession('ses_anon', {});
+    const until = Date.now() + 3_600_000;
+    // The KV rows health-share.js publishes (the HealthHub snapshot has the same shape).
+    const SESSIONS_KV = {
+      get: async key => key.startsWith('health:v1:gemini:') ? { status: 'blurred', until, at: Date.now() } : null,
+      put: async () => {},
+    };
+    reset({ gemini: () => { throw new Error('a pool parked in the shared view must not be tried first'); },
+      groq: () => completion({ content: 'from groq' }) });
+    const response = await gw.call({ ...KEYS, SESSIONS_KV }, { model: 'auto', messages, tools }, { country: 'US' });
+    assert.equal(response.status, 200);
+    assert.deepEqual(upstreamCalls().map(call => call.target), ['groq']);
+
+    // Parked pools are moved back, not dropped: an explicit request for one still tries it.
+    reset({ gemini: () => completion({ content: 'from gemini' }) });
+    const explicit = await gw.call({ ...KEYS, SESSIONS_KV }, { model: 'gemini/gemini-3.5-flash', messages, tools }, { country: 'US' });
+    assert.equal(explicit.status, 200);
+    assert.deepEqual(upstreamCalls().map(call => call.target), ['gemini']);
+  });
+
   await test('413 skips a pool for this request only and never opens its circuit', async () => {
     const gw = gateway();
     gw.addSession('ses_anon', {});

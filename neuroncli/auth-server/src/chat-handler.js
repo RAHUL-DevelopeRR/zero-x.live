@@ -6,10 +6,11 @@ import {
 import { globalSignatureCache } from './provider-request.js';
 import { globalRouter } from './router.js';
 import { FailureKind, globalHealthTracker } from './provider-health.js';
-import { publishHealth } from './health-hub-client.js';
+import { hubHealthRows, publishHealth } from './health-hub-client.js';
+import { readShared } from './health-share.js';
 import { callerCountry, loadCatalogDbModels, loadPlanPolicies, planPolicy, resolveModelId } from './catalog.js';
 import { billableUsage, estimateOutputTokens, estimatePromptTokens, utf8Bytes } from './pricing.js';
-import { exhaustedBudget, notePoolExhausted, notePoolReserved } from './pool-budget.js';
+import { exhaustedBudget, notePoolExhausted, notePoolReserved, poolBudgetState } from './pool-budget.js';
 import {
   PAID_DENIED_STATUSES, RESERVE_ERRORS, TERMINAL_RESERVE_STATUSES, reservationArgs, reserveCapacity, reserveError,
   reserveSessionQuota, runInBackground, sessionTiers, settleCapacity, settleSessionQuota, settlementArgs, usesLedger,
@@ -94,6 +95,32 @@ const GENERATED_KINDS = new Set([FailureKind.MODEL_ERROR, FailureKind.TIMEOUT]);
 function minimum(values) {
   const valid = values.map(Number).filter(value => Number.isFinite(value) && value > 0);
   return valid.length ? Math.min(...valid) : undefined;
+}
+
+// Pools another isolate saw out of capacity (busy or blurred in the HealthHub snapshot, or in
+// KV on the Node server) and pools whose shared budget this isolate saw spent go after the
+// other pools of their tier (free pools still come before paid ones). The router's circuit
+// state only knows this isolate's own attempts, so without this a fresh isolate sends `auto`
+// straight to a provider whose daily quota is gone. Parked pools stay in the list: when every
+// candidate is parked, the request still tries them in order.
+async function orderBySharedHealth(env, candidates, now = Date.now()) {
+  if (candidates.length < 2) return candidates;
+  const keys = [...new Set(candidates.map(candidate => candidate.key))];
+  let rows = null;
+  try {
+    rows = (await hubHealthRows(env, keys, now)) || await readShared(env, keys);
+  } catch {
+    rows = null;
+  }
+  const parked = key => {
+    const row = rows?.get(key);
+    if (row && (row.status === 'busy' || row.status === 'blurred') && (row.until || 0) > now) return true;
+    return (poolBudgetState(key, now)?.until || 0) > now;
+  };
+  const rank = candidate => (candidate.pool.tier === 'paid' ? 2 : 0) + (parked(candidate.key) ? 1 : 0);
+  return candidates.map((candidate, index) => ({ candidate, index, rank: rank(candidate) }))
+    .sort((left, right) => left.rank - right.rank || left.index - right.index)
+    .map(item => item.candidate);
 }
 
 // The client-facing error once every candidate failed (contract §3.3).
@@ -337,9 +364,13 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
 
     // ROUTER_MAX_ATTEMPTS caps upstream attempts per request. When the plan includes paid
     // capacity, the last attempt is kept for a paid pool so failing free pools (tried first)
-    // cannot use up every attempt of a paying user.
+    // cannot use up every attempt of a paying user. A 429 is refused before any generation, so
+    // it does not count against that cap; ROUTER_MAX_RATE_LIMITED caps those refusals instead,
+    // so `auto` still reaches a provider with capacity when the first ones are out of quota.
     const maxAttempts = positiveInt(env.ROUTER_MAX_ATTEMPTS, 3);
-    const paidCandidates = route.candidates.some(candidate => candidate.pool.tier === 'paid');
+    const maxRateLimited = positiveInt(env.ROUTER_MAX_RATE_LIMITED, 6);
+    const candidates = await orderBySharedHealth(env, route.candidates);
+    const paidCandidates = candidates.some(candidate => candidate.pool.tier === 'paid');
     const freeAttemptLimit = paidCandidates && maxAttempts > 1 ? maxAttempts - 1 : maxAttempts;
     const failures = [];
     const exhausted = [];
@@ -350,6 +381,7 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
     let reservations = 0;
     let attempts = 0;
     let freeAttempts = 0;
+    let rateLimited = 0;
     // Without an explicit status a failed attempt is settled by how it failed (see GENERATED_KINDS):
     // the user gets the request back either way (within the daily refund allowance for
     // failed_upstream), while the pool keeps attempts the upstream counted.
@@ -364,7 +396,7 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
     };
 
     try {
-      for (const candidate of route.candidates) {
+      for (const candidate of candidates) {
         if (attempts >= maxAttempts || clientSignal?.aborted) break;
         if (skipModels.has(candidate.entry.id) || (paidDenied && candidate.pool.tier === 'paid')) continue;
         if (candidate.pool.tier !== 'paid' && !paidDenied && freeAttempts >= freeAttemptLimit) continue;
@@ -412,6 +444,11 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
         failures.push(result);
         if (reservation) pending = { reservation, candidate, latencyMs: result.latencyMs, errorCode: result.errorCode, kind: result.kind };
         if (result.kind === FailureKind.ABORTED) break;
+        if (result.kind === FailureKind.RATE_LIMITED) {
+          attempts--;
+          if (candidate.pool.tier !== 'paid') freeAttempts--;
+          if (++rateLimited >= maxRateLimited) break;
+        }
         // The same upstream model would reject the request again from another pool.
         if (result.kind === FailureKind.INVALID) skipModels.add(candidate.entry.id);
       }
