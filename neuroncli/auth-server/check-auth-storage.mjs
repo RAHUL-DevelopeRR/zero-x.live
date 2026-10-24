@@ -24,7 +24,7 @@ let sdkCallbackRunning=false;
 let activeSession=null;
 let sessionError=null;
 const window = {
-  location: { hostname: 'www.zero-x.live', protocol: 'https:', origin: 'https://www.zero-x.live', pathname: '/neuron.html' },
+  location: { hostname: 'www.zero-x.live', protocol: 'https:', origin: 'https://www.zero-x.live', pathname: '/neucockpit' },
   supabase: { createClient(_url, _key, options) {
     storage = options.auth.storage;
     return { auth: {
@@ -52,7 +52,7 @@ for (const value of ['a'.repeat(12000), JSON.stringify({ profile: '"% & 😀'.re
 }
 for (const provider of ['google', 'github', 'azure']) await window.ZeroXAuth.signInWithOAuth(provider);
 assert.equal(oauthRequests[0].options.queryParams.prompt, 'select_account');
-assert.equal(oauthRequests[0].options.redirectTo, 'https://www.zero-x.live/neuron.html');
+assert.equal(oauthRequests[0].options.redirectTo, 'https://www.zero-x.live/neucockpit');
 assert.equal(oauthRequests[1].options.queryParams, undefined);
 assert.equal(oauthRequests[2].options.scopes, 'email');
 activeSession={access_token:'identity-token',user:{id:'owner'}};

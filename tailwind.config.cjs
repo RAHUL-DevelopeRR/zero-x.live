@@ -1,5 +1,5 @@
 module.exports = {
-  content: ['./index.html', './neuron.html'],
+  content: ['./index.html', './neucockpit.html'],
   darkMode: 'class',
   theme: { extend: {
     colors: {
