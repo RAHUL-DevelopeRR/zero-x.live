@@ -31,6 +31,7 @@ const seoPages = JSON.parse(read('seo-pages.json'));
 const routeFiles = new Map(seoPages.map(page => [new URL(page.url).host + new URL(page.url).pathname, page.file]));
 routeFiles.set('zero-x.live/dashboard', 'dashboard.html');
 routeFiles.set('dashboard.zero-x.live/', 'dashboard.html');
+routeFiles.set('neuron.zero-x.live/device', 'neuroncli/device/index.html');
 const {TABS} = await import(new URL('dashboard.js', root));
 
 /* ───────────── Page structure, accessibility, SEO flags ───────────── */
@@ -221,10 +222,12 @@ const text = file => stripScripts(read(file)).replace(/<[^>]+>/g, ' ').replace(/
 const ADDRESS = '6/2, N. Pugalur, Karur 639113, Tamil Nadu, India';
 {
   const refund = read('refund.html');
-  for (const id of ['owner-review', 'cancellation', 'refunds', 'request', 'contact']) assert.ok(refund.includes(`id="${id}"`), 'refund: section ' + id);
-  assert.match(text('refund.html'), /Owner review required/);
-  assert.match(text('refund.html'), /7-day refund for new subscriptions/);
-  assert.match(text('refund.html'), /no refunds for consumed credits/);
+  for (const id of ['cancellation', 'refunds', 'request', 'contact']) assert.ok(refund.includes(`id="${id}"`), 'refund: section ' + id);
+  // The refund terms are approved, so the draft "Owner review required" box is gone.
+  assert.ok(!refund.includes('id="owner-review"'), 'refund: no owner-review draft box');
+  assert.doesNotMatch(text('refund.html'), /Owner review required/);
+  assert.match(text('refund.html'), /full refund of your first payment within 7 days of that payment/);
+  assert.match(text('refund.html'), /Credits that have been consumed by requests are not refundable/);
   assert.match(text('refund.html'), /cancel at any time/i);
   assert.match(text('refund.html'), /stay active until the end of the billing period/);
   assert.ok(text('refund.html').includes(ADDRESS));
@@ -241,8 +244,9 @@ const ADDRESS = '6/2, N. Pugalur, Karur 639113, Tamil Nadu, India';
 
   const privacy = text('privacy.html');
   for (const processor of ['Groq', 'Google Gemini API', 'Cloudflare', 'Workers AI', 'OpenRouter', 'NVIDIA', 'Supabase', 'Razorpay']) assert.ok(privacy.includes(processor), 'privacy: processor ' + processor);
-  assert.match(privacy, /only when you connect your own OpenRouter account/i);
-  assert.match(privacy, /Evaluation only/);
+  // Providers as the live gateway serves them: free OpenRouter and NVIDIA models on every plan.
+  assert.match(privacy, /Serves the free OpenRouter models Zero-X offers/);
+  assert.match(privacy, /Free models served on NVIDIA's shared trial endpoints/);
   assert.match(privacy, /may use prompts to improve their models and may let humans review them/);
   for (const id of ['retention', 'rights', 'grievance', 'age', 'processors']) assert.ok(read('privacy.html').includes(`id="${id}"`), 'privacy: section ' + id);
   assert.match(privacy, /aged 18 or over/);
