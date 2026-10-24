@@ -15,12 +15,12 @@
   <meta property="og:title" content="Neuron CLI pricing: Free, Pro and Max plans">
   <meta property="og:description" content="Free daily usage on shared model pools, or Pro and Max plans with higher limits and included credits for paid-capacity models.">
   <meta property="og:url" content="https://zero-x.live/pricing">
-  <meta property="og:image" content="https://zero-x.live/Assets/zerox-favicon-centered.png">
+  <meta property="og:image" content="https://zero-x.live/Assets/zerox-share.png">
   <meta property="og:image:alt" content="Zero-X logo">
-  <meta name="twitter:card" content="summary">
+  <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Neuron CLI pricing: Free, Pro and Max plans">
   <meta name="twitter:description" content="Free daily usage on shared model pools, or Pro and Max plans with higher limits and included credits.">
-  <meta name="twitter:image" content="https://zero-x.live/Assets/zerox-favicon-centered.png">
+  <meta name="twitter:image" content="https://zero-x.live/Assets/zerox-share.png">
   <meta name="twitter:image:alt" content="Zero-X logo">
   <link rel="stylesheet" href="/site-fonts.css">
   <link rel="stylesheet" href="/zx-tokens.css">
@@ -111,7 +111,7 @@
       <div class="zx-grid zx-grid--2">
         <div class="zx-card zx-card--flat">
           <h3>Free plan: shared free pools</h3>
-          <p>Free requests go to the free tiers of upstream providers (Groq, Google Gemini API and Cloudflare Workers AI). Every Zero-X user shares those pools, and each pool has its own daily budget.</p>
+          <p>Free requests go to the free tiers of upstream providers (Groq, Google Gemini API, Cloudflare Workers AI, NVIDIA API Catalog and the free models on OpenRouter). Every Zero-X user shares those pools, and each pool has its own daily budget.</p>
           <p>Free usage costs no credits but counts toward your daily request and token caps. When a shared pool runs out, requests fail with <code>capacity_exhausted</code> until it resets or another free model has capacity. Availability is best effort.</p>
         </div>
         <div class="zx-card zx-card--flat">
@@ -186,7 +186,7 @@
         </details>
         <details>
           <summary>Who sees my prompts and code?</summary>
-          <p>Your requests are sent to the upstream provider that serves the selected model: Groq, Google Gemini API or Cloudflare Workers AI, plus OpenRouter only if you connect your own OpenRouter account. Free tiers of some providers may use prompts to improve their models and allow human review, so do not send secrets or code you are not allowed to share on the Free plan. The <a href="/privacy">privacy policy</a> lists every processor.</p>
+          <p>Your requests are sent to the upstream provider that serves the selected model: Groq, Google Gemini API, Cloudflare Workers AI, NVIDIA API Catalog or OpenRouter (the free OpenRouter models Zero-X offers, or your own OpenRouter account if you connect one). Free tiers of some providers may use prompts to improve their models and allow human review, so do not send secrets or code you are not allowed to share on the Free plan. The <a href="/privacy">privacy policy</a> lists every processor.</p>
         </details>
         <details>
           <summary>Can I use my own API key (BYOK)?</summary>
@@ -194,7 +194,7 @@
         </details>
         <details>
           <summary>Do I need a card for the Free plan?</summary>
-          <p>No. Install Neuron, run <code>neuron auth login</code> and sign in with your Zero-X account.</p>
+          <p>No. Install Neuron, run <code>neuron login</code> and approve the short code it shows while signed in to your Zero-X account.</p>
         </details>
       </div>
     </section>
@@ -203,7 +203,7 @@
       <div class="zx-card zx-row zx-row--between">
         <div>
           <h2 id="cta-title">Try Neuron on the Free plan</h2>
-          <p class="zx-muted">Install from npm, sign in once and start in any repository.</p>
+          <p class="zx-muted">Install Neuron 7.0.0-alpha.1 with the one-line installer for macOS, Linux or Windows, sign in once with <code>neuron login</code> and start in any repository.</p>
         </div>
         <a class="zx-btn zx-btn--primary" href="/neuron-cli#install">Install Neuron CLI</a>
       </div>
@@ -227,7 +227,7 @@
         <h2>Company</h2>
         <a href="/about">About</a>
         <a href="/contact">Contact</a>
-        <a href="https://neuron.zero-x.live/">NeuCockpit</a>
+        <a href="https://zero-x.live/neucockpit">NeuCockpit</a>
       </nav>
       <nav aria-label="Legal">
         <h2>Legal</h2>

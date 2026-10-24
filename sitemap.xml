@@ -2,55 +2,55 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:video="http://www.google.com/schemas/sitemap-video/1.1">
   <url>
     <loc>https://zero-x.live/</loc>
-    <lastmod>2026-10-16</lastmod>
+    <lastmod>2026-10-24</lastmod>
   </url>
   <url>
     <loc>https://zero-x.live/neuron-cli</loc>
-    <lastmod>2026-10-16</lastmod>
+    <lastmod>2026-10-24</lastmod>
   </url>
   <url>
     <loc>https://zero-x.live/pricing</loc>
-    <lastmod>2026-10-16</lastmod>
+    <lastmod>2026-10-24</lastmod>
   </url>
   <url>
     <loc>https://zero-x.live/docs</loc>
-    <lastmod>2026-10-16</lastmod>
+    <lastmod>2026-10-24</lastmod>
   </url>
   <url>
-    <loc>https://neuron.zero-x.live/</loc>
-    <lastmod>2026-10-04</lastmod>
+    <loc>https://zero-x.live/neucockpit</loc>
+    <lastmod>2026-10-24</lastmod>
   </url>
   <url>
     <loc>https://zero-x.live/about</loc>
-    <lastmod>2026-10-03</lastmod>
+    <lastmod>2026-10-24</lastmod>
   </url>
   <url>
     <loc>https://zero-x.live/privacy</loc>
-    <lastmod>2026-10-16</lastmod>
+    <lastmod>2026-10-24</lastmod>
   </url>
   <url>
     <loc>https://zero-x.live/terms</loc>
-    <lastmod>2026-10-16</lastmod>
+    <lastmod>2026-10-24</lastmod>
   </url>
   <url>
     <loc>https://zero-x.live/contact</loc>
-    <lastmod>2026-10-16</lastmod>
+    <lastmod>2026-10-24</lastmod>
   </url>
   <url>
     <loc>https://zero-x.live/refund</loc>
-    <lastmod>2026-10-16</lastmod>
+    <lastmod>2026-10-24</lastmod>
   </url>
   <url>
     <loc>https://zero-x.live/shipping</loc>
-    <lastmod>2026-10-16</lastmod>
+    <lastmod>2026-10-24</lastmod>
   </url>
   <url>
     <loc>https://zero-x.live/find-files-by-content</loc>
-    <lastmod>2026-10-03</lastmod>
+    <lastmod>2026-10-24</lastmod>
   </url>
   <url>
     <loc>https://zero-x.live/wheres-that-file</loc>
-    <lastmod>2026-10-03</lastmod>
+    <lastmod>2026-10-24</lastmod>
     <video:video>
       <video:thumbnail_loc>https://zero-x.live/Assets/neucockpit-film-poster.webp</video:thumbnail_loc>
       <video:title>Where’s That File? | NeuCockpit by Zero-X</video:title>

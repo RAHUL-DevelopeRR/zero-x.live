@@ -43,7 +43,7 @@
 
     <section id="dash-gate" class="zx-card" aria-labelledby="gate-title" hidden>
       <h2 id="gate-title">Sign in to view your dashboard</h2>
-      <p class="zx-muted">Use the same Zero-X account you connect with <code>neuron auth login</code>.</p>
+      <p class="zx-muted">Use the same Zero-X account you use to approve <code>neuron login</code>.</p>
       <div id="gate-error" class="zx-alert zx-alert--error zx-mb" role="alert"></div>
       <div class="zx-row">
         <button id="gate-signin" class="zx-btn zx-btn--primary" type="button">Sign in</button>
@@ -98,9 +98,10 @@
 
         <section class="zx-card zx-card--flat zx-mt" aria-labelledby="qs-title">
           <h3 id="qs-title">Quick start</h3>
-          <p class="zx-muted">Install Neuron CLI, sign in once, then run <code>neuron</code> in any project.</p>
-          <div class="zx-code zx-code--copy"><span class="zx-code__label">Install</span><pre><code id="qs-install">npm install -g @zero-x.live/neuron</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="qs-install" data-copy-label="Install command">Copy</button></div>
-          <div class="zx-code zx-code--copy"><span class="zx-code__label">Sign in</span><pre><code id="qs-login">neuron auth login</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="qs-login" data-copy-label="Login command">Copy</button></div>
+          <p class="zx-muted">Install Neuron 7.0.0-alpha.1 (a GitHub pre-release), sign in once with <code>neuron login</code> and approve the short code it shows, then run <code>neuron</code> in any project.</p>
+          <div class="zx-code zx-code--copy"><span class="zx-code__label">Install on macOS or Linux</span><pre><code id="qs-install">curl -fsSL https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.1/install.sh | sh -s -- --version 7.0.0-alpha.1</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="qs-install" data-copy-label="macOS and Linux install command">Copy</button></div>
+          <div class="zx-code zx-code--copy"><span class="zx-code__label">Install on Windows (PowerShell)</span><pre><code id="qs-install-win">&amp; ([scriptblock]::Create((irm https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.1/install.ps1))) -Version 7.0.0-alpha.1</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="qs-install-win" data-copy-label="Windows install command">Copy</button></div>
+          <div class="zx-code zx-code--copy"><span class="zx-code__label">Sign in</span><pre><code id="qs-login">neuron login</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="qs-login" data-copy-label="Login command">Copy</button></div>
           <div class="zx-code zx-code--copy"><span class="zx-code__label">OpenAI-compatible base URL</span><pre><code id="qs-base">https://zero-x.live/v1</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="qs-base" data-copy-label="Base URL">Copy</button></div>
           <p class="zx-help">Need more? Read the <a href="https://zero-x.live/docs" data-site-path="/docs">documentation</a>.</p>
         </section>
@@ -196,7 +197,6 @@
           </table>
         </div>
         <div class="zx-code zx-mt"><span class="zx-code__label">Headless example</span><pre><code>export NEURON_TOKEN=nzx_your_key
-export NEURON_API_BASE=https://zero-x.live/v1
 neuron -p "Run the tests and summarise failures"</code></pre></div>
       </section>
 
@@ -249,7 +249,7 @@ neuron -p "Run the tests and summarise failures"</code></pre></div>
 
       <section class="zx-tabpanel" role="tabpanel" id="panel-sessions" aria-labelledby="tab-sessions" tabindex="0" hidden>
         <h2>CLI sessions</h2>
-        <p class="zx-muted">Each <code>neuron auth login</code> creates a CLI session that lasts up to 30 days. If a computer is lost or a session token was exposed, sign out every CLI session at once.</p>
+        <p class="zx-muted">Each <code>neuron login</code> creates a CLI session that lasts up to 30 days. If a computer is lost or a session token was exposed, sign out every CLI session at once.</p>
         <div id="sessions-error" class="zx-alert zx-alert--error zx-mb" role="alert"></div>
         <p class="zx-mb"><input id="sessions-keys" type="checkbox"> <label for="sessions-keys">Also revoke every API key (do this if a session token may have leaked, since a session can create keys)</label></p>
         <div class="zx-row">
@@ -316,8 +316,10 @@ neuron -p "Run the tests and summarise failures"</code></pre></div>
         <a href="https://zero-x.live/terms" data-site-path="/terms">Terms of Service</a>
         <a href="https://zero-x.live/privacy" data-site-path="/privacy">Privacy Policy</a>
         <a href="https://zero-x.live/refund" data-site-path="/refund">Cancellation and refunds</a>
+        <a href="https://zero-x.live/shipping" data-site-path="/shipping">Shipping and delivery</a>
       </nav>
     </div>
+    <p class="zx-container zx-footer__legal">© 2026 Zero-X · <a href="mailto:support@zero-x.live">support@zero-x.live</a></p>
   </footer>
 </body>
 </html>

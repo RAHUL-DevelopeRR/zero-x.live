@@ -15,12 +15,12 @@
   <meta property="og:title" content="Neuron CLI and Zero-X API documentation">
   <meta property="og:description" content="Install and configure Neuron CLI, call the OpenAI-compatible Zero-X API, and handle limits and error codes.">
   <meta property="og:url" content="https://zero-x.live/docs">
-  <meta property="og:image" content="https://zero-x.live/Assets/zerox-favicon-centered.png">
+  <meta property="og:image" content="https://zero-x.live/Assets/zerox-share.png">
   <meta property="og:image:alt" content="Zero-X logo">
-  <meta name="twitter:card" content="summary">
+  <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Neuron CLI and Zero-X API documentation">
   <meta name="twitter:description" content="Quickstart, commands, configuration, API reference, error codes, limits and billing.">
-  <meta name="twitter:image" content="https://zero-x.live/Assets/zerox-favicon-centered.png">
+  <meta name="twitter:image" content="https://zero-x.live/Assets/zerox-share.png">
   <meta name="twitter:image:alt" content="Zero-X logo">
   <link rel="stylesheet" href="/site-fonts.css">
   <link rel="stylesheet" href="/zx-tokens.css">
@@ -45,6 +45,7 @@
       <nav class="zx-breadcrumb" aria-label="Breadcrumb"><a href="/">Zero-X</a> / Docs</nav>
       <h1>Neuron CLI and Zero-X API docs</h1>
       <p class="zx-lead">Everything you need to install Neuron, sign in, configure it, and call the OpenAI-compatible gateway directly.</p>
+      <p class="zx-help">These docs cover Neuron 7.0.0-alpha.1, a GitHub pre-release published on 24 October 2026. The full reference is the <a href="https://github.com/RAHUL-DevelopeRR/neuron-v2/blob/HEAD/USAGE.md">usage guide</a>; see the <a href="https://github.com/RAHUL-DevelopeRR/neuron-v2/blob/HEAD/CHANGELOG.md">changelog</a> for known limitations.</p>
     </div>
     <div class="zx-docs">
       <nav class="zx-toc" aria-label="On this page">
@@ -63,15 +64,15 @@
         <section id="quickstart" aria-labelledby="quickstart-title">
           <h2 id="quickstart-title">Quickstart</h2>
           <ol>
-            <li>Install: <code>npm install -g @zero-x.live/neuron</code> (or <code>python -m pip install neuroncli</code>).</li>
-            <li>Sign in: <code>neuron auth login</code> opens the browser; sign in and choose <strong>Connect this account</strong>.</li>
-            <li>Run <code>neuron</code> inside a project and review the trust prompt.</li>
+            <li>Install: on macOS and Linux, <code>curl -fsSL https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.1/install.sh | sh -s -- --version 7.0.0-alpha.1</code>; on Windows (PowerShell 5.1 or 7), <code>&amp; ([scriptblock]::Create((irm https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.1/install.ps1))) -Version 7.0.0-alpha.1</code>. npm (<code>@zero-x.live/neuron@next</code>) comes once the alpha is published there; pip is not available for the alpha. See <a href="/neuron-cli#install">all install options</a>.</li>
+            <li>Sign in: <code>neuron login</code> prints <code>https://neuron.zero-x.live/device</code> and a short code. Open it in any browser, sign in, check the code and choose <strong>Approve</strong>. The code expires after 10 minutes.</li>
+            <li>Run <code>neuron</code> inside a project; on a terminal it opens the full-screen UI. The UI cannot trust a folder yet: run <code>neuron --no-tui</code> there once and press 1, or add the folder to <code>trustedRoots</code> in <code>~/.neuron/settings.json</code>. Until then the folder's own settings, hooks and MCP servers are ignored.</li>
           </ol>
-          <div class="zx-code"><pre><code>npm install -g @zero-x.live/neuron
-neuron auth login
+          <div class="zx-code"><pre><code>curl -fsSL https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.1/install.sh | sh -s -- --version 7.0.0-alpha.1
+neuron login
 cd path/to/project
 neuron</code></pre></div>
-          <p>Check the result with <code>neuron auth status</code>. If something fails, run <code>/doctor</code> inside Neuron.</p>
+          <p>Check the result with <code>neuron auth status</code>. If something fails, run <code>neuron doctor</code>.</p>
         </section>
 
         <section id="cli" aria-labelledby="cli-title">
@@ -81,14 +82,18 @@ neuron</code></pre></div>
               <caption>Shell commands</caption>
               <thead><tr><th scope="col">Command</th><th scope="col">What it does</th></tr></thead>
               <tbody>
-                <tr><th scope="row"><code>neuron</code></th><td>Start an interactive session in the current directory.</td></tr>
-                <tr><th scope="row"><code>neuron -p "prompt"</code></th><td>Run one prompt and exit (scripts and CI).</td></tr>
-                <tr><th scope="row"><code>neuron --resume</code></th><td>Resume a saved session.</td></tr>
+                <tr><th scope="row"><code>neuron</code></th><td>On a terminal, open the full-screen UI (<code>neuron-tui</code>) in the current directory. <code>neuron --no-tui</code> or <code>NEURON_NO_TUI=1</code> keeps the line REPL.</td></tr>
+                <tr><th scope="row"><code>neuron prompt "…"</code>, <code>neuron -p "…"</code></th><td>Run one prompt and exit (scripts and CI). In a script, a tool call that needs approval is denied, and a run that denied one exits with code 2.</td></tr>
+                <tr><th scope="row"><code>neuron --continue [CHAT]</code></th><td>Reopen the latest chat for this folder (or CHAT) in the full-screen UI.</td></tr>
+                <tr><th scope="row"><code>neuron --resume latest</code></th><td>Continue the newest saved line-REPL session.</td></tr>
                 <tr><th scope="row"><code>neuron --model &lt;id&gt;</code></th><td>Start with a specific model, for example <code>auto</code> or <code>gemini/gemini-2.5-flash</code>.</td></tr>
-                <tr><th scope="row"><code>neuron --permission-mode &lt;mode&gt;</code></th><td><code>read-only</code>, <code>workspace-write</code> or <code>danger-full-access</code>.</td></tr>
-                <tr><th scope="row"><code>neuron auth login</code></th><td>Sign in through the browser and store an encrypted gateway session.</td></tr>
-                <tr><th scope="row"><code>neuron auth status</code></th><td>Show which credential Neuron will use.</td></tr>
-                <tr><th scope="row"><code>neuron auth logout</code></th><td>Revoke and delete the local session.</td></tr>
+                <tr><th scope="row"><code>neuron --permission-mode &lt;mode&gt;</code></th><td><code>read-only</code>, <code>workspace-write</code> (the default) or <code>danger-full-access</code>.</td></tr>
+                <tr><th scope="row"><code>neuron login</code> (or <code>neuron auth login</code>)</th><td>Sign in with a device code that you approve at <code>https://neuron.zero-x.live/device</code>; works over SSH, in WSL and in containers. The session goes to the macOS Keychain or Windows Credential Manager, or on Linux to <code>~/.neuroncli/credentials.json</code> (owner-only).</td></tr>
+                <tr><th scope="row"><code>neuron login --with-token</code></th><td>Read an <code>nzx_</code> API key or a <code>ses_</code> session from standard input, for CI.</td></tr>
+                <tr><th scope="row"><code>neuron auth status</code></th><td>Check the credential with the gateway and show where it came from, the plan, the expiry and today's usage.</td></tr>
+                <tr><th scope="row"><code>neuron logout</code> (or <code>neuron auth logout</code>)</th><td>Revoke the session on the gateway and delete the local copy.</td></tr>
+                <tr><th scope="row"><code>neuron usage</code></th><td>Your plan, today's usage with the reset time, and credits.</td></tr>
+                <tr><th scope="row"><code>neuron doctor</code></th><td>Check sign-in, configuration and the workspace.</td></tr>
                 <tr><th scope="row"><code>neuron --version</code>, <code>neuron --help</code></th><td>Version and all flags.</td></tr>
               </tbody>
             </table>
@@ -103,6 +108,7 @@ neuron</code></pre></div>
                 <tr><th scope="row"><code>/model</code></th><td>Show or switch the model; the list comes from the gateway catalog.</td></tr>
                 <tr><th scope="row"><code>/permissions</code></th><td>Show or switch the permission mode.</td></tr>
                 <tr><th scope="row"><code>/usage</code></th><td>Your plan, today's usage and limits.</td></tr>
+                <tr><th scope="row"><code>/upgrade</code></th><td>Open the pricing page.</td></tr>
                 <tr><th scope="row"><code>/cost</code></th><td>Token usage for this session.</td></tr>
                 <tr><th scope="row"><code>/compact</code></th><td>Summarise history to shrink the prompt.</td></tr>
                 <tr><th scope="row"><code>/clear</code></th><td>Start a fresh session.</td></tr>
@@ -110,8 +116,10 @@ neuron</code></pre></div>
                 <tr><th scope="row"><code>/diff</code>, <code>/commit</code></th><td>Show workspace changes; write a commit message and commit.</td></tr>
                 <tr><th scope="row"><code>/mcp</code></th><td>Inspect configured MCP servers.</td></tr>
                 <tr><th scope="row"><code>/agents</code>, <code>/skills</code></th><td>List subagents and skills.</td></tr>
+                <tr><th scope="row"><code>/init</code></th><td>Create a starter <code>NEURON.md</code> for the project.</td></tr>
                 <tr><th scope="row"><code>/doctor</code></th><td>Diagnose setup and connectivity.</td></tr>
-                <tr><th scope="row"><code>/login</code>, <code>/logout</code></th><td>Run the gateway sign-in or sign-out flow.</td></tr>
+                <tr><th scope="row"><code>/login</code>, <code>/logout</code></th><td>Run the gateway sign-in (device code) or sign-out flow.</td></tr>
+                <tr><th scope="row"><code>/exit</code></th><td>Leave Neuron (Ctrl+C twice also quits).</td></tr>
               </tbody>
             </table>
           </div>
@@ -127,7 +135,12 @@ neuron</code></pre></div>
                 <tr><th scope="row"><code>NEURON_TOKEN</code></th><td>Credential for headless runs: an API key (<code>nzx_…</code>) or a CLI session (<code>ses_…</code>). Overrides the stored login.</td></tr>
                 <tr><th scope="row"><code>NEURON_API_BASE</code></th><td>Gateway base URL. Default <code>https://zero-x.live/v1</code>.</td></tr>
                 <tr><th scope="row"><code>NEURON_MODEL</code></th><td>Default model ID.</td></tr>
+                <tr><th scope="row"><code>NEURON_PROVIDER</code></th><td>Provider for this process, for example <code>zero-x</code> or <code>openai</code>.</td></tr>
+                <tr><th scope="row"><code>NEURON_NO_TUI=1</code></th><td>Use the line REPL instead of the full-screen UI.</td></tr>
                 <tr><th scope="row"><code>NEURON_CONFIG_HOME</code></th><td>User config directory. Default <code>~/.neuron</code>.</td></tr>
+                <tr><th scope="row"><code>NEURON_HOME</code></th><td>Directory for the login file and caches. Default <code>~/.neuroncli</code>. Setting it also keeps the login out of the OS credential store.</td></tr>
+                <tr><th scope="row"><code>NEURON_CREDENTIAL_STORE</code></th><td><code>file</code> or <code>keychain</code>: force where the login is kept.</td></tr>
+                <tr><th scope="row"><code>NEURON_TRUST_WORKSPACE=1</code></th><td>Trust the current directory in a headless run. Use it only for checkouts you trust.</td></tr>
                 <tr><th scope="row"><code>OPENAI_API_KEY</code>, <code>OPENAI_BASE_URL</code></th><td>Bring your own OpenAI-compatible provider. Used when you choose that provider or are not signed in to Zero-X.</td></tr>
               </tbody>
             </table>
@@ -138,7 +151,7 @@ neuron</code></pre></div>
               <thead><tr><th scope="col">Path</th><th scope="col">Scope</th></tr></thead>
               <tbody>
                 <tr><th scope="row"><code>~/.neuron/settings.json</code></th><td>User settings for every project.</td></tr>
-                <tr><th scope="row"><code>.neuron.json</code>, <code>.neuron/settings.json</code></th><td>Project settings, safe to commit.</td></tr>
+                <tr><th scope="row"><code>.neuron.json</code>, <code>.neuron/settings.json</code></th><td>Project settings, safe to commit. They apply only after you trust the folder, and they cannot select a full-access mode.</td></tr>
                 <tr><th scope="row"><code>.neuron/settings.local.json</code></th><td>Machine-local overrides; keep out of version control.</td></tr>
                 <tr><th scope="row"><code>NEURON.md</code></th><td>Project instructions Neuron reads at the start of each session.</td></tr>
               </tbody>
@@ -162,15 +175,20 @@ neuron</code></pre></div>
     "owned_by": "gemini",
     "display_name": "Gemini 2.5 Flash",
     "context_window": 1048576,
+    "context_length": 1048576,
     "max_output_tokens": 65536,
-    "capabilities": { "tools": true, "streaming": true },
-    "tiers": ["free", "paid"],
+    "capabilities": { "tools": true, "streaming": true, "vision": true, "reasoning": true },
+    "reasoning_efforts": ["none", "low", "medium", "high"],
+    "tiers": ["free"],
     "available": true,
     "unavailable_reason": null,
-    "pricing": { "input_per_mtok_usd": 0.375, "output_per_mtok_usd": 3.125 }
+    "pricing": null,
+    "status": "available",
+    "available_again_at": null,
+    "checked_at": "2026-10-24T13:53:52.473Z"
   }]
 }</code></pre></div>
-          <p><code>unavailable_reason</code> is <code>null</code>, <code>upgrade_required</code>, <code>region_unavailable</code> or <code>not_configured</code>. <code>pricing</code> is the paid-capacity price per million tokens, or <code>null</code> for free-only models. The list includes the pseudo-model <code>auto</code>.</p>
+          <p><code>unavailable_reason</code> is <code>null</code>, <code>upgrade_required</code>, <code>region_unavailable</code> or <code>not_configured</code>. <code>pricing</code> is the paid-capacity price per million tokens, or <code>null</code> for free-only models. <code>status</code> is <code>available</code>, <code>degraded</code>, <code>busy</code> or <code>blurred</code>; a blurred model is temporarily unavailable until <code>available_again_at</code>. <code>GET /v1/models/status</code> returns the same availability fields for polling. The list includes the pseudo-model <code>auto</code>.</p>
 
           <h3 id="chat-completions">POST /v1/chat/completions</h3>
           <p>Standard OpenAI request body. <code>model</code> may be <code>auto</code>. Set <code>"stream": true</code> for server-sent events ending with <code>data: [DONE]</code>; streamed <code>tool_calls</code> deltas always include <code>index</code>.</p>
@@ -201,16 +219,19 @@ neuron</code></pre></div>
               <tbody>
                 <tr><td>400</td><th scope="row"><code>invalid_request</code></th><td><code>invalid_request_error</code></td><td>Malformed body.</td><td>Fix the request. Do not retry.</td></tr>
                 <tr><td>400</td><th scope="row"><code>context_length_exceeded</code></th><td><code>invalid_request_error</code></td><td>No model can fit the request.</td><td>Shorten the prompt or run <code>/compact</code>.</td></tr>
-                <tr><td>401</td><th scope="row"><code>invalid_session</code></th><td><code>authentication_error</code></td><td>Missing, expired or revoked credential.</td><td>Run <code>neuron auth login</code> or use a valid key.</td></tr>
+                <tr><td>401</td><th scope="row"><code>invalid_session</code></th><td><code>authentication_error</code></td><td>Missing, expired or revoked credential.</td><td>Run <code>neuron login</code> or use a valid key.</td></tr>
                 <tr><td>402</td><th scope="row"><code>insufficient_credits</code></th><td><code>insufficient_quota</code></td><td>Paid capacity needed and the credit balance is too low.</td><td>Top up or wait for renewal (<code>upgrade_url</code>).</td></tr>
                 <tr><td>403</td><th scope="row"><code>upgrade_required</code></th><td><code>permission_error</code></td><td>The model is not in your plan.</td><td>Pick another model or upgrade.</td></tr>
                 <tr><td>403</td><th scope="row"><code>region_unavailable</code></th><td><code>permission_error</code></td><td>The free pool is not offered in your region and no paid option is available.</td><td>Pick another model or upgrade.</td></tr>
                 <tr><td>403</td><th scope="row"><code>account_suspended</code></th><td><code>permission_error</code></td><td>The account is suspended.</td><td>Email support@zero-x.live.</td></tr>
+                <tr><td>403</td><th scope="row"><code>api_key_not_allowed</code></th><td><code>permission_error</code></td><td>API keys cannot call this route (managing keys, sessions or billing).</td><td>Use a signed-in session. Do not retry.</td></tr>
+                <tr><td>404</td><th scope="row"><code>model_not_found</code></th><td><code>invalid_request_error</code></td><td>The requested model is not available.</td><td>List models with <code>GET /v1/models</code>. Do not retry.</td></tr>
                 <tr><td>429</td><th scope="row"><code>insufficient_quota</code></th><td><code>insufficient_quota</code></td><td>Daily request or token cap reached (<code>resets_at</code>).</td><td>Do not retry. Wait for the reset or upgrade.</td></tr>
                 <tr><td>429</td><th scope="row"><code>rate_limited</code></th><td><code>rate_limit_error</code></td><td>Per-minute or concurrency limit.</td><td>Retry after <code>retry_after_seconds</code>.</td></tr>
                 <tr><td>503</td><th scope="row"><code>capacity_exhausted</code></th><td><code>server_error</code></td><td>The shared free pool is used up.</td><td>Retry later, choose another model or upgrade.</td></tr>
                 <tr><td>502</td><th scope="row"><code>upstream_error</code></th><td><code>server_error</code></td><td>The provider failed after failover. The request is not counted.</td><td>Retry up to twice.</td></tr>
                 <tr><td>504</td><th scope="row"><code>upstream_timeout</code></th><td><code>server_error</code></td><td>No first byte within 45 s, or idle for more than 90 s.</td><td>Retry up to twice.</td></tr>
+                <tr><td>503</td><th scope="row"><code>service_unavailable</code></th><td><code>server_error</code></td><td>The gateway is briefly unavailable.</td><td>Retry up to twice.</td></tr>
               </tbody>
             </table>
           </div>
@@ -289,7 +310,7 @@ neuron</code></pre></div>
         <h2>Company</h2>
         <a href="/about">About</a>
         <a href="/contact">Contact</a>
-        <a href="https://neuron.zero-x.live/">NeuCockpit</a>
+        <a href="https://zero-x.live/neucockpit">NeuCockpit</a>
       </nav>
       <nav aria-label="Legal">
         <h2>Legal</h2>
