@@ -211,8 +211,18 @@ assert.match(read('zerox-auth.js'), /getAccessToken: getAccessToken/);
 {
   const patterns = read('.assetsignore').split(/\r?\n/).map(line => line.trim()).filter(line => line && !line.startsWith('#'));
   const toRegex = pattern => new RegExp('^' + pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*\*\//g, '(?:.*/)?').replace(/\*/g, '[^/]*') + (pattern.endsWith('/') ? '' : '$'));
-  for (const file of [...PUBLIC_PAGES, ...PRIVATE_PAGES, ...SITE_SCRIPTS, 'zx-tokens.css', 'site-fonts.css', 'home.css']) {
+  for (const file of [...PUBLIC_PAGES, ...PRIVATE_PAGES, ...SITE_SCRIPTS, 'zx-tokens.css', 'site-fonts.css', 'home.css',
+    'neucockpit.html', 'favicon.ico', 'Assets/zerox-share.png']) {
+    assert.ok(isFile(file), `${file} exists`);
     assert.ok(!patterns.some(pattern => toRegex(pattern).test(file)), `${file} is excluded from the Worker assets`);
+  }
+  // Share cards: every public page names an image that is deployed with the site.
+  for (const file of PUBLIC_PAGES) {
+    for (const key of ['og:image', 'twitter:image']) {
+      const url = new URL(meta(read(file))[key]);
+      assert.equal(url.origin, 'https://zero-x.live', `${file}: ${key} host`);
+      assert.ok(isFile('.' + url.pathname), `${file}: ${key} ${url.pathname} exists`);
+    }
   }
 }
 
