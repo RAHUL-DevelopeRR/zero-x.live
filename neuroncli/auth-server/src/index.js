@@ -31,6 +31,7 @@ import { registerPushRoutes } from './routes/push.js';
 import { registerRelayRoutes } from './routes/relay.js';
 import { runDiscoveryTick } from './discovery/jobs.js';
 import { registerProviderKeyRoutes } from './routes/provider-keys.js';
+import { registerOfferRoutes } from './routes/offers.js';
 import { loadVaultKeys, vaultConfigured } from './provider-keys.js';
 import { accessConfigured, passedAccess } from './access-auth.js';
 // Durable Object classes are exported from the Worker entry (wrangler.toml [[durable_objects]]).
@@ -51,7 +52,7 @@ app.onError((error, c) => {
 
 // Paths are served both at the root and under the legacy /neuroncli/auth-server mount.
 const routePath = pathname => pathname.startsWith(API_MOUNT + '/') ? pathname.slice(API_MOUNT.length) : pathname;
-const isApiRoute = path => ['/auth/', '/api/', '/v1/', '/admin/', '/webhooks/', '/relay/'].some(prefix => path.startsWith(prefix)) ||
+const isApiRoute = path => ['/auth/', '/api/', '/v1/', '/admin/', '/webhooks/', '/relay/', '/oiop/'].some(prefix => path.startsWith(prefix)) ||
   path === '/health' || path === '/ready';
 
 // ── Security headers ──
@@ -121,7 +122,7 @@ app.use('*', async (c, next) => {
     c.header('Cache-Control', 'no-store');
   }
   if (url.hostname === 'dashboard.zero-x.live' || url.pathname.startsWith('/neuroncli/') || path === '/health' ||
-      ['/auth/', '/api/', '/v1/', '/admin/', '/webhooks/', '/relay/'].some(prefix => path.startsWith(prefix))) {
+      ['/auth/', '/api/', '/v1/', '/admin/', '/webhooks/', '/relay/', '/oiop/'].some(prefix => path.startsWith(prefix))) {
     c.header('X-Robots-Tag', 'noindex, nofollow');
   }
 });
@@ -941,6 +942,7 @@ registerChangelogRoutes(api);
 registerPushRoutes(api);
 registerRelayRoutes(api);
 registerProviderKeyRoutes(api);
+registerOfferRoutes(api);
 
 app.route(API_MOUNT, api);
 app.route('/', api);
