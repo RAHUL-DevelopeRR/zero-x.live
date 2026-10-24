@@ -4,6 +4,7 @@
 import { databaseConfigured, rpcRows } from './account-store.js';
 import { priceFromCost, publicPricing } from './pricing.js';
 import { vaultKeys, vaultKeySecret } from './provider-keys.js';
+import { offerForPool, servesOperatorPools } from './oiop/offers.js';
 
 // EU-27 plus Iceland, Liechtenstein and Norway.
 export const EEA_COUNTRIES = Object.freeze(['AT', 'BE', 'BG', 'HR', 'CY', 'CZ', 'DK', 'EE', 'FI', 'FR',
@@ -483,14 +484,20 @@ export function callerCountry(request, env = {}) {
   return normalizeCountry(country);
 }
 
-// Classifies every pool of an entry for a caller: configured, in plan, region allowed.
+// Classifies every pool of an entry for a caller: configured, in plan, region allowed. A pool
+// counts as configured only while its OIOP offer may serve other people through the operator's
+// keys (src/oiop/offers.js servesOperatorPools: active or degraded, redistribution permitted).
 export function poolVerdicts(env, entry, tiers, country) {
-  return entryPools(env, entry).map(pool => ({
-    pool,
-    configured: poolConfigured(env, entry, pool),
-    inPlan: tiers.includes(pool.tier),
-    region: !geoBlocked(entry, pool, country, env),
-  }));
+  return entryPools(env, entry).map(pool => {
+    const offer = offerForPool(env, entry, pool);
+    return {
+      pool,
+      offer,
+      configured: poolConfigured(env, entry, pool) && servesOperatorPools(offer),
+      inPlan: tiers.includes(pool.tier),
+      region: !geoBlocked(entry, pool, country, env),
+    };
+  });
 }
 
 export function unavailableReason(verdicts) {

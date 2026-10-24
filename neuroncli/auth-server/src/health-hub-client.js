@@ -80,6 +80,31 @@ export async function hubHealthRows(env, keys, now = Date.now()) {
   return new Map(keys.map(key => [key, snapshot.pools[key] ?? null]));
 }
 
+const ROUTING_TIMEOUT_MS = 300;
+const ROUTING_STALE_MS = 60_000;
+
+/**
+ * The hub's rows for every pool, for routing (router.js skips busy and blurred pools and demotes
+ * degraded ones). Uses the snapshot /v1/models reads; when it is older than 5 s the hub gets at
+ * most 300 ms to answer, after which a snapshot up to a minute old still serves. Null without a
+ * hub or any usable snapshot: routing then uses this isolate's tracker alone.
+ */
+export async function hubHealthForRouting(env, now = Date.now()) {
+  const hub = healthHub(env);
+  if (!hub) return null;
+  if (!snapshot || now - snapshot.at >= SNAPSHOT_TTL_MS) {
+    try {
+      const response = await hub.fetch(`${HUB_ORIGIN}/snapshot`, { signal: AbortSignal.timeout(ROUTING_TIMEOUT_MS) });
+      if (response.ok) {
+        const body = await response.json();
+        snapshot = { at: now, pools: body?.pools && typeof body.pools === 'object' ? body.pools : {} };
+      }
+    } catch { /* a slow or failed hub leaves the previous snapshot */ }
+  }
+  if (!snapshot || now - snapshot.at > ROUTING_STALE_MS) return null;
+  return new Map(Object.entries(snapshot.pools));
+}
+
 /**
  * Marks pools whose model disappeared from the provider's public list (daily discovery job) as
  * model_unavailable: in the hub when it is bound, otherwise in this isolate's tracker. Returns

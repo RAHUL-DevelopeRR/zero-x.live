@@ -2,9 +2,14 @@
 // offline: PGlite for the database, no outbound requests.
 //   node check-oiop.mjs
 import assert from 'node:assert/strict';
+import { Hono } from 'hono';
 import { rpcRows } from './src/account-store.js';
 import { closeAllPglite, getPgliteHandle } from './src/db/pglite.js';
-import { CATALOG } from './src/catalog.js';
+import { CATALOG, catalogEntry, listModelsForCaller, poolKey } from './src/catalog.js';
+import { RoutingEngine } from './src/router.js';
+import { ProviderHealthTracker } from './src/provider-health.js';
+import { conversationKey, createChatHandler, requestNeeds } from './src/chat-handler.js';
+import { callerPolicy, DEFAULT_TRUST_TIERS, TRAINING_HEADER, TRUST_HEADER } from './src/oiop/policy.js';
 import {
   BUILTIN_OFFERS, canTransition, LIFECYCLES, loadOffers, offerById, offerIdFor, resetOfferCache, servesOperatorPools,
   servesOwnKeys, TRANSITIONS,
@@ -20,6 +25,8 @@ function ok(name) { passed.push(name); console.log(`ok - ${name}`); }
 const DB = { DATABASE_DRIVER: 'pglite' };
 const ADMIN = 'oiop-admin-token-0123456789abcdef0123';
 const sql = async (text, params) => (await (await getPgliteHandle(DB)).db.query(text, params)).rows;
+const messages = [{ role: 'user', content: 'Read a.js and b.js' }];
+const tools = [{ type: 'function', function: { name: 'read_file', parameters: { type: 'object', properties: { path: { type: 'string' } } } } }];
 const realFetch = globalThis.fetch;
 globalThis.fetch = async input => { throw new Error(`Unexpected outbound request: ${String(input?.url ?? input)}`); };
 
@@ -215,7 +222,149 @@ try {
     ok('offer cache: database rows replace the built-ins once loaded (a suspended offer stops serving); without a database the built-ins route');
   }
 
-  console.log(`\nPASS: OIOP (${passed.length} groups): offers, lifecycle, terms review, audit, manifests, signing, admin API`);
+  // ── Routing: policy, capabilities, offer state, shared health, ordering, stickiness ──
+  {
+    const tracker = new ProviderHealthTracker();
+    const router = new RoutingEngine(tracker);
+    const env = { GROQ_API_KEY: 'groq-key', GEMINI_API_KEY: 'gemini-key', GEMINI_PAID_API_KEY: 'gemini-paid',
+      ALLOW_UNKNOWN_COUNTRY: 'true' };
+    const base = { env, requestedModel: 'auto', promptTokens: 1000, maxTokens: 2048, tiers: ['free'], needs: { tools: true } };
+    const models = route => [...new Set(route.candidates.map(candidate => candidate.entry.id))];
+    const policy = (tiers, training) => callerPolicy(new Headers({ ...(tiers ? { [TRUST_HEADER]: tiers } : {}),
+      ...(training ? { [TRAINING_HEADER]: training } : {}) }));
+    const all = router.route(base);
+    assert.equal(all.candidates[0].entry.id, 'gemini/gemini-2.5-flash');
+    assert.equal(all.candidates[0].offer.id, 'gemini.free', 'candidates carry their offer');
+    assert.deepEqual(policy('t1, T9,T0').trustTiers, ['T0', 'T1']);
+    assert.deepEqual(policy('T9').trustTiers, DEFAULT_TRUST_TIERS, 'a header naming no known tier keeps the default');
+    assert.ok(!DEFAULT_TRUST_TIERS.includes('T3'), 'T3 never by default');
+    const t1 = router.route({ ...base, policy: policy('T1') });
+    assert.ok(t1.ok && models(t1).every(id => !id.startsWith('gemini/')), 'T1 only: the T0 Gemini offers are left out');
+    const explicit = router.route({ ...base, requestedModel: 'gemini/gemini-2.5-flash', policy: policy('T1') });
+    assert.equal(explicit.error, 'policy_restricted');
+    assert.match(explicit.message, /trust tiers T1/);
+    const noTraining = router.route({ ...base, requestedModel: 'gemini/gemini-2.5-flash', tiers: ['free', 'paid'],
+      policy: policy(null, 'false') });
+    assert.deepEqual(noTraining.candidates.map(candidate => candidate.offer.id), ['gemini.paid'],
+      'training opt-out: the free tier (trains on inputs) is skipped, the paid tier serves');
+    // groq.free is trains_on_inputs=unknown until a quote is captured, so with only Groq and Gemini
+    // keys a free-plan caller who opts out of training has no model left.
+    const { GEMINI_PAID_API_KEY: _paid, ...freeKeys } = env;
+    assert.equal(router.route({ ...base, env: freeKeys, policy: policy(null, 'false') }).error, 'policy_restricted');
+    assert.equal(router.route({ ...base, policy: policy(null, 'false') }).error, 'upgrade_required',
+      'with a paid pool that does not train, the caller is told to upgrade instead');
+    const withWorkers = router.route({ ...base, env: { ...freeKeys, AI: {} }, policy: policy(null, 'false') });
+    assert.ok(withWorkers.ok && models(withWorkers).every(id => id.startsWith('@cf/')), 'Workers AI (no training) still serves');
+    const vision = router.route({ ...base, needs: { tools: true, vision: true } });
+    assert.ok(models(vision).length && models(vision).every(id => catalogEntry(id).supports_vision), 'images: vision models only');
+    const groqVision = router.route({ ...base, requestedModel: 'groq/openai/gpt-oss-120b', needs: { vision: true } });
+    assert.deepEqual([groqVision.error, groqVision.message], ['invalid_request', 'This model does not accept images; choose a vision model.']);
+    assert.equal(requestNeeds({ messages: [{ role: 'user', content: [{ type: 'image_url', image_url: { url: 'data:' } }] }] }).vision, true);
+    assert.equal(requestNeeds({ messages, response_format: { type: 'json_object' } }).json, true);
+
+    const flashKey = poolKey(catalogEntry('gemini/gemini-2.5-flash'), catalogEntry('gemini/gemini-2.5-flash').pools[0]);
+    const later = Date.now() + 60_000;
+    const blurred = router.route({ ...base, sharedHealth: new Map([[flashKey, { status: 'blurred', until: later }]]) });
+    assert.ok(!models(blurred).includes('gemini/gemini-2.5-flash'), 'a pool another isolate saw fail is skipped');
+    const expired = router.route({ ...base, sharedHealth: new Map([[flashKey, { status: 'blurred', until: Date.now() - 1 }]]) });
+    assert.equal(expired.candidates[0].entry.id, 'gemini/gemini-2.5-flash', 'an ended cooldown no longer counts');
+    const degraded = router.route({ ...base, sharedHealth: new Map([[flashKey, { status: 'degraded', until: 0 }]]) });
+    assert.notEqual(degraded.candidates[0].entry.id, 'gemini/gemini-2.5-flash');
+    assert.equal(degraded.candidates.at(-1).entry.id, 'gemini/gemini-2.5-flash', 'a degraded pool is tried after the healthy ones');
+    const spent = router.route({ ...base, budgetState: key => (key === flashKey ? { until: later } : null) });
+    assert.equal(spent.candidates.at(-1).entry.id, 'gemini/gemini-2.5-flash', 'a spent budget goes last');
+
+    const sticky = router.route({ ...base, affinity: 'user-1', conversation: 'c:task-42' });
+    assert.equal(sticky.sticky, 'user-1|c:task-42');
+    router.remember(sticky.sticky, 'groq/openai/gpt-oss-120b');
+    assert.equal(router.route({ ...base, affinity: 'user-1', conversation: 'c:task-42' }).candidates[0].entry.id,
+      'groq/openai/gpt-oss-120b', 'the conversation stays on the model that served it');
+    assert.equal(router.route({ ...base, affinity: 'user-1', conversation: 'c:other' }).candidates[0].entry.id,
+      'gemini/gemini-2.5-flash', 'other conversations are not affected');
+    assert.equal(router.route({ ...base, affinity: 'user-1', conversation: 'c:task-42', tiers: ['free', 'paid'] })
+      .candidates.find(candidate => candidate.pool.tier === 'paid')?.pool.tier, 'paid', 'stickiness never moves paid pools ahead of free ones');
+    assert.equal(conversationKey(' task-42 ', messages), 'c:task-42');
+    assert.equal(conversationKey(null, [{ role: 'system', content: 'You are Neuron.' }, ...messages]),
+      conversationKey(undefined, [{ role: 'system', content: 'You are Neuron.' }, ...messages, { role: 'assistant', content: 'ok' }]),
+      'later turns of a conversation hash the same');
+
+    const dbEnv = { ...env, ...DB };
+    await rpcRows(DB, 'zerox_offer_transition', { p_id: 'groq.free', p_to: 'suspended', p_actor: 'check' });
+    resetOfferCache(dbEnv);
+    await loadOffers(dbEnv);
+    assert.equal(router.route({ ...base, env: dbEnv, requestedModel: 'groq/openai/gpt-oss-120b' }).error, 'model_not_found',
+      'a suspended offer serves nothing');
+    assert.ok(models(router.route({ ...base, env: dbEnv })).every(id => !id.startsWith('groq/')));
+    const listed = listModelsForCaller(dbEnv, { tiers: ['free'] }).data.find(model => model.id === 'groq/openai/gpt-oss-120b');
+    assert.deepEqual([listed.available, listed.unavailable_reason], [false, 'not_configured'], '/v1/models agrees');
+    await rpcRows(DB, 'zerox_offer_transition', { p_id: 'groq.free', p_to: 'probing', p_actor: 'check' });
+    await rpcRows(DB, 'zerox_offer_transition', { p_id: 'groq.free', p_to: 'active', p_actor: 'check' });
+    resetOfferCache(dbEnv);
+    ok('routing: trust tiers and training opt-out per request (T3 never by default), vision/streaming/json needs, suspended offers serve nothing (also in /v1/models), shared busy/blurred pools skipped, degraded and spent pools demoted, per-conversation stickiness within the free tier');
+  }
+
+  // ── Chat handler: X-OIOP-Offer, X-OIOP-Fallback, policy errors ──
+  {
+    const tracker = new ProviderHealthTracker();
+    const router = new RoutingEngine(tracker);
+    const store = new Map();
+    const chat = new Hono();
+    chat.post('/v1/chat/completions', createChatHandler({
+      validateSession: async c => {
+        const token = (c.req.header('Authorization') || '').replace(/^Bearer /, '');
+        return store.has(token) ? { token, session: store.get(token) } : null;
+      },
+      setSession: async (c, token, value) => { store.set(token, value); },
+      getSession: async (c, token) => store.get(token) || null,
+      planLimits: async () => ({ free: { name: 'Free', daily_tokens: 256000, daily_requests: 2000, price_usd: 0 } }),
+      router, healthTracker: tracker,
+    }));
+    store.set('ses_anon', { created: Date.now(), plan: 'free', requests: 0, tokens_used: 0, usage_day: new Date().toISOString().slice(0, 10) });
+    const env = { GROQ_API_KEY: 'groq-key', GEMINI_API_KEY: 'gemini-key', ALLOW_UNKNOWN_COUNTRY: 'true' };
+    const upstreamModels = [];
+    globalThis.fetch = async (input, init = {}) => {
+      const url = String(input?.url ?? input);
+      if (!url.startsWith('https://generativelanguage.googleapis.com/') && !url.startsWith('https://api.groq.com/')) {
+        throw new Error(`Unexpected outbound request: ${url}`);
+      }
+      const { model } = JSON.parse(init.body);
+      upstreamModels.push(model);
+      if (model === 'gemini-2.5-flash') {
+        return Response.json({ error: { message: 'quota', code: 429 } }, { status: 429, headers: { 'Retry-After': '30' } });
+      }
+      return Response.json({ id: 'up', choices: [{ index: 0, message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
+        usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 } });
+    };
+    const send = (extra = {}, body = {}) => chat.request('https://zero-x.live/v1/chat/completions', { method: 'POST',
+      headers: { Authorization: 'Bearer ses_anon', 'Content-Type': 'application/json', ...extra },
+      body: JSON.stringify({ model: 'auto', messages, tools, ...body }) }, env);
+    const quiet = async fn => {
+      const saved = [console.warn, console.error];
+      console.warn = () => {}; console.error = () => {};
+      try { return await fn(); } finally { [console.warn, console.error] = saved; }
+    };
+    const rerouted = await quiet(() => send());
+    assert.equal(rerouted.status, 200);
+    assert.deepEqual(upstreamModels, ['gemini-2.5-flash', 'gemini-3.5-flash']);
+    assert.equal(rerouted.headers.get('x-oiop-offer'), 'gemini.free');
+    assert.equal(rerouted.headers.get('x-oiop-fallback'), 'gemini/gemini-2.5-flash; offer=gemini.free; reason=rate_limited');
+    assert.equal(rerouted.headers.get('x-neuron-model'), 'gemini/gemini-3.5-flash');
+    assert.equal(router.sticky.get(`ses_anon|${conversationKey(null, messages)}`), 'gemini/gemini-3.5-flash',
+      'the model that served is remembered for the conversation');
+    upstreamModels.length = 0;
+    const direct = await send({ [TRUST_HEADER]: 'T1' });
+    assert.equal(direct.status, 200);
+    assert.deepEqual([upstreamModels, direct.headers.get('x-oiop-offer'), direct.headers.get('x-oiop-fallback')],
+      [['openai/gpt-oss-120b'], 'groq.free', null], 'T1 only: served by Groq first, no fallback header');
+    const refused = await send({ [TRUST_HEADER]: 'T3' });
+    assert.equal(refused.status, 403);
+    assert.equal((await refused.json()).error.code, 'policy_restricted');
+    assert.equal(refused.headers.get('x-oiop-offer'), null, 'errors name no offer');
+    globalThis.fetch = async input => { throw new Error(`Unexpected outbound request: ${String(input?.url ?? input)}`); };
+    ok('chat handler: X-OIOP-Offer names the serving offer, X-OIOP-Fallback the first choice and why it did not serve; the served model sticks to the conversation; trust-tier headers route and refuse (403 policy_restricted)');
+  }
+
+  console.log(`\nPASS: OIOP (${passed.length} groups): offers, lifecycle, terms review, audit, manifests, signing, admin API, routing policy, headers`);
 } finally {
   globalThis.fetch = realFetch;
   await closeAllPglite();

@@ -248,7 +248,8 @@ app.use('*', async (c, next) => {
 // ── CORS: identity routes accept only the Zero-X origins; the OpenAI surface stays open ──
 const IDENTITY_ORIGINS = ['https://zero-x.live', 'https://www.zero-x.live', 'https://dashboard.zero-x.live'];
 const DEV_ORIGIN = /^http:\/\/(127\.0\.0\.1|localhost)(:\d{1,5})?$/;
-const CORS_HEADERS = ['Content-Type', 'Authorization'];
+const CORS_HEADERS = ['Content-Type', 'Authorization', 'X-Neuron-Trust-Tiers', 'X-Neuron-Allow-Training',
+  'X-Neuron-Conversation'];
 const CORS_METHODS = ['GET', 'POST', 'DELETE', 'OPTIONS'];
 const identityCors = cors({
   origin: (origin, c) => IDENTITY_ORIGINS.includes(origin) || (devRuntimeEnabled(c.env) && DEV_ORIGIN.test(origin)) ? origin : null,
@@ -257,7 +258,7 @@ const identityCors = cors({
 const openCors = cors({
   origin: '*', allowHeaders: CORS_HEADERS, allowMethods: CORS_METHODS, maxAge: 600,
   exposeHeaders: ['X-Request-Id', 'X-Neuron-Plan', 'X-Neuron-Model', 'X-Neuron-Quota-Remaining-Requests',
-    'X-Neuron-Quota-Remaining-Tokens', 'Retry-After'],
+    'X-Neuron-Quota-Remaining-Tokens', 'X-OIOP-Offer', 'X-OIOP-Fallback', 'Retry-After'],
 });
 app.use('*', async (c, next) => {
   const path = routePath(new URL(c.req.url).pathname);

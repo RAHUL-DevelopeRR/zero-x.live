@@ -181,14 +181,17 @@ export async function loadOffers(env) {
   const pending = (async () => {
     let rows = cached?.rows || NO_ROWS;
     let ttl = OFFERS_TTL_MS;
+    let failing = false;
     try {
       const list = (await rpcRows(env, 'zerox_offers_list', {})).filter(row => typeof row?.id === 'string').map(freezeRow);
       rows = { list: Object.freeze(list), byId: new Map(list.map(row => [row.id, row])) };
     } catch (error) {
-      console.error('OIOP offers unavailable; keeping the last list', { name: error?.name });
+      // Logged once per failure streak (e.g. before the migration is applied), not every retry.
+      if (!cached?.failing) console.error('OIOP offers unavailable; keeping the last list', { name: error?.name });
       ttl = OFFERS_RETRY_MS;
+      failing = true;
     }
-    offerCache.set(env, { rows, expires: Date.now() + ttl });
+    offerCache.set(env, { rows, failing, expires: Date.now() + ttl });
     return offersList(env);
   })();
   offerCache.set(env, { ...cached, rows: cached?.rows || NO_ROWS, expires: 0, pending });

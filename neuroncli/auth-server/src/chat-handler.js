@@ -6,11 +6,13 @@ import {
 import { globalSignatureCache } from './provider-request.js';
 import { globalRouter } from './router.js';
 import { FailureKind, globalHealthTracker } from './provider-health.js';
-import { publishHealth } from './health-hub-client.js';
+import { hubHealthForRouting, publishHealth } from './health-hub-client.js';
 import { callerCountry, loadCatalogDbModels, loadPlanPolicies, planPolicy, poolSecret, resolveModelId } from './catalog.js';
 import { touchVaultKey } from './provider-keys.js';
 import { billableUsage, estimateOutputTokens, estimatePromptTokens, utf8Bytes } from './pricing.js';
-import { exhaustedBudget, notePoolExhausted, notePoolReserved } from './pool-budget.js';
+import { exhaustedBudget, notePoolExhausted, notePoolReserved, poolBudgetState } from './pool-budget.js';
+import { loadOffers, offerIdFor } from './oiop/offers.js';
+import { callerPolicy } from './oiop/policy.js';
 import {
   PAID_DENIED_STATUSES, RESERVE_ERRORS, TERMINAL_RESERVE_STATUSES, reservationArgs, reserveCapacity, reserveError,
   reserveSessionQuota, runInBackground, sessionTiers, settleCapacity, settleSessionQuota, settlementArgs, usesLedger,
@@ -67,6 +69,43 @@ export function validateCompletionBody(body) {
     return 'stream_options must be an object.';
   }
   return null;
+}
+
+// What the request needs from a model (router.js lacks()).
+const IMAGE_PARTS = new Set(['image_url', 'input_image', 'image']);
+export function requestNeeds(body) {
+  return {
+    tools: Array.isArray(body.tools) && body.tools.length > 0,
+    vision: body.messages.some(message => Array.isArray(message.content) &&
+      message.content.some(part => IMAGE_PARTS.has(part?.type))),
+    stream: body.stream === true,
+    json: ['json_object', 'json_schema'].includes(body.response_format?.type),
+  };
+}
+
+// FNV-1a over text, as 8 hex digits.
+function fnv(text) {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < text.length; index++) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, '0');
+}
+
+const CONVERSATION_HEADER = /^[A-Za-z0-9._:-]{1,128}$/;
+const messageText = message => (typeof message?.content === 'string' ? message.content
+  : Array.isArray(message?.content) ? message.content.map(part => (typeof part?.text === 'string' ? part.text : '')).join('') : '');
+
+// Identifies a conversation for sticky routing: the client's X-Neuron-Conversation id when it
+// sends one, otherwise a hash of the first system and user messages (the same in every turn of a
+// conversation). Never stored or logged beyond the per-isolate sticky map.
+export function conversationKey(header, messages) {
+  if (typeof header === 'string' && CONVERSATION_HEADER.test(header.trim())) return `c:${header.trim()}`;
+  const system = messages.find(message => message.role === 'system' || message.role === 'developer');
+  const user = messages.find(message => message.role === 'user');
+  if (!user) return null;
+  return `h:${fnv(`${messageText(system).slice(0, 4000)}\u0000${messageText(user).slice(0, 4000)}`)}`;
 }
 
 function positiveInt(value, fallback) {
@@ -155,7 +194,7 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
     const ledger = usesLedger(env, session);
     if (session.account_backed && !ledger) return fail('service_unavailable');
     const policy = planPolicy(env, session.plan, ledger ? await loadPlanPolicies(env) : undefined);
-    await loadCatalogDbModels(env);
+    const [, , sharedHealth] = await Promise.all([loadCatalogDbModels(env), loadOffers(env), hubHealthForRouting(env)]);
     headers['x-neuron-plan'] = policy.id;
     const promptTokens = estimatePromptTokens(body.messages, body.tools);
     const requestedMax = body.max_completion_tokens ?? body.max_tokens ?? DEFAULT_MAX_TOKENS;
@@ -169,13 +208,17 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
       route = router.route({
         env,
         requestedModel: body.model,
-        needsTools: Array.isArray(body.tools) && body.tools.length > 0,
+        needs: requestNeeds(body),
         promptTokens,
         maxTokens: requestedMax,
         tiers: sessionTiers(env, session, policy),
         country: callerCountry(c.req.raw, env),
         ownedCatalog: isOwnedSession(session) ? await ownedCatalog(env, session) : null,
         affinity: caller,
+        conversation: conversationKey(c.req.header('x-neuron-conversation'), body.messages),
+        policy: callerPolicy(c.req.raw.headers),
+        sharedHealth,
+        budgetState: poolBudgetState,
       });
     } catch (error) {
       console.error('Neuron routing failed', { name: error?.name, request_id: requestId });
@@ -350,6 +393,9 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
     const failures = [];
     const exhausted = [];
     const skipModels = new Set();
+    // The first candidate and why it did not serve, for X-OIOP-Fallback (contract §11.3).
+    const first = route.candidates[0];
+    let firstMiss = null;
     let paidDenied = null;
     let pending = null; // reservation of the last failed attempt, settled once its fate is known
     let current = null; // reservation whose attempt is in flight
@@ -392,6 +438,7 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
               const error = reserveError(row);
               return fail(error.code, error);
             }
+            if (candidate === first) firstMiss = row.status;
             if (PAID_DENIED_STATUSES.has(row.status)) paidDenied = row;
             else {
               // pool_exhausted: the shared budget of this pool is spent for every user.
@@ -412,9 +459,17 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
         }
         attempts++;
         if (candidate.pool.tier !== 'paid') freeAttempts++;
+        headers['x-oiop-offer'] = offerIdFor(candidate.entry, candidate.pool);
+        if (candidate !== first) {
+          headers['x-oiop-fallback'] = `${first.entry.id}; offer=${offerIdFor(first.entry, first.pool)}; reason=${firstMiss || 'skipped'}`;
+        }
         const result = await attempt(candidate, reservation);
         current = null;
-        if (result.ok) return result.response;
+        if (result.ok) {
+          if (route.sticky) router.remember(route.sticky, candidate.entry.id);
+          return result.response;
+        }
+        if (candidate === first) firstMiss = result.kind;
         failures.push(result);
         if (reservation) pending = { reservation, candidate, latencyMs: result.latencyMs, errorCode: result.errorCode, kind: result.kind };
         if (result.kind === FailureKind.ABORTED) break;
@@ -424,11 +479,16 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
     } catch (error) {
       console.error('Neuron completion failed unexpectedly', { name: error?.name, request_id: requestId });
       if (current) pending = { ...current, errorCode: 'internal_error' };
+      delete headers['x-oiop-offer'];
+      delete headers['x-oiop-fallback'];
       await releasePending('refunded');
       await settleKv({ actualTokens: 0, refundRequest: true });
       return fail('upstream_error');
     }
 
+    // No offer served this request.
+    delete headers['x-oiop-offer'];
+    delete headers['x-oiop-fallback'];
     const final = finalError({ failures, exhausted, paidDenied });
     const aborted = failures.some(failure => failure.kind === FailureKind.ABORTED);
     // Requests the upstream rejected as invalid count against the caller; provider-side
