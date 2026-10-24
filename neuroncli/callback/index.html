@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>NeuronCLI — Auth Callback</title>
+    <title>Connecting OpenRouter | Zero-X</title>
     <link rel="icon" type="image/png" sizes="32x32" href="../../Assets/zerox-favicon-32.png">
     <meta name="referrer" content="no-referrer">
     <link rel="stylesheet" href="/site-fonts.css">
@@ -64,7 +64,7 @@
         <div class="spinner" id="spinner"></div>
         <h1 id="title">Authenticating...</h1>
         <div id="badge"></div>
-        <p id="message">Connecting to NeuronCLI...</p>
+        <p id="message">Finishing your OpenRouter connection...</p>
         <div id="steps"></div>
         <div class="code-box" id="session" hidden></div>
         <button class="btn" id="copy-session" type="button" hidden>Copy gateway token</button>
@@ -104,16 +104,16 @@
                         try { await navigator.clipboard.writeText(result.session_token); copy.textContent = 'Copied'; }
                         catch { copy.textContent = 'Select and copy the token above'; }
                     });
-                    finish(true, 'Your OpenRouter connection is ready. This is a gateway token. For account sign-in, start neuron auth login in your terminal.');
+                    finish(true, 'Your OpenRouter connection is ready. This is a gateway token. To sign in to Neuron, run neuron login in your terminal.');
                 } else if (provider === 'azure' && token) {
                     const response = await fetch(AUTH_SERVER + '/auth/session', {
                         headers: {Authorization: 'Bearer ' + token}, signal: AbortSignal.timeout(15000)
                     });
                     if (!response.ok) throw new Error('Invalid or expired session. Restart authentication in your terminal.');
                     await response.json();
-                    finish(true, 'Your gateway session was verified. For terminal sign-in, start neuron auth login.');
+                    finish(true, 'Your gateway session was verified. To sign in to Neuron, run neuron login in your terminal.');
                 } else {
-                    finish(false, 'Start authentication from NeuronCLI using neuron auth login. This page requires a valid authentication callback.');
+                    finish(false, 'This page only completes an OpenRouter connection started from Zero-X. To sign in to Neuron, run neuron login and approve the code at https://neuron.zero-x.live/device.');
                 }
             } catch (error) {
                 finish(false, error.name === 'TimeoutError' ? 'Authentication timed out. Restart authentication in your terminal.' : error.message);

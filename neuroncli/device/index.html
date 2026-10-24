@@ -27,6 +27,7 @@
     #find,#signin{background:var(--zx-accent);color:var(--zx-on-accent);border:0}
     button:disabled{opacity:.55;cursor:not-allowed}button:focus-visible,input:focus-visible{outline:none;box-shadow:var(--zx-focus)}
     .done{font-size:1.1rem;color:var(--zx-heading)}
+    .help{font-size:.875rem;margin-top:20px}.help+.help{margin-top:4px}
   </style>
   <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js" integrity="sha384-Rj26LVGvoeRVR6+mwQmFfcR3QOBEwT+ZmuCWpuiqeTzJpCs0ER4ITAWGb4Hiy3Ok" crossorigin="anonymous"></script>
   <script defer src="/zerox-auth.js"></script>
@@ -65,6 +66,9 @@
     </section>
 
     <p id="done" class="done" hidden></p>
+
+    <p class="help">New to Neuron? <a href="https://zero-x.live/neuron-cli">Install it</a>.</p>
+    <p class="help">Trouble signing in? Email <a href="mailto:support@zero-x.live">support@zero-x.live</a>. <a href="https://zero-x.live/docs">Docs</a> · <a href="https://zero-x.live/terms">Terms</a> · <a href="https://zero-x.live/privacy">Privacy</a></p>
   </main>
 </body>
 </html>
