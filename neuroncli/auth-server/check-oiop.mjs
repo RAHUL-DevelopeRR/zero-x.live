@@ -10,6 +10,7 @@ import { RoutingEngine } from './src/router.js';
 import { ProviderHealthTracker } from './src/provider-health.js';
 import { conversationKey, createChatHandler, requestNeeds } from './src/chat-handler.js';
 import { callerPolicy, DEFAULT_TRUST_TIERS, TRAINING_HEADER, TRUST_HEADER } from './src/oiop/policy.js';
+import { findSecrets, scrubMode, scrubRequest, scrubsOffer, SecretRestorer } from './src/oiop/scrub.js';
 import {
   BUILTIN_OFFERS, canTransition, LIFECYCLES, loadOffers, offerById, offerIdFor, resetOfferCache, servesOperatorPools,
   servesOwnKeys, TRANSITIONS,
@@ -364,7 +365,160 @@ try {
     ok('chat handler: X-OIOP-Offer names the serving offer, X-OIOP-Fallback the first choice and why it did not serve; the served model sticks to the conversation; trust-tier headers route and refuse (403 policy_restricted)');
   }
 
-  console.log(`\nPASS: OIOP (${passed.length} groups): offers, lifecycle, terms review, audit, manifests, signing, admin API, routing policy, headers`);
+  // ── Secret scrubber: detection ──
+  {
+    const secretsIn = text => findSecrets(text).map(([start, end]) => text.slice(start, end));
+    const openai = `sk-proj-${'a1B2'.repeat(10)}`;
+    const groq = `gsk_${'Q9w8'.repeat(13)}`;
+    const pem = `-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7\n-----END PRIVATE KEY-----`;
+    const jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c';
+    const positives = [
+      [`client = OpenAI(api_key="${openai}")`, openai],
+      [`GROQ_API_KEY=${groq}`, groq],
+      ['key: AIzaSyD-9tSrke72PouQMnMX-a7eZSW0jkFMBWY', 'AIzaSyD-9tSrke72PouQMnMX-a7eZSW0jkFMBWY'],
+      ['AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE', 'AKIAIOSFODNN7EXAMPLE'],
+      [`token ghp_${'x1Y2'.repeat(9)} end`, `ghp_${'x1Y2'.repeat(9)}`],
+      [pem, pem],
+      [`Authorization: ${jwt}`, jwt],
+      ['DATABASE_URL=postgres://app:s3cr3t-Pa55@db.internal:5432/app', 's3cr3t-Pa55'],
+      ['export STRIPE_WEBHOOK_SECRET="whsec_7f3a9c21b0d4e5f6"', 'whsec_7f3a9c21b0d4e5f6'],
+      ['{ "password": "hunter2hunter2" }', 'hunter2hunter2'],
+      ['db:\n  password: Zx81qPlm0Nn\n', 'Zx81qPlm0Nn'],
+    ];
+    for (const [text, secret] of positives) assert.ok(secretsIn(text).includes(secret), `finds ${secret.slice(0, 24)} in ${text.slice(0, 40)}`);
+    const negatives = [
+      'API_KEY=process.env.API_KEY', 'API_KEY=your-api-key-here', 'password: ${DB_PASSWORD}', 'token = "xxxxxxxxxxxx"',
+      'const apiKey = config.openai.apiKey;', 'Fixed the password reset flow in auth.js', 'commit 9fceb02d0ae598e95dc970b74767f19372d61af8',
+      'SECRET_NAME=short', 'PASSWORD=<your password>', 'OPENAI_API_KEY=changeme',
+    ];
+    for (const text of negatives) assert.deepEqual(secretsIn(text), [], `nothing in ${text}`);
+    ok(`scrubber detection: ${positives.length} credential forms found (provider keys, PEM, JWT, connection-string and assignment values); ${negatives.length} look-alikes (env references, placeholders, prose, hashes) left alone`);
+  }
+
+  // ── Secret scrubber: requests, placeholders, restoring ──
+  {
+    const groq = `gsk_${'Q9w8'.repeat(13)}`;
+    const dotenv = `GROQ_API_KEY=${groq}\nDEBUG=true\n`;
+    const body = { model: 'auto', messages: [
+      { role: 'system', content: 'You are Neuron.' },
+      { role: 'user', content: [{ type: 'text', text: `Rotate this: ${groq}` }] },
+      { role: 'assistant', content: null, tool_calls: [{ id: 'call_1', type: 'function',
+        function: { name: 'write_file', arguments: JSON.stringify({ path: '.env', content: dotenv }) } }] },
+      { role: 'tool', tool_call_id: 'call_1', content: `wrote .env:\n${dotenv}` },
+    ] };
+    const { body: sent, secrets, count } = await scrubRequest(body);
+    const wire = JSON.stringify(sent);
+    assert.equal(count, 1);
+    assert.ok(!wire.includes(groq), 'the key never reaches the upstream');
+    const [placeholder] = secrets.keys();
+    assert.match(placeholder, /^zxsecret_[0-9a-f]{12}$/);
+    assert.equal(wire.split(placeholder).length - 1, 3, 'the same placeholder everywhere the key appears');
+    assert.deepEqual(JSON.parse(sent.messages[2].tool_calls[0].function.arguments),
+      { path: '.env', content: `GROQ_API_KEY=${placeholder}\nDEBUG=true\n` }, 'arguments stay valid JSON');
+    assert.equal(sent.messages[0], body.messages[0], 'untouched messages are reused as is');
+    assert.equal((await scrubRequest(body)).secrets.keys().next().value, placeholder, 'stable across turns (prompt caches still match)');
+    const clean = { model: 'auto', messages };
+    assert.equal((await scrubRequest(clean)).body, clean, 'a request without secrets is passed through');
+
+    const tricky = 'line1\n"quoted"\\end';
+    const restorer = new SecretRestorer(new Map([['zxsecret_0123456789ab', tricky], [placeholder, groq]]));
+    const completion = restorer.completion({ choices: [{ index: 0, message: { role: 'assistant',
+      content: `Use ${placeholder}.`, tool_calls: [{ id: 'c', type: 'function',
+        function: { name: 'write_file', arguments: '{"content":"K=zxsecret_0123456789ab"}' } }] } }] });
+    assert.equal(completion.choices[0].message.content, `Use ${groq}.`);
+    assert.deepEqual(JSON.parse(completion.choices[0].message.tool_calls[0].function.arguments), { content: `K=${tricky}` },
+      'secrets go back JSON-escaped into tool arguments');
+
+    const streamed = new SecretRestorer(new Map([[placeholder, groq]]));
+    const pieces = ['Key: zxse', 'cret_', placeholder.slice(9, 15), `${placeholder.slice(15)} done`];
+    const out = pieces.map(text => streamed.chunk({ choices: [{ index: 0, delta: { content: text }, finish_reason: null }] })
+      .choices[0].delta.content).join('');
+    assert.equal(out, `Key: ${groq} done`, 'a placeholder split over four chunks is restored');
+    const args = new SecretRestorer(new Map([[placeholder, groq]]));
+    const argText = [`{"k":"${placeholder.slice(0, 5)}`, `${placeholder.slice(5)}"}`].map(text =>
+      args.chunk({ choices: [{ index: 0, delta: { tool_calls: [{ index: 0, function: { arguments: text } }] }, finish_reason: null }] })
+        .choices[0].delta.tool_calls[0].function.arguments).join('');
+    assert.equal(argText, `{"k":"${groq}"}`);
+    const tail = new SecretRestorer(new Map([[placeholder, groq]]));
+    assert.equal(tail.chunk({ choices: [{ index: 0, delta: { content: 'ends with zxsecret_0' }, finish_reason: null }] }).choices[0].delta.content, 'ends with ');
+    assert.equal(tail.chunk({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] }).choices[0].delta.content, 'zxsecret_0',
+      'held text that never became a placeholder is released when the choice ends');
+    const open = new SecretRestorer(new Map([[placeholder, groq]]));
+    open.chunk({ choices: [{ index: 0, delta: { content: 'x zxsec' }, finish_reason: null }] });
+    assert.deepEqual(open.finalChunk({ id: 'c' }).choices[0].delta, { content: 'zxsec' }, 'and at the end of a stream without a finish');
+    assert.equal(scrubMode({}), 'all');
+    assert.equal(scrubMode({ OIOP_SCRUB: 'nonsense' }), 'all');
+    assert.ok(!scrubsOffer('untrusted', offerById({}, 'groq.free')) && scrubsOffer('untrusted', { trust_tier: 'T3' }));
+    assert.ok(!scrubsOffer('off', { trust_tier: 'T3' }));
+    ok('scrubber requests: text, parts, tool results and tool-call arguments (still valid JSON) carry one stable placeholder per secret; answers get the secrets back, JSON-escaped in arguments, across split stream chunks, with held text released at the end');
+  }
+
+  // ── Secret scrubber: through the chat handler ──
+  {
+    const groq = `gsk_${'Q9w8'.repeat(13)}`;
+    const store = new Map([['ses_anon', { created: Date.now(), plan: 'free', requests: 0, tokens_used: 0,
+      usage_day: new Date().toISOString().slice(0, 10) }]]);
+    const tracker = new ProviderHealthTracker();
+    const chat = new Hono();
+    chat.post('/v1/chat/completions', createChatHandler({
+      validateSession: async c => ({ token: 'ses_anon', session: store.get('ses_anon') }),
+      setSession: async (c, token, value) => { store.set(token, value); },
+      getSession: async () => store.get('ses_anon'),
+      planLimits: async () => ({ free: { name: 'Free', daily_tokens: 256000, daily_requests: 2000, price_usd: 0 } }),
+      router: new RoutingEngine(tracker), healthTracker: tracker,
+    }));
+    const env = { GROQ_API_KEY: 'groq-upstream-key' };
+    let upstreamBody = null;
+    const encoder = new TextEncoder();
+    globalThis.fetch = async (input, init = {}) => {
+      const url = String(input?.url ?? input);
+      if (!url.startsWith('https://api.groq.com/')) throw new Error(`Unexpected outbound request: ${url}`);
+      upstreamBody = init.body;
+      const sentBody = JSON.parse(init.body);
+      const placeholder = init.body.match(/zxsecret_[0-9a-f]{12}/)?.[0] || 'none';
+      if (!sentBody.stream) {
+        return Response.json({ id: 'up', choices: [{ index: 0, message: { role: 'assistant', content: `Saved ${placeholder}` },
+          finish_reason: 'stop' }], usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 } });
+      }
+      const events = [
+        { choices: [{ index: 0, delta: { role: 'assistant', content: `Key ${placeholder.slice(0, 11)}` }, finish_reason: null }] },
+        { choices: [{ index: 0, delta: { content: placeholder.slice(11) }, finish_reason: null }] },
+        { choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 'call_9', type: 'function',
+          function: { name: 'write_file', arguments: `{"content":"K=${placeholder}"}` } }] }, finish_reason: null }] },
+        { choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }], usage: { prompt_tokens: 10, completion_tokens: 4, total_tokens: 14 } },
+      ];
+      return new Response(new ReadableStream({ start(controller) {
+        for (const event of events) controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+        controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+        controller.close();
+      } }), { headers: { 'Content-Type': 'text/event-stream' } });
+    };
+    const send = (extra = {}, callEnv = env) => chat.request('https://zero-x.live/v1/chat/completions', { method: 'POST',
+      headers: { Authorization: 'Bearer ses_anon', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'groq/openai/gpt-oss-120b', messages: [{ role: 'user', content: `My key is ${groq}` }], ...extra }) }, callEnv);
+    const plain = await send();
+    assert.equal(plain.status, 200);
+    assert.ok(!upstreamBody.includes(groq), 'the upstream got the placeholder');
+    assert.equal(plain.headers.get('x-oiop-redacted'), '1');
+    assert.equal((await plain.json()).choices[0].message.content, `Saved ${groq}`, 'the client got the key back');
+    const streamed = await send({ stream: true, tools });
+    const text = await streamed.text();
+    assert.ok(!upstreamBody.includes(groq));
+    const chunks = text.split('\n\n').filter(Boolean).map(event => event.slice(6)).filter(data => data !== '[DONE]').map(JSON.parse);
+    const content = chunks.map(chunk => chunk.choices?.[0]?.delta?.content || '').join('');
+    const argumentsText = chunks.flatMap(chunk => chunk.choices?.[0]?.delta?.tool_calls || []).map(call => call.function?.arguments || '').join('');
+    assert.equal(content, `Key ${groq}`);
+    assert.deepEqual(JSON.parse(argumentsText), { content: `K=${groq}` });
+    assert.ok(!text.includes('zxsecret_'), 'no placeholder reaches the client');
+    await send({}, { ...env, OIOP_SCRUB: 'off' });
+    assert.ok(upstreamBody.includes(groq), 'OIOP_SCRUB=off sends the prompt as is');
+    await send({}, { ...env, OIOP_SCRUB: 'untrusted' });
+    assert.ok(upstreamBody.includes(groq), 'untrusted: a T1 offer gets the prompt as is');
+    globalThis.fetch = async input => { throw new Error(`Unexpected outbound request: ${String(input?.url ?? input)}`); };
+    ok('scrubber end to end: the upstream sees placeholders, the client sees its own secrets (JSON and streamed content and tool arguments), X-OIOP-Redacted counts them; OIOP_SCRUB off/untrusted respected');
+  }
+
+  console.log(`\nPASS: OIOP (${passed.length} groups): offers, lifecycle, terms review, audit, manifests, signing, admin API, routing policy, headers, secret scrubber`);
 } finally {
   globalThis.fetch = realFetch;
   await closeAllPglite();

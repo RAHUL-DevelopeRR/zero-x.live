@@ -13,6 +13,7 @@ import { billableUsage, estimateOutputTokens, estimatePromptTokens, utf8Bytes } 
 import { exhaustedBudget, notePoolExhausted, notePoolReserved, poolBudgetState } from './pool-budget.js';
 import { loadOffers, offerIdFor } from './oiop/offers.js';
 import { callerPolicy } from './oiop/policy.js';
+import { scrubMode, scrubRequest, scrubsOffer, SecretRestorer } from './oiop/scrub.js';
 import {
   PAID_DENIED_STATUSES, RESERVE_ERRORS, TERMINAL_RESERVE_STATUSES, reservationArgs, reserveCapacity, reserveError,
   reserveSessionQuota, runInBackground, sessionTiers, settleCapacity, settleSessionQuota, settlementArgs, usesLedger,
@@ -323,9 +324,23 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
       if (upstream) console.warn('Neuron upstream error detail', { ...log, kind, upstream });
     };
 
+    // Credentials in the prompt are replaced before it leaves the gateway and put back into the
+    // answer (src/oiop/scrub.js); scrubbed once per request, for the offers OIOP_SCRUB covers.
+    const scrub = scrubMode(env);
+    let scrubbed = null;
+    const outgoing = async offer => {
+      if (!scrubsOffer(scrub, offer)) return { body, secrets: new Map(), count: 0 };
+      scrubbed ||= scrubRequest(body);
+      return scrubbed;
+    };
+
     const attempt = async (candidate, reservation) => {
       const { entry, pool, key } = candidate;
-      const payload = buildUpstreamPayload(entry, body, candidate.maxTokens);
+      const sent = await outgoing(candidate.offer);
+      const restorer = new SecretRestorer(sent.secrets);
+      if (sent.count) headers['x-oiop-redacted'] = String(sent.count);
+      else delete headers['x-oiop-redacted'];
+      const payload = buildUpstreamPayload(entry, sent.body, candidate.maxTokens);
       const startedAt = Date.now();
       const log = { provider: entry.provider, model: entry.upstream_model, tier: pool.tier, request_id: requestId };
       const { request, onToolSignature } = signatureHooks(entry);
@@ -355,7 +370,7 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
       if (!payload.stream) {
         let completion;
         try {
-          completion = normalizeCompletion(started.json, entry.id, body.messages, body.tools, { onToolSignature });
+          completion = restorer.completion(normalizeCompletion(started.json, entry.id, sent.body.messages, body.tools, { onToolSignature }));
         } catch {
           recordFailure(key, FailureKind.SERVER, null, started.latencyMs);
           console.error('Neuron upstream returned an invalid completion', log);
@@ -369,7 +384,7 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
       recordSuccess(key, started.latencyMs, pool);
       const stream = createCompletionStream({
         ...started.stream, model: entry.id, controller: started.controller, clientSignal, timeouts, requestId, env,
-        onToolSignature,
+        onToolSignature, restorer,
         onFinish: async outcome => {
           if (outcome.status !== 'ok') {
             recordFailure(key, outcome.kind, outcome.retryAfterSeconds, Date.now() - startedAt, outcome.phase ?? null);
@@ -489,6 +504,7 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
     // No offer served this request.
     delete headers['x-oiop-offer'];
     delete headers['x-oiop-fallback'];
+    delete headers['x-oiop-redacted'];
     const final = finalError({ failures, exhausted, paidDenied });
     const aborted = failures.some(failure => failure.kind === FailureKind.ABORTED);
     // Requests the upstream rejected as invalid count against the caller; provider-side

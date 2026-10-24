@@ -258,7 +258,7 @@ const identityCors = cors({
 const openCors = cors({
   origin: '*', allowHeaders: CORS_HEADERS, allowMethods: CORS_METHODS, maxAge: 600,
   exposeHeaders: ['X-Request-Id', 'X-Neuron-Plan', 'X-Neuron-Model', 'X-Neuron-Quota-Remaining-Requests',
-    'X-Neuron-Quota-Remaining-Tokens', 'X-OIOP-Offer', 'X-OIOP-Fallback', 'Retry-After'],
+    'X-Neuron-Quota-Remaining-Tokens', 'X-OIOP-Offer', 'X-OIOP-Fallback', 'X-OIOP-Redacted', 'Retry-After'],
 });
 app.use('*', async (c, next) => {
   const path = routePath(new URL(c.req.url).pathname);

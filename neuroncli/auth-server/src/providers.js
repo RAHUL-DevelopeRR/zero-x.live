@@ -1032,7 +1032,7 @@ function normalizeStreamValue(value, state) {
  * { status:'ok'|'error', usage, outputBytes, errorCode, kind } before the final event.
  */
 export function createCompletionStream({ reader, first, model, controller, clientSignal, timeouts, onFinish, requestId, env,
-  onToolSignature = null }) {
+  onToolSignature = null, restorer = null }) {
   const encoder = new TextEncoder();
   const state = {
     id: `chatcmpl-${crypto.randomUUID()}`, created: Math.floor(Date.now() / 1000), model,
@@ -1058,13 +1058,17 @@ export function createCompletionStream({ reader, first, model, controller, clien
       state.sawDone = true;
       return [];
     }
-    return normalizeStreamValue(event.value, state);
+    const chunks = normalizeStreamValue(event.value, state);
+    // Secrets withheld from the upstream go back into the client's stream (src/oiop/scrub.js).
+    return restorer?.active ? chunks.map(chunk => restorer.chunk(chunk)) : chunks;
   };
   const finalize = async () => {
     if (!state.sawDone && !state.sawFinish && !state.pendingToolFinish) {
       throw new UpstreamProtocolError('Provider stream ended before completion');
     }
     const tail = [];
+    const held = restorer?.active ? restorer.finalChunk(chunkOf(state, [])) : null;
+    if (held) tail.push(held);
     if (!state.sawFinish) tail.push(chunkOf(state, [{ index: 0, delta: {}, finish_reason: state.pendingToolFinish ? 'tool_calls' : 'stop' }]));
     if (state.usage && !state.usageForwarded) tail.push(chunkOf(state, [], { usage: state.usage }));
     await finish({ status: 'ok' });
