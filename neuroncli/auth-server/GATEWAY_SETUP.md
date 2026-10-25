@@ -186,8 +186,11 @@ deleted. An approved change serves at once in the approving isolate and within a
 everywhere; `/v1/models/stream` tells clients through `catalog_version`.
 
 **Rollback.** Set `CATALOG_SOURCE = "code"` (wrangler.toml `[vars]`) and deploy: the gateway serves
-`src/catalog.js` only, whatever the rows say. To remove the migrations, deploy that first, then run
-`migrations/down/*.down.sql` newest first by hand (the runner skips that directory).
+`src/catalog.js` only, whatever the rows say. The down scripts are in `migrations/down/` (the
+runner skips that directory) and run newest first by hand. The catalog ones (`20261025000100`,
+`20261025000000`) are safe once `CATALOG_SOURCE = "code"` is deployed. The billing ones
+(`20261025000300`, `20261025000200`) restore the 9-argument `zerox_settle_v2`, which this gateway
+version no longer calls: revert the Worker to the previous version first.
 
 **Smoke test after deploy.** `/v1/models` as Pro lists both Claude models `available: true`; as Free
 they show `upgrade_required`. A Pro request to `claude-sonnet-5-5` with `max_tokens` 1024 produces a
