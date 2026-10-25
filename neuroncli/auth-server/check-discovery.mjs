@@ -17,6 +17,7 @@ import { LIST_SOURCES, MODELS_DEV_URL, parseKilo, parseLlm7, parseNvidia, parseO
 import { OMNIROUTE_CATALOG_URL, omnirouteDiff, parseOmnirouteCatalog } from './src/discovery/omniroute.js';
 import { parseResearchAnswer, researchBudget, researchCostMicrousd, researchRows, RESEARCH_MODEL } from './src/discovery/research.js';
 import { verificationTarget, verifyCandidate } from './src/discovery/verify.js';
+import { REVIEW_PAGE } from './src/discovery/review-page.js';
 import { DAY, discoveryJobs, researchEnabled, runDiscoveryTick, WEEK } from './src/discovery/jobs.js';
 import { anthropicFetch } from './src/anthropic-transport.js';
 import app from './src/index.js';
@@ -511,6 +512,31 @@ try {
   const disabled = await call('/admin/catalog/disable', { method: 'POST', body: { model_id: 'acme/coder-pro:free', note: 'pause' } });
   assert.equal(disabled.status, 200);
   assert.ok(!(await servedIds({ ...adminEnv })).includes('acme/coder-pro:free'), 'disabled on /admin/models: no longer served');
+  // A candidate promoted before the data-driven catalog keeps its legacy gateway_provider_models
+  // row, and migration 20261025000100 imported it as a catalog row. Once that row is active,
+  // "Remove from catalog" must not report a removal while it keeps serving: demote is refused.
+  await sql(`INSERT INTO public.gateway_provider_models (public_model_id, provider_id, provider_model_id, candidate_id)
+    VALUES ('acme/coder-pro:free', 'openrouter', 'acme/coder-pro:free', $1)`, [coderRow.id]);
+  assert.equal((await call('/admin/catalog/enable', { method: 'POST', body: { model_id: 'acme/coder-pro:free' } })).status, 200);
+  const both = (await call('/admin/discovery/candidates?status=verified&provider=openrouter')).body.data.find(item => item.id === coderRow.id);
+  assert.deepEqual([both.promoted, both.catalog_model_id, both.catalog_status], [true, 'acme/coder-pro:free', 'active']);
+  const managed = await call(`/admin/discovery/candidates/${coderRow.id}/demote`, { method: 'POST', body: {} });
+  assert.deepEqual([managed.status, managed.body.error.code], [409, 'catalog_managed'], 'a catalog row is managed on /admin/models');
+  assert.match(managed.body.error.message, /acme\/coder-pro:free is a catalog row \(active\); disable it on \/admin\/models/);
+  assert.equal((await sql("SELECT status FROM public.zerox_catalog_models WHERE id = 'acme/coder-pro:free'"))[0].status, 'active');
+  assert.ok((await servedIds({ ...adminEnv })).includes('acme/coder-pro:free'), 'the active row keeps serving and nothing claims otherwise');
+  assert.match(REVIEW_PAGE, /row\.promoted && !row\.catalog_model_id\) button\('Remove legacy row', 'demote'\)/,
+    'the page offers no demote next to a catalog row');
+  assert.ok(!REVIEW_PAGE.includes('Removed from the catalog.'));
+  assert.equal((await call('/admin/catalog/disable', { method: 'POST', body: { model_id: 'acme/coder-pro:free' } })).status, 200);
+  // A legacy row without a catalog row can still be disabled; the answer says it was never served.
+  const [legacy] = await sql(`INSERT INTO public.zerox_provider_candidates (source, provider, model_id, status)
+    VALUES ('check', 'openrouter', 'acme/legacy:free', 'verified') RETURNING id`);
+  await sql(`INSERT INTO public.gateway_provider_models (public_model_id, provider_id, provider_model_id, candidate_id)
+    VALUES ('acme/legacy:free', 'openrouter', 'acme/legacy:free', $1)`, [legacy.id]);
+  const legacyDemote = await call(`/admin/discovery/candidates/${legacy.id}/demote`, { method: 'POST', body: {} });
+  assert.deepEqual([legacyDemote.status, legacyDemote.body.demoted, legacyDemote.body.served], [200, ['acme/legacy:free'], false]);
+  assert.match(legacyDemote.body.note, /was not served/);
   // CATALOG_DB_MODELS is ignored: the legacy promoted-model table is never served.
   const legacyEnv = { ...adminEnv, CATALOG_DB_MODELS: 'true' };
   await loadCatalog(legacyEnv);

@@ -159,8 +159,8 @@ pre { white-space: pre-wrap; word-break: break-word; font-size: 12px; background
         const result = await api('/admin/discovery/candidates/' + row.id + '/promote', { method: 'POST', body: '{}' });
         say('Saved ' + result.promoted?.public_model_id + ' as a draft. ' + (result.notes || []).join(' '), 'good');
       } else if (action === 'demote') {
-        await api('/admin/discovery/candidates/' + row.id + '/demote', { method: 'POST', body: '{}' });
-        say('Removed from the catalog.', 'good');
+        const result = await api('/admin/discovery/candidates/' + row.id + '/demote', { method: 'POST', body: '{}' });
+        say(result.note || 'The legacy discovery row was disabled.', 'good');
       }
       await load(false);
     } catch (error) { say(error.message, 'bad'); button.disabled = false; }
@@ -183,7 +183,9 @@ pre { white-space: pre-wrap; word-break: break-word; font-size: 12px; background
         actions.append(link('https://dashboard.zero-x.live/admin/models?id=' + encodeURIComponent(row.catalog_model_id),
           'Catalog: ' + row.catalog_status));
       }
-      if (row.promoted) button('Remove from catalog', 'demote');
+      // A catalog row is disabled on /admin/models (the link above); only a legacy row without one
+      // can be cleaned up here, and it was never served.
+      if (row.promoted && !row.catalog_model_id) button('Remove legacy row', 'demote');
       if (row.status !== 'excluded' && !(row.status === 'rejected' && !row.filtered)) button('Reject', 'reject');
       const more = el('button', { text: 'Details' });
       const name = el('td', {}, el('div', {}, el('strong', { text: row.provider })),

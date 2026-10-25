@@ -232,11 +232,24 @@ export function registerDiscoveryRoutes(api) {
       admin_url: draft.admin_url, served_within_seconds: null, notes });
   }));
 
+  // Disables the candidate's legacy gateway_provider_models row (promotions from before the
+  // data-driven catalog). That row is never served (CATALOG_DB_MODELS is no longer read), so this
+  // removes nothing from the catalog. A candidate that has a catalog row (promoted as a draft, or
+  // imported by migration 20261025000100) is managed on /admin/models, behind the operator token
+  // and Cloudflare Access: demoting here would leave that row serving, so it is refused.
   api.post('/admin/discovery/candidates/:id/demote', operatorOnly(async c => {
     const id = candidateId(c.req.param('id'));
     if (!id) throw new ApiError(404, 'not_found', 'No candidate with this id.');
+    // Not catalogByCandidate: when the catalog cannot be read, this fails instead of guessing.
+    const catalog = (await rpcRows(c.env, 'zerox_catalog_list', {})).find(row => Number(row.candidate_id) === id);
+    if (catalog) {
+      const adminUrl = `/admin/models?id=${encodeURIComponent(catalog.id)}`;
+      throw new ApiError(409, 'catalog_managed',
+        `${catalog.id} is a catalog row (${catalog.status}); disable it on /admin/models instead.`, { admin_url: adminUrl });
+    }
     const rows = await rpcRows(c.env, 'zerox_candidate_demote', { p_id: id });
-    return c.json({ demoted: rows.map(row => row.public_model_id) });
+    return c.json({ demoted: rows.map(row => row.public_model_id), served: false,
+      note: 'The legacy discovery row was disabled. It was not served: promoted models are catalog rows now.' });
   }));
 
   // Runs jobs now (default: every list). Research spends money, so it only runs when named.

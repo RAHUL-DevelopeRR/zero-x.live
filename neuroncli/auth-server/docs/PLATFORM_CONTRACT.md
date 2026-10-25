@@ -445,7 +445,9 @@ by itself, and signing up to a provider stays manual. Code: `src/discovery/`, re
   provider: the provider's own secret, or `DISCOVERY_KEY_<ID>` with `DISCOVERY_BASE_<ID>`),
   `POST …/{id}/verify`, `POST …/{id}/reject`, `POST …/candidates/reject` (`{ids}`),
   `POST …/{id}/promote`, `POST …/{id}/demote`, `POST /admin/discovery/run` (`{jobs}`; research
-  only when named).
+  only when named). Since v1.8 demote only disables a legacy `gateway_provider_models` row, which
+  is never served; a candidate with a catalog row answers 409 `catalog_managed` (disable the row
+  on `/admin/models`).
 - **Catalog join** (until v1.8; since v1.8 promotion creates a draft catalog row, section 13.2):
   promotion writes `gateway_provider_models` (with `candidate_id`). With
   `CATALOG_DB_MODELS=true` the gateway adds those rows to the code-defined catalog (60 s cache)
