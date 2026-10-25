@@ -573,7 +573,10 @@ try {
     assert.ok(!deltas(refused.events).some(delta => delta.content), 'the note never becomes assistant content');
     assert.doesNotMatch(refusalNote({ category: 'weird<script>' }), /weird/);
     assert.match(refusalNote({ category: 'reasoning_extraction' }), /does not reproduce its internal reasoning/);
-    assert.match(refusalNote(null), /^Claude declined this request\. /);
+    assert.match(refusalNote(null), /^The model declined this request\. /);
+    for (const details of [null, { category: 'cyber' }, { category: 'reasoning_extraction' }]) {
+      assert.doesNotMatch(refusalNote(details), /Claude|Anthropic/, 'users see the note: it names no provider');
+    }
   });
 
   await test('usage: cache reads and writes count toward prompt_tokens; message_delta values override message_start', () => {

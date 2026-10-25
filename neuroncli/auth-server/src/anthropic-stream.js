@@ -21,13 +21,14 @@ const REPLAYABLE = new Set(['end_turn', 'tool_use', 'stop_sequence']);
 const SEPARATOR = '\n\n';
 
 // The fixed note sent with finish_reason 'content_filter'. Only a whitelisted category is named;
-// stop_details.explanation is never forwarded (it may quote the prompt).
+// stop_details.explanation is never forwarded (it may quote the prompt). Clients show it to users,
+// so it names no provider or model family.
 export function refusalNote(details) {
   const category = REFUSAL_CATEGORIES.has(details?.category) ? details.category : null;
   if (category === 'reasoning_extraction') {
-    return 'Claude does not reproduce its internal reasoning. Ask for a short summary of the answer instead.';
+    return 'The model does not reproduce its internal reasoning. Ask for a short summary of the answer instead.';
   }
-  return `Claude declined this request${category ? ` (safety category: ${category})` : ''}. Rephrase it or choose another model.`;
+  return `The model declined this request${category ? ` (safety category: ${category})` : ''}. Rephrase it or choose another model.`;
 }
 
 // The in-stream error body the gateway turns into UpstreamStreamError (by status_code).
