@@ -734,7 +734,10 @@ Code: `src/catalog-types.js`, `src/list-prices.js`, `src/catalog-guardrails.js`,
   `CATALOG_DB_MODELS` is no longer read. Aliases go to models with a code entry first, then to
   the others in list order; a code model's ids and aliases always name that model (or nothing
   while it is disabled), whatever another row's `position`, and the admin API refuses them as
-  another model's alias (`alias_reserved`).
+  another model's alias (`alias_reserved`). The same holds for each of those names behind the
+  `openai/` transport prefix (a request for `openai/X` resolves as `X` when no model names
+  `openai/X`), and an alias `openai/X` on any row is dropped when `X` names another model. Aliases
+  never end in `/` or contain `//`.
 - `/v1/models` and routing read the served snapshot; for the code-seeded rows they are identical to
   the code catalog (`fixtures/v1-models-baseline.json`). `GET /v1/models/status` adds
   `catalog_version` (16 hex characters, changes with every approved revision), and the ETag hashes
@@ -753,7 +756,7 @@ Code: `src/catalog-types.js`, `src/list-prices.js`, `src/catalog-guardrails.js`,
   stored when they fail; 409 `no_change`), `POST /admin/catalog/approve {model_id, revision_id,
   expected_active_revision_id, confirm?, note}` (409 `stale_revision`, 422 `validation_failed`,
   422 `confirmation_required` unless `confirm` = the model id for price, cap-up, key-slot,
-  paid-pool or auto-rank changes; answers `catalog_version` and `served_within_seconds: 60`),
+  paid-pool, auto-rank or alias changes; answers `catalog_version` and `served_within_seconds: 60`),
   `POST /admin/catalog/reject`, `/disable`, `/enable`, `GET /admin/catalog/audit[?id=]` (one model,
   or the operator feed over offers and models). Specs use USD decimals; unknown fields are errors.
 - Page: `https://dashboard.zero-x.live/admin/models` (strict admin CSP, token in memory only).

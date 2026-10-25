@@ -72,14 +72,22 @@ function servedCodeItem(item, now) {
 
 const positionOf = spec => (Number.isSafeInteger(spec?.position) ? spec.position : 100_000);
 
+// resolveModelId (src/catalog.js) reads `openai/X` as X whenever `openai/X` itself names nothing.
+export const TRANSPORT_PREFIX = 'openai/';
+
 // Ids and aliases of the code catalog -> the code model they name. They always resolve to that
-// model (or to nothing while it is disabled), never to another row, whatever its position.
+// model (or to nothing while it is disabled), never to another row, whatever its position. The
+// same names behind the `openai/` transport prefix are reserved too: without them a row could take
+// the alias `openai/<code alias>` and catch requests the code model answers today.
 export function reservedAliases(code = codeCatalog()) {
   if (code.reserved) return code.reserved;
   const reserved = new Map();
   for (const item of code.items) {
     reserved.set(item.id.toLowerCase(), item.id);
     for (const alias of item.spec.aliases) if (!reserved.has(String(alias).toLowerCase())) reserved.set(String(alias).toLowerCase(), item.id);
+  }
+  for (const [name, owner] of [...reserved]) {
+    if (!reserved.has(TRANSPORT_PREFIX + name)) reserved.set(TRANSPORT_PREFIX + name, owner);
   }
   code.reserved = reserved;
   return reserved;
@@ -104,6 +112,17 @@ function finalize({ source, served, verdicts, warnings, failing, now, code }) {
         continue;
       }
       aliases.set(lower, entry.id);
+    }
+  }
+  // An alias `openai/X` may only point where X does (for rows without a code entry too): otherwise
+  // it takes the requests OpenAI-compatible clients send for X with the transport prefix.
+  for (const [lower, owner] of [...aliases]) {
+    if (!lower.startsWith(TRANSPORT_PREFIX)) continue;
+    const rest = lower.slice(TRANSPORT_PREFIX.length);
+    const target = rest === 'auto' ? 'auto' : byId.get(rest)?.id ?? aliases.get(rest);
+    if (target && target !== owner) {
+      aliases.delete(lower);
+      warnings.push({ model: owner, alias: lower, reason: 'alias_conflict' });
     }
   }
   const version = hash64([source, code.hash, ...entries.map(entry =>

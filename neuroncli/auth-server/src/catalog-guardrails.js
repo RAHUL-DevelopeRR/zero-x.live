@@ -33,7 +33,8 @@ const MODEL_ID = /^[a-z0-9@][a-z0-9@./:_-]{0,199}$/;
 const ALIAS = /^[a-z0-9][a-z0-9./:_-]{0,99}$/;
 const GEO = /^(EEA|[A-Z]{2})$/;
 const DISPLAY_FORBIDDEN = /[\u0000-\u001f\u007f<>]/;
-const RESERVED_ALIASES = new Set(['auto', 'default']);
+// `openai/` is a transport prefix (resolveModelId): `openai/auto` means auto.
+const RESERVED_ALIASES = new Set(['auto', 'default', 'openai/auto', 'openai/default']);
 const PRICE_KEYS = Object.freeze(['input', 'output', 'cache_read', 'cache_write', 'cache_write_1h']);
 const LIMIT_KEYS = Object.freeze(['rpm', 'rpd', 'tpm', 'tpd']);
 const MICRO = 1_000_000;
@@ -158,6 +159,8 @@ function poolReasons(typeId, spec, pool, now) {
 
 function aliasValid(typeId, id, alias) {
   if (typeof alias !== 'string' || !ALIAS.test(alias) || RESERVED_ALIASES.has(alias) || alias === id) return false;
+  // No empty path segment: `gpt-oss-120b/` would only catch typos of another model's name.
+  if (alias.endsWith('/') || alias.includes('//')) return false;
   // An alias must not squat another provider type's id space.
   for (const [other, registry] of Object.entries(PROVIDER_TYPES)) {
     if (other === typeId) continue;
@@ -455,7 +458,8 @@ export function apiFromSpec(spec) {
 
 // ── Diffs ──
 
-const RISKY_FLAGS = new Set(['price_up', 'price_down', 'price_added', 'cap_up', 'slot_changed', 'auto_rank_changed']);
+const RISKY_FLAGS = new Set(['price_up', 'price_down', 'price_added', 'cap_up', 'slot_changed', 'auto_rank_changed', 'aliases_changed']);
+const KEY_FLAGS = Object.freeze({ auto_rank: 'auto_rank_changed', aliases: 'aliases_changed' });
 
 function compareFlag(from, to, up, down) {
   if (from === null || from === undefined) return to === null || to === undefined ? null : `${up.split('_')[0]}_added`;
@@ -482,7 +486,7 @@ export function specDiff(before, after) {
     const from = prev[key];
     const to = next[key];
     if (canonicalJson(from ?? null) === canonicalJson(to ?? null)) continue;
-    items.push({ path: key, from, to, flag: key === 'auto_rank' ? 'auto_rank_changed' : 'changed' });
+    items.push({ path: key, from, to, flag: KEY_FLAGS[key] ?? 'changed' });
   }
   const byTier = list => new Map((Array.isArray(list) ? list : []).filter(isObject).map(pool => [pool.tier, pool]));
   const oldPools = byTier(prev.pools);
@@ -520,7 +524,7 @@ export function specDiff(before, after) {
 }
 
 // Diff items that need the operator to type the model id when approving: price changes, a higher
-// cap, a new key slot, a new paid pool, a new auto rank.
+// cap, a new key slot, a new paid pool, a new auto rank, changed aliases (they move requests).
 export function riskyChanges(diff) {
   return diff.filter(item => RISKY_FLAGS.has(item.flag) || (item.flag === 'tier_added' && item.path === 'pools.paid'));
 }

@@ -30,7 +30,7 @@ import {
   riskyChanges, specDiff, specFromApi, specValid, validateSpec,
 } from './src/catalog-guardrails.js';
 import {
-  buildSnapshot, catalogSnapshot, catalogStatus, codeCatalog, codeSnapshot, loadCatalog, resetCatalogCache,
+  buildSnapshot, catalogSnapshot, catalogStatus, codeCatalog, codeSnapshot, loadCatalog, reservedAliases, resetCatalogCache,
 } from './src/catalog-db.js';
 import { ANTHROPIC_PAID_OFFER, CLAUDE_MODEL_SPECS } from './src/catalog-claude.js';
 import { previewModel, proposeCandidateDraft, registerCatalogAdminRoutes } from './src/routes/catalog-admin.js';
@@ -286,6 +286,10 @@ try {
       ['id squatting', OPUS_ID, SONNET, 'id_mismatch'],
       ['alias squatting another id space', SONNET_ID, variant(SONNET, s => { s.aliases = ['gemini/gemini-2.5-flash']; }), 'alias_invalid'],
       ['alias auto', SONNET_ID, variant(SONNET, s => { s.aliases = ['auto']; }), 'alias_invalid'],
+      ['alias openai/auto', SONNET_ID, variant(SONNET, s => { s.aliases = ['openai/auto']; }), 'alias_invalid'],
+      ['alias openai/default', SONNET_ID, variant(SONNET, s => { s.aliases = ['openai/default']; }), 'alias_invalid'],
+      ['alias with a trailing slash', OPUS_ID, variant(OPUS, s => { s.aliases = ['gpt-oss-120b/']; }), 'alias_invalid'],
+      ['alias with an empty segment', OPUS_ID, variant(OPUS, s => { s.aliases = ['gpt-oss//120b']; }), 'alias_invalid'],
       ['markup in the name', SONNET_ID, variant(SONNET, s => { s.display_name = '<img src=x onerror=alert(1)>'; }), 'display_name_invalid'],
       ['unknown provider type', SONNET_ID, variant(SONNET, s => { s.provider_type = 'evil'; }), 'unknown_provider_type'],
       ['priced free pool', 'gemini/gemini-2.5-flash', variant(codeCatalog().byId.get('gemini/gemini-2.5-flash').spec, s => {
@@ -601,6 +605,36 @@ try {
     assert.deepEqual(['gpt-oss-120b', 'openai/gpt-oss-120b', 'claude-opus-5-5', 'gpt-oss-20b'].map(alias => squatted.aliases.get(alias) ?? null),
       ['groq/openai/gpt-oss-120b', 'groq/openai/gpt-oss-120b', OPUS_ID, null]);
     assert.deepEqual(squatted.warnings.filter(item => item.model === OPUS_ID).map(item => item.alias), ['gpt-oss-120b', 'openai/gpt-oss-120b', 'gpt-oss-20b']);
+    // resolveModelId reads `openai/X` as X when nothing names `openai/X`: the transport-prefixed
+    // names of code models are theirs too, so a row (written straight into the tables, past the
+    // admin API) cannot catch a request for a free or cheap code model and bill it as Opus.
+    const prefixed = ['openai/claude-sonnet-5-5', 'openai/gemini-2.5-flash', 'openai/llama-3.3-70b', 'openai/openai/gpt-oss-120b',
+      'openai/groq/openai/gpt-oss-120b', 'openai/gemini/gemini-2.5-flash'];
+    const opusPrefixed = row(OPUS_ID);
+    Object.assign(opusPrefixed.spec, { aliases: ['claude-opus-5-5', 'openai/claude-opus-5-5', ...prefixed] });
+    const prefixedSnapshot = buildSnapshot([opusPrefixed]);
+    assert.equal(prefixedSnapshot.verdicts.get(OPUS_ID).served_from, 'database');
+    assert.deepEqual(prefixed.map(alias => prefixedSnapshot.aliases.get(alias) ?? null), prefixed.map(() => null), 'no prefixed code name moves to Opus');
+    assert.deepEqual(prefixedSnapshot.warnings.filter(item => item.model === OPUS_ID).map(item => [item.alias, item.reason]),
+      prefixed.map(alias => [alias, 'alias_conflict']));
+    assert.equal(prefixedSnapshot.aliases.get('openai/claude-opus-5-5'), OPUS_ID, "a model's own name behind the prefix is fine");
+    const reservedNames = reservedAliases();
+    assert.deepEqual(prefixed.map(alias => reservedNames.get(alias)), [SONNET_ID, 'gemini/gemini-2.5-flash', '@cf/meta/llama-3.3-70b-instruct-fp8-fast',
+      'groq/openai/gpt-oss-120b', 'groq/openai/gpt-oss-120b', 'gemini/gemini-2.5-flash']);
+    assert.equal(reservedNames.get('openai/gpt-oss-120b'), 'groq/openai/gpt-oss-120b', 'a code alias that already starts with openai/ keeps its model');
+    // Rows without a code entry: `openai/X` is dropped when X names another model.
+    const acmeA = { id: 'groq/acme/fast-1', provider_type: 'groq', status: 'active', revision_id: 910, spec: { provider_type: 'groq',
+      upstream_model: 'acme/fast-1', display_name: 'Acme Fast 1', context_window: 131072, max_output_tokens: 8192, aliases: ['acme-fast-1'],
+      pools: [{ tier: 'free', key_slot: 'groq.free', price: null, limits: { rpm: 30, rpd: 1000, tpm: 8000, tpd: 200000 }, daily_spend_cap_microusd: null }] } };
+    const acmeB = clone(acmeA);
+    Object.assign(acmeB, { id: 'groq/acme/big-1', revision_id: 911 });
+    Object.assign(acmeB.spec, { upstream_model: 'acme/big-1', display_name: 'Acme Big 1', position: 0,
+      aliases: ['acme-big-1', 'openai/acme-fast-1', 'openai/groq/acme/fast-1', 'openai/acme-big-1', 'openai/claude-opus-5-5'] });
+    const rowsOnly = buildSnapshot([acmeA, acmeB]);
+    assert.deepEqual(['openai/acme-fast-1', 'openai/groq/acme/fast-1', 'openai/acme-big-1', 'openai/claude-opus-5-5'].map(alias => rowsOnly.aliases.get(alias) ?? null),
+      [null, null, 'groq/acme/big-1', null]);
+    assert.deepEqual(rowsOnly.warnings.filter(item => item.model === 'groq/acme/big-1').map(item => item.alias),
+      ['openai/claude-opus-5-5', 'openai/acme-fast-1', 'openai/groq/acme/fast-1']);
     assert.equal(snapshot.aliases.get('default'), 'auto');
     assert.equal(snapshot.byId.get('cohere/north-mini-code:free'), codeCatalog().byId.get('cohere/north-mini-code:free').entry,
       'code models without a row serve from code');
@@ -737,6 +771,20 @@ try {
     assert.deepEqual([squat.body.ok, squat.body.errors], [false, ['alias_reserved:gpt-oss-120b', 'alias_reserved:gemini-2.5-flash']],
       "the model's own alias is fine; another code model's is reserved");
     assert.equal((await call('/admin/catalog/propose', { method: 'POST', body: { spec: squatter } })).status, 400, 'a squatting alias is never stored');
+    // The same names behind the `openai/` transport prefix (resolveModelId strips it) are reserved too.
+    const prefixSquatter = { ...apiFromSpec(OPUS), aliases: ['claude-opus-5-5', 'openai/claude-opus-5-5', 'openai/claude-sonnet-5-5',
+      'openai/llama-3.3-70b', 'openai/openai/gpt-oss-120b'] };
+    const prefixSquat = await call('/admin/catalog/validate', { method: 'POST', body: { spec: prefixSquatter } });
+    assert.deepEqual([prefixSquat.body.ok, prefixSquat.body.errors], [false, ['alias_reserved:openai/claude-sonnet-5-5',
+      'alias_reserved:openai/llama-3.3-70b', 'alias_reserved:openai/openai/gpt-oss-120b']]);
+    assert.equal((await call('/admin/catalog/propose', { method: 'POST', body: { spec: prefixSquatter } })).status, 400);
+    const typoCatcher = await call('/admin/catalog/validate', { method: 'POST', body: { spec: { ...apiFromSpec(OPUS), aliases: ['gpt-oss-120b/'] } } });
+    assert.deepEqual([typoCatcher.body.ok, typoCatcher.body.validation.model], [false, ['alias_invalid']]);
+    // A new alias moves requests: approving it needs the model id typed.
+    const ownPrefixed = await call('/admin/catalog/validate', { method: 'POST', body: { spec: { ...apiFromSpec(OPUS),
+      aliases: ['claude-opus-5-5', 'openai/claude-opus-5-5'] } } });
+    assert.deepEqual([ownPrefixed.body.ok, ownPrefixed.body.risky], [true, ['aliases']]);
+    assert.deepEqual(ownPrefixed.body.diff.map(item => [item.path, item.flag]), [['aliases', 'aliases_changed']]);
     assert.equal((await call('/admin/catalog/propose', { method: 'POST', body: { spec: apiFromSpec(SONNET) } })).status, 409, 'no change, no revision');
     assert.deepEqual(await counts(), start, 'validate and refused proposals write nothing');
 

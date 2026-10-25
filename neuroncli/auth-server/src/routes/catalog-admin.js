@@ -354,7 +354,7 @@ export function registerCatalogAdminRoutes(api) {
     const diff = specDiff(baseSpec(id, row.active ? row.active.spec : null), spec);
     const risky = riskyChanges(diff);
     if (risky.length && body.confirm !== id) {
-      throw new ApiError(422, 'confirmation_required', 'This change moves prices, caps, key slots, paid pools or auto ranks; send confirm with the model id.',
+      throw new ApiError(422, 'confirmation_required', 'This change moves prices, caps, key slots, paid pools, auto ranks or aliases; send confirm with the model id.',
         { param: 'confirm', risky: risky.map(item => item.path) });
     }
     await rpcRows(c.env, 'zerox_catalog_approve', {
