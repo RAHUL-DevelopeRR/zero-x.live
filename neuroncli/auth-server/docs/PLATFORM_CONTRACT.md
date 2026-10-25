@@ -797,8 +797,11 @@ Code: `src/catalog-types.js`, `src/list-prices.js`, `src/catalog-guardrails.js`,
 - The gateway sends `metadata.user_id` = the first 32 hex digits of SHA-256(`zx-user:` + user id),
   replays Claude's signed thinking blocks per caller for up to 2 h after last use (each turn's
   leading thinking blocks, before the turn rebuilt from the client's echo; per isolate,
-  `ANTHROPIC_THINKING_REPLAY=false` turns it off; `input_transformations` is logged as counts) and uses 5-minute prompt caching. Upstream errors:
-  429 `rate_limited` (does not count against `ROUTER_MAX_ATTEMPTS`), 529 and 5xx `upstream_error`,
+  `ANTHROPIC_THINKING_REPLAY=false` turns it off; `input_transformations` is logged as counts)
+  and uses 5-minute prompt caching. The cache is per isolate: it matches exact bytes, replayed
+  thinking included, so a request reads only what its own isolate's earlier requests wrote; the
+  first request after a switch to another isolate writes the conversation again from the first
+  assistant turn whose records differ. Upstream errors: 429 `rate_limited` (does not count against `ROUTER_MAX_ATTEMPTS`), 529 and 5xx `upstream_error`,
   401/402/403 park the pool (402: the Anthropic account is out of credit).
 
 ### 13.4 Billing

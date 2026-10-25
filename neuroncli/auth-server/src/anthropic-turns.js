@@ -12,6 +12,14 @@
 // request sends thinking.block_binding drop_block, so a stale or mismatched block is dropped by
 // the API, never a 400; input_transformations is logged (anthropic-stream.js).
 //
+// The prompt cache is per isolate. It matches exact bytes, thinking blocks included, and the
+// replayed thinking differs by isolate (each holds the turns it produced), so a request reads only
+// the cache entries written by earlier requests of its own isolate. The first request after a
+// switch to an isolate whose records differ misses from the first assistant turn where they
+// differ and writes the rest at the cache-write rate (Opus: 25 times the read price); the
+// isolate's next request reads it again. Sharing the records across isolates (for example a
+// per-caller Durable Object) would remove that cost; it is not done.
+//
 // Key: the caller plus the turn fingerprint (anthropic-request.js turnFingerprint). It is not
 // scoped to the model: Opus 5.5 reads Sonnet 5.5 blocks, and the API drops what a model cannot
 // read, unbilled.

@@ -1047,6 +1047,8 @@ try {
       ? { ...message, content: message.content.filter(block => block.type !== 'thinking') } : message)));
     const miss = upto => JSON.stringify(toClaudeRequest(OPUS, payloadFor(history(upto), { tools }), { metadataUserId: 'abc' }).body.messages);
     let previous = null;
+    const lastOn = {};
+    let lastServed = null;
     for (const [index, isolate] of servedBy.entries()) {
       const upto = index; // request n echoes the n-1 turns before it
       const { body, replayed } = request(upto, isolate);
@@ -1071,6 +1073,19 @@ try {
         assert.deepEqual(current.slice(0, previous.length - 1), previous.slice(0, -1), `request ${index + 1} extends the previous one`);
       }
       previous = JSON.parse(withoutThinking(body.messages));
+      // The prompt cache matches exact bytes, thinking included, so it is per isolate: a request
+      // extends the previous request its own isolate served (its cache entries hit), while the
+      // first request after a switch differs from the first turn whose records differ (written
+      // again at the cache-write rate). Documented in anthropic-turns.js and the contract §13.3.
+      const exact = stripCache(body.messages);
+      const own = lastOn[isolate];
+      if (own) assert.deepEqual(exact.slice(0, own.length - 1), own.slice(0, -1), `request ${index + 1} extends ${isolate}'s previous request byte for byte`);
+      if (lastServed && lastServed.isolate !== isolate) {
+        assert.notDeepEqual(exact.slice(0, lastServed.messages.length - 1), lastServed.messages.slice(0, -1),
+          `request ${index + 1} on ${isolate} does not extend the other isolate's request: the cache misses from the first differing turn`);
+      }
+      lastOn[isolate] = exact;
+      lastServed = { isolate, messages: exact };
       if (index < turns.length) kept.remember({ caller: 'user-123', fingerprint: messageFingerprint(turns[index].echo), blocks: structuredClone(turns[index].record) });
     }
     // Eviction: the least recently used caller loses every turn at once, never its oldest turn alone.

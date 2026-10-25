@@ -183,6 +183,10 @@ function usableRestore(blocks, message) {
  * the next turn's thinking is minted with this turn's last leading block as its predecessor, and
  * a leading block's prefix ends where its message starts. (input_transformations on message_start
  * is logged, so drops show up.)
+ *
+ * This keeps the thinking binding independent of the isolate, not the prompt cache: the cache
+ * matches exact bytes, thinking included, so it hits only on what the same isolate sent before
+ * (src/anthropic-turns.js).
  */
 function splicedTurn(record, message) {
   return [...leadingThinking(record), ...assistantBlocks(message)];
