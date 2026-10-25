@@ -1124,6 +1124,27 @@ try {
     assert.equal(calls.at(-1).init.redirect, 'manual');
     assert.equal(ANTHROPIC.baseURL, 'https://api.anthropic.com');
     assert.equal(adapter.getBaseUrl(), 'https://api.anthropic.com/v1');
+    // The Node server's process.env (often a Claude Code shell): ANTHROPIC_AUTH_TOKEN and
+    // ANTHROPIC_CUSTOM_HEADERS cannot replace the key, add an Authorization header or another
+    // header; the adapter's own beta still goes out.
+    process.env.ANTHROPIC_AUTH_TOKEN = 'env-auth-token';
+    process.env.ANTHROPIC_CUSTOM_HEADERS = ['Authorization: Bearer custom-header-token', 'X-Api-Key: custom-header-key',
+      'anthropic-beta: some-beta-2099', 'anthropic-version: 1999-01-01', 'X-Custom-Header: leak'].join('\n');
+    try {
+      upstream = request => sseResponse(SIMPLE_END, request);
+      const run = await adapterRun(adapter, { payload: payloadFor([{ role: 'user', content: 'hi' }]) });
+      assert.equal(run.response.status, 200);
+      const sent = calls.at(-1).headers;
+      assert.deepEqual(['x-api-key', 'authorization', 'anthropic-beta', 'anthropic-version', 'x-custom-header'].map(name => sent.get(name)),
+        [KEY, null, BINDING_BETA, '2023-06-01', null]);
+      // The shared fetch sets the one credential again whatever headers it is handed.
+      await anthropicFetch(null, { apiKey: KEY })('https://api.anthropic.com/v1/messages',
+        { method: 'POST', headers: { 'x-api-key': 'other-key', Authorization: 'Bearer other' } });
+      assert.deepEqual([calls.at(-1).headers.get('x-api-key'), calls.at(-1).headers.get('authorization')], [KEY, null]);
+    } finally {
+      delete process.env.ANTHROPIC_AUTH_TOKEN;
+      delete process.env.ANTHROPIC_CUSTOM_HEADERS;
+    }
     assert.ok(logged.every(line => !line.includes(KEY)), 'no log line contains the key');
   });
 

@@ -22,6 +22,7 @@ const program = async id => (await rpcRows(DB, 'zerox_credit_programs_list', {})
 const anthropicCalls = [];
 const anthropicRedirects = [];
 const anthropicAuth = [];
+const anthropicHeaders = [];
 let replies = [];
 const realFetch = globalThis.fetch;
 globalThis.fetch = async (input, init = {}) => {
@@ -29,7 +30,10 @@ globalThis.fetch = async (input, init = {}) => {
   if (url === 'https://api.anthropic.com/v1/messages') {
     anthropicCalls.push(JSON.parse(init.body));
     anthropicRedirects.push(init.redirect);
-    anthropicAuth.push(new Headers(init.headers).get('authorization'));
+    const sent = new Headers(init.headers);
+    anthropicAuth.push(sent.get('authorization'));
+    anthropicHeaders.push({ key: sent.get('x-api-key'), beta: sent.get('anthropic-beta'), version: sent.get('anthropic-version'),
+      custom: sent.get('x-custom-header') });
     const reply = replies.shift();
     if (!reply) throw new Error('No fake Claude reply left');
     return new Response(JSON.stringify(reply), { status: 200, headers: { 'content-type': 'application/json' } });
@@ -131,17 +135,23 @@ try {
     // base URL to api.anthropic.com and sends x-api-key only (src/anthropic-transport.js).
     process.env.ANTHROPIC_BASE_URL = 'https://evil.example';
     process.env.ANTHROPIC_AUTH_TOKEN = 'auth-token-must-not-be-sent';
+    // A Claude Code shell often sets this; the SDK merges it after the auth headers.
+    process.env.ANTHROPIC_CUSTOM_HEADERS = ['Authorization: Bearer custom-header-token', 'x-api-key: custom-header-key',
+      'anthropic-beta: some-beta-2099', 'anthropic-version: 1999-01-01', 'X-Custom-Header: leak'].join('\n');
     let run;
     try {
       [run] = (await runDiscoveryTick(env, { jobs: ['credits'] })).ran;
     } finally {
       delete process.env.ANTHROPIC_BASE_URL;
       delete process.env.ANTHROPIC_AUTH_TOKEN;
+      delete process.env.ANTHROPIC_CUSTOM_HEADERS;
     }
     assert.equal(run.ok, true, run.error);
     const [search, extract] = anthropicCalls;
     assert.deepEqual(anthropicRedirects, ['manual', 'manual'], 'the key never follows a redirect');
-    assert.deepEqual(anthropicAuth, [null, null], 'ANTHROPIC_AUTH_TOKEN never adds a second credential');
+    assert.deepEqual(anthropicAuth, [null, null], 'ANTHROPIC_AUTH_TOKEN and ANTHROPIC_CUSTOM_HEADERS never add a second credential');
+    assert.deepEqual(anthropicHeaders, Array(2).fill({ key: 'sk-ant-test', beta: null, version: '2023-06-01', custom: null }),
+      'ANTHROPIC_CUSTOM_HEADERS neither replaces the key nor adds a beta or any other header');
     assert.equal(search.model, 'claude-haiku-5-5');
     assert.equal(search.tools[0].type, 'web_search_20250305');
     assert.equal(search.output_config.format, undefined, 'the search call has no output format (citations stay on)');

