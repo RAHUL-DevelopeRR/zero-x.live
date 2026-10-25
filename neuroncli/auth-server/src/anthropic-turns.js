@@ -4,12 +4,21 @@
 // same pattern as Gemini's ThoughtSignatureCache in provider-request.js).
 //
 // Per isolate and best effort: a miss only means Claude answers without that turn's reasoning.
-// Every replaying request sends thinking.block_binding drop_block, so a stale or mismatched
-// block is dropped by the API, never a 400.
+// The mapper (anthropic-request.js mapMessages) splices only the record's thinking blocks into
+// the turn it rebuilds from the client's echo, so a found and a missing record differ by those
+// blocks alone: the text and tool_use bytes, and so every later turn's thinking binding, are the
+// same in either case (another isolate, an evicted entry). Every replaying request sends
+// thinking.block_binding drop_block, so a stale or mismatched block is dropped by the API, never
+// a 400.
 //
 // Key: the caller plus the turn fingerprint (anthropic-request.js turnFingerprint). It is not
 // scoped to the model: Opus 5.5 reads Sonnet 5.5 blocks, and the API drops what a model cannot
 // read, unbilled.
+//
+// Eviction is per caller: when the cache is full, the caller used least recently loses all of its
+// turns at once, so an active conversation never keeps turns 2..N while turn 1 was evicted (the
+// oldest turn of a conversation is always its least recently used entry). Only a single caller
+// over the caps alone loses its own oldest turns.
 
 const DEFAULTS = Object.freeze({ maxEntries: 4000, maxBytes: 24 * 2 ** 20, maxEntryBytes: 512 * 1024, ttlMs: 2 * 3600_000 });
 
@@ -33,66 +42,105 @@ function deepFreeze(value) {
   return value;
 }
 
+const validKey = (caller, fingerprint) =>
+  caller !== null && caller !== undefined && caller !== '' && typeof fingerprint === 'string' && fingerprint.length > 0;
+
 export class ClaudeTurnCache {
   constructor({ maxEntries = DEFAULTS.maxEntries, maxBytes = DEFAULTS.maxBytes, maxEntryBytes = DEFAULTS.maxEntryBytes,
     ttlMs = DEFAULTS.ttlMs } = {}) {
-    this.entries = new Map(); // insertion order is LRU order
+    // caller -> { entries: Map<fingerprint, entry>, bytes }. Both maps keep LRU order by insertion:
+    // callers by their last use, a caller's entries by theirs.
+    this.callers = new Map();
     this.maxEntries = maxEntries;
     this.maxBytes = maxBytes;
     this.maxEntryBytes = maxEntryBytes;
     this.ttlMs = ttlMs;
     this.totalBytes = 0;
+    this.count = 0;
   }
 
-  key({ caller, fingerprint }) {
-    if (caller === null || caller === undefined || caller === '' || typeof fingerprint !== 'string' || !fingerprint) return null;
-    return `${String(caller)}\u0000${fingerprint}`;
+  // The caller's group, made the most recently used.
+  touch(caller) {
+    const id = String(caller);
+    let group = this.callers.get(id);
+    if (group) this.callers.delete(id);
+    else group = { entries: new Map(), bytes: 0 };
+    this.callers.set(id, group);
+    return group;
   }
 
-  remove(key) {
-    const entry = this.entries.get(key);
+  removeEntry(id, group, fingerprint) {
+    const entry = group.entries.get(fingerprint);
     if (!entry) return;
-    this.entries.delete(key);
+    group.entries.delete(fingerprint);
+    group.bytes -= entry.bytes;
     this.totalBytes -= entry.bytes;
+    this.count -= 1;
+    if (!group.entries.size) this.callers.delete(id);
+  }
+
+  removeCaller(id) {
+    const group = this.callers.get(id);
+    if (!group) return;
+    this.callers.delete(id);
+    this.totalBytes -= group.bytes;
+    this.count -= group.entries.size;
+  }
+
+  full() {
+    return this.count > this.maxEntries || this.totalBytes > this.maxBytes;
   }
 
   // Freezes `blocks` in place and keeps them; false when they were not kept.
   remember({ caller, fingerprint, blocks }, now = Date.now()) {
-    const key = this.key({ caller, fingerprint });
-    if (!key || !Array.isArray(blocks) || !blocks.length) return false;
-    const bytes = utf8Length(JSON.stringify(blocks)) + key.length;
+    if (!validKey(caller, fingerprint) || !Array.isArray(blocks) || !blocks.length) return false;
+    const id = String(caller);
+    const bytes = utf8Length(JSON.stringify(blocks)) + id.length + fingerprint.length;
     if (bytes > this.maxEntryBytes) return false;
-    this.remove(key);
-    this.entries.set(key, { blocks: deepFreeze(blocks), bytes, expires: now + this.ttlMs });
+    const group = this.touch(id);
+    this.removeEntry(id, group, fingerprint);
+    if (!this.callers.has(id)) this.callers.set(id, group); // removeEntry dropped the emptied group
+    group.entries.set(fingerprint, { blocks: deepFreeze(blocks), bytes, expires: now + this.ttlMs });
+    group.bytes += bytes;
     this.totalBytes += bytes;
-    while (this.entries.size > this.maxEntries || this.totalBytes > this.maxBytes) {
-      this.remove(this.entries.keys().next().value);
+    this.count += 1;
+    // Whole callers first, least recently used first; never this one while another is left.
+    for (const other of this.callers.keys()) {
+      if (!this.full()) break;
+      if (other !== id) this.removeCaller(other);
     }
+    // Alone over the caps: this caller's own least recently used turns.
+    while (this.full() && group.entries.size) this.removeEntry(id, group, group.entries.keys().next().value);
     return true;
   }
 
-  // The frozen blocks, or null on a miss or an expired entry. A hit becomes the most recent.
+  // The frozen blocks, or null on a miss or an expired entry. A hit makes its caller (and itself
+  // within the caller) the most recent.
   lookup({ caller, fingerprint }, now = Date.now()) {
-    const key = this.key({ caller, fingerprint });
-    const entry = key ? this.entries.get(key) : null;
+    if (!validKey(caller, fingerprint)) return null;
+    const id = String(caller);
+    const group = this.callers.get(id);
+    const entry = group?.entries.get(fingerprint);
     if (!entry) return null;
     if (entry.expires <= now) {
-      this.remove(key);
+      this.removeEntry(id, group, fingerprint);
       return null;
     }
-    this.entries.delete(key);
+    this.touch(id);
+    group.entries.delete(fingerprint);
     entry.expires = now + this.ttlMs; // an ongoing conversation keeps its turns
-    this.entries.set(key, entry);
+    group.entries.set(fingerprint, entry);
     return entry.blocks;
   }
 
   clear() {
-    this.entries.clear();
+    this.callers.clear();
     this.totalBytes = 0;
+    this.count = 0;
   }
 
   get size() {
-    return this.entries.size;
+    return this.count;
   }
 
   get bytes() {

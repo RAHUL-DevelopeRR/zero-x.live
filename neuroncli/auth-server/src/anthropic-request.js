@@ -158,9 +158,46 @@ function usableRestore(blocks, message) {
 }
 
 /**
+ * A restored assistant turn: the record's thinking blocks spliced into the turn rebuilt from the
+ * echoed message. Text and tool_use always come from the echo (Neuron folds the reasoning
+ * summary into its text and re-serializes tool input), so the turn without its thinking blocks is
+ * byte-identical to the turn rebuilt on a miss. Whether this isolate holds the record then
+ * changes those blocks only: never the text that later turns' thinking signatures are bound to
+ * (system, tools and earlier messages, excluding earlier thinking blocks), and the prompt-cache
+ * prefix only by the thinking itself. Thinking blocks keep their place relative to the record's
+ * text and tool_use blocks; the echo's text sits where the record's first text (or, without one,
+ * its first tool_use) was.
+ */
+function splicedTurn(record, message) {
+  const echo = assistantBlocks(message);
+  const text = echo.filter(block => block.type === 'text');
+  const tools = echo.filter(block => block.type === 'tool_use');
+  const out = [];
+  let textPlaced = false;
+  let next = 0;
+  const placeText = () => {
+    if (textPlaced) return;
+    out.push(...text);
+    textPlaced = true;
+  };
+  for (const block of record) {
+    if (THINKING_BLOCKS.has(block?.type)) out.push(block);
+    else if (block?.type === 'text') placeText();
+    else if (block?.type === 'tool_use') {
+      placeText();
+      if (next < tools.length) out.push(tools[next++]);
+    }
+  }
+  placeText();
+  out.push(...tools.slice(next));
+  return out;
+}
+
+/**
  * OpenAI messages to Claude `system` blocks and `messages`.
- * `restore(message)` returns the exact cached Claude blocks of an assistant turn (thinking with
- * signatures included) or null. `systemMessages` allows native mid-conversation system turns.
+ * `restore(message)` returns the cached Claude blocks of an assistant turn (thinking with
+ * signatures included) or null; only their thinking blocks are used (splicedTurn).
+ * `systemMessages` allows native mid-conversation system turns.
  */
 export function mapMessages(input, { restore = null, systemMessages = true } = {}) {
   if (!Array.isArray(input)) throw new ClaudeRequestError('Provide at least one message.');
@@ -198,7 +235,7 @@ export function mapMessages(input, { restore = null, systemMessages = true } = {
       } else {
         const restored = restore ? restore(message) : null;
         turns.push(usableRestore(restored, message)
-          ? { role: 'assistant', content: [...restored], restored: true, source: message }
+          ? { role: 'assistant', content: splicedTurn(restored, message), restored: true, source: message }
           : { role: 'assistant', content: assistantBlocks(message), restored: false, source: message });
       }
     } else if (isSystem(message)) {
@@ -320,7 +357,8 @@ export function claudeEffort(traits, value) {
  * The Claude Messages body for one attempt. The body is built from a whitelist, so sampling
  * parameters (temperature, top_p, top_k, seed, penalties), user, n, logprobs and stream_options
  * are never sent. Options:
- * - restore(message): cached exact blocks for an assistant turn (preserved thinking);
+ * - restore(message): the cached blocks of an assistant turn, whose thinking blocks are spliced
+ *   into the turn rebuilt from the message (preserved thinking);
  * - metadataUserId: the pseudonymous user id for metadata.user_id;
  * - bindingBeta: send thinking.block_binding drop_block under BINDING_BETA.
  * Returns { body, betas, toolNames, replay, replayed, rememberTurns }.

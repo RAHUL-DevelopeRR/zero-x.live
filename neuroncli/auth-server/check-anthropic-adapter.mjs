@@ -851,7 +851,7 @@ try {
     assert.equal(cache.bytes, 0);
   });
 
-  await test('replay: the next request restores the exact thinking blocks for the echoed turn (re-serialized args, or Neuron-style text)', async () => {
+  await test('replay: the next request splices the thinking blocks into the echoed turn (re-serialized args, or Neuron-style text)', async () => {
     const cache = new ClaudeTurnCache();
     const request = { caller: 'user-123', turns: claudeTurnHooks(cache, 'user-123') };
     const history1 = [{ role: 'system', content: 'You are Neuron.' }, { role: 'user', content: 'Read a.txt and b.txt' }];
@@ -874,7 +874,10 @@ try {
       const turn2 = await gatewayRun({ payload: payloadFor([...history1, echo(content), ...results], { tools: TOOLS }), request });
       assert.equal(turn2.finish.status, 'ok');
       const sent = calls.at(-1);
-      assert.deepEqual(sent.body.messages[1], { role: 'assistant', content: restored });
+      // Thinking from the record, text and tool input from the echo (the echo's own text, so a
+      // Neuron echo keeps its folded reasoning; the arguments as the client re-serialized them).
+      const expected = restored.map(block => (block.type === 'text' ? { type: 'text', text: content } : block));
+      assert.deepEqual(sent.body.messages[1], { role: 'assistant', content: expected });
       assert.deepEqual(sent.body.thinking.block_binding, { prefix_mismatch_behavior: 'drop_block' });
       assert.equal(sent.headers.get('anthropic-beta'), BINDING_BETA);
       assert.equal(sent.body.messages[2].content[0].tool_use_id, 'toolu_01A');
@@ -905,6 +908,69 @@ try {
     const noThinking = new ClaudeStreamTranslator({ model: OPUS.id });
     for (const event of SIMPLE_END) noThinking.translate(event);
     assert.equal(noThinking.turnRecord(), null);
+  });
+
+  await test('replay across isolates: a found or missing record changes the thinking blocks only; eviction drops whole callers', () => {
+    // A Neuron agent loop: each echoed turn carries the reasoning summary folded into its text and
+    // the tool input with sorted keys; Claude's own blocks had the answer text alone and its key order.
+    const system = { role: 'system', content: 'You are Neuron, a coding agent. '.repeat(40) };
+    const turns = [1, 2, 3].map(n => ({
+      echo: { role: 'assistant', content: `Reason ${n}.\n\nAnswer ${n}.`, tool_calls: [call(`toolu_0${n}`, 'run', `{"command":"echo ${n}","timeout":5}`)] },
+      record: [{ type: 'thinking', thinking: `Reason ${n}.`, signature: `sig${n}` }, { type: 'text', text: `Answer ${n}.` },
+        { type: 'tool_use', id: `toolu_0${n}`, name: 'run', input: { timeout: 5, command: `echo ${n}` } }],
+      result: toolMessage(`toolu_0${n}`, `out ${n}`),
+    }));
+    const history = upto => [system, { role: 'user', content: 'Run three commands.' },
+      ...turns.slice(0, upto).flatMap(turn => [turn.echo, turn.result])];
+    const tools = [fn('run', { command: { type: 'string' }, timeout: { type: 'number' } })];
+    const isolates = { A: new ClaudeTurnCache(), B: new ClaudeTurnCache() };
+    // Turn n is produced (and remembered) on the isolate that served request n.
+    const servedBy = ['A', 'A', 'B', 'A'];
+    const request = (upto, isolate) => {
+      const hooks = claudeTurnHooks(isolates[isolate], 'user-123');
+      return toClaudeRequest(OPUS, payloadFor(history(upto), { tools }), { restore: message => hooks.lookup(messageFingerprint(message)),
+        metadataUserId: 'abc' });
+    };
+    const withoutThinking = messages => JSON.stringify(messages.map(message => (Array.isArray(message.content)
+      ? { ...message, content: message.content.filter(block => block.type !== 'thinking') } : message)));
+    const miss = upto => JSON.stringify(toClaudeRequest(OPUS, payloadFor(history(upto), { tools }), { metadataUserId: 'abc' }).body.messages);
+    let previous = null;
+    for (const [index, isolate] of servedBy.entries()) {
+      const upto = index; // request n echoes the n-1 turns before it
+      const { body, replayed } = request(upto, isolate);
+      assert.equal(withoutThinking(body.messages), miss(upto), `request ${index + 1} on ${isolate}: same bytes as a miss, minus thinking`);
+      const kept = isolates[isolate];
+      const expectedHits = turns.slice(0, upto).filter((turn, n) => servedBy[n] === isolate).length;
+      assert.equal(replayed, expectedHits, `request ${index + 1} on ${isolate} replays the turns that isolate produced`);
+      for (const [n, turn] of turns.slice(0, upto).entries()) {
+        const message = body.messages[1 + 2 * n]; // system is top-level: user, assistant, user (results), ...
+        assert.equal(message.role, 'assistant');
+        const hasThinking = message.content.some(block => block.type === 'thinking');
+        assert.equal(hasThinking, servedBy[n] === isolate, `turn ${n + 1} thinking only where it was produced`);
+        assert.equal(message.content.find(block => block.type === 'text').text, turn.echo.content, 'the echo text, not the record text');
+        assert.deepEqual(Object.keys(message.content.find(block => block.type === 'tool_use').input), ['command', 'timeout'], 'the echo key order');
+      }
+      if (previous) {
+        const current = JSON.parse(withoutThinking(body.messages));
+        assert.deepEqual(current.slice(0, previous.length - 1), previous.slice(0, -1), `request ${index + 1} extends the previous one`);
+      }
+      previous = JSON.parse(withoutThinking(body.messages));
+      if (index < turns.length) kept.remember({ caller: 'user-123', fingerprint: messageFingerprint(turns[index].echo), blocks: structuredClone(turns[index].record) });
+    }
+    // Eviction: the least recently used caller loses every turn at once, never its oldest turn alone.
+    const blocks = n => [{ type: 'thinking', thinking: `t${n}`, signature: `s${n}` }, { type: 'text', text: `x${n}` }];
+    const cache = new ClaudeTurnCache({ maxEntries: 4 });
+    cache.remember({ caller: 'idle', fingerprint: 'i1', blocks: blocks(1) }, 0);
+    cache.remember({ caller: 'idle', fingerprint: 'i2', blocks: blocks(2) }, 1);
+    cache.remember({ caller: 'active', fingerprint: 'a1', blocks: blocks(3) }, 2);
+    cache.remember({ caller: 'active', fingerprint: 'a2', blocks: blocks(4) }, 3);
+    assert.ok(cache.lookup({ caller: 'active', fingerprint: 'a1' }, 4) && cache.lookup({ caller: 'active', fingerprint: 'a2' }, 4));
+    cache.remember({ caller: 'active', fingerprint: 'a3', blocks: blocks(5) }, 5);
+    assert.deepEqual(['i1', 'i2'].map(fingerprint => cache.lookup({ caller: 'idle', fingerprint }, 6)), [null, null], 'the idle caller left whole');
+    assert.ok(['a1', 'a2', 'a3'].every(fingerprint => cache.lookup({ caller: 'active', fingerprint }, 6)), 'the active conversation keeps turn 1');
+    assert.equal(cache.size, 3);
+    assert.equal(cache.bytes, ['a1', 'a2', 'a3'].reduce((sum, fingerprint, n) => sum + Buffer.byteLength(JSON.stringify(blocks(n + 3))) +
+      'active'.length + fingerprint.length, 0));
   });
 
   await test('beta fallback: a rejected binding beta retries once without beta or replay and stays off; a rejected signature retries without replay', async () => {
