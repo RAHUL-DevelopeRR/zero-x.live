@@ -360,7 +360,10 @@ async function mountDashboard({profile = PROFILE, hash = '', state = {}, routes 
   // Copy quick-start command.
   doc.querySelector('[data-copy-target="qs-install"]').click();
   await settle();
-  assert.equal(win.copied, 'npm install -g @zero-x.live/neuron');
+  assert.equal(win.copied, 'curl -fsSL https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.1/install.sh | sh -s -- --version 7.0.0-alpha.1');
+  doc.querySelector('[data-copy-target="qs-install-win"]').click();
+  await settle();
+  assert.equal(win.copied, '& ([scriptblock]::Create((irm https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.1/install.ps1))) -Version 7.0.0-alpha.1');
 
   // Hash routing to Usage.
   win.location.hash = '#usage';
@@ -794,26 +797,28 @@ for (const scenario of ['live', 'offline']) {
   vm.runInNewContext(script, {document: doc, fetch, Promise, Array, Math, isFinite, Error, TypeError});
   await settle();
   const tabs = doc.querySelectorAll('[role="tab"]');
-  assert.deepEqual(tabs.map(tab => tab.textContent), ['npm', 'pip', 'install.sh', 'install.ps1']);
-  assert.equal(doc.getElementById('install-npm').hidden, false);
-  assert.equal(doc.getElementById('install-pip').hidden, true);
+  assert.deepEqual(tabs.map(tab => tab.textContent), ['install.sh', 'install.ps1', 'npm', 'pip', 'From source']);
+  assert.equal(doc.getElementById('install-sh').hidden, false, 'The release installer is the default tab');
+  assert.equal(doc.getElementById('install-npm').hidden, true);
   tabs[2].click();
-  assert.equal(doc.getElementById('install-sh').hidden, false);
+  assert.equal(doc.getElementById('install-npm').hidden, false);
+  assert.equal(doc.getElementById('install-sh').hidden, true);
   assert.equal(tabs[2].getAttribute('aria-selected'), 'true');
   tabs[2].focus();
   doc.querySelector('[role="tablist"]').dispatchEvent(makeEvent('keydown', {key: 'ArrowRight', bubbles: true}));
-  assert.equal(doc.getElementById('install-ps1').hidden, false);
+  assert.equal(doc.getElementById('install-pip').hidden, false);
   assert.equal(doc.activeElement, tabs[3]);
   const rows = doc.getElementById('models-body').querySelectorAll('tr');
   if (scenario === 'live') {
     assert.equal(rows.length, 3, 'Invalid catalog entries are skipped');
     assert.equal(rows[1].querySelector('th').textContent, XSS);
     assert.equal(rows[1].querySelectorAll('td')[2].textContent, '1,048,576');
+    assert.deepEqual(rows.map(row => row.querySelectorAll('td')[1].textContent), ['Zero-X', 'Google Gemini', 'Groq'], 'owned_by is shown as a provider name');
     assert.equal(rows[1].querySelectorAll('td')[4].textContent, 'All plans (not in your region)');
     assert.equal(rows[2].querySelectorAll('td')[4].textContent, 'Pro and Max');
     assert.match(doc.getElementById('models-status').textContent, /Live catalog from the Zero-X gateway: 3 models/);
   } else {
-    assert.equal(rows.length, 7, 'The static catalog stays when /v1/models is unreachable');
+    assert.equal(rows.length, 13, 'The static catalog (12 models plus auto) stays when /v1/models is unreachable');
     assert.match(doc.getElementById('models-status').textContent, /Default catalog shown/);
   }
 }

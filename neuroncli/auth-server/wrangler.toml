@@ -56,7 +56,7 @@ NVIDIA_HOSTED = "true"
 OPENROUTER_HOSTED = "true"
 # Public Razorpay key id (rzp_live_...). RAZORPAY_KEY_SECRET and RAZORPAY_WEBHOOK_SECRET are
 # Worker secrets; billing answers 503 billing_not_configured until all three are set.
-RAZORPAY_KEY_ID = ""
+RAZORPAY_KEY_ID = "rzp_live_TK43zZbnvcWZa8"
 # Set to "true" once Content-Security-Policy-Report-Only shows no violations.
 CSP_ENFORCE = "false"
 # Cloudflare Access application on dashboard.zero-x.live/admin (provider key vault page,

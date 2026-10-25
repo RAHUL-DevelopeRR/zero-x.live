@@ -141,7 +141,8 @@ async function notFoundPage(c) {
 
 // Pages served from https://zero-x.live/<page> (clean URLs).
 const SITE_PAGES = ['/about', '/privacy', '/terms', '/find-files-by-content', '/wheres-that-file',
-  '/pricing', '/neuron-cli', '/docs', '/docs/trust', '/download', '/changelog', '/refund', '/contact', '/shipping'];
+  '/pricing', '/neuron-cli', '/docs', '/docs/trust', '/download', '/changelog', '/refund', '/contact', '/shipping',
+  '/neucockpit'];
 
 // Hostname-based subdomain routing middleware
 app.use('*', async (c, next) => {
@@ -188,14 +189,18 @@ app.use('*', async (c, next) => {
     let fragment = '';
     const site = loopback ? '' : 'https://zero-x.live';
     const clean = path.replace(/\.html$/, '').replace(/\/$/, '');
-    if (loopback && ['/dashboard', '/neuron'].includes(clean)) {
+    if (loopback && clean === '/dashboard') {
       if (path !== clean) target = clean;
     }
-    else if (['/neuron','/neucockpit','/legacy'].includes(clean)) target = 'https://neuron.zero-x.live/';
-    else if (clean === '/start') { target = 'https://neuron.zero-x.live/'; fragment = '#downloads'; }
-    else if (clean === '/features') { target = 'https://neuron.zero-x.live/'; fragment = '#features'; }
+    // neuron.zero-x.live belongs to Neuron: its home is the Neuron CLI page, and /device (above)
+    // stays the sign-in page. NeuCockpit lives at https://zero-x.live/neucockpit. /download is the
+    // Neuron download page the apps link to (A6), so it is a site page, not a redirect.
+    else if (hostname === 'neuron.zero-x.live' && ['', '/index', '/index2'].includes(clean)) target = 'https://zero-x.live/neuron-cli';
+    else if (['/neuron','/neuroncli'].includes(clean)) target = site + '/neuron-cli';
+    else if (clean === '/legacy') target = site + '/neucockpit';
+    else if (clean === '/start') { target = site + '/neuron-cli'; fragment = '#install'; }
+    else if (clean === '/features') { target = site + '/neucockpit'; fragment = '#features'; }
     else if (clean === '/dashboard') target = 'https://dashboard.zero-x.live/';
-    else if (clean === '/neuroncli') target = site + '/neuron-cli';
     else if (['/index','/index2'].includes(clean)) target = loopback ? '/' : `https://${hostname === 'www.zero-x.live' ? 'zero-x.live' : hostname}/`;
     else if (SITE_PAGES.includes(clean)) {
       if (loopback ? path !== clean : hostname !== 'zero-x.live' || path !== clean) target = site + clean;
@@ -210,14 +215,6 @@ app.use('*', async (c, next) => {
     if (path === '/' || path === '/index.html') {
       if (c.env && c.env.ASSETS) {
         const newUrl = new URL('/dashboard.html', c.req.url);
-        const newReq = new Request(newUrl.toString(), c.req.raw);
-        return c.env.ASSETS.fetch(newReq);
-      }
-    }
-  } else if (hostname === 'neuron.zero-x.live') {
-    if (path === '/' || path === '/index.html') {
-      if (c.env && c.env.ASSETS) {
-        const newUrl = new URL('/neuron.html', c.req.url);
         const newReq = new Request(newUrl.toString(), c.req.raw);
         return c.env.ASSETS.fetch(newReq);
       }
@@ -1012,7 +1009,7 @@ app.notFound(async (c) => {
     if (path === '/' || path === '') {
       let targetHtml = '/index.html';
       if (hostname === 'dashboard.zero-x.live') targetHtml = '/dashboard.html';
-      else if (hostname === 'neuron.zero-x.live') targetHtml = '/neuron.html';
+      else if (hostname === 'neuron.zero-x.live') targetHtml = '/neuron-cli.html';
 
       const htmlUrl = new URL(targetHtml, c.req.url);
       const htmlReq = new Request(htmlUrl.toString(), c.req.raw);

@@ -179,7 +179,7 @@ export class OpenAICompatibleAdapter extends ProviderAdapter {
       const response = await fetch(`${baseUrl}/models`, {
         headers: { Authorization: `Bearer ${apiKey}` },
         signal: AbortSignal.timeout(5000),
-        redirect: 'error',
+        redirect: 'manual',
       });
       result.http_status = response.status;
       if (!response.ok) {
@@ -249,7 +249,9 @@ export class OpenAICompatibleAdapter extends ProviderAdapter {
       },
       body: JSON.stringify(body),
       signal,
-      redirect: 'error',
+      // Never follow a redirect with the key attached. The Workers runtime rejects the 'error'
+      // redirect mode, so a 3xx comes back as a non-ok response and fails the attempt.
+      redirect: 'manual',
     });
   }
 }

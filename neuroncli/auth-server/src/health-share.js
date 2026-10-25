@@ -61,7 +61,7 @@ export function shareHealth(c, env, key, record, now = Date.now()) {
   if (!runInBackground(c, task)) return task;
 }
 
-async function readShared(env, keys) {
+export async function readShared(env, keys) {
   const kv = env?.SESSIONS_KV;
   if (!kv || !keys.length) return new Map();
   const rows = await Promise.all(keys.map(key => kv.get(PREFIX + key, { type: 'json' }).catch(() => null)));

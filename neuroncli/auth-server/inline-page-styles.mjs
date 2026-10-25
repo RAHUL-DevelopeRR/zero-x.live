@@ -4,7 +4,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 const root = new URL('../../', import.meta.url);
 const css = await Promise.all(['site-fonts.css', 'site.min.css'].map(name => readFile(new URL(name, root), 'utf8')));
 const styles = `<style data-public-styles>\n${css.join('\n')}\n</style>`;
-for (const name of ['index.html', 'neuron.html']) {
+for (const name of ['index.html', 'neucockpit.html']) {
   const file = new URL(name, root);
   let html = await readFile(file, 'utf8');
   if (html.includes('<style data-public-styles>')) {

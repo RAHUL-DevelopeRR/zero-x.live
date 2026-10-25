@@ -81,7 +81,7 @@ export class CloudflareWorkersAIAdapter extends ProviderAdapter {
         },
         body: JSON.stringify(body),
         signal,
-        redirect: 'error',
+        redirect: 'manual',
       }
     );
     if (!response.ok || payload.stream) return response;

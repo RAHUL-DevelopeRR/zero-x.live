@@ -1,12 +1,12 @@
 # Zero-X — NeuCockpit website
 
-Official website: <https://zero-x.live/>. [NeuCockpit](https://neuron.zero-x.live/) is Zero-X's local AI desktop application for finding documents by meaning on Windows, macOS and Linux. [Product source and releases](https://github.com/RAHUL-DevelopeRR/deepseekfs) live in a separate repository.
+Official website: <https://zero-x.live/>. It is the home of [Neuron](https://zero-x.live/neuron-cli), Zero-X's AI coding agent for the terminal. [NeuCockpit](https://zero-x.live/neucockpit) is Zero-X's local AI desktop application for finding documents by meaning on Windows, macOS and Linux. [NeuCockpit's source and releases](https://github.com/RAHUL-DevelopeRR/deepseekfs) live in a separate repository.
 
 ## Architecture
 
 Static HTML/CSS and vanilla JavaScript provide crawlable public pages. `neuroncli/auth-server/src/index.js` is the production Hono/Cloudflare Worker: it routes website/product/dashboard hosts and serves authenticated APIs. Supabase supports identity and account persistence. The legacy Express server is not the production Worker.
 
-Public pages are listed in `seo-pages.json`. About, guide, film and policies use clean paths. `/neucockpit`, `/download` and `/features` redirect to the full product page. WWW marketing pages redirect to HTTPS apex; product/dashboard subdomains remain. Dashboard/auth/API pages are intentionally not indexed.
+Public pages are listed in `seo-pages.json`. Product pages, guides, film and policies use clean paths, including `/neuron-cli` and `/neucockpit`. `neuron.zero-x.live` belongs to Neuron: `/` redirects to `https://zero-x.live/neuron-cli` and `/device` is the CLI's device sign-in page. `/neuron` redirects to `/neuron-cli`, `/download` and `/start` to `/neuron-cli#install`, and `/legacy` and `/features` to the NeuCockpit page. WWW marketing pages redirect to HTTPS apex; the dashboard subdomain remains. Dashboard/auth/API pages are intentionally not indexed.
 
 ## Develop and verify
 
