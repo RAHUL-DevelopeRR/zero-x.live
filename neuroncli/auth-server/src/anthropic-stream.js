@@ -96,6 +96,7 @@ export class ClaudeStreamTranslator {
     this.finished = false;
     this.done = false;
     this.unknownBlocks = 0;
+    this.transformations = null; // counts by `type:reason` (noteTransformations)
   }
 
   chunk(delta, finish = null) {
@@ -113,6 +114,21 @@ export class ClaudeStreamTranslator {
 
   clientName(name) {
     return this.toolNames.get(name) ?? name;
+  }
+
+  // input_transformations (message_start; again on message_delta after a server-side model
+  // fallback): replayed thinking blocks the API dropped or let through after a failed check.
+  // Logged as counts by type and reason only (no paths, no content), so replay drops show up in
+  // production; an empty array means every replayed block was kept.
+  noteTransformations(list) {
+    if (!Array.isArray(list) || !list.length) return;
+    const counts = {};
+    for (const item of list) {
+      const key = `${String(item?.type ?? 'unknown').slice(0, 40)}:${String(item?.reason ?? 'unknown').slice(0, 40)}`;
+      counts[key] = (counts[key] ?? 0) + 1;
+    }
+    this.transformations = counts;
+    console.warn('Claude transformed replayed thinking', { model: this.model, count: list.length, counts });
   }
 
   takeUsage(usage) {
@@ -172,6 +188,7 @@ export class ClaudeStreamTranslator {
     switch (event?.type) {
       case 'message_start':
         this.takeUsage(event.message?.usage);
+        this.noteTransformations(event.message?.input_transformations);
         break;
       case 'content_block_start': {
         const block = event.content_block ?? {};
@@ -223,6 +240,7 @@ export class ClaudeStreamTranslator {
       }
       case 'message_delta': {
         this.takeUsage(event.usage);
+        this.noteTransformations(event.input_transformations ?? event.message?.input_transformations);
         if (this.finished) break;
         this.stopReason = event.delta?.stop_reason ?? null;
         this.stopDetails = event.delta?.stop_details ?? null;

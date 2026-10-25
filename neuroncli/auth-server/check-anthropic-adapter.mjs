@@ -929,7 +929,7 @@ try {
     assert.equal(cache.bytes, 0);
   });
 
-  await test('replay: the next request splices the thinking blocks into the echoed turn (re-serialized args, or Neuron-style text)', async () => {
+  await test('replay: the next request puts the leading thinking blocks before the echoed turn (re-serialized args, or Neuron-style text)', async () => {
     const cache = new ClaudeTurnCache();
     const request = { caller: 'user-123', turns: claudeTurnHooks(cache, 'user-123') };
     const history1 = [{ role: 'system', content: 'You are Neuron.' }, { role: 'user', content: 'Read a.txt and b.txt' }];
@@ -937,10 +937,12 @@ try {
     const turn1 = await gatewayRun({ payload: payloadFor(history1, { tools: TOOLS }), request });
     assert.equal(turn1.finish.status, 'ok');
     assert.equal(cache.size, 2, 'kept under the content-only and the Neuron (reasoning + content) fingerprints');
+    // Claude wrote [thinking, text, thinking (progress), tool_use, tool_use]. Only the leading
+    // thinking is replayed: the progress block was minted after Claude's own text, which the echo
+    // does not reproduce, so replaying it could fail its binding and drop every later block.
     const restored = [
       { type: 'thinking', thinking: 'Plan the reads.', signature: 'sig-one' },
       { type: 'text', text: AGENT_TEXT },
-      { type: 'thinking', thinking: 'Reading now.', signature: 'sig-two' },
       { type: 'tool_use', id: 'toolu_01A', name: safeName('a.b:c'), input: { path: 'a.txt' } },
       { type: 'tool_use', id: 'toolu_01B', name: 'read_file', input: { path: 'b.txt' } },
     ];
@@ -986,20 +988,52 @@ try {
     const noThinking = new ClaudeStreamTranslator({ model: OPUS.id });
     for (const event of SIMPLE_END) noThinking.translate(event);
     assert.equal(noThinking.turnRecord(), null);
+    // input_transformations (message_start) is logged as counts by type and reason, no paths.
+    const before = logged.length;
+    const watched = new ClaudeStreamTranslator({ model: OPUS.id });
+    const start = E.start();
+    start.message.input_transformations = [
+      { type: 'thinking_dropped', path: 'messages.3.content.0', reason: 'prefix_binding_mismatch' },
+      { type: 'thinking_dropped', path: 'messages.5.content.0', reason: 'prefix_binding_mismatch' },
+      { type: 'thinking_dropped', path: 'messages.7.content.0', reason: 'model_binding_mismatch' }];
+    watched.translate(start);
+    assert.deepEqual(watched.transformations, { 'thinking_dropped:prefix_binding_mismatch': 2, 'thinking_dropped:model_binding_mismatch': 1 });
+    const line = logged.slice(before).find(entry => entry.includes('Claude transformed replayed thinking'));
+    assert.ok(line && line.includes('"count":3') && !line.includes('messages.'), line);
+    const quiet = new ClaudeStreamTranslator({ model: OPUS.id });
+    const clean = E.start();
+    clean.message.input_transformations = [];
+    const beforeClean = logged.length;
+    quiet.translate(clean);
+    assert.equal(quiet.transformations, null, 'nothing dropped, nothing logged');
+    assert.equal(logged.length, beforeClean);
   });
 
   await test('replay across isolates: a found or missing record changes the thinking blocks only; eviction drops whole callers', () => {
     // A Neuron agent loop: each echoed turn carries the reasoning summary folded into its text and
     // the tool input with sorted keys; Claude's own blocks had the answer text alone and its key order.
     const system = { role: 'system', content: 'You are Neuron, a coding agent. '.repeat(40) };
-    const turns = [1, 2, 3].map(n => ({
-      echo: { role: 'assistant', content: `Reason ${n}.\n\nAnswer ${n}.`, tool_calls: [call(`toolu_0${n}`, 'run', `{"command":"echo ${n}","timeout":5}`)] },
-      record: [{ type: 'thinking', thinking: `Reason ${n}.`, signature: `sig${n}` }, { type: 'text', text: `Answer ${n}.` },
-        { type: 'tool_use', id: `toolu_0${n}`, name: 'run', input: { timeout: 5, command: `echo ${n}` } }],
-      result: toolMessage(`toolu_0${n}`, `out ${n}`),
-    }));
+    // Turn shapes: [thinking, text, tool_use]; [thinking, text, progress thinking, tool_use];
+    // [thinking, tool_use, progress thinking, tool_use] (no text: Neuron's echo still has its
+    // folded reasoning as text). Only the leading thinking block may be replayed.
+    const thinking = (n, kind = '') => ({ type: 'thinking', thinking: `${kind ? 'Progress' : 'Reason'} ${n}.`, signature: `sig${n}${kind}` });
+    const use = (id, n) => ({ type: 'tool_use', id, name: 'run', input: { timeout: 5, command: `echo ${n}` } });
+    const records = {
+      1: [thinking(1), { type: 'text', text: 'Answer 1.' }, use('toolu_01', 1)],
+      2: [thinking(2), { type: 'text', text: 'Answer 2.' }, thinking(2, 'p'), use('toolu_02', 2)],
+      3: [thinking(3), use('toolu_03', 3), thinking(3, 'p'), use('toolu_03b', 3)],
+    };
+    const turns = [1, 2, 3].map(n => {
+      const ids = records[n].filter(block => block.type === 'tool_use').map(block => block.id);
+      return {
+        echo: { role: 'assistant', content: n === 3 ? 'Reason 3.\n\nProgress 3.' : `Reason ${n}.\n\nAnswer ${n}.`,
+          tool_calls: ids.map(id => call(id, 'run', `{"command":"echo ${n}","timeout":5}`)) },
+        record: records[n],
+        results: ids.map(id => toolMessage(id, `out ${id}`)),
+      };
+    });
     const history = upto => [system, { role: 'user', content: 'Run three commands.' },
-      ...turns.slice(0, upto).flatMap(turn => [turn.echo, turn.result])];
+      ...turns.slice(0, upto).flatMap(turn => [turn.echo, ...turn.results])];
     const tools = [fn('run', { command: { type: 'string' }, timeout: { type: 'number' } })];
     const isolates = { A: new ClaudeTurnCache(), B: new ClaudeTurnCache() };
     // Turn n is produced (and remembered) on the isolate that served request n.
@@ -1023,8 +1057,12 @@ try {
       for (const [n, turn] of turns.slice(0, upto).entries()) {
         const message = body.messages[1 + 2 * n]; // system is top-level: user, assistant, user (results), ...
         assert.equal(message.role, 'assistant');
-        const hasThinking = message.content.some(block => block.type === 'thinking');
-        assert.equal(hasThinking, servedBy[n] === isolate, `turn ${n + 1} thinking only where it was produced`);
+        const replayedThinking = message.content.filter(block => block.type === 'thinking');
+        assert.deepEqual(replayedThinking, servedBy[n] === isolate ? [turn.record[0]] : [],
+          `turn ${n + 1}: its leading thinking only, and only where it was produced`);
+        const firstOther = message.content.findIndex(block => block.type !== 'thinking');
+        assert.ok(message.content.slice(firstOther).every(block => block.type !== 'thinking'),
+          `turn ${n + 1}: no thinking block after the turn's text or tool_use (its binding never covers rebuilt blocks)`);
         assert.equal(message.content.find(block => block.type === 'text').text, turn.echo.content, 'the echo text, not the record text');
         assert.deepEqual(Object.keys(message.content.find(block => block.type === 'tool_use').input), ['command', 'timeout'], 'the echo key order');
       }

@@ -147,10 +147,20 @@ function toolResult(message) {
     ...(message.is_error === true ? { is_error: true } : {}) };
 }
 
-// Restored blocks are used only when they hold thinking and their tool_use ids are exactly the
-// echoed message's calls, in order; anything else is rebuilt from the message.
+// The record's leading run of thinking blocks: the ones before its first text or tool_use.
+function leadingThinking(blocks) {
+  const leading = [];
+  for (const block of blocks) {
+    if (!THINKING_BLOCKS.has(block?.type)) break;
+    leading.push(block);
+  }
+  return leading;
+}
+
+// Restored blocks are used only when they start with thinking and their tool_use ids are exactly
+// the echoed message's calls, in order; anything else is rebuilt from the message.
 function usableRestore(blocks, message) {
-  if (!Array.isArray(blocks) || !blocks.some(block => THINKING_BLOCKS.has(block?.type))) return false;
+  if (!Array.isArray(blocks) || !leadingThinking(blocks).length) return false;
   const restoredIds = blocks.filter(block => block?.type === 'tool_use').map(block => block.id);
   const calls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
   if (restoredIds.length !== calls.length) return false;
@@ -158,39 +168,24 @@ function usableRestore(blocks, message) {
 }
 
 /**
- * A restored assistant turn: the record's thinking blocks spliced into the turn rebuilt from the
- * echoed message. Text and tool_use always come from the echo (Neuron folds the reasoning
- * summary into its text and re-serializes tool input), so the turn without its thinking blocks is
- * byte-identical to the turn rebuilt on a miss. Whether this isolate holds the record then
- * changes those blocks only: never the text that later turns' thinking signatures are bound to
- * (system, tools and earlier messages, excluding earlier thinking blocks), and the prompt-cache
- * prefix only by the thinking itself. Thinking blocks keep their place relative to the record's
- * text and tool_use blocks; the echo's text sits where the record's first text (or, without one,
- * its first tool_use) was.
+ * A restored assistant turn: the record's leading thinking blocks, then the turn rebuilt from the
+ * echoed message. Text and tool_use always come from the echo (Neuron folds the reasoning summary
+ * into its text and re-serializes tool input), so the turn without its thinking blocks is
+ * byte-identical to the turn rebuilt on a miss, and whether this isolate holds the record changes
+ * the thinking blocks only: never the content later turns' thinking signatures are bound to
+ * (system, tools and every earlier message).
+ *
+ * Only the leading run is replayed. A thinking block written later in the turn (the progress
+ * updates 5.5 models write between tool calls) was minted after Claude's own text and tool_use,
+ * which the echo does not reproduce exactly; if its binding covers the earlier blocks of its own
+ * message, replaying it would fail the check and drop_block would remove it and every later block,
+ * on every request. Leaving it out the same way on every request keeps the chain valid either way:
+ * the next turn's thinking is minted with this turn's last leading block as its predecessor, and
+ * a leading block's prefix ends where its message starts. (input_transformations on message_start
+ * is logged, so drops show up.)
  */
 function splicedTurn(record, message) {
-  const echo = assistantBlocks(message);
-  const text = echo.filter(block => block.type === 'text');
-  const tools = echo.filter(block => block.type === 'tool_use');
-  const out = [];
-  let textPlaced = false;
-  let next = 0;
-  const placeText = () => {
-    if (textPlaced) return;
-    out.push(...text);
-    textPlaced = true;
-  };
-  for (const block of record) {
-    if (THINKING_BLOCKS.has(block?.type)) out.push(block);
-    else if (block?.type === 'text') placeText();
-    else if (block?.type === 'tool_use') {
-      placeText();
-      if (next < tools.length) out.push(tools[next++]);
-    }
-  }
-  placeText();
-  out.push(...tools.slice(next));
-  return out;
+  return [...leadingThinking(record), ...assistantBlocks(message)];
 }
 
 /**

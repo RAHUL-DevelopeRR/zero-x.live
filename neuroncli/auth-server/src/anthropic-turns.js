@@ -4,12 +4,13 @@
 // same pattern as Gemini's ThoughtSignatureCache in provider-request.js).
 //
 // Per isolate and best effort: a miss only means Claude answers without that turn's reasoning.
-// The mapper (anthropic-request.js mapMessages) splices only the record's thinking blocks into
-// the turn it rebuilds from the client's echo, so a found and a missing record differ by those
-// blocks alone: the text and tool_use bytes, and so every later turn's thinking binding, are the
-// same in either case (another isolate, an evicted entry). Every replaying request sends
-// thinking.block_binding drop_block, so a stale or mismatched block is dropped by the API, never
-// a 400.
+// The mapper (anthropic-request.js mapMessages, splicedTurn) puts only the record's leading
+// thinking blocks before the turn it rebuilds from the client's echo, so a found and a missing
+// record differ by those blocks alone: the text and tool_use bytes, and so every later turn's
+// thinking binding, are the same in either case (another isolate, an evicted entry). Thinking
+// written later in a turn (progress between tool calls) is never replayed. Every replaying
+// request sends thinking.block_binding drop_block, so a stale or mismatched block is dropped by
+// the API, never a 400; input_transformations is logged (anthropic-stream.js).
 //
 // Key: the caller plus the turn fingerprint (anthropic-request.js turnFingerprint). It is not
 // scoped to the model: Opus 5.5 reads Sonnet 5.5 blocks, and the API drops what a model cannot
