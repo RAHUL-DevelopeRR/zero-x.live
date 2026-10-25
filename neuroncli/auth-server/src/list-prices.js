@@ -2,9 +2,9 @@
 // src/catalog-guardrails.js) and built from (src/catalog-claude.js). USD per million tokens, as
 // the providers publish them; MARKUP stays in src/pricing.js and is applied there only.
 //
-// NOTE for the integration: src/pricing.js re-exports LIST_PRICES, LIST_PRICE_SCHEDULE,
-// listPriceFor and MAX_DAILY_SPEND_CAP_USD from this module (billing design §1.2), so callers
-// may import them from either file and there is still a single table.
+// src/pricing.js re-exports LIST_PRICES, LIST_PRICE_SCHEDULE, listPriceFor, listPriceMicro and
+// MAX_DAILY_SPEND_CAP_USD from this module (billing design §1.2), so callers may import them from
+// either file and there is still a single table.
 //
 // A paid catalog row whose (provider type, upstream model) is listed here must carry exactly
 // these prices, cache rates included; a row for an unlisted model of a provider that allows it

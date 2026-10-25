@@ -168,8 +168,11 @@ export async function usagePayload(env, userId, range) {
     for (const key of Object.keys(totals)) totals[key] += row[key];
     series.push({ day, ...withCost(row) });
   }
+  // Per model also the prompt tokens read from and written to the provider's prompt cache (part of
+  // prompt_tokens; Claude bills them at their own rates).
   const byModel = modelRows.filter(row => typeof row?.model === 'string')
-    .map(row => ({ model: row.model, ...withCost(usageRow(row)) }))
+    .map(row => ({ model: row.model, ...withCost(usageRow(row)), cache_read_tokens: count(row.cache_read_tokens),
+      cache_write_tokens: count(row.cache_write_tokens) }))
     .sort((left, right) => right.requests - left.requests || left.model.localeCompare(right.model));
   return { from: range.from, to: range.to, series, by_model: byModel, totals: withCost(totals) };
 }
@@ -203,6 +206,9 @@ const eventView = row => ({
   tier: row.tier ?? null,
   status: row.status ?? null,
   prompt_tokens: count(row.prompt_tokens),
+  // Of prompt_tokens: read from and written to the provider's prompt cache.
+  cache_read_tokens: count(row.cache_read_tokens),
+  cache_write_tokens: count(row.cache_write_tokens),
   completion_tokens: count(row.completion_tokens),
   cost_usd: microusdToUsd(row.cost_microusd ?? 0),
   latency_ms: row.latency_ms === null || row.latency_ms === undefined ? null : count(row.latency_ms),

@@ -300,6 +300,10 @@ try {
   // The static fallbacks on the site show the same strings until /api/plans answers.
   const { PLAN_CATALOG: sitePlans } = await import(pathToFileURL(join(site, 'pricing.js')).href);
   for (const plan of sitePlans.plans) assert.deepEqual(plan.features, PLAN_FEATURES[plan.id], `site pricing.js fallback features for ${plan.id}`);
+  // So does the gateway's static plan catalogue (src/plan-policy.js, /api/plans without a database).
+  const { PLAN_CATALOG: gatewayPlans } = await import('./src/plan-policy.js');
+  for (const plan of gatewayPlans) assert.deepEqual(plan.features, PLAN_FEATURES[plan.id], `src/plan-policy.js features for ${plan.id}`);
+  assert.deepEqual(gatewayPlans.map(plan => [plan.id, plan.tiers]), [['free', ['free']], ['pro', ['free', 'paid']], ['max', ['free', 'paid']]]);
   const pricingHtml = await readFile(join(site, 'pricing.html'), 'utf8');
   for (const id of ['free', 'pro', 'max']) {
     const list = pricingHtml.match(new RegExp(`<ul data-plan-features="${id}">([\\s\\S]*?)</ul>`))[1];
@@ -317,7 +321,7 @@ try {
     [['free', ['free']], ['pro', ['free', 'paid']], ['max', ['free', 'paid']], ['ultrawork', ['free', 'paid']]]);
   assert.equal((await sql("SELECT updated_at FROM public.zerox_plan_policy WHERE plan = 'pro'"))[0].updated_at.getTime(), stamp.getTime(),
     'rows already up to date are not rewritten');
-  ok('plans: Free free-only, Pro/Max/ultrawork free+paid, limits and credits unchanged, features equal the site fallback and pricing.html, re-run repairs drifted tiers');
+  ok('plans: Free free-only, Pro/Max/ultrawork free+paid, limits and credits unchanged, features equal the site fallback, pricing.html and src/plan-policy.js, re-run repairs drifted tiers');
 
   // ---------------------------------------------------------------- down scripts and re-runs
   // Baseline: every migration except the two under test, on a fresh PGlite.

@@ -591,6 +591,8 @@ try {
   db.usage.byModel = [
     { model: 'groq/openai/gpt-oss-20b', requests: 1, prompt_tokens: 100, completion_tokens: 10, cost_microusd: 0 },
     { model: 'gemini/gemini-2.5-flash', requests: 4, prompt_tokens: 400, completion_tokens: 40, cost_microusd: 1234572 },
+    { model: 'anthropic/claude-sonnet-5-5', requests: 1, prompt_tokens: 20800, cache_read_tokens: 16000, cache_write_tokens: 4000,
+      completion_tokens: 800, cost_microusd: 26500 },
   ];
   let usage = await json(await request('/api/usage', { token: sessionToken }));
   assert.equal(usage.status, 200);
@@ -601,8 +603,11 @@ try {
   assert.deepEqual(usage.body.series.at(-1), { day: today, requests: 2, prompt_tokens: 200, completion_tokens: 20, cost_usd: 0.000005 });
   assert.deepEqual(usage.body.series[0], { day: dayOffset(-29), requests: 0, prompt_tokens: 0, completion_tokens: 0, cost_usd: 0 });
   assert.deepEqual(usage.body.totals, { requests: 5, prompt_tokens: 500, completion_tokens: 50, cost_usd: 1.234572 });
-  assert.deepEqual(usage.body.by_model.map(row => row.model), ['gemini/gemini-2.5-flash', 'groq/openai/gpt-oss-20b']);
+  assert.deepEqual(usage.body.by_model.map(row => row.model), ['gemini/gemini-2.5-flash', 'anthropic/claude-sonnet-5-5', 'groq/openai/gpt-oss-20b']);
   assert.equal(usage.body.by_model[0].cost_usd, 1.234572);
+  assert.deepEqual(usage.body.by_model[1], { model: 'anthropic/claude-sonnet-5-5', requests: 1, prompt_tokens: 20800, completion_tokens: 800,
+    cost_usd: 0.0265, cache_read_tokens: 16000, cache_write_tokens: 4000 }, 'by model: prompt-cache reads and writes (part of prompt_tokens)');
+  assert.deepEqual([usage.body.by_model[0].cache_read_tokens, usage.body.by_model[0].cache_write_tokens], [0, 0]);
   assert.deepEqual(db.calls.filter(call => call.name === 'zerox_usage_series').at(-1).args, { p_user_id: userA.id, p_from: dayOffset(-29), p_to: today });
   usage = await json(await request(`/api/usage?from=${dayOffset(-91)}&to=${today}`, { token: sessionToken }));
   assert.equal(usage.status, 200);
@@ -620,12 +625,14 @@ try {
   db.usage.events = Array.from({ length: 5 }, (_, index) => ({
     id: index + 1, created_at: `${today}T00:0${index}:00Z`, model: 'groq/openai/gpt-oss-20b', provider: 'groq', tier: 'free',
     status: 'ok', prompt_tokens: 10, completion_tokens: 2, cost_microusd: index * 1000, latency_ms: 120, request_id: `req_${index}`, user_id: userA.id,
+    cache_read_tokens: index === 4 ? 6 : 0, cache_write_tokens: index === 4 ? 2 : 0,
   }));
   let page = await json(await request('/api/usage/events?limit=2', { token: sessionToken }));
   assert.deepEqual(page.body.events.map(event => event.id), [5, 4]);
   assert.equal(page.body.next_before, 4);
-  assert.deepEqual(Object.keys(page.body.events[0]).sort(), ['completion_tokens', 'cost_usd', 'created_at', 'id', 'latency_ms', 'model',
-    'prompt_tokens', 'provider', 'request_id', 'status', 'tier']);
+  assert.deepEqual(Object.keys(page.body.events[0]).sort(), ['cache_read_tokens', 'cache_write_tokens', 'completion_tokens', 'cost_usd',
+    'created_at', 'id', 'latency_ms', 'model', 'prompt_tokens', 'provider', 'request_id', 'status', 'tier']);
+  assert.deepEqual([page.body.events[0].cache_read_tokens, page.body.events[0].cache_write_tokens, page.body.events[1].cache_read_tokens], [6, 2, 0]);
   assert.equal(page.body.events[0].cost_usd, 0.004);
   assert.deepEqual(db.calls.filter(call => call.name === 'zerox_usage_events').at(-1).args, { p_user_id: userA.id, p_limit: 3, p_before: null });
   page = await json(await request(`/api/usage/events?limit=2&before=${page.body.next_before}`, { token: sessionToken }));

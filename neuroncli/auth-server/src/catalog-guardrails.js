@@ -262,24 +262,15 @@ export function billedDailyCapMicrousd(env, entry, pool) {
 // ── Entries ──
 
 /**
- * The billed catalog price of a spec price (pricing.js shape): priceFromCost for input, output and
- * the long-context rate, plus the cache rates marked up the same way when the provider has them.
- * NOTE for the integration: once src/pricing.js has priceFromList (billing design §1.2), this can
- * return priceFromList(the same USD row); check-catalog-db.mjs pins the values either way.
+ * The billed catalog price of a spec price (pricing.js shape): priceFromCost for input, output,
+ * the long-context rate and the cache rates the provider has, marked up in src/pricing.js.
  */
 export function priceFromSpec(price) {
   if (!price) return null;
   const usd = value => (value === null || value === undefined ? null : value / MICRO);
   const long = price.long ? { threshold: price.long.threshold, input: usd(price.long.input), output: usd(price.long.output) } : undefined;
-  const base = priceFromCost(usd(price.input), usd(price.output), long);
-  const cache = ['cache_read', 'cache_write', 'cache_write_1h'].filter(key => price[key] !== null && price[key] !== undefined);
-  if (!cache.length) return base;
-  return Object.freeze({
-    ...base,
-    upstream_cost_usd_per_mtok: Object.freeze({ ...base.upstream_cost_usd_per_mtok,
-      ...Object.fromEntries(cache.map(key => [key, usd(price[key])])) }),
-    ...Object.fromEntries(cache.map(key => [`${key}_microusd_per_mtok`, Math.round(usd(price[key]) * MICRO * MARKUP)])),
-  });
+  return priceFromCost(usd(price.input), usd(price.output), long,
+    { read: usd(price.cache_read), write: usd(price.cache_write), write_1h: usd(price.cache_write_1h) });
 }
 
 function poolFromSpec(typeId, pool) {
@@ -532,14 +523,9 @@ export function riskyChanges(diff) {
   return diff.filter(item => RISKY_FLAGS.has(item.flag) || (item.flag === 'tier_added' && item.path === 'pools.paid'));
 }
 
-// The public price block a spec's paid pool would show on /v1/models (pricing.js publicPricing),
-// plus the cache rates when the provider has them.
+// The public price block a spec's paid pool would show on /v1/models (pricing.js publicPricing,
+// cache rates included when the provider has them).
 export function publicSpecPricing(spec) {
   const paid = (normalizeSpec(spec).pools || []).find(pool => isObject(pool) && pool.tier === 'paid' && pool.price);
-  if (!paid) return null;
-  const price = priceFromSpec(paid.price);
-  const pricing = { ...publicPricing(price) };
-  if (price.cache_read_microusd_per_mtok !== undefined) pricing.cache_read_per_mtok_usd = price.cache_read_microusd_per_mtok / MICRO;
-  if (price.cache_write_microusd_per_mtok !== undefined) pricing.cache_write_per_mtok_usd = price.cache_write_microusd_per_mtok / MICRO;
-  return pricing;
+  return paid ? publicPricing(priceFromSpec(paid.price)) : null;
 }
