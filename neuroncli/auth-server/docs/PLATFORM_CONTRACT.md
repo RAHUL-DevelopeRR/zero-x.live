@@ -1,6 +1,6 @@
 # Neuron × Zero-X platform contract
 
-Status: v1.2 (2026-10-16; v1.1 amendments in section 6, v1.2 amendments in section 7). This document is the source of truth shared by the Neuron CLI
+Status: v1.8 (2026-10-25; amendments v1.1 to v1.8 in sections 6 to 13). This document is the source of truth shared by the Neuron CLI
 (`RAHUL-DevelopeRR/neuron-v2`) and the Zero-X gateway + website
 (`RAHUL-DevelopeRR/zero-x.live`, `neuroncli/auth-server`). A copy lives in both repos;
 change both together.
@@ -36,7 +36,7 @@ catalog price (upstream cost × 1.25 markup). Free-pool usage costs 0 credits bu
 toward daily request/token caps. Top-up packs: `credits_5` ($5 credit, $5 / ₹449),
 `credits_20` ($20 credit, $20 / ₹1,749).
 
-## 2. Model catalog (gateway `src/catalog.js`)
+## 2. Model catalog (gateway `src/catalog.js`, data-driven rows since v1.8: section 13.1)
 
 Each public model has one or more pools:
 
@@ -50,12 +50,18 @@ Each public model has one or more pools:
   supports_tools: true, supports_streaming: true,
   geo_block_free: ['EEA','GB','CH'],       // free pool unavailable for these caller countries
   pools: [
-    { tier: 'free', key_var: 'GEMINI_API_KEY', limits: { rpm: 5, rpd: 250, tpm: 120000, tpd: 5000000 } },
-    { tier: 'paid', key_var: 'GEMINI_PAID_API_KEY',
+    { tier: 'free', key_slot: 'gemini.free', key_var: 'GEMINI_API_KEY', limits: { rpm: 5, rpd: 250, tpm: 120000, tpd: 5000000 } },
+    { tier: 'paid', key_slot: 'gemini.paid', key_var: 'GEMINI_PAID_API_KEY', daily_spend_cap_usd: 10,
       price: { input_microusd_per_mtok: 375000, output_microusd_per_mtok: 3125000 } },
   ],
 }
 ```
+
+`key_var` comes only from the key slot (`src/catalog-types.js` `KEY_SLOTS`). Paid pools carry a
+price and a daily spend cap (section 13.4); Claude prices add `cache_read_microusd_per_mtok`,
+`cache_write_microusd_per_mtok` and `cache_write_1h_microusd_per_mtok`. `/v1/models` `pricing` is
+`{input_per_mtok_usd, output_per_mtok_usd}` plus, for Claude, `cache_read_per_mtok_usd` and
+`cache_write_per_mtok_usd`.
 
 A pool is usable only when its key/binding is configured and `hosted` is not disabled.
 Routing for plan tiers `T`: prefer a usable `free` pool with remaining budget; otherwise a
@@ -193,13 +199,13 @@ All called through `rpc(env, name, args)` / `rpcRows(env, name, args)` in
 
 | RPC | args | returns (row) |
 |-----|------|---------------|
-| `zerox_reserve_v2` | `p_user_id uuid, p_request_id text, p_model text, p_tier text, p_tokens bigint, p_cost_microusd bigint, p_pool jsonb` (`{rpm,rpd,tpm,tpd}` or null), `p_pool_key text = null` (a provider key vault pool's key, 1-300 characters: `p_pool` is then that key's budget, counted in its own buckets; null = the model's default bucket, §11.1) | `{status, reservation_id, plan, remaining_requests, remaining_tokens, credit_balance_microusd, resets_at, retry_after_seconds}`; status ∈ `ok, no_account, suspended, upgrade_required, user_daily_requests, user_daily_tokens, user_rpm, user_concurrency, insufficient_credits, pool_exhausted` |
-| `zerox_settle_v2` | `p_reservation_id uuid, p_prompt_tokens bigint, p_completion_tokens bigint, p_cost_microusd bigint, p_status text ('ok','error','refunded','failed_upstream'), p_latency_ms int, p_provider text, p_upstream_model text, p_error_code text` | `{status:'settled'|'already_settled'|'not_found', credit_balance_microusd}`; reconciles the pool bucket stored on the reservation (model, tier, pool key) |
+| `zerox_reserve_v2` | `p_user_id uuid, p_request_id text, p_model text, p_tier text, p_tokens bigint, p_cost_microusd bigint, p_pool jsonb` (`{rpm,rpd,tpm,tpd,cpd}` or null; `cpd` = a paid pool's daily spend cap in billed micro-USD per UTC day, section 13.4), `p_pool_key text = null` (a provider key vault pool's key, 1-300 characters: `p_pool` is then that key's budget, counted in its own buckets; null = the model's default bucket, §11.1) | `{status, reservation_id, plan, remaining_requests, remaining_tokens, credit_balance_microusd, resets_at, retry_after_seconds}`; status ∈ `ok, no_account, suspended, upgrade_required, user_daily_requests, user_daily_tokens, user_rpm, user_concurrency, insufficient_credits, pool_exhausted` |
+| `zerox_settle_v2` | `p_reservation_id uuid, p_prompt_tokens bigint, p_completion_tokens bigint, p_cost_microusd bigint, p_status text ('ok','error','refunded','failed_upstream'), p_latency_ms int, p_provider text, p_upstream_model text, p_error_code text, p_cache_read_tokens bigint = 0, p_cache_write_tokens bigint = 0` (cache tokens are part of `p_prompt_tokens`, section 13.4) | `{status:'settled'|'already_settled'|'not_found', credit_balance_microusd}`; reconciles the pool bucket stored on the reservation (model, tier, pool key) |
 | `zerox_release_stale_reservations` | — | `{released}` |
 | `zerox_plan_policies_v2` | — | one row per plan: `plan, name, price_usd, price_usd_cents, price_inr_paise, daily_requests, daily_tokens, rpm_limit, concurrency_limit, allowed_tiers text[], monthly_credit_microusd, features, sort, public, highlighted, razorpay_plan_id_inr, razorpay_plan_id_usd` |
 | `zerox_account_overview` | `p_user_id` | account + policy + credits + subscription + today usage (jsonb columns) |
 | `zerox_usage_series` | `p_user_id, p_from date, p_to date` | rows `{day, requests, prompt_tokens, completion_tokens, cost_microusd}` |
-| `zerox_usage_by_model` | `p_user_id, p_from, p_to` | rows `{model, requests, prompt_tokens, completion_tokens, cost_microusd}` |
+| `zerox_usage_by_model` | `p_user_id, p_from, p_to` | rows `{model, requests, prompt_tokens, cache_read_tokens, cache_write_tokens, completion_tokens, cost_microusd}` |
 | `zerox_usage_events` | `p_user_id, p_limit int, p_before bigint` | rows of `zerox_usage_events` |
 | `zerox_api_key_create` | `p_user_id, p_name, p_prefix, p_hash` (`p_prefix` ~ `^nzx_[A-Za-z0-9_-]{0,28}$`, `p_hash` = lowercase hex SHA-256 of the secret) | `{id, name, prefix, created_at}` (raises `too_many_keys`) |
 | `zerox_api_key_list` | `p_user_id` | rows |
@@ -440,7 +446,8 @@ by itself, and signing up to a provider stays manual. Code: `src/discovery/`, re
   `POST …/{id}/verify`, `POST …/{id}/reject`, `POST …/candidates/reject` (`{ids}`),
   `POST …/{id}/promote`, `POST …/{id}/demote`, `POST /admin/discovery/run` (`{jobs}`; research
   only when named).
-- **Catalog join**: promotion writes `gateway_provider_models` (with `candidate_id`). With
+- **Catalog join** (until v1.8; since v1.8 promotion creates a draft catalog row, section 13.2):
+  promotion writes `gateway_provider_models` (with `candidate_id`). With
   `CATALOG_DB_MODELS=true` the gateway adds those rows to the code-defined catalog (60 s cache)
   through a template per provider in `src/catalog.js` (OpenRouter and NVIDIA today), which fixes
   the adapter, key, hosting flag and shared budget. They are free pools only, never chosen by
@@ -690,3 +697,121 @@ migration `20261024000200_oiop_offers.sql`; checks `check-oiop.mjs`, `check-quot
 - Provider research also proposes offers: each provider it finds becomes `<provider>.free` in
   `discovered` (`T3`, unknown terms) unless an offer with that id exists.
 
+## 13. v1.8 amendments (data-driven catalog, Claude, paid spend caps, 2026-10-25)
+
+Code: `src/catalog-types.js`, `src/list-prices.js`, `src/catalog-guardrails.js`, `src/catalog-db.js`,
+`src/catalog-claude.js`, `src/routes/catalog-admin.js`, `neuroncli/admin/models/`,
+`src/anthropic-*.js`; migrations `20261025000000_catalog_models.sql`, `20261025000100_catalog_seed.sql`,
+`20261025000200_paid_billing_caps.sql`, `20261025000300_plan_features_claude.sql` (down scripts in
+`migrations/down/`); checks `check-catalog-db.mjs`, `check-admin-models-page.mjs`,
+`check-anthropic-adapter.mjs`, `check-billing-caps.mjs`.
+
+### 13.1 Catalog rows
+
+- Models are rows (`zerox_catalog_models`: `draft | active | disabled`, never deleted) with
+  immutable revisions (`zerox_catalog_revisions`, pools in `zerox_catalog_revision_pools`) and an
+  append-only audit log (`zerox_catalog_events`; a change made outside the catalog functions is
+  logged as `direct`). The seed makes the 16 code models active at revision 1, equal to their code
+  specs.
+- Code bounds every row: provider types (adapter, base URL, public id prefix, upstream id
+  grammar, allowed key slots per tier, hosting flag, spend ceiling) in `src/catalog-types.js`; a
+  row names a key slot id (`anthropic.paid` → `ANTHROPIC_API_KEY`), never an env var or a URL.
+  Listed models' paid prices must equal `LIST_PRICES` (`src/list-prices.js`, cache rates included;
+  effective-dated changes apply on their date); unlisted ones sit in a price band, except
+  `anthropic`, which is listed-only. `MARKUP` (1.25) exists only in `src/pricing.js`.
+- Loader (`src/catalog-db.js`): `zerox_catalog_snapshot()` every 45 s per isolate (at once after an
+  approval in that isolate). An active row serves its approved revision once it passes the
+  guardrails; a failing pool is dropped, a failing model falls back to its code entry. A disabled
+  row hides the code entry with its id; a draft changes nothing. Code models without a row serve
+  from code. The database failing keeps the last snapshot that loaded, else the code catalog.
+  `CATALOG_SOURCE=code` (kill switch) and a gateway without a database serve the code catalog.
+  `CATALOG_DB_MODELS` is no longer read.
+- `/v1/models` and routing read the served snapshot; for the code-seeded rows they are identical to
+  the code catalog (`fixtures/v1-models-baseline.json`). `GET /v1/models/status` adds
+  `catalog_version` (16 hex characters, changes with every approved revision), and the ETag hashes
+  it with the availability data, so `/v1/models/stream` emits `catalog.updated` after an approval
+  that keeps every model's availability (a price or a display name).
+
+### 13.2 Catalog admin (operator)
+
+- Bearer `GATEWAY_ADMIN_TOKEN` plus Cloudflare Access when configured (as §11.1); actor = Access
+  e-mail or `operator`; `Cache-Control: no-store`. Model ids travel in query strings and bodies.
+- `GET /admin/catalog/types` (provider types, key slots with `configured` only, list prices, billed
+  prices), `GET /admin/catalog/models` (rows with served source, loader reasons, active and pending
+  revisions, diff and validation; code models without a row), `GET /admin/catalog/model?id=`
+  (revisions and events), `POST /admin/catalog/validate {spec}` (dry run: validation, diff,
+  `/v1/models` preview), `POST /admin/catalog/propose {spec, note}` (guardrails first; nothing is
+  stored when they fail; 409 `no_change`), `POST /admin/catalog/approve {model_id, revision_id,
+  expected_active_revision_id, confirm?, note}` (409 `stale_revision`, 422 `validation_failed`,
+  422 `confirmation_required` unless `confirm` = the model id for price, cap-up, key-slot,
+  paid-pool or auto-rank changes; answers `catalog_version` and `served_within_seconds: 60`),
+  `POST /admin/catalog/reject`, `/disable`, `/enable`, `GET /admin/catalog/audit[?id=]` (one model,
+  or the operator feed over offers and models). Specs use USD decimals; unknown fields are errors.
+- Page: `https://dashboard.zero-x.live/admin/models` (strict admin CSP, token in memory only).
+- Discovery promote (`POST /admin/discovery/candidates/:id/promote`, verified candidates only)
+  creates a draft row (source `discovery`) with the provider type's free pool and default limits
+  and answers `{promoted: {public_model_id, status: 'draft', revision_id}, admin_url, notes}`; it is
+  served only once approved. Candidate rows add `catalog_model_id` and `catalog_status`.
+- RPCs (`service_role` only): `zerox_catalog_propose(p_spec, p_actor, p_note, p_detail, p_source,
+  p_candidate_id)`, `zerox_catalog_approve(p_model_id, p_revision_id, p_expected_active, p_actor,
+  p_note, p_detail)`, `zerox_catalog_reject(p_model_id, p_revision_id, p_actor, p_note)`,
+  `zerox_catalog_set_status(p_model_id, p_to, p_actor, p_note)`, `zerox_catalog_snapshot()`,
+  `zerox_catalog_list()`, `zerox_catalog_model(p_id)`, `zerox_catalog_events_list(p_id, p_limit,
+  p_before)`, `zerox_operator_audit_list(p_limit, p_before)`. Errors: `catalog_model_not_found`,
+  `stale_revision`, `invalid_transition: a -> b`, `invalid_catalog: ...`, `candidate_not_verified`,
+  `catalog_immutable`, `catalog_unapproved`.
+
+### 13.3 Claude (`anthropic/claude-sonnet-5-5`, `anthropic/claude-opus-5-5`)
+
+- Paid tier only (Pro and Max, billed from credits), offer `anthropic.paid`, key slot
+  `anthropic.paid`, `auto_rank` null (`auto` never picks them; aliases `claude-sonnet-5-5`,
+  `claude-opus-5-5`). `context_window` 200,000, `max_output_tokens` 32,000; without `max_tokens`
+  a request gets `default_max_tokens` 16,000 (thinking counts inside `max_tokens`). Free sees
+  them as `upgrade_required`.
+- `reasoning_effort`: Sonnet `none | low | medium | high` (`minimal` → `low`; `none` keeps
+  thinking off between tool calls), Opus `low | medium | high` (`minimal`, `none` → `low`); absent
+  or `default` = `medium`. Thinking summaries stream as `delta.reasoning_content` (non-streaming:
+  `message.reasoning_content`), separated from the answer by a blank line.
+- Ignored for Claude: `temperature`, `top_p`, `top_k`, `seed`, penalties, `user`. A forced
+  `tool_choice` (`required` or a named function) is sent as `auto` with an instruction to call
+  the tool; `parallel_tool_calls: false` is kept.
+- A refusal is `finish_reason: content_filter` with a fixed `delta.refusal` / `message.refusal`
+  note (no server-side fallback model). `usage` carries `prompt_tokens` = input + cache writes +
+  cache reads and `prompt_tokens_details: {cached_tokens, cache_write_tokens,
+  cache_write_1h_tokens}`.
+- The gateway sends `metadata.user_id` = the first 32 hex digits of SHA-256(`zx-user:` + user id),
+  replays Claude's signed thinking blocks per caller for up to 2 h after last use (per isolate,
+  `ANTHROPIC_THINKING_REPLAY=false` turns it off) and uses 5-minute prompt caching. Upstream errors:
+  429 `rate_limited` (does not count against `ROUTER_MAX_ATTEMPTS`), 529 and 5xx `upstream_error`,
+  401/402/403 park the pool (402: the Anthropic account is out of credit).
+
+### 13.4 Billing
+
+- Settled cost = plain prompt tokens × input + cache reads × cache read + cache writes ×
+  cache write (5-minute; 1-hour writes at their rate) + completion × output, all at list price ×
+  1.25. Prices without cache rates bill cache tokens at the input rate (unchanged for every other
+  model). Claude per million tokens, billed: Sonnet 5.5 $2.50 / $12.50, Opus 5.5 $5 / $25, cache
+  reads $0.25, cache writes $3.125 (Sonnet) and $6.25 (Opus).
+- Credit hold (reservation): every prompt token at max(input, cache write) plus all of the fitted
+  `max_tokens` at the output rate; a running request never exceeds its hold.
+- Paid pools carry a daily spend cap, enforced in Postgres: `p_pool.cpd` = effective cap (upstream
+  USD) × 1e6 × 1.25. `zerox_reserve_v2` refuses with `pool_exhausted` (retry at 00:00 UTC) once the
+  pool's held plus settled cost for the UTC day would pass it; `zerox_settle_v2` reconciles to the
+  settled cost (refunds return the hold, `failed_upstream` keeps its cost). Caps: Claude Sonnet 5.5
+  $10, Claude Opus 5.5 $6, Gemini paid $10, Groq and Workers AI paid $5; code maximum $100 a pool
+  ($50 for anthropic), lowered further by `PAID_DAILY_SPEND_CAP_USD`. A paid pool without a price or
+  cap is never offered. The pool budget name is `cpd` (blurred until midnight on `/v1/models`); when
+  only caps refused, `capacity_exhausted` says "<model> has reached today's spending limit on Zero-X.
+  It resets at 00:00 UTC; choose another model until then."
+- `zerox_reserve_v2` counts `user_rpm` per client request (failover attempts `<id>.<n>` share one).
+  `zerox_release_stale_reservations` frees paid holds after 60 minutes, free ones after 15.
+  `zerox_admin_overview` pools and keys add `cost_today_microusd`.
+- `/api/usage` `by_model` rows and `/api/usage/events` events add `cache_read_tokens` and
+  `cache_write_tokens` (part of `prompt_tokens`). `insufficient_credits` explains that held credits
+  count as used and to lower `max_tokens`, top up or wait for renewal.
+
+### 13.5 Plans
+
+Tiers, limits, prices and credits are unchanged (section 1). The plan features
+(`zerox_plan_policy.features`, `/api/plans`, the site fallback) name Claude Sonnet 5.5 and Claude
+Opus 5.5 billed from credits on Pro and Max, and say every plan has the same Neuron features.

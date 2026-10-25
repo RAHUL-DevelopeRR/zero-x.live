@@ -160,6 +160,22 @@ modalities, list prices; refreshed by the cron at most daily into KV). The calle
 a ruled-out model is `unavailable_reason: policy_restricted`. `GET /v1/models/stream` pushes
 `catalog.updated` events (id = `/v1/models/status` ETag) on every change.
 
+**Model rows (contract §13.1, §13.2).** The catalog is data: model rows in Postgres, each change a
+reviewed revision, approved draft → active on `/admin/models` by the operator (token plus
+Cloudflare Access), with an append-only audit log that `GET /admin/catalog/audit` shows together
+with the offer events. Offers and rows are two separate gates: an offer decides whether a
+provider's terms let the operator's keys serve anyone (lifecycle, redistribution), a row decides
+which of that provider's models serve and at what price. A row's pools still map to
+`<provider>.<tier>` offers, so a row cannot move a model to a more permissive offer, and a row
+can never name a URL or a secret: base URLs, key slots, list prices and spend ceilings live in
+code. Discovery only ever creates draft rows. `catalog_version` in the `/v1/models/status` ETag
+makes every approval a `catalog.updated` event.
+
+**Claude.** `anthropic.paid` (protocol `anthropic-messages`, `T0`, `trains_on_inputs: no`,
+redistribution `permitted` as an operator decision of 2026-10-24) serves Claude Sonnet 5.5 and
+Claude Opus 5.5 to Pro and Max through the native Messages adapter, billed from credits. The
+built-in offer mirrors the seed migration's row.
+
 ## 9. Discovery: endpoints and credits
 
 Discovery (`src/discovery/`, contract §8.4) runs on the 10-minute cron and only ever proposes:
@@ -187,8 +203,8 @@ Discovery (`src/discovery/`, contract §8.4) runs on the 10-minute cron and only
   hashes terms pages and re-crawls them daily; legitimacy checks (domain age, company identity, scam lists,
   pay-before-access); the admin queue shows quoted clauses and a next-step checklist, with e-mail
   or webhook notices; self-deploy plans (vLLM/Ollama image, GPU, monthly cost); keys for any
-  OpenAI-compatible offer through a generic adapter (the vault and catalog templates cover Groq,
-  Gemini, NVIDIA and OpenRouter today); providers' own `/.well-known/oiop.json`.
+  OpenAI-compatible offer through a generic adapter (the vault and the catalog's provider types
+  cover Groq, Gemini, NVIDIA, OpenRouter, Workers AI and Anthropic today); providers' own `/.well-known/oiop.json`.
 - **Phase 3 — quality and limits**: nightly identity/quality eval against model swapping; limits
   learned from 429s and rate-limit headers; reset windows on the provider's clock.
 - **Phase 4 — the standard**: publish the spec and a signed public registry.
