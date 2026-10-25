@@ -588,8 +588,19 @@ try {
     assert.deepEqual(snapshot.byId.get('@cf/openai/gpt-oss-120b').pools.map(pool => pool.tier), ['free'], 'a cap above the maximum drops the paid pool');
     assert.equal(snapshot.byId.get('nvidia/acme/coder-9').source, 'database', 'a valid row without a code entry serves from the database');
     assert.ok(snapshot.warnings.some(item => item.alias === 'gemini-2.5-flash' && item.reason === 'alias_conflict'), 'an alias taken by another model is dropped');
-    assert.ok(snapshot.warnings.some(item => item.alias === 'openai/gpt-oss-120b'));
+    assert.ok(snapshot.warnings.some(item => item.model === 'gemini/gemini-2.5-flash' && item.alias === 'openai/gpt-oss-120b'),
+      'the Gemini row (position 10) cannot take the alias of the Groq code model (position 50)');
+    assert.equal(snapshot.aliases.get('openai/gpt-oss-120b'), 'groq/openai/gpt-oss-120b');
     assert.equal(snapshot.aliases.get('gemini-2.5-flash'), 'gemini/gemini-2.5-flash');
+    // Position orders the list, never alias ownership: a position-0 row cannot take code aliases,
+    // even of a code model that is disabled (its aliases then resolve to nothing).
+    const opusFirst = row(OPUS_ID);
+    Object.assign(opusFirst.spec, { position: 0, aliases: ['claude-opus-5-5', 'gpt-oss-120b', 'openai/gpt-oss-120b', 'gpt-oss-20b'] });
+    const squatted = buildSnapshot([opusFirst, { ...row('groq/openai/gpt-oss-20b'), status: 'disabled', revision_id: null, spec: null }]);
+    assert.equal(squatted.entries[0].id, OPUS_ID, 'listed first');
+    assert.deepEqual(['gpt-oss-120b', 'openai/gpt-oss-120b', 'claude-opus-5-5', 'gpt-oss-20b'].map(alias => squatted.aliases.get(alias) ?? null),
+      ['groq/openai/gpt-oss-120b', 'groq/openai/gpt-oss-120b', OPUS_ID, null]);
+    assert.deepEqual(squatted.warnings.filter(item => item.model === OPUS_ID).map(item => item.alias), ['gpt-oss-120b', 'openai/gpt-oss-120b', 'gpt-oss-20b']);
     assert.equal(snapshot.aliases.get('default'), 'auto');
     assert.equal(snapshot.byId.get('cohere/north-mini-code:free'), codeCatalog().byId.get('cohere/north-mini-code:free').entry,
       'code models without a row serve from code');
@@ -720,6 +731,12 @@ try {
     assert.ok(refused.body.validation.pools.paid.includes('price_mismatch_list'));
     assert.equal((await call('/admin/catalog/propose', { method: 'POST', body: { spec: cheap } })).status, 400, 'an off-list price is never stored');
     assert.equal((await call('/admin/catalog/propose', { method: 'POST', body: { spec: { ...renamed, base_url: 'https://evil.example' } } })).status, 400);
+    // A code model's id or alias cannot be proposed as another model's alias.
+    const squatter = { ...renamed, position: 0, aliases: ['claude-sonnet-5-5', 'gpt-oss-120b', 'gemini-2.5-flash'] };
+    const squat = await call('/admin/catalog/validate', { method: 'POST', body: { spec: squatter } });
+    assert.deepEqual([squat.body.ok, squat.body.errors], [false, ['alias_reserved:gpt-oss-120b', 'alias_reserved:gemini-2.5-flash']],
+      "the model's own alias is fine; another code model's is reserved");
+    assert.equal((await call('/admin/catalog/propose', { method: 'POST', body: { spec: squatter } })).status, 400, 'a squatting alias is never stored');
     assert.equal((await call('/admin/catalog/propose', { method: 'POST', body: { spec: apiFromSpec(SONNET) } })).status, 409, 'no change, no revision');
     assert.deepEqual(await counts(), start, 'validate and refused proposals write nothing');
 

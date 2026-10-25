@@ -24,7 +24,7 @@ import {
   apiFromSpec, normalizeSpec, publicSpecPricing, REASONING_EFFORTS, riskyChanges, sameSpec, specDiff, specFromApi,
   specValid, validateSpec,
 } from '../catalog-guardrails.js';
-import { catalogSnapshot, catalogStatus, codeCatalog, loadCatalog } from '../catalog-db.js';
+import { catalogSnapshot, catalogStatus, codeCatalog, loadCatalog, reservedAliases } from '../catalog-db.js';
 
 const MAX_BODY_BYTES = 65536;
 const MODEL_ID = /^[a-z0-9@][a-z0-9@./:_-]{0,199}$/;
@@ -195,11 +195,17 @@ function typesView(env) {
   });
 }
 
-// Validates an operator API spec. Returns { id, spec, errors, validation }.
+// Validates an operator API spec. Returns { id, spec, errors, validation }. A code model's id or
+// alias named as another model's alias is an error here too (the loader would drop it anyway).
 function checkApiSpec(body, now) {
   const { spec, errors } = specFromApi(body);
   if (!spec) return { id: null, spec: null, errors, validation: null };
   const id = publicIdFor(spec.provider_type, spec.upstream_model);
+  const reserved = reservedAliases();
+  for (const alias of Array.isArray(spec.aliases) ? spec.aliases : []) {
+    const owner = reserved.get(String(alias).toLowerCase());
+    if (owner && owner !== id) errors.push(`alias_reserved:${String(alias).slice(0, 100)}`);
+  }
   return { id, spec, errors, validation: validateSpec(id, spec, { now }) };
 }
 

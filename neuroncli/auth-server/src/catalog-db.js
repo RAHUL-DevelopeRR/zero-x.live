@@ -72,16 +72,34 @@ function servedCodeItem(item, now) {
 
 const positionOf = spec => (Number.isSafeInteger(spec?.position) ? spec.position : 100_000);
 
+// Ids and aliases of the code catalog -> the code model they name. They always resolve to that
+// model (or to nothing while it is disabled), never to another row, whatever its position.
+export function reservedAliases(code = codeCatalog()) {
+  if (code.reserved) return code.reserved;
+  const reserved = new Map();
+  for (const item of code.items) {
+    reserved.set(item.id.toLowerCase(), item.id);
+    for (const alias of item.spec.aliases) if (!reserved.has(String(alias).toLowerCase())) reserved.set(String(alias).toLowerCase(), item.id);
+  }
+  code.reserved = reserved;
+  return reserved;
+}
+
 function finalize({ source, served, verdicts, warnings, failing, now, code }) {
   // served: [{ entry, position }] in merge order; listed by position, then merge order.
   const entries = served.map((item, index) => ({ ...item, index }))
     .sort((a, b) => a.position - b.position || a.index - b.index).map(item => item.entry);
   const byId = new Map(entries.map(entry => [entry.id.toLowerCase(), entry]));
+  // Aliases: models with a code entry first, then the others, each in list order. A row's
+  // position orders /v1/models only; it can never take a code id or alias from its model.
+  const reserved = reservedAliases(code);
   const aliases = new Map([['default', 'auto']]);
-  for (const entry of entries) {
+  const isCode = entry => code.byId.has(entry.id.toLowerCase());
+  for (const entry of [...entries.filter(isCode), ...entries.filter(entry => !isCode(entry))]) {
     for (const alias of entry.aliases) {
       const lower = String(alias).toLowerCase();
-      if (byId.has(lower) || lower === 'auto' || aliases.has(lower)) {
+      const owner = reserved.get(lower);
+      if (byId.has(lower) || lower === 'auto' || aliases.has(lower) || (owner && owner !== entry.id)) {
         warnings.push({ model: entry.id, alias, reason: 'alias_conflict' });
         continue;
       }

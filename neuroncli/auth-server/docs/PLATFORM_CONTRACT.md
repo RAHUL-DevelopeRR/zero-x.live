@@ -731,7 +731,10 @@ Code: `src/catalog-types.js`, `src/list-prices.js`, `src/catalog-guardrails.js`,
   row hides the code entry with its id; a draft changes nothing. Code models without a row serve
   from code. The database failing keeps the last snapshot that loaded, else the code catalog.
   `CATALOG_SOURCE=code` (kill switch) and a gateway without a database serve the code catalog.
-  `CATALOG_DB_MODELS` is no longer read.
+  `CATALOG_DB_MODELS` is no longer read. Aliases go to models with a code entry first, then to
+  the others in list order; a code model's ids and aliases always name that model (or nothing
+  while it is disabled), whatever another row's `position`, and the admin API refuses them as
+  another model's alias (`alias_reserved`).
 - `/v1/models` and routing read the served snapshot; for the code-seeded rows they are identical to
   the code catalog (`fixtures/v1-models-baseline.json`). `GET /v1/models/status` adds
   `catalog_version` (16 hex characters, changes with every approved revision), and the ETag hashes
