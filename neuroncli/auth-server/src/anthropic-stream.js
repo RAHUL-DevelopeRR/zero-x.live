@@ -152,15 +152,18 @@ export class ClaudeStreamTranslator {
   /**
    * Usage for settling a stream that ended before message_delta (a client abort, a mid-stream
    * error event): the input and cache counts message_start reported, billed at their own rates,
-   * and completion = max(output_tokens reported so far, ceil(output bytes / 3.5)) over what the
-   * gateway streamed and what this translator read. null when message_start carried no counts,
-   * so the caller falls back to its estimate.
+   * and completion = max(output_tokens reported so far, ceil(output bytes / 3.5)) over the bytes
+   * Claude generated (text, thinking and raw tool-input JSON, counted by this translator). The
+   * gateway's own byte count is not used: it measures the serialized OpenAI tool_calls deltas
+   * (index and function wrappers, partial JSON escaped a second time), several times the tool
+   * input on an abort during a file write. null when message_start carried no counts, so the
+   * caller falls back to its estimate.
    */
-  usageSoFar(outputBytes = 0) {
+  usageSoFar() {
     const reported = ['input_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens']
       .some(key => Number.isFinite(this.usage[key]));
     if (!reported) return null;
-    const streamed = estimateOutputTokens(Math.max(Number(outputBytes) || 0, this.outputBytes));
+    const streamed = estimateOutputTokens(this.outputBytes);
     return openaiUsage({ ...this.usage, output_tokens: Math.max(count(this.usage.output_tokens), streamed) });
   }
 

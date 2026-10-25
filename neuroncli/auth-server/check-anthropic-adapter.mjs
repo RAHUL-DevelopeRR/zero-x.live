@@ -766,9 +766,31 @@ try {
     assert.deepEqual([cold.finish.usage.prompt_tokens, cold.finish.usage.completion_tokens, cold.finish.usage.prompt_tokens_details.cache_write_tokens],
       [30500, 40, 30000]);
     assert.equal(settle(cold.finish).p_cost_microusd, 500 * 2.5 + 30000 * 3.125 + 40 * 12.5, 'not under-billed at the input rate');
+    // An abort while Claude writes a tool input (Esc during a file write): completion counts the
+    // tool-input JSON Claude generated (160 fragments of 12 bytes = 1,920 bytes, ceil(/3.5) = 549
+    // tokens), not the gateway's count of the serialized OpenAI tool_calls deltas it streamed
+    // (index and function wrappers, the partial JSON escaped again: several times as many bytes).
+    const fragment = String.raw`abc\"def\nhi`; // file content as escaped inside the tool-input JSON
+    assert.equal(Buffer.byteLength(fragment), 12);
+    upstream = request => sseResponse([start, ...E.tool(0, 'toolu_write', 'write_file', Array(160).fill(fragment)).slice(0, 161), { hang: true }], request);
+    const writer = new AbortController();
+    const writing = await startCompletion(ENV, SESSION, SONNET, POOL, payloadFor([{ role: 'user', content: 'write it' }],
+      { entry: SONNET, tools: [fn('write_file')] }), { clientSignal: writer.signal, timeouts: TIMEOUTS });
+    let writeAborted = null;
+    const writeStream = createCompletionStream({ ...writing.stream, model: SONNET.id, controller: writing.controller, clientSignal: writer.signal,
+      timeouts: TIMEOUTS, requestId: 'req_abort_tool', env: ENV, onFinish: async outcome => { writeAborted = outcome; } });
+    const writeReader = writeStream.getReader();
+    let written = '';
+    while ((written.match(/"arguments":"abc/g) || []).length < 160) written += decoder.decode((await writeReader.read()).value);
+    setTimeout(() => writer.abort(), 20);
+    await writeReader.read().catch(() => null);
+    assert.deepEqual([writeAborted.status, writeAborted.kind], ['error', FailureKind.ABORTED]);
+    assert.ok(writeAborted.outputBytes > 3 * 1920, `the gateway counted ${writeAborted.outputBytes} bytes of serialized deltas`);
+    assert.equal(writeAborted.usage.completion_tokens, 549, 'the tool input Claude generated, at 3.5 bytes a token');
+    assert.equal(settle(writeAborted).p_cost_microusd, Math.ceil(4000 * 2.5 + 16000 * 0.25 + 549 * 12.5));
     // Nothing reported yet (no message_start counts): the gateway's estimate stays.
     const bare = new ClaudeStreamTranslator({ model: SONNET.id });
-    assert.equal(bare.usageSoFar(100), null);
+    assert.equal(bare.usageSoFar(), null);
     // A completed stream still settles with message_delta's usage.
     upstream = request => sseResponse([start, ...E.text(0, [TEXT]), E.delta('end_turn', { output_tokens: 12 }), E.stop()], request);
     const done = await gatewayRun({ entry: SONNET, payload });

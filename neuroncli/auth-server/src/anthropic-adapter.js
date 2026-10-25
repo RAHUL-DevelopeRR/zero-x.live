@@ -222,7 +222,7 @@ export class AnthropicAdapter extends ProviderAdapter {
     const translator = new ClaudeStreamTranslator({ model: entry.id, toolNames: mapped.toolNames });
     // An attempt that fails from here on (an error event, a timeout, an abort; streamed or not) is
     // settled from what message_start reported (provider-adapter.js setPartialUsage).
-    setPartialUsage(signal, outputBytes => translator.usageSoFar(outputBytes));
+    setPartialUsage(signal, () => translator.usageSoFar());
     const onTurn = turns && mapped.rememberTurns ? () => {
       const record = translator.turnRecord();
       if (record) for (const fingerprint of record.fingerprints) turns.remember(fingerprint, record.blocks);
@@ -232,7 +232,7 @@ export class AnthropicAdapter extends ProviderAdapter {
       { status: 200, headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store' } });
     // The usage chunk only comes with message_delta: an abort or a mid-stream error before it is
     // settled from message_start's input and cache counts (createCompletionStream usageSoFar).
-    return setPartialUsage(response, outputBytes => translator.usageSoFar(outputBytes));
+    return setPartialUsage(response, () => translator.usageSoFar());
   }
 }
 
