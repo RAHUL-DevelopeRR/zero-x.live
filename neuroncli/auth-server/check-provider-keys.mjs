@@ -17,6 +17,7 @@ import { FailureKind, HealthState, ProviderHealthTracker } from './src/provider-
 import { HealthHub } from './src/health-hub.js';
 import { overviewPools } from './src/routes/admin.js';
 import { resetAccessCache, verifyAccessJwt } from './src/access-auth.js';
+import { validateProviderKey } from './src/routes/provider-keys.js';
 
 const b64 = bytes => Buffer.from(bytes).toString('base64');
 const b64url = value => Buffer.from(value).toString('base64url');
@@ -77,7 +78,7 @@ globalThis.fetch = async (input, init = {}) => {
   const url = String(input?.url ?? input);
   const headers = new Headers(init.headers || input?.headers || {});
   calls.push({ url, method: init.method || 'GET', authorization: headers.get('authorization'), goog: headers.get('x-goog-api-key'),
-    body: typeof init.body === 'string' ? init.body : null });
+    body: typeof init.body === 'string' ? init.body : null, redirect: init.redirect });
   if (access && url === `https://${access.team}/cdn-cgi/access/certs`) return json(access.jwks);
   for (const [prefix, handler] of Object.entries(upstream)) if (url.startsWith(prefix)) return handler(url, headers);
   throw new TypeError(`check-provider-keys: unexpected request to ${url}`);
@@ -177,6 +178,16 @@ try {
   assert.equal(JSON.parse(nvidiaCheck.body).max_tokens, 1);
   assert.equal((await sql('SELECT count(*)::int AS n FROM public.zerox_provider_keys'))[0].n, 6, 'rejected keys were not saved');
   assert.ok(!calls.some(call => leaks(call.url).length), 'no key in any URL');
+  // A key check never follows a redirect with the key attached (Workers rejects the 'error'
+  // mode), and a 3xx is reported as unavailable, never as an accepted key.
+  assert.ok(calls.filter(call => call.authorization || call.goog).every(call => call.redirect === 'manual'), 'key checks use redirect manual');
+  let redirectMode;
+  const moved = await validateProviderKey('groq', SECRETS.groqA, { fetchImpl: async (url, init) => {
+    redirectMode = init.redirect;
+    return new Response(null, { status: 302, headers: { location: 'https://elsewhere.example/' } });
+  } });
+  assert.equal(redirectMode, 'manual');
+  assert.deepEqual(moved, { ok: false, reason: 'unavailable', status: 302 });
 
   const listed = await admin('/admin/providers/keys');
   assert.equal(listed.status, 200);
@@ -444,6 +455,8 @@ try {
   resetAccessCache();
   const good = await sign(claims);
   assert.deepEqual(await verifyAccessJwt(guarded, good), { email: 'rahul@zero-x.live', sub: 'u1' });
+  assert.equal(calls.findLast(call => call.url === `https://${team}/cdn-cgi/access/certs`)?.redirect, 'manual',
+    'Access certs are fetched without following redirects');
   assert.equal(await verifyAccessJwt(guarded, await sign({ ...claims, aud: ['b'.repeat(64)] })), null, 'other application');
   assert.equal(await verifyAccessJwt(guarded, await sign({ ...claims, exp: now - 120 })), null, 'expired');
   assert.equal(await verifyAccessJwt(guarded, await sign({ ...claims, iss: 'https://evil.cloudflareaccess.com' })), null, 'other team');

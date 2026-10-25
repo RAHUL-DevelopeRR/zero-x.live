@@ -42,7 +42,9 @@ export async function validateProviderKey(provider, secret, { fetchImpl = (...ar
   const [url, init] = validationRequest(provider, secret);
   let response;
   try {
-    response = await fetchImpl(url, { ...init, redirect: 'error',
+    // Never follow a redirect with the key attached: Workers rejects the 'error' mode, and with
+    // 'manual' a 3xx is a non-ok response, reported as unavailable below.
+    response = await fetchImpl(url, { ...init, redirect: 'manual',
       signal: AbortSignal.timeout(provider === 'nvidia' ? 30_000 : 10_000) });
   } catch (error) {
     return { ok: false, reason: 'unavailable', status: null, timeout: error?.name === 'TimeoutError' };

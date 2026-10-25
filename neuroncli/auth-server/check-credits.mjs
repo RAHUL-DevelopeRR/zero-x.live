@@ -20,12 +20,14 @@ const sql = async (text, params) => (await (await getPgliteHandle(DB)).db.query(
 const program = async id => (await rpcRows(DB, 'zerox_credit_programs_list', {})).find(row => row.id === id);
 
 const anthropicCalls = [];
+const anthropicRedirects = [];
 let replies = [];
 const realFetch = globalThis.fetch;
 globalThis.fetch = async (input, init = {}) => {
   const url = String(input?.url ?? input);
   if (url === 'https://api.anthropic.com/v1/messages') {
     anthropicCalls.push(JSON.parse(init.body));
+    anthropicRedirects.push(init.redirect);
     const reply = replies.shift();
     if (!reply) throw new Error('No fake Claude reply left');
     return new Response(JSON.stringify(reply), { status: 200, headers: { 'content-type': 'application/json' } });
@@ -126,6 +128,7 @@ try {
     const [run] = (await runDiscoveryTick(env, { jobs: ['credits'] })).ran;
     assert.equal(run.ok, true, run.error);
     const [search, extract] = anthropicCalls;
+    assert.deepEqual(anthropicRedirects, ['manual', 'manual'], 'the key never follows a redirect');
     assert.equal(search.model, 'claude-haiku-5-5');
     assert.equal(search.tools[0].type, 'web_search_20250305');
     assert.equal(search.output_config.format, undefined, 'the search call has no output format (citations stay on)');

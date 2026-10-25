@@ -336,6 +336,7 @@ try {
   assert.ok(request.max_tokens <= 8000);
   assert.match(request.messages[0].content, /openrouter \[rejected\]: .*acme\/coder-pro:free/, 'the agent is given the current list');
   assert.equal(new Headers(callsTo('https://api.anthropic.com').at(-1).init.headers).get('x-api-key'), 'sk-ant-test');
+  assert.ok(callsTo('https://api.anthropic.com').every(call => call.init.redirect === 'manual'), 'the key never follows a redirect');
   assert.equal((await candidate('freshai', 'fresh-coder')).status, 'new');
   assert.equal((await candidate('freshai')).record.sources[0], 'https://freshai.example/pricing');
   assert.equal((await candidate('scrapeit', 's1')).status, 'excluded');

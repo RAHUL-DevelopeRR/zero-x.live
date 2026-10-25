@@ -166,8 +166,10 @@ export async function runResearch(env, known, { today, snapshot = null } = {}) {
   const budget = researchBudget(env, SYSTEM.length + prompt.length, snapshot);
   if (!budget.maxSearches) throw new Error(`DISCOVERY_RESEARCH_MAX_USD (${budget.capUsd}) is too small for one search`);
   // No SDK retries: a retried timeout could bill twice. The job itself retries the next day.
+  // x-api-key is a custom header that a followed cross-origin redirect would keep, so a 3xx is
+  // never followed (Workers rejects the 'error' redirect mode); the SDK reports it as a failed call.
   const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY, maxRetries: 0, timeout: 300_000,
-    fetch: (...args) => fetch(...args) });
+    fetch: (url, init) => fetch(url, { ...init, redirect: 'manual' }) });
   const response = await client.messages.create({
     model: RESEARCH_MODEL,
     max_tokens: budget.maxTokens,

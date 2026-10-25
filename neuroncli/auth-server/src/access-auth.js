@@ -37,7 +37,7 @@ function signingKeys(domain, fetchImpl, now) {
   if (cached && now - cached.fetchedAt < CERTS_TTL_MS) return cached;
   const entry = { fetchedAt: now, keys: (async () => {
     const response = await fetchImpl(`https://${domain}/cdn-cgi/access/certs`, {
-      signal: AbortSignal.timeout(5000), redirect: 'error',
+      signal: AbortSignal.timeout(5000), redirect: 'manual',
     });
     if (!response.ok) throw new Error(`Access certs answered ${response.status}`);
     const body = await response.json();
