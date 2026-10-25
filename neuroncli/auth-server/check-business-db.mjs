@@ -109,13 +109,15 @@ try {
     'Worker-bundled modules stay free of Node built-ins');
   const migrations = await listMigrations();
   assert.deepEqual(handle.applied, migrations.map(migration => migration.version), 'all migrations applied in version order');
-  assert.deepEqual(migrations.slice(-13).map(migration => migration.file), [
+  // The business migrations in apply order; other migrations may sit between them.
+  const businessMigrations = [
     '20261016000000_business_schema.sql', '20261016000100_business_quota.sql',
     '20261016000200_business_billing.sql', '20261016000300_business_sessions_admin.sql',
     '20261019000000_device_auth.sql', '20261019120000_provider_discovery.sql', '20261021000000_device_pending_retry.sql',
     '20261023000000_session_devices.sql', '20261023000100_push_tokens.sql', '20261024000000_provider_keys.sql',
     '20261024000100_provider_key_budgets.sql', '20261024000200_oiop_offers.sql',
-    '20261024000300_credit_programs.sql']);
+    '20261024000300_credit_programs.sql', '20261025000200_paid_billing_caps.sql', '20261025000300_plan_features_claude.sql'];
+  assert.deepEqual(migrations.map(migration => migration.file).filter(file => businessMigrations.includes(file)), businessMigrations);
   assert.equal((await sql('SELECT count(*)::int AS n FROM supabase_migrations.schema_migrations'))[0].n, migrations.length);
   await assert.rejects(rpc(env, 'zerox_does_not_exist', {}), error =>
     error instanceof AccountDatabaseError && error.code === 'PGRST202');
@@ -353,7 +355,7 @@ try {
   assert.deepEqual(await settle(freeTierCost.reservation_id, { p_cost_microusd: 999 }),
     { status: 'settled', credit_balance_microusd: 5000 }, 'free pool usage costs no credits');
   // A long-running paid request keeps its credits held after its concurrency slot lapses (10 min),
-  // until it is settled or released (15 min).
+  // until it is settled or released (60 min for paid reservations, 15 for free ones).
   const longRunner = await newUser('pro', { credits: 1000 });
   const longPaid = await reserve(longRunner, { p_tier: 'paid', p_cost_microusd: 1000 });
   assert.equal(longPaid.status, 'ok');
@@ -361,6 +363,10 @@ try {
   assert.equal((await reserve(longRunner, { p_tier: 'paid', p_cost_microusd: 1000 })).status, 'insufficient_credits',
     'credits stay held beyond the 10 minute concurrency horizon');
   await sql("UPDATE public.zerox_reservations SET created_at = now() - interval '16 minutes' WHERE id = $1", [longPaid.reservation_id]);
+  await rpc(env, 'zerox_release_stale_reservations', {});
+  assert.equal((await reserve(longRunner, { p_tier: 'paid', p_cost_microusd: 1000 })).status, 'insufficient_credits',
+    'a paid reservation is not released at 15 minutes, so a long Claude stream keeps its hold');
+  await sql("UPDATE public.zerox_reservations SET created_at = now() - interval '61 minutes' WHERE id = $1", [longPaid.reservation_id]);
   await rpc(env, 'zerox_release_stale_reservations', {});
   assert.equal((await reserve(longRunner, { p_tier: 'paid', p_cost_microusd: 1000 })).status, 'ok', 'release returns the held credits');
   // The usage: ref namespace belongs to settlements, so a grant can never block one.
@@ -1063,8 +1069,8 @@ try {
     { day: utcDay(0), requests: 2, prompt_tokens: 8, completion_tokens: 4, cost_microusd: 2500 },
   ], 'series is zero-filled per UTC day');
   assert.deepEqual(await rpcRows(env, 'zerox_usage_by_model', { p_user_id: statsUser, p_from: utcDay(-3), p_to: utcDay(0) }), [
-    { model: 'm/a', requests: 3, prompt_tokens: 307, completion_tokens: 33, cost_microusd: 0 },
-    { model: 'm/b', requests: 2, prompt_tokens: 51, completion_tokens: 6, cost_microusd: 4000 },
+    { model: 'm/a', requests: 3, prompt_tokens: 307, cache_read_tokens: 0, cache_write_tokens: 0, completion_tokens: 33, cost_microusd: 0 },
+    { model: 'm/b', requests: 2, prompt_tokens: 51, cache_read_tokens: 0, cache_write_tokens: 0, completion_tokens: 6, cost_microusd: 4000 },
   ]);
   assert.deepEqual(await rpcRows(env, 'zerox_usage_by_model', { p_user_id: statsUser, p_from: utcDay(-1), p_to: utcDay(-1) }), []);
   await assert.rejects(rpcRows(env, 'zerox_usage_series', { p_user_id: statsUser, p_from: utcDay(0), p_to: utcDay(-1) }), /invalid_range/);
