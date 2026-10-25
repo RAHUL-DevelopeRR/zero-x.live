@@ -125,6 +125,10 @@ export class AnthropicAdapter extends ProviderAdapter {
     this.betaRetryMs = betaRetryMs;
     // Set when the API rejects BINDING_BETA: this isolate stops sending it for betaRetryMs.
     this.bindingBetaRejectedUntil = 0;
+    // Claude sends its input and cache counts in message_start, before the model runs: an attempt
+    // that ends without them (a timeout, an abort, an error first) never reached the model
+    // (chat-handler settles it as a full refund, contract §13.4).
+    this.reportsUsageAtStart = true;
   }
 
   capabilities() {

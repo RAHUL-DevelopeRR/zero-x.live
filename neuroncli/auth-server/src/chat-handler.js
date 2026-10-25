@@ -1,7 +1,7 @@
 import { errorResponse, newRequestId } from './errors.js';
 import {
   buildUpstreamPayload, classifyUpstreamFailure, createCompletionStream, isOwnedSession, normalizeCompletion,
-  ownedCatalog, startCompletion, streamTimeouts, upstreamErrorSummary,
+  ownedCatalog, reportsUsageAtStart, startCompletion, streamTimeouts, upstreamErrorSummary,
 } from './providers.js';
 import { globalSignatureCache } from './provider-request.js';
 import { claudeTurnHooks, globalClaudeTurnCache } from './anthropic-turns.js';
@@ -140,6 +140,9 @@ const ERROR_CODES_BY_KIND = {
 // 5xx, network and auth failures) is returned to the pool ('refunded'). An attempt whose upstream
 // reported usage before it failed (Claude's message_start, then an error event, a timeout or an
 // abort) ran the model whatever its kind: it is settled 'failed_upstream' too, from that usage.
+// An upstream that reports usage before the model runs (reportsUsageAtStart: Claude) and reported
+// none did not run it, whatever the kind: a first-byte or response timeout, or a client abort,
+// before message_start is 'refunded' (contract §13.4).
 const GENERATED_KINDS = new Set([FailureKind.MODEL_ERROR, FailureKind.TIMEOUT]);
 
 function minimum(values) {
@@ -487,12 +490,14 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
       if (!pending) return;
       const { reservation, candidate, latencyMs = 0, errorCode = null, kind = null, reported = null } = pending;
       pending = null;
-      const generated = !status && (reported !== null || GENERATED_KINDS.has(kind));
+      const generated = !status && (reported !== null || (GENERATED_KINDS.has(kind) && !reportsUsageAtStart(candidate.entry)));
       const settled = status || (generated ? 'failed_upstream' : 'refunded');
       const usage = generated ? reported ?? { prompt_tokens: promptTokens, completion_tokens: 0 } : undefined;
       await settleDb(reservation, candidate, { status: settled, latencyMs, errorCode, usage, ...outcome }, false);
     };
     const abortedUsage = () => pending?.reported ?? { prompt_tokens: promptTokens, completion_tokens: 0 };
+    // A Claude attempt the client aborted before message_start never reached the model.
+    const abortedUnreached = () => Boolean(pending && pending.reported == null && reportsUsageAtStart(pending.candidate.entry));
 
     try {
       for (const candidate of candidates) {
@@ -586,7 +591,8 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
     // failures are refunded (contract §3.3: upstream_error refunds the request, §6: within the
     // daily allowance when the model ran).
     const clientSide = final.code === 'context_length_exceeded' || final.code === 'invalid_request';
-    if (aborted) await releasePending('error', { usage: abortedUsage() });
+    if (aborted && abortedUnreached()) await releasePending('refunded');
+    else if (aborted) await releasePending('error', { usage: abortedUsage() });
     else if (clientSide) await releasePending('error', { usage: { prompt_tokens: 0, completion_tokens: 0 } });
     else await releasePending();
     await settleKv({ actualTokens: aborted ? promptTokens : 0, refundRequest: !aborted && !clientSide });

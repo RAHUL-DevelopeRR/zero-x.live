@@ -1553,6 +1553,36 @@ try {
       anthropic: () => Response.json({ type: 'error', error: { type: 'overloaded_error', message: 'Overloaded' } }, { status: 529 }) });
     await expectError(await gw.call(env, { model: 'claude-sonnet-5-5', messages }, { token: 'ses_pro' }), 502, 'upstream_error');
     assert.deepEqual(refundedSettled.map(args => [args.p_status, args.p_prompt_tokens, args.p_cost_microusd]), [['refunded', 0, 0]]);
+    // So does every other way a Claude attempt can end before message_start, the event Claude sends
+    // before the model runs: a first-byte or response timeout (with or without response headers)
+    // and a client abort. None may put the prompt estimate against the pool's spend cap or the
+    // caller's credits (a first-byte timeout of an OpenAI-compatible upstream stays failed_upstream).
+    const silentClaude = call => new Response(new ReadableStream({
+      start(controller) {
+        call.signal?.addEventListener('abort', () => { try { controller.error(new DOMException('aborted', 'AbortError')); } catch { /* closed */ } });
+      },
+    }), { headers: { 'content-type': 'text/event-stream', 'request-id': 'req_claude' } });
+    for (const [label, stream, ending] of [['timeout, no headers', false, 'timeout'], ['timeout, headers only', false, 'timeout-headers'],
+      ['timeout, no headers', true, 'timeout'], ['timeout, headers only', true, 'timeout-headers'],
+      ['client abort, no headers', false, 'abort'], ['client abort, headers only', true, 'abort-headers']]) {
+      const name = `${stream ? 'stream' : 'non-stream'} ${label}`;
+      const silentSettled = [];
+      const client = new AbortController();
+      gw.tracker.reset();
+      reset({ 'rpc:zerox_plan_policies_v2': policiesRpc, 'rpc:zerox_reserve_v2': () => Response.json([okReserve({ reservation_id: 'res-silent' })]),
+        'rpc:zerox_settle_v2': call => { silentSettled.push(call.body); return Response.json([{ status: 'settled' }]); },
+        anthropic: call => {
+          if (ending.startsWith('abort')) setTimeout(() => client.abort(), 50);
+          return ending.endsWith('headers') ? silentClaude(call) : untilAborted(call);
+        } });
+      const answer = await gw.call(ending.startsWith('abort') ? env : { ...env, ...FAST }, { model: 'claude-sonnet-5-5', messages, stream },
+        { token: 'ses_pro', signal: client.signal }).catch(error => error);
+      if (ending.startsWith('timeout')) await expectError(answer, 504, 'upstream_timeout');
+      for (let wait = 0; wait < 50 && !silentSettled.length; wait++) await new Promise(resolve => setTimeout(resolve, 10));
+      assert.deepEqual(silentSettled.map(args => [args.p_reservation_id, args.p_status, args.p_prompt_tokens, args.p_completion_tokens,
+        args.p_cache_read_tokens, args.p_cache_write_tokens, args.p_cost_microusd]), [['res-silent', 'refunded', 0, 0, 0, 0, 0]],
+      `${name}: Claude reported nothing, a full refund`);
+    }
 
     // A spent daily spend cap names the model and the reset time; no credits is 402 with the hold explained.
     resetPoolBudgets();

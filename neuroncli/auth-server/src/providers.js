@@ -407,6 +407,12 @@ export function normalizeCompletion(result, model, messages, tools, { onToolSign
   };
 }
 
+// True when the entry's upstream reports usage before the model runs (Claude's message_start), so
+// a failed attempt that reported none never reached the model (chat-handler settlement).
+export function reportsUsageAtStart(entry) {
+  return ADAPTERS[entry?.provider]?.reportsUsageAtStart === true;
+}
+
 // `request` carries per-request shaping context for the adapter ({ signatureFor }).
 export async function requestCompletion(env, session, entry, body, signal, pool, request = {}) {
   const adapter = ADAPTERS[entry.provider];

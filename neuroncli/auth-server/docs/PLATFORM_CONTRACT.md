@@ -829,7 +829,10 @@ Code: `src/catalog-types.js`, `src/list-prices.js`, `src/catalog-guardrails.js`,
   non-streaming call, which is streamed upstream too, or a stream whose first event is an error)
   is settled from the same counts: `failed_upstream` for an error event or a timeout (the model
   ran, whatever the error kind; the caller is refunded within the daily allowance), `error` for a
-  client abort. A failure before `message_start` stays a full refund.
+  client abort. A Claude attempt that ends before `message_start` (an HTTP error, an error event
+  first, a first-byte or response timeout with or without response headers, a client abort) is
+  `refunded`, user and pool alike: Claude sends `message_start` before the model runs, so for
+  Claude the §7 rule that a timeout is `failed_upstream` from the prompt estimate does not apply.
 - Paid pools carry a daily spend cap, enforced in Postgres: `p_pool.cpd` = effective cap (upstream
   USD) × 1e6 × 1.25. `zerox_reserve_v2` refuses with `pool_exhausted` (retry at 00:00 UTC) once the
   pool's held plus settled cost for the UTC day would pass it; `zerox_settle_v2` reconciles to the
