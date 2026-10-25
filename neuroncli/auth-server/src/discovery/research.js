@@ -3,7 +3,7 @@
 // already known, and returns records in the provider database shape (SCHEMA.json) with sources.
 // Spending is capped per run (DISCOVERY_RESEARCH_MAX_USD). Its output is untrusted web-derived
 // data: it only ever creates candidates for review, and nothing it returns is ever called.
-import Anthropic from '@anthropic-ai/sdk';
+import { anthropicClient } from '../anthropic-transport.js';
 import { bool, candidateRow, evaluateOffer, exclusionReason, httpsUrl, positiveInt, providerId } from './policy.js';
 
 export const RESEARCH_MODEL = 'claude-haiku-5-5';
@@ -165,11 +165,10 @@ export async function runResearch(env, known, { today, snapshot = null } = {}) {
   const prompt = researchPrompt(known, today);
   const budget = researchBudget(env, SYSTEM.length + prompt.length, snapshot);
   if (!budget.maxSearches) throw new Error(`DISCOVERY_RESEARCH_MAX_USD (${budget.capUsd}) is too small for one search`);
-  // No SDK retries: a retried timeout could bill twice. The job itself retries the next day.
-  // x-api-key is a custom header that a followed cross-origin redirect would keep, so a 3xx is
-  // never followed (Workers rejects the 'error' redirect mode); the SDK reports it as a failed call.
-  const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY, maxRetries: 0, timeout: 300_000,
-    fetch: (url, init) => fetch(url, { ...init, redirect: 'manual' }) });
+  // The adapter's transport (src/anthropic-transport.js): api.anthropic.com only, no redirects,
+  // base URL pinned and no ANTHROPIC_AUTH_TOKEN, no SDK retries (a retried timeout could bill
+  // twice; the job itself retries the next day).
+  const client = anthropicClient(env.ANTHROPIC_API_KEY, { timeout: 300_000 });
   const response = await client.messages.create({
     model: RESEARCH_MODEL,
     max_tokens: budget.maxTokens,

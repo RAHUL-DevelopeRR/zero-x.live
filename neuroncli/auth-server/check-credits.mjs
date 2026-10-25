@@ -21,6 +21,7 @@ const program = async id => (await rpcRows(DB, 'zerox_credit_programs_list', {})
 
 const anthropicCalls = [];
 const anthropicRedirects = [];
+const anthropicAuth = [];
 let replies = [];
 const realFetch = globalThis.fetch;
 globalThis.fetch = async (input, init = {}) => {
@@ -28,6 +29,7 @@ globalThis.fetch = async (input, init = {}) => {
   if (url === 'https://api.anthropic.com/v1/messages') {
     anthropicCalls.push(JSON.parse(init.body));
     anthropicRedirects.push(init.redirect);
+    anthropicAuth.push(new Headers(init.headers).get('authorization'));
     const reply = replies.shift();
     if (!reply) throw new Error('No fake Claude reply left');
     return new Response(JSON.stringify(reply), { status: 200, headers: { 'content-type': 'application/json' } });
@@ -125,10 +127,21 @@ try {
     await rpcRows(DB, 'zerox_credit_program_transition', { p_id: 'google-for-startups-cloud', p_to: 'approved', p_actor: 'check' });
     replies = [searchReply, extractReply(extracted)];
     const env = { ...DB, ANTHROPIC_API_KEY: 'sk-ant-test' };
-    const [run] = (await runDiscoveryTick(env, { jobs: ['credits'] })).ran;
+    // On the Node server the SDK would read these from process.env: the credits client pins the
+    // base URL to api.anthropic.com and sends x-api-key only (src/anthropic-transport.js).
+    process.env.ANTHROPIC_BASE_URL = 'https://evil.example';
+    process.env.ANTHROPIC_AUTH_TOKEN = 'auth-token-must-not-be-sent';
+    let run;
+    try {
+      [run] = (await runDiscoveryTick(env, { jobs: ['credits'] })).ran;
+    } finally {
+      delete process.env.ANTHROPIC_BASE_URL;
+      delete process.env.ANTHROPIC_AUTH_TOKEN;
+    }
     assert.equal(run.ok, true, run.error);
     const [search, extract] = anthropicCalls;
     assert.deepEqual(anthropicRedirects, ['manual', 'manual'], 'the key never follows a redirect');
+    assert.deepEqual(anthropicAuth, [null, null], 'ANTHROPIC_AUTH_TOKEN never adds a second credential');
     assert.equal(search.model, 'claude-haiku-5-5');
     assert.equal(search.tools[0].type, 'web_search_20250305');
     assert.equal(search.output_config.format, undefined, 'the search call has no output format (citations stay on)');

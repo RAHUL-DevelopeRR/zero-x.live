@@ -5,8 +5,9 @@
 // providers.js handle it unchanged.
 //
 // Transport is the official @anthropic-ai/sdk with three shims: a fetch wrapper (redirect
-// 'manual', api.anthropic.com only, a byte tap for liveness), SDK errors turned back into
-// upstream-shaped Responses, and abort mapping. maxRetries is 0: the router owns failover.
+// 'manual', api.anthropic.com only, a byte tap for liveness; src/anthropic-transport.js), SDK
+// errors turned back into upstream-shaped Responses, and abort mapping. maxRetries is 0: the
+// router owns failover.
 import Anthropic from '@anthropic-ai/sdk';
 import { ProviderAdapter } from './provider-adapter.js';
 import { catalogEntries, poolSecret } from './catalog.js';
@@ -14,6 +15,9 @@ import { FailureKind } from './provider-health.js';
 import { ANTHROPIC, BINDING_BETA, ClaudeRequestError, messageFingerprint, toClaudeRequest } from './anthropic-request.js';
 import { ERROR_STATUS, Liveness, openAIStream, openaiUsage, streamErrorBody, ClaudeStreamTranslator } from './anthropic-stream.js';
 import { claudeTurnHooks, globalClaudeTurnCache } from './anthropic-turns.js';
+import { anthropicClient, anthropicFetch, isAnthropicUrl } from './anthropic-transport.js';
+
+export { anthropicFetch, isAnthropicUrl };
 
 const SDK_TIMEOUT_MS = 600_000; // headers only; the gateway's first-byte and idle budgets apply first
 const ERROR_TYPES = Object.freeze(Object.fromEntries(Object.entries(ERROR_STATUS).map(([type, status]) => [status, type])));
@@ -23,46 +27,8 @@ const BETA_REJECTED = [
 ];
 const SIGNATURE_REJECTED = /signature[\s\S]*thinking|thinking[\s\S]*signature/i;
 
-// Only https://api.anthropic.com/v1/… is ever fetched with the key.
-export function isAnthropicUrl(value) {
-  let url;
-  try {
-    url = new URL(value);
-  } catch {
-    return false;
-  }
-  return url.protocol === 'https:' && url.hostname === ANTHROPIC.host && !url.port && !url.username &&
-    !url.password && url.pathname.startsWith('/v1/');
-}
-
-/**
- * The fetch the SDK uses. x-api-key is a custom header that a followed cross-origin redirect
- * would keep, so redirects are never followed (Workers rejects the 'error' mode; a 3xx comes
- * back as a failed call). Successful bodies are piped through a tap that signals `liveness` on
- * every chunk, because the SDK swallows `ping` events.
- */
-export function anthropicFetch(liveness = null) {
-  return async (input, init = {}) => {
-    const href = typeof input === 'string' ? input : input instanceof URL ? input.href : input?.url;
-    if (!isAnthropicUrl(href)) throw new Error('Refused a Claude API call to a host other than api.anthropic.com');
-    const response = await globalThis.fetch(href, { ...init, redirect: 'manual' });
-    if (!liveness || !response.ok || !response.body) return response;
-    const tap = new TransformStream({
-      transform(chunk, controller) {
-        liveness.bytes();
-        controller.enqueue(chunk);
-      },
-    });
-    return new Response(response.body.pipeThrough(tap),
-      { status: response.status, statusText: response.statusText, headers: response.headers });
-  };
-}
-
 function claudeClient(apiKey, liveness) {
-  // authToken null: an ANTHROPIC_AUTH_TOKEN in the environment must not add a second
-  // credential header. baseURL is pinned; logging is off (no prompts, headers or keys in logs).
-  return new Anthropic({ apiKey, authToken: null, baseURL: ANTHROPIC.baseURL, maxRetries: 0, timeout: SDK_TIMEOUT_MS,
-    logLevel: 'off', fetch: anthropicFetch(liveness) });
+  return anthropicClient(apiKey, { timeout: SDK_TIMEOUT_MS, liveness });
 }
 
 /**

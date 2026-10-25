@@ -8,7 +8,7 @@
 // with no cited fact is dropped. Records only ever become rows for the operator to review
 // (zerox_credit_programs): applying for a program stays manual. Spending is capped like the
 // provider research (DISCOVERY_RESEARCH_MAX_USD).
-import Anthropic from '@anthropic-ai/sdk';
+import { anthropicClient } from '../anthropic-transport.js';
 import { httpsUrl } from './policy.js';
 import { RESEARCH_MODEL, researchBudget, researchCostMicrousd } from './research.js';
 
@@ -218,11 +218,10 @@ export async function runCreditsResearch(env, known, { today, snapshot = null } 
   const prompt = creditsPrompt(known, today);
   const budget = researchBudget(env, SEARCH_SYSTEM.length + prompt.length, snapshot);
   if (!budget.maxSearches) throw new Error(`DISCOVERY_RESEARCH_MAX_USD (${budget.capUsd}) is too small for one search`);
-  // No SDK retries: a retried timeout could bill twice. The job itself retries the next day.
-  // x-api-key is a custom header that a followed cross-origin redirect would keep, so a 3xx is
-  // never followed (Workers rejects the 'error' redirect mode); the SDK reports it as a failed call.
-  const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY, maxRetries: 0, timeout: 300_000,
-    fetch: (url, init) => fetch(url, { ...init, redirect: 'manual' }) });
+  // The adapter's transport (src/anthropic-transport.js): api.anthropic.com only, no redirects,
+  // base URL pinned and no ANTHROPIC_AUTH_TOKEN, no SDK retries (a retried timeout could bill
+  // twice; the job itself retries the next day).
+  const client = anthropicClient(env.ANTHROPIC_API_KEY, { timeout: 300_000 });
   let spentMicrousd = 0;
   let nextSnapshot = snapshot;
   const fail = message => Object.assign(new Error(message), { spentMicrousd, nextSnapshot });

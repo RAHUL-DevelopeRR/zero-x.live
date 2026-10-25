@@ -3,6 +3,7 @@
 // the verification stream and HealthHub. Any other outbound request fails the run.
 //   node check-discovery.mjs
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { rpc, rpcRows } from './src/account-store.js';
 import { closeAllPglite, getPgliteHandle } from './src/db/pglite.js';
 import { CATALOG, listModelsForCaller, loadCatalog, offeredEntries, resolveModelId } from './src/catalog.js';
@@ -17,6 +18,7 @@ import { OMNIROUTE_CATALOG_URL, omnirouteDiff, parseOmnirouteCatalog } from './s
 import { parseResearchAnswer, researchBudget, researchCostMicrousd, researchRows, RESEARCH_MODEL } from './src/discovery/research.js';
 import { verificationTarget, verifyCandidate } from './src/discovery/verify.js';
 import { DAY, discoveryJobs, researchEnabled, runDiscoveryTick, WEEK } from './src/discovery/jobs.js';
+import { anthropicFetch } from './src/anthropic-transport.js';
 import app from './src/index.js';
 
 const passed = [];
@@ -326,7 +328,17 @@ try {
   upstream.set('https://api.anthropic.com/v1/messages', (url, init) => { anthropicCalls.push(JSON.parse(init.body)); return researchReply(); });
   // DISCOVERY_CREDITS=false: this run counts the provider research call only (credits: check-credits.mjs).
   const researchEnv = { ...listEnv, ANTHROPIC_API_KEY: 'sk-ant-test', DISCOVERY_CREDITS: 'false' };
-  const research = (await runDiscoveryTick(researchEnv)).ran;
+  // On the Node server (server.js builds env from process.env) the SDK would take its base URL
+  // and a bearer token from these: the research client pins api.anthropic.com and x-api-key.
+  process.env.ANTHROPIC_BASE_URL = 'https://evil.example';
+  process.env.ANTHROPIC_AUTH_TOKEN = 'auth-token-must-not-be-sent';
+  let research;
+  try {
+    research = (await runDiscoveryTick(researchEnv)).ran;
+  } finally {
+    delete process.env.ANTHROPIC_BASE_URL;
+    delete process.env.ANTHROPIC_AUTH_TOKEN;
+  }
   assert.deepEqual(research.map(item => item.job), ['research'], 'research is due once a key is set; the lists are not');
   assert.equal(research[0].ok, true, research[0].error);
   const request = anthropicCalls[0];
@@ -338,6 +350,14 @@ try {
   assert.match(request.messages[0].content, /openrouter \[rejected\]: .*acme\/coder-pro:free/, 'the agent is given the current list');
   assert.equal(new Headers(callsTo('https://api.anthropic.com').at(-1).init.headers).get('x-api-key'), 'sk-ant-test');
   assert.ok(callsTo('https://api.anthropic.com').every(call => call.init.redirect === 'manual'), 'the key never follows a redirect');
+  assert.ok(!calls.some(call => call.url.startsWith('https://evil.example')), 'ANTHROPIC_BASE_URL never moves the key');
+  assert.equal(new Headers(callsTo('https://api.anthropic.com').at(-1).init.headers).get('authorization'), null, 'no ANTHROPIC_AUTH_TOKEN bearer');
+  await assert.rejects(anthropicFetch()('https://evil.example/v1/messages', { method: 'POST', headers: { 'x-api-key': 'sk-ant-test' } }),
+    /other than api\.anthropic\.com/, 'the shared transport refuses other hosts');
+  for (const file of ['research.js', 'credits.js']) {
+    const source = readFileSync(new URL(`./src/discovery/${file}`, import.meta.url), 'utf8');
+    assert.ok(source.includes("from '../anthropic-transport.js'") && !/new Anthropic\(/.test(source), `${file} builds its client with anthropicClient`);
+  }
   assert.equal((await candidate('freshai', 'fresh-coder')).status, 'new');
   assert.equal((await candidate('freshai')).record.sources[0], 'https://freshai.example/pricing');
   assert.equal((await candidate('scrapeit', 's1')).status, 'excluded');
