@@ -488,13 +488,22 @@ try {
   const catalogNoJwt = await admin('/admin/catalog/types', { target: guarded });
   assert.deepEqual([catalogNoJwt.status, (await catalogNoJwt.json()).error.code], [403, 'access_required'], 'catalog API: Access as for the vault');
   assert.equal((await admin('/admin/catalog/types', { target: guarded, headers: { 'Cf-Access-Jwt-Assertion': good } })).status, 200);
+  const discoveryNoJwt = await admin('/admin/discovery/candidates?status=all', { target: guarded });
+  assert.deepEqual([discoveryNoJwt.status, (await discoveryNoJwt.json()).error.code], [403, 'access_required'], 'discovery API: Access as for the vault');
+  const discoveryRunNoJwt = await admin('/admin/discovery/run', { method: 'POST', body: { jobs: ['research'] }, target: guarded });
+  assert.deepEqual([discoveryRunNoJwt.status, (await discoveryRunNoJwt.json()).error.code], [403, 'access_required'], 'no paid research run on the token alone');
+  assert.equal((await admin('/admin/discovery/candidates?status=all', { target: guarded,
+    headers: { 'Cf-Access-Jwt-Assertion': await sign({ ...claims, exp: now - 120 }) } })).status, 403, 'discovery API: an expired Access JWT is refused');
+  const discoveryWithJwt = await admin('/admin/discovery/candidates?status=all', { target: guarded, headers: { 'Cf-Access-Jwt-Assertion': good } });
+  assert.equal(discoveryWithJwt.status, 200);
+  assert.equal(discoveryWithJwt.headers.get('cache-control'), 'no-store');
   const apiNoJwt = await admin('/admin/providers/keys', { target: guarded });
   assert.equal(apiNoJwt.status, 403, 'API: the admin token alone is not enough once Access is configured');
   assert.equal((await apiNoJwt.json()).error.code, 'access_required');
   const apiWithJwt = await admin('/admin/providers/keys', { target: guarded, headers: { 'Cf-Access-Jwt-Assertion': good } });
   assert.equal(apiWithJwt.status, 200);
   assert.equal((await apiWithJwt.json()).access_configured, true);
-  ok('admin pages (keys, models): dashboard host only, enforced CSP without inline script, Access JWT (signature, audience, issuer, expiry) required when configured, for the catalog API too');
+  ok('admin pages (keys, models): dashboard host only, enforced CSP without inline script, Access JWT (signature, audience, issuer, expiry) required when configured, for the catalog and discovery APIs too');
 
   console.log('PASS: provider key vault: sealed keys, service_role RPCs, validated adds, per-key pools and health, Access-gated admin page');
 } finally {

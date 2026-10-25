@@ -439,7 +439,8 @@ by itself, and signing up to a provider stays manual. Code: `src/discovery/`, re
 - **Exclusion filter**: access that needs CAPTCHA solving, scraping a consumer chat website, a
   spoofed client or another product's login is `excluded`, also for every model of an excluded
   provider; excluded candidates cannot be approved.
-- **Review** (`Bearer GATEWAY_ADMIN_TOKEN`; page `GET /admin/discovery`):
+- **Review** (`Bearer GATEWAY_ADMIN_TOKEN` plus Cloudflare Access when configured, as §11.1,
+  `Cache-Control: no-store`; page `GET /admin/discovery`):
   `GET /admin/discovery/candidates?status=&provider=&q=&limit=&offset=`, `GET …/candidates/{id}`,
   `POST …/{id}/approve` (runs one live streamed tool call when this deployment holds a key for the
   provider: the provider's own secret, or `DISCOVERY_KEY_<ID>` with `DISCOVERY_BASE_<ID>`),

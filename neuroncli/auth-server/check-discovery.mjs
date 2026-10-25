@@ -445,8 +445,27 @@ try {
   assert.equal(page.headers.get('cache-control'), 'no-store');
   assert.equal((await call('/admin/discovery/candidates', { token: null })).status, 401);
   assert.equal((await call('/admin/discovery/candidates', { token: 'wrong-token-wrong-token-wrong-token' })).status, 401);
+  // Cloudflare Access, as the catalog, key vault, offers and credits routes: once it is configured
+  // the token alone reaches nothing (research and credit runs spend money, verify spends provider
+  // keys, promote writes catalog drafts).
+  const accessEnv = { ...adminEnv, ANTHROPIC_API_KEY: 'sk-ant-api03-check-not-real', CF_ACCESS_TEAM_DOMAIN: 'zerox.cloudflareaccess.com',
+    CF_ACCESS_AUD: 'a'.repeat(32) };
+  const callsBeforeAccess = calls.length;
+  for (const [method, path, body] of [['GET', '/admin/discovery/candidates?status=all'], ['GET', '/admin/discovery/candidates/1'],
+    ['POST', '/admin/discovery/run', { jobs: ['research'] }], ['POST', '/admin/discovery/run', { jobs: ['credits'] }],
+    ['POST', '/admin/discovery/candidates/1/approve', {}], ['POST', '/admin/discovery/candidates/1/verify', {}],
+    ['POST', '/admin/discovery/candidates/1/promote', {}], ['POST', '/admin/discovery/candidates/1/demote', {}],
+    ['POST', '/admin/discovery/candidates/1/reject', {}], ['POST', '/admin/discovery/candidates/reject', { ids: [1] }]]) {
+    const refused = await call(path, { method, body, env: accessEnv });
+    assert.deepEqual([refused.status, refused.body?.error?.code], [403, 'access_required'], `${method} ${path}: Access is required when configured`);
+    assert.equal((await call(path, { method, body, env: accessEnv, token: 'wrong-token-wrong-token-wrong-token' })).status, 401,
+      'the token is checked first');
+  }
+  assert.equal(calls.length, callsBeforeAccess, 'no Claude call, verification or list fetch without Access');
+  assert.equal((await call('/admin/discovery', { token: null, env: accessEnv })).status, 200, 'the page shell holds no data');
   const listed = await call('/admin/discovery/candidates?status=new&provider=openrouter');
   assert.equal(listed.status, 200);
+  assert.equal(listed.headers.get('cache-control'), 'no-store');
   const coderRow = listed.body.data.find(item => item.model_id === 'acme/coder-pro:free');
   assert.deepEqual([coderRow.verifiable, coderRow.catalog_template, coderRow.record, coderRow.catalog_model_id], [true, true, null, null]);
   assert.equal(listed.body.settings.catalog_source, 'database');
@@ -572,7 +591,7 @@ try {
   assert.equal((await call('/admin/discovery/run', { method: 'POST', body: { jobs: ['research'] } })).status, 400, 'research needs its key');
   const runNow = await call('/admin/discovery/run', { method: 'POST', body: { jobs: ['list:requesty'] }, env: { ...adminEnv, HEALTH_HUB } });
   assert.deepEqual(runNow.body.ran.map(item => [item.job, item.ok]), [['list:requesty', true]], 'run now forces a job that is not due');
-  ok('admin API: token required, approve runs the live tool call, verified is only proposed, promote creates a draft catalog row that serves only once approved on /admin/models (and stops when disabled)');
+  ok('admin API: token required (and Cloudflare Access when configured), approve runs the live tool call, verified is only proposed, promote creates a draft catalog row that serves only once approved on /admin/models (and stops when disabled)');
 
   // ──────────────────────────────────────────── research switch
   assert.equal(researchEnabled({ ANTHROPIC_API_KEY: 'sk-ant-x' }), true, 'on by default once the key is set');

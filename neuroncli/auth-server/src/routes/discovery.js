@@ -1,4 +1,6 @@
-// Discovery review (contract §8.4): every route needs Bearer GATEWAY_ADMIN_TOKEN except the page
+// Discovery review (contract §8.4): every route needs Bearer GATEWAY_ADMIN_TOKEN, plus a valid
+// Cloudflare Access JWT when Access is configured (as the catalog, key vault, offers and credits
+// routes: research and credit runs spend money, verify spends provider keys), except the page
 // shell, which holds no data and asks for the token. Approving a model runs one live streamed
 // tool call when this deployment holds a key for its provider; promotion is a separate step that
 // only proposes: it creates a draft catalog row, served once an operator approves it on
@@ -10,7 +12,7 @@ import { MODELS_VARS, loadCatalog, resolveModelId } from '../catalog.js';
 import { catalogSource } from '../catalog-db.js';
 import { providerType, publicIdFor } from '../catalog-types.js';
 import { proposeCandidateDraft } from './catalog-admin.js';
-import { accessConfigured, verifyAccessJwt } from '../access-auth.js';
+import { accessConfigured, passedAccess, verifyAccessJwt } from '../access-auth.js';
 import { discoveryJobs, JOB_INTERVALS, researchEnabled, runDiscoveryTick } from '../discovery/jobs.js';
 import { researchCap } from '../discovery/research.js';
 import { verificationTarget, verifyCandidate } from '../discovery/verify.js';
@@ -91,6 +93,8 @@ const note = value => (typeof value === 'string' && value.trim() ? value.trim().
 export function registerDiscoveryRoutes(api) {
   const operatorOnly = handler => async c => {
     if (!await isOperator(c)) return errorResponse(c, 401, 'invalid_session', 'Operator authentication required.');
+    if (!await passedAccess(c)) return errorResponse(c, 403, 'access_required', 'Cloudflare Access authentication required.');
+    c.header('Cache-Control', 'no-store');
     try {
       return await handler(c);
     } catch (error) {
