@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { accountRpc, databaseConfigured } from './account-store.js';
 import { modelCatalog, resolveModelCatalog, providerHealth, providerConfiguration } from './providers.js';
-import { callerCountry, catalogEntries, catalogWarnings, inheritCallerCountry, loadCatalogDbModels } from './catalog.js';
+import { callerCountry, catalogEntries, catalogWarnings, inheritCallerCountry, loadCatalog } from './catalog.js';
 import { refreshModelsDevFacts } from './oiop/models-dev.js';
 import { globalHealthTracker } from './provider-health.js';
 import { createChatHandler } from './chat-handler.js';
@@ -33,6 +33,7 @@ import { registerRelayRoutes } from './routes/relay.js';
 import { runDiscoveryTick } from './discovery/jobs.js';
 import { registerProviderKeyRoutes } from './routes/provider-keys.js';
 import { registerOfferRoutes } from './routes/offers.js';
+import { registerCatalogAdminRoutes } from './routes/catalog-admin.js';
 import { registerCreditRoutes } from './routes/credits.js';
 import { loadVaultKeys, vaultConfigured } from './provider-keys.js';
 import { accessConfigured, passedAccess } from './access-auth.js';
@@ -74,14 +75,19 @@ const CONTENT_SECURITY_POLICY = [
 // Public, cacheable API answers (everything else under /api/ is no-store).
 const PUBLIC_API_PATHS = ['/api/plans', '/api/changelog.json'];
 
-// The provider key vault page (dashboard.zero-x.live/admin/keys, src/routes/provider-keys.js):
-// served from neuroncli/admin/keys/ under /admin/ only, so one Cloudflare Access application on
-// dashboard.zero-x.live/admin covers the page, its script and the key API.
+// The operator pages on dashboard.zero-x.live, served from neuroncli/admin/ under /admin/ only, so
+// one Cloudflare Access application on dashboard.zero-x.live/admin covers the pages, their
+// scripts and their APIs: the provider key vault (/admin/keys, src/routes/provider-keys.js) and
+// the model catalog (/admin/models, src/routes/catalog-admin.js).
 const ADMIN_PAGE_FILES = Object.freeze({
   '/admin/keys': '/neuroncli/admin/keys/index.html',
   '/admin/keys/': '/neuroncli/admin/keys/index.html',
   '/admin/keys/keys.js': '/neuroncli/admin/keys/keys.js',
   '/admin/keys/keys.css': '/neuroncli/admin/keys/keys.css',
+  '/admin/models': '/neuroncli/admin/models/index.html',
+  '/admin/models/': '/neuroncli/admin/models/index.html',
+  '/admin/models/models.js': '/neuroncli/admin/models/models.js',
+  '/admin/models/models.css': '/neuroncli/admin/models/models.css',
 });
 // No inline script or style, nothing from another origin except the site fonts.
 const ADMIN_CONTENT_SECURITY_POLICY = [
@@ -162,7 +168,7 @@ app.use('*', async (c, next) => {
     return c.redirect(url.toString(), 308);
   }
 
-  // The admin page's files are only reachable through /admin/keys on the dashboard host.
+  // The admin pages' files are only reachable through /admin/keys and /admin/models on the dashboard host.
   if (path.startsWith('/neuroncli/admin/')) return (await notFoundPage(c)) || c.text('Not Found', 404);
 
   if (c.req.method === 'GET' || c.req.method === 'HEAD') {
@@ -180,7 +186,7 @@ app.use('*', async (c, next) => {
         ((hostname === 'neuron.zero-x.live' || loopback) && (path === '/device' || path === '/device/')))) {
       return c.env.ASSETS.fetch(new Request(new URL('/neuroncli/device/index.html', url), c.req.raw));
     }
-    // Provider key vault page: dashboard host (or the local Node server), behind Cloudflare Access.
+    // Operator pages (key vault, model catalog): dashboard host (or the local Node server), behind Cloudflare Access.
     if (c.env?.ASSETS && Object.hasOwn(ADMIN_PAGE_FILES, path) && (hostname === 'dashboard.zero-x.live' || loopback)) {
       if (!await passedAccess(c)) return c.text('Cloudflare Access authentication required.', 403);
       return c.env.ASSETS.fetch(new Request(new URL(ADMIN_PAGE_FILES[path], url), c.req.raw));
@@ -860,6 +866,7 @@ api.get('/v1/models/stream', async (c) => {
 api.get('/v1/providers/health', async (c) => {
   if (!await isOperator(c)) return errorResponse(c, 401, 'invalid_session', 'Operator authentication required.');
   c.header('Cache-Control', 'no-store');
+  await loadCatalog(c.env);
   // pools: per-pool circuit state of this isolate (provider:upstream_model:tier).
   return c.json({ provider_configuration: providerConfiguration(c.env), providers: await providerHealth(c.env),
     pools: globalHealthTracker.getSnapshot(), catalog_warnings: catalogWarnings(c.env) });
@@ -991,6 +998,7 @@ registerPushRoutes(api);
 registerRelayRoutes(api);
 registerProviderKeyRoutes(api);
 registerOfferRoutes(api);
+registerCatalogAdminRoutes(api);
 registerCreditRoutes(api);
 
 app.route(API_MOUNT, api);
@@ -1044,7 +1052,7 @@ app.scheduled = (controller, env, ctx) => {
     console.warn('Discovery tick failed', { message: String(error?.message).slice(0, 200) });
   });
   // models.dev facts for /v1/models, at most once a day (src/oiop/models-dev.js).
-  const facts = loadCatalogDbModels(env).then(() => refreshModelsDevFacts(env, catalogEntries(env))).catch(error => {
+  const facts = loadCatalog(env).then(() => refreshModelsDevFacts(env, catalogEntries(env))).catch(error => {
     console.warn('models.dev facts refresh failed', { message: String(error?.message).slice(0, 200) });
   });
   const task = Promise.allSettled([runScheduledMaintenance(env), discovery, facts]).then(([maintenance]) => {

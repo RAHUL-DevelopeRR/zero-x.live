@@ -3,9 +3,9 @@
 // src/catalog-db.js serves these from code whenever the database has no row for them, and
 // check-catalog-db.mjs proves the seeded rows equal them exactly.
 //
-// NOTE for the integration: src/oiop/offers.js BUILTIN_OFFERS gains offer(ANTHROPIC_PAID_OFFER)
-// (otherwise servesOperatorPools keeps the pools unconfigured), and src/catalog.js may build its
-// code entries for Claude with entryFromSpec(id, spec, { source: 'code' }) from CLAUDE_MODEL_SPECS.
+// src/oiop/offers.js BUILTIN_OFFERS lists offer(ANTHROPIC_PAID_OFFER) (without it
+// servesOperatorPools would keep the pools unconfigured), and src/catalog.js builds its code
+// entries for Claude with entryFromSpec(id, spec, { source: 'code' }) from CLAUDE_MODEL_SPECS.
 //
 // Paid tier only (Pro and Max), key slot anthropic.paid (ANTHROPIC_API_KEY), never chosen by
 // `auto`. Context and output are kept to what the gateway can carry: MAX_BODY_BYTES (1 MiB) holds

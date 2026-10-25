@@ -12,7 +12,7 @@
 // `new`. Approval, verification and promotion are operator actions (src/routes/discovery.js,
 // offers.js, credits.js); signing up to a provider or applying for credits stays manual.
 import { databaseConfigured, rpcRows } from '../account-store.js';
-import { entryPools, loadCatalogDbModels, offeredEntries, poolKey } from '../catalog.js';
+import { entryPools, loadCatalog, offeredEntries, poolKey } from '../catalog.js';
 import { markPoolsUnavailable } from '../health-hub-client.js';
 import { globalHealthTracker } from '../provider-health.js';
 import { loadVaultKeys } from '../provider-keys.js';
@@ -37,8 +37,15 @@ export const JOB_INTERVALS = Object.freeze({
   ...Object.fromEntries(LIST_SOURCES.map(source => [source.job, DAY])), omniroute: WEEK, research: WEEK, credits: WEEK,
 });
 
+// The weekly research and credits jobs call Claude (with web search) and spend real money, capped
+// per run by DISCOVERY_RESEARCH_MAX_USD. They run once ANTHROPIC_API_KEY is set (the key the Claude
+// pools use); DISCOVERY_RESEARCH=false turns both off, DISCOVERY_CREDITS=false the credits job only.
+export function researchEnabled(env) {
+  return Boolean(env?.ANTHROPIC_API_KEY) && String(env?.DISCOVERY_RESEARCH ?? '').trim().toLowerCase() !== 'false';
+}
+
 export function discoveryJobs(env) {
-  const paid = env?.ANTHROPIC_API_KEY ? ['research', ...(env.DISCOVERY_CREDITS === 'false' ? [] : ['credits'])] : [];
+  const paid = researchEnabled(env) ? ['research', ...(env.DISCOVERY_CREDITS === 'false' ? [] : ['credits'])] : [];
   return [...LIST_SOURCES.map(source => source.job), 'omniroute', ...paid];
 }
 
@@ -79,7 +86,7 @@ const firstIds = list => list.slice(0, SUMMARY_IDS);
  * more than one) is treated as broken and marks nothing.
  */
 export async function markMissingCatalogModels(env, provider, ids) {
-  await Promise.all([loadCatalogDbModels(env), loadVaultKeys(env)]);
+  await Promise.all([loadCatalog(env), loadVaultKeys(env)]);
   const entries = offeredEntries(env).filter(entry => entry.provider === provider);
   const missing = entries.filter(entry => !ids.has(entry.upstream_model));
   if (!missing.length) return { missing: [], marked: 0 };

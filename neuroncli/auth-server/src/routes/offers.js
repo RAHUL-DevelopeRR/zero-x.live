@@ -7,7 +7,7 @@ import { databaseConfigured, rpcRows } from '../account-store.js';
 import { ApiError, errorResponse, sendApiError } from '../auth-context.js';
 import { isOperator } from '../operator-auth.js';
 import { accessConfigured, passedAccess, verifyAccessJwt } from '../access-auth.js';
-import { catalogEntries, entryPools, loadCatalogDbModels } from '../catalog.js';
+import { catalogEntries, entryPools, loadCatalog } from '../catalog.js';
 import {
   loadOffers, offerById, offerIdFor, offersList, resetOfferCache, TRANSITIONS,
 } from '../oiop/offers.js';
@@ -101,13 +101,13 @@ export function registerOfferRoutes(api) {
   // ── Operator ──
 
   api.get('/admin/offers', operatorOnly(async c => {
-    await Promise.all([loadOffers(c.env), loadCatalogDbModels(c.env)]);
+    await Promise.all([loadOffers(c.env), loadCatalog(c.env)]);
     return c.json({ offers: offersList(c.env).map(offer => publicOffer(c.env, offer)) });
   }));
 
   api.get('/admin/offers/:id', operatorOnly(async c => {
     const id = offerIdParam(c);
-    await Promise.all([loadOffers(c.env), loadCatalogDbModels(c.env)]);
+    await Promise.all([loadOffers(c.env), loadCatalog(c.env)]);
     const offer = offerById(c.env, id);
     if (!offer) throw new ApiError(404, 'not_found', 'No offer with this id.');
     const events = databaseConfigured(c.env) ? await rpcRows(c.env, 'zerox_offer_events_list', { p_id: id, p_limit: 50 }) : [];
@@ -145,7 +145,7 @@ export function registerOfferRoutes(api) {
   // the facts last changed.
   api.get('/admin/offers/:id/manifest', operatorOnly(async c => {
     const id = offerIdParam(c);
-    await Promise.all([loadOffers(c.env), loadCatalogDbModels(c.env)]);
+    await Promise.all([loadOffers(c.env), loadCatalog(c.env)]);
     const offer = offerById(c.env, id);
     if (!offer) throw new ApiError(404, 'not_found', 'No offer with this id.');
     if (offer.manifest) return c.json({ signed: true, manifest: offer.manifest });
@@ -162,7 +162,7 @@ export function registerOfferRoutes(api) {
         'Set the Worker secret OIOP_SIGNING_JWK (node scripts/oiop-keygen.mjs) to sign manifests.');
     }
     resetOfferCache(c.env);
-    await Promise.all([loadOffers(c.env), loadCatalogDbModels(c.env)]);
+    await Promise.all([loadOffers(c.env), loadCatalog(c.env)]);
     const offer = offerById(c.env, id);
     if (!offer) throw new ApiError(404, 'not_found', 'No offer with this id.');
     const manifest = await signManifest(buildManifest(offer, offerEntries(c.env, id)), jwk);

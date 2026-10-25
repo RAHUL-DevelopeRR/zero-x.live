@@ -5,7 +5,8 @@
 import assert from 'node:assert/strict';
 import { rpc, rpcRows } from './src/account-store.js';
 import { closeAllPglite, getPgliteHandle } from './src/db/pglite.js';
-import { CATALOG, dbCatalogEntry, listModelsForCaller, loadCatalogDbModels, offeredEntries, resolveModelId } from './src/catalog.js';
+import { CATALOG, listModelsForCaller, loadCatalog, offeredEntries, resolveModelId } from './src/catalog.js';
+import { catalogSnapshot } from './src/catalog-db.js';
 import { RoutingEngine } from './src/router.js';
 import { HealthHub } from './src/health-hub.js';
 import { ProviderHealthTracker } from './src/provider-health.js';
@@ -15,7 +16,7 @@ import { LIST_SOURCES, MODELS_DEV_URL, parseKilo, parseLlm7, parseNvidia, parseO
 import { OMNIROUTE_CATALOG_URL, omnirouteDiff, parseOmnirouteCatalog } from './src/discovery/omniroute.js';
 import { parseResearchAnswer, researchBudget, researchCostMicrousd, researchRows, RESEARCH_MODEL } from './src/discovery/research.js';
 import { verificationTarget, verifyCandidate } from './src/discovery/verify.js';
-import { DAY, runDiscoveryTick, WEEK } from './src/discovery/jobs.js';
+import { DAY, discoveryJobs, researchEnabled, runDiscoveryTick, WEEK } from './src/discovery/jobs.js';
 import app from './src/index.js';
 
 const passed = [];
@@ -402,10 +403,10 @@ try {
   assert.match(unconfigured.error.message, /signing up stays manual/);
   ok('verification: one streamed tool call through the production adapter, split SSE chunks, failures recorded without keys');
 
-  // ──────────────────────────────────────────── admin API, review page and catalog join
+  // ──────────────────────────────────────────── admin API, review page and catalog drafts
   chatReply = () => sse(toolStream);
   const adminEnv = { ...DB, GATEWAY_ADMIN_TOKEN: ADMIN, OPENROUTER_API_KEY: 'or-secret-key', OPENROUTER_HOSTED: 'true',
-    CATALOG_DB_MODELS: 'true', ALLOW_UNKNOWN_COUNTRY: 'true' };
+    ALLOW_UNKNOWN_COUNTRY: 'true' };
   const call = async (path, { method = 'GET', body, env = adminEnv, token = ADMIN } = {}) => {
     const response = await app.request(`https://zero-x.live${path}`, { method, headers: {
       ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(body ? { 'Content-Type': 'application/json' } : {}) },
@@ -415,6 +416,7 @@ try {
     try { parsed = JSON.parse(text); } catch { /* HTML page */ }
     return { status: response.status, body: parsed, text, headers: response.headers };
   };
+  const servedIds = async env => (await call('/v1/models', { token: null, env })).body.data.map(model => model.id);
   const page = await call('/admin/discovery', { token: null });
   assert.equal(page.status, 200);
   assert.match(page.text, /<title>Provider discovery<\/title>/);
@@ -425,57 +427,74 @@ try {
   const listed = await call('/admin/discovery/candidates?status=new&provider=openrouter');
   assert.equal(listed.status, 200);
   const coderRow = listed.body.data.find(item => item.model_id === 'acme/coder-pro:free');
-  assert.deepEqual([coderRow.verifiable, coderRow.catalog_template, coderRow.record], [true, true, null]);
-  assert.equal(listed.body.settings.catalog_db_models, true);
+  assert.deepEqual([coderRow.verifiable, coderRow.catalog_template, coderRow.record, coderRow.catalog_model_id], [true, true, null, null]);
+  assert.equal(listed.body.settings.catalog_source, 'database');
+  assert.equal(listed.body.settings.research_enabled, false, 'no ANTHROPIC_API_KEY, no research');
   assert.ok(listed.body.overview.jobs.some(item => item.job === 'list:openrouter'));
   assert.equal((await call('/admin/discovery/candidates?status=bogus')).status, 400);
-  assert.ok(!(await call('/v1/models', { token: null })).body.data.some(model => model.id === 'acme/coder-pro:free'), 'not served before review');
+  assert.ok(!(await servedIds(adminEnv)).includes('acme/coder-pro:free'), 'not served before review');
 
+  assert.equal((await call(`/admin/discovery/candidates/${coderRow.id}/promote`, { method: 'POST', body: {} })).body.error.code,
+    'candidate_not_verified', 'only verified models are promoted');
   const approved = await call(`/admin/discovery/candidates/${coderRow.id}/approve`, { method: 'POST', body: { note: 'looks good' } });
   assert.equal(approved.status, 200, approved.text);
   assert.equal(approved.body.verification.passed, true);
   assert.equal(approved.body.candidate.status, 'verified');
-  assert.ok(!(await call('/v1/models', { token: null, env: { ...adminEnv } })).body.data.some(model => model.id === 'acme/coder-pro:free'),
-    'verified alone is not served: it is proposed');
+  assert.ok(!(await servedIds({ ...adminEnv })).includes('acme/coder-pro:free'), 'verified alone is not served: it is proposed');
+
+  // Promote creates a draft catalog row (source discovery): nothing serves until it is approved.
   const promoted = await call(`/admin/discovery/candidates/${coderRow.id}/promote`, { method: 'POST', body: {} });
   assert.equal(promoted.status, 200, promoted.text);
-  assert.deepEqual(promoted.body.promoted, { public_model_id: 'acme/coder-pro:free', enabled: true });
-  assert.deepEqual(promoted.body.notes, []);
+  assert.deepEqual([promoted.body.promoted.public_model_id, promoted.body.promoted.status, promoted.body.served_within_seconds],
+    ['acme/coder-pro:free', 'draft', null]);
+  assert.equal(promoted.body.admin_url, '/admin/models?id=acme%2Fcoder-pro%3Afree');
+  assert.match(promoted.body.notes[0], /draft catalog row: review and approve acme\/coder-pro:free on \/admin\/models/);
+  const [draftRow] = await sql("SELECT status, source, candidate_id, pending_revision_id FROM public.zerox_catalog_models WHERE id = 'acme/coder-pro:free'");
+  assert.deepEqual([draftRow.status, draftRow.source, Number(draftRow.candidate_id)], ['draft', 'discovery', Number(coderRow.id)]);
+  const [{ n: legacyRows }] = await sql("SELECT count(*)::int AS n FROM public.gateway_provider_models WHERE public_model_id = 'acme/coder-pro:free'");
+  assert.equal(legacyRows, 0, 'promotion no longer writes the legacy discovery table');
+  const draftEnv = { ...adminEnv };
+  assert.ok(!(await servedIds(draftEnv)).includes('acme/coder-pro:free'), 'a draft is never served');
+  assert.ok(!catalogSnapshot(draftEnv).byId.has('acme/coder-pro:free'));
+  const relisted = (await call('/admin/discovery/candidates?status=verified&provider=openrouter')).body.data.find(item => item.id === coderRow.id);
+  assert.deepEqual([relisted.catalog_model_id, relisted.catalog_status], ['acme/coder-pro:free', 'draft'], 'the review page links the draft');
+
+  // Approval happens on /admin/models (operator token, Access when configured), against the
+  // reviewed revision; from then on the row serves through its provider type.
+  const approval = await call('/admin/catalog/approve', { method: 'POST', body: { model_id: 'acme/coder-pro:free',
+    revision_id: Number(draftRow.pending_revision_id), expected_active_revision_id: null, confirm: 'acme/coder-pro:free' } });
+  assert.equal(approval.status, 200, approval.text);
   const servingEnv = { ...adminEnv };
   const models = (await call('/v1/models', { token: null, env: servingEnv })).body.data;
   const served = models.find(model => model.id === 'acme/coder-pro:free');
-  assert.ok(served, 'a promoted model is listed');
+  assert.ok(served, 'an approved row is listed');
   assert.deepEqual([served.capabilities.tools, served.context_window, served.max_output_tokens, served.tiers], [true, 131072, 16384, ['free']]);
   const router = new RoutingEngine(new ProviderHealthTracker());
   const routed = router.route({ env: servingEnv, requestedModel: 'acme/coder-pro:free', needsTools: true, promptTokens: 100,
     maxTokens: 2048, tiers: ['free'], country: 'US' });
   assert.equal(routed.ok, true);
   assert.equal(routed.candidates[0].entry.source, 'database');
-  assert.equal(routed.candidates[0].pool.key_var, 'OPENROUTER_API_KEY');
+  assert.deepEqual([routed.candidates[0].pool.key_var, routed.candidates[0].pool.limits.rpd], ['OPENROUTER_API_KEY', 50],
+    'the provider type fixes the key slot and the shared budget');
   const auto = router.route({ env: servingEnv, requestedModel: 'auto', needsTools: true, promptTokens: 100, maxTokens: 2048,
     tiers: ['free'], country: 'US' });
-  assert.ok(!auto.ok || auto.candidates.every(item => item.entry.source !== 'database'), '`auto` never picks a discovery model');
+  assert.ok(auto.ok && auto.candidates.every(item => item.entry.id !== 'acme/coder-pro:free'), '`auto` never picks a discovery model (no auto rank)');
   const narrowed = { ...adminEnv, OPENROUTER_MODELS: 'cohere/north-mini-code:free' };
-  await loadCatalogDbModels(narrowed);
+  await loadCatalog(narrowed);
   assert.ok(!offeredEntries(narrowed).some(entry => entry.id === 'acme/coder-pro:free'), '*_MODELS still narrows');
-  const narrowedPromote = await call(`/admin/discovery/candidates/${coderRow.id}/promote`, { method: 'POST', body: {}, env: narrowed });
-  assert.match(narrowedPromote.body.notes.join(' '), /OPENROUTER_MODELS narrows/);
-  const flagOff = { ...adminEnv, CATALOG_DB_MODELS: undefined };
-  await loadCatalogDbModels(flagOff);
-  assert.ok(!offeredEntries(flagOff).some(entry => entry.id === 'acme/coder-pro:free'), 'off unless CATALOG_DB_MODELS=true');
+  const killSwitch = { ...adminEnv, CATALOG_SOURCE: 'code' };
+  await loadCatalog(killSwitch);
+  assert.ok(!offeredEntries(killSwitch).some(entry => entry.id === 'acme/coder-pro:free'), 'CATALOG_SOURCE=code serves code only');
   assert.equal(resolveModelId('acme/coder-pro:free'), null, 'resolution without the loaded env sees code models only');
-
-  const demoted = await call(`/admin/discovery/candidates/${coderRow.id}/demote`, { method: 'POST', body: {} });
-  assert.deepEqual(demoted.body.demoted, ['acme/coder-pro:free']);
-  const afterDemote = { ...adminEnv };
-  assert.ok(!(await call('/v1/models', { token: null, env: afterDemote })).body.data.some(model => model.id === 'acme/coder-pro:free'));
-  await call(`/admin/discovery/candidates/${coderRow.id}/promote`, { method: 'POST', body: {} });
-  const rejected = await call(`/admin/discovery/candidates/${coderRow.id}/reject`, { method: 'POST', body: { note: 'changed my mind' } });
-  assert.equal(rejected.body.candidate.status, 'rejected');
-  assert.equal(rejected.body.candidate.promoted, false, 'rejecting disables the catalog row');
-  const afterReject = { ...adminEnv };
-  await loadCatalogDbModels(afterReject);
-  assert.ok(!offeredEntries(afterReject).some(entry => entry.id === 'acme/coder-pro:free'));
+  assert.equal((await call(`/admin/discovery/candidates/${coderRow.id}/promote`, { method: 'POST', body: {} })).body.error.code,
+    'already_in_catalog', 'a served model is never proposed again over itself');
+  const disabled = await call('/admin/catalog/disable', { method: 'POST', body: { model_id: 'acme/coder-pro:free', note: 'pause' } });
+  assert.equal(disabled.status, 200);
+  assert.ok(!(await servedIds({ ...adminEnv })).includes('acme/coder-pro:free'), 'disabled on /admin/models: no longer served');
+  // CATALOG_DB_MODELS is ignored: the legacy promoted-model table is never served.
+  const legacyEnv = { ...adminEnv, CATALOG_DB_MODELS: 'true' };
+  await loadCatalog(legacyEnv);
+  assert.deepEqual(offeredEntries(legacyEnv).map(entry => entry.id), offeredEntries({ ...adminEnv }).map(entry => entry.id));
 
   const kiloRow = (await call('/admin/discovery/candidates?status=new&provider=kilo-gateway&q=zeta')).body.data[0];
   const kiloApproved = await call(`/admin/discovery/candidates/${kiloRow.id}/approve`, { method: 'POST', body: {} });
@@ -484,10 +503,20 @@ try {
   assert.equal((await call(`/admin/discovery/candidates/${kiloRow.id}/verify`, { method: 'POST', body: {} })).body.error.code, 'no_key');
   assert.equal((await call(`/admin/discovery/candidates/${kiloRow.id}/promote`, { method: 'POST', body: {} })).body.error.code,
     'no_catalog_template');
+  const [unsized] = await sql(`INSERT INTO public.zerox_provider_candidates (source, provider, model_id, status)
+    VALUES ('check', 'openrouter', 'acme/unsized:free', 'verified') RETURNING id`);
+  const unsizedPromote = await call(`/admin/discovery/candidates/${unsized.id}/promote`, { method: 'POST', body: {} });
+  assert.deepEqual([unsizedPromote.status, unsizedPromote.body.error.param], [400, 'context_window'], 'an unknown context window is asked for');
+  const sized = await call(`/admin/discovery/candidates/${unsized.id}/promote`, { method: 'POST',
+    body: { context_window: 65536, max_output_tokens: 8192, display_name: 'Acme Unsized' } });
+  assert.deepEqual([sized.status, sized.body.promoted.status], [200, 'draft']);
+  const tooLong = await call(`/admin/discovery/candidates/${unsized.id}/promote`, { method: 'POST', body: { context_window: 4096, max_output_tokens: 8192 } });
+  assert.equal(tooLong.status, 400, 'the guardrails refuse an output limit above the context window');
   const excludedRow = await candidate('duckduckgo-web', 'ddg-new');
   const refused = await call(`/admin/discovery/candidates/${excludedRow.id}/approve`, { method: 'POST', body: {} });
   assert.deepEqual([refused.status, refused.body.error.code], [409, 'candidate_excluded']);
   const seededVerified = await candidate('openrouter', 'cohere/north-mini-code:free');
+  await sql("UPDATE public.zerox_provider_candidates SET status = 'verified' WHERE id = $1", [seededVerified.id]);
   assert.equal((await call(`/admin/discovery/candidates/${seededVerified.id}/promote`, { method: 'POST', body: {} })).body.error.code,
     'already_in_catalog', 'code-defined models are never shadowed');
   const freshRows = await sql("SELECT id FROM public.zerox_provider_candidates WHERE provider = 'freshai'");
@@ -497,21 +526,20 @@ try {
   assert.equal((await call('/admin/discovery/run', { method: 'POST', body: { jobs: ['research'] } })).status, 400, 'research needs its key');
   const runNow = await call('/admin/discovery/run', { method: 'POST', body: { jobs: ['list:requesty'] }, env: { ...adminEnv, HEALTH_HUB } });
   assert.deepEqual(runNow.body.ran.map(item => [item.job, item.ok]), [['list:requesty', true]], 'run now forces a job that is not due');
-  ok('admin API: token required, approve runs the live tool call, verified is only proposed, promote serves through the template, demote and reject remove it');
+  ok('admin API: token required, approve runs the live tool call, verified is only proposed, promote creates a draft catalog row that serves only once approved on /admin/models (and stops when disabled)');
 
-  // ──────────────────────────────────────────── catalog overlay guards
-  const base = { public_model_id: 'acme/x:free', provider_id: 'openrouter', provider_model_id: 'acme/x:free', context_window: 131072,
-    max_output_tokens: 16384, display_name: 'X', supports_vision: false, candidate_id: 7 };
-  assert.equal(dbCatalogEntry(base).pools[0].limits.rpd, 50, 'the template fixes the shared budget');
-  assert.equal(dbCatalogEntry(base).auto_rank, null);
-  assert.equal(dbCatalogEntry({ ...base, provider_id: 'kilo-gateway' }), null, 'providers without a template never join');
-  assert.equal(dbCatalogEntry({ ...base, public_model_id: 'other' }), null, 'the row must match the template id');
-  assert.equal(dbCatalogEntry({ ...base, public_model_id: 'cohere/north-mini-code:free', provider_model_id: 'cohere/north-mini-code:free' }), null);
-  assert.equal(dbCatalogEntry({ ...base, max_output_tokens: 200000 }), null);
-  assert.equal(dbCatalogEntry({ ...base, provider_id: 'nvidia', provider_model_id: 'newlab/agent-70b', public_model_id: 'nvidia/newlab/agent-70b' }).hosted_flag, 'NVIDIA_HOSTED');
+  // ──────────────────────────────────────────── research switch
+  assert.equal(researchEnabled({ ANTHROPIC_API_KEY: 'sk-ant-x' }), true, 'on by default once the key is set');
+  assert.equal(researchEnabled({ ANTHROPIC_API_KEY: 'sk-ant-x', DISCOVERY_RESEARCH: 'false' }), false);
+  assert.equal(researchEnabled({ DISCOVERY_RESEARCH: 'true' }), false, 'never without the key');
+  assert.ok(discoveryJobs({ ANTHROPIC_API_KEY: 'sk-ant-x' }).includes('research') && discoveryJobs({ ANTHROPIC_API_KEY: 'sk-ant-x' }).includes('credits'));
+  assert.ok(!discoveryJobs({ ANTHROPIC_API_KEY: 'sk-ant-x', DISCOVERY_RESEARCH: 'false' }).some(item => ['research', 'credits'].includes(item)),
+    'DISCOVERY_RESEARCH=false turns off both Claude jobs');
+  assert.deepEqual(discoveryJobs({ ANTHROPIC_API_KEY: 'sk-ant-x', DISCOVERY_CREDITS: 'false' }).filter(item => ['research', 'credits'].includes(item)),
+    ['research']);
   assert.equal(CATALOG.length, CATALOG.filter(entry => entry.source !== 'database').length);
   assert.ok(listModelsForCaller({}).data.length > 1);
-  ok('catalog overlay: templates fix adapter, key and budget; never auto; code ids win; off by default');
+  ok('research jobs: on once ANTHROPIC_API_KEY is set, DISCOVERY_RESEARCH=false turns research and credits off, DISCOVERY_CREDITS=false credits only');
 
   // ──────────────────────────────────────────── HealthHub /mark
   const saved = new Map();

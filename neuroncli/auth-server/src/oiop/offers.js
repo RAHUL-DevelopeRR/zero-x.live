@@ -5,6 +5,7 @@
 // rows when they loaded (60 s cache), otherwise BUILTIN_OFFERS, which mirror the migration's
 // backfill so a deployment without a database routes exactly as before.
 import { databaseConfigured, rpcRows } from '../account-store.js';
+import { ANTHROPIC_PAID_OFFER } from '../catalog-claude.js';
 
 export const LIFECYCLES = Object.freeze(['discovered', 'analysed', 'pending_approval', 'rejected',
   'awaiting_credentials', 'awaiting_deployment', 'probing', 'active', 'degraded', 'review', 'suspended', 'retired']);
@@ -51,7 +52,8 @@ const offer = fields => Object.freeze({
   lifecycle: 'active', verified_by: 'operator', manifest_version: 1, notes: null, ...fields,
 });
 
-// The offers behind the code catalog (src/catalog.js), as the migration backfills them. The
+// The offers behind the code catalog (src/catalog.js), as the migrations backfill them
+// (anthropic.paid: 20261025000100_catalog_seed.sql, defined in src/catalog-claude.js). The
 // redistribution of nvidia.free and openrouter.free is an operator override (2026-10-24, see the
 // evidence); their hosted flags still gate them.
 export const BUILTIN_OFFERS = Object.freeze([
@@ -138,6 +140,8 @@ export const BUILTIN_OFFERS = Object.freeze([
     prerequisites: [{ type: 'account', detail: "The caller's own OpenRouter account, connected with OAuth" }],
     evidence: [OPENROUTER_DATA],
   }),
+  // Claude Sonnet 5.5 and Opus 5.5 on Pro and Max, billed from credits (ANTHROPIC_API_KEY).
+  offer(ANTHROPIC_PAID_OFFER),
 ].map(entry => Object.freeze({ ...entry, prerequisites: Object.freeze(entry.prerequisites),
   limits: Object.freeze(entry.limits), evidence: Object.freeze(entry.evidence) })));
 

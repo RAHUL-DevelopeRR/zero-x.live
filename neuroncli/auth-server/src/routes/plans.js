@@ -1,8 +1,9 @@
 import { loadPlanCatalog, TOPUP_PACKS } from '../plan-policy.js';
 import {
-  AUTO_MODEL_ID, callerCountry, catalogEntry, entryPools, listModelsForCaller, loadCatalogDbModels, loadPlanPolicies,
+  AUTO_MODEL_ID, callerCountry, catalogEntry, entryPools, listModelsForCaller, loadCatalog, loadPlanPolicies,
   planPolicy, poolKey,
 } from '../catalog.js';
+import { catalogStatus } from '../catalog-db.js';
 import { isOwnedSession, listModelsForSession } from '../providers.js';
 import { sessionTiers } from '../capacity.js';
 import { withHealth } from '../health-share.js';
@@ -55,7 +56,7 @@ export async function v1ModelsPayload(c, session = {}) {
   const country = callerCountry(c.req.raw, env);
   if (isOwnedSession(session)) return listModelsForSession(env, { session, country });
   const plan = session?.plan || 'free';
-  const [policies, , , facts] = await Promise.all([loadPlanPolicies(env), loadCatalogDbModels(env), loadOffers(env),
+  const [policies, , , facts] = await Promise.all([loadPlanPolicies(env), loadCatalog(env), loadOffers(env),
     modelsDevFacts(env)]);
   const policy = planPolicy(env, plan, policies);
   const tiers = sessionTiers(env, session, policy);
@@ -83,14 +84,18 @@ export async function v1ModelsPayload(c, session = {}) {
 
 // GET /v1/models/status: the part of /v1/models that changes at runtime, small enough for
 // clients to poll every 30 s. The ETag lets an unchanged list answer 304 with no body.
+// catalog_version (src/catalog-db.js) changes with every approved catalog revision, so an approved
+// change that keeps availability (a new price or display name) still changes the ETag and
+// /v1/models/stream emits catalog.updated: clients then reload /v1/models.
 export async function v1ModelStatusPayload(c, session = {}) {
   const models = await v1ModelsPayload(c, session);
   const data = models.data.map(model => ({
     id: model.id, available: model.available !== false, unavailable_reason: model.unavailable_reason ?? null,
     status: model.status ?? 'available', available_again_at: model.available_again_at ?? null,
   }));
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(data)));
+  const catalogVersion = catalogStatus(c.env || {}).version;
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify({ v: catalogVersion, data })));
   const etag = `W/"${[...new Uint8Array(digest).slice(0, 12)].map(byte => byte.toString(16).padStart(2, '0')).join('')}"`;
   const checked = models.data.map(model => model.checked_at).filter(Boolean).sort().at(-1) ?? null;
-  return { etag, body: { object: 'list', checked_at: checked, poll_interval_seconds: 30, data } };
+  return { etag, body: { object: 'list', checked_at: checked, poll_interval_seconds: 30, catalog_version: catalogVersion, data } };
 }

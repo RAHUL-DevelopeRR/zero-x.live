@@ -9,9 +9,8 @@
 // guardrails (src/catalog-guardrails.js) before it is written and again before it is approved.
 // Model ids contain '/', so they travel in query strings and bodies, never in path parameters.
 //
-// NOTE for the integration: src/index.js calls registerCatalogAdminRoutes(api) and serves
-// neuroncli/admin/models/ under /admin/models (ADMIN_PAGE_FILES, strict admin CSP);
-// src/routes/discovery.js promote calls proposeCandidateDraft.
+// src/index.js registers these routes and serves neuroncli/admin/models/ under /admin/models
+// (ADMIN_PAGE_FILES, strict admin CSP); src/routes/discovery.js promote calls proposeCandidateDraft.
 import { databaseConfigured, rpcRows } from '../account-store.js';
 import { ApiError, errorResponse, sendApiError } from '../auth-context.js';
 import { isOperator } from '../operator-auth.js';

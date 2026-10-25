@@ -52,6 +52,10 @@ try {
       }
     }
     assert.ok(!servesOperatorPools(offerById({}, 'openrouter.byok')), 'the BYOK offer never serves operator pools');
+    const claudeOffer = offerById({}, 'anthropic.paid');
+    assert.deepEqual([claudeOffer.provider, claudeOffer.protocol, claudeOffer.trust_tier, claudeOffer.redistribution, claudeOffer.trains_on_inputs],
+      ['anthropic', 'anthropic-messages', 'T0', 'permitted', 'no'], 'the Claude pools belong to the built-in anthropic.paid offer');
+    assert.equal(offerIdFor(catalogEntry('anthropic/claude-opus-5-5'), catalogEntry('anthropic/claude-opus-5-5').pools[0]), 'anthropic.paid');
     assert.ok(servesOwnKeys(offerById({}, 'openrouter.byok')));
     for (const offer of BUILTIN_OFFERS) assert.deepEqual(validateManifest(buildManifest(offer, [])), [], `${offer.id} manifest`);
     ok('every catalog pool maps to a built-in offer that serves today; every built-in offer has a valid manifest');
@@ -636,6 +640,62 @@ try {
     assert.equal(JSON.parse(t1.find(event => event.event === 'catalog.updated').data).data
       .find(model => model.id === 'gemini/gemini-2.5-flash').unavailable_reason, 'policy_restricted', 'the stream follows the caller policy');
     ok('catalog push: /v1/models/stream emits catalog.updated (id = status ETag) at start and on every change, keep-alives otherwise, ends after its lifetime, resumes by Last-Event-ID and follows the caller policy');
+  }
+
+  // ── Catalog push follows approvals: catalog_version is part of the status ETag ──
+  {
+    const env = { ...DB, GATEWAY_ADMIN_TOKEN: ADMIN, GROQ_API_KEY: 'groq-key', GEMINI_API_KEY: 'gemini-key', ALLOW_UNKNOWN_COUNTRY: 'true',
+      MODELS_STREAM_INTERVAL_MS: '40', MODELS_STREAM_LIFETIME_MS: '1200' };
+    const admin = async (path, body) => (await app.request(`https://zero-x.live${path}`, { method: body ? 'POST' : 'GET',
+      headers: { Authorization: `Bearer ${ADMIN}`, ...(body ? { 'Content-Type': 'application/json' } : {}) },
+      body: body ? JSON.stringify(body) : undefined }, env)).json();
+    const readEvents = async (response, onEvent) => {
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      const events = [];
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let cut;
+        while ((cut = buffer.indexOf('\n\n')) >= 0) {
+          const raw = buffer.slice(0, cut);
+          buffer = buffer.slice(cut + 2);
+          const event = Object.fromEntries(raw.split('\n').filter(line => !line.startsWith(':') && line.includes(':'))
+            .map(line => [line.slice(0, line.indexOf(':')), line.slice(line.indexOf(':') + 1).trim()]));
+          events.push(event);
+          await onEvent?.(event);
+        }
+      }
+      return events;
+    };
+    const id = 'groq/qwen/qwen3.8-27b';
+    const before = await (await app.request('https://zero-x.live/v1/models/status', {}, env)).json();
+    assert.match(before.catalog_version, /^[0-9a-f]{16}$/);
+    let approval = null;
+    const events = await readEvents(await app.request('https://zero-x.live/v1/models/stream', {}, env), async event => {
+      if (event.event !== 'catalog.updated' || approval) return;
+      approval = 'pending';
+      // A change that keeps every model's availability: only the display name.
+      const detail = await admin(`/admin/catalog/model?id=${encodeURIComponent(id)}`);
+      const proposed = await admin('/admin/catalog/propose', { spec: { ...detail.model.active.spec, display_name: 'Qwen 3.8 27B (Groq, renamed)' } });
+      approval = await admin('/admin/catalog/approve', { model_id: id, revision_id: proposed.revision_id,
+        expected_active_revision_id: detail.model.active.revision_id });
+    });
+    const updates = events.filter(event => event.event === 'catalog.updated');
+    assert.equal(updates.length, 2, 'one event at the start, one after the approval');
+    const [first, second] = updates.map(event => JSON.parse(event.data));
+    assert.deepEqual(second.data, first.data, 'availability did not change');
+    assert.notEqual(updates[0].id, updates[1].id, 'the ETag changed with catalog_version');
+    assert.deepEqual([first.catalog_version, second.catalog_version], [before.catalog_version, approval.catalog_version]);
+    assert.notEqual(approval.catalog_version, before.catalog_version);
+    const models = await (await app.request('https://zero-x.live/v1/models', {}, env)).json();
+    assert.equal(models.data.find(model => model.id === id).display_name, 'Qwen 3.8 27B (Groq, renamed)', 'clients reload and see the change');
+    const resumed = await readEvents(await app.request('https://zero-x.live/v1/models/stream',
+      { headers: { 'Last-Event-ID': updates[1].id } }, { ...env, MODELS_STREAM_LIFETIME_MS: '100' }));
+    assert.equal(resumed.filter(event => event.event === 'catalog.updated').length, 0, 'a reconnect with the new ETag gets none');
+    ok('catalog push follows approvals: an approved display-name change emits catalog.updated (catalog_version in the ETag), a reconnect with the new ETag gets none');
   }
 
   // ── Health: canaries, rolling metrics, spent daily quotas ──

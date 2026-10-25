@@ -6,19 +6,16 @@
 // fetches models.dev itself. Logos are models.dev/logos/<provider>.svg, falling back to the
 // provider's favicon.
 import { MODELS_DEV_URL } from '../discovery/sources.js';
+import { PROVIDER_TYPES } from '../catalog-types.js';
 
-// Gateway provider -> models.dev provider id (the catalog's upstream ids match models.dev's).
-export const MODELS_DEV_PROVIDERS = Object.freeze({
-  gemini: 'google', groq: 'groq', cloudflare: 'cloudflare-workers-ai', nvidia: 'nvidia', openrouter: 'openrouter',
-});
+// Gateway provider -> models.dev provider id (the catalog's upstream ids match models.dev's) and
+// the provider's display name and homepage, both from the provider-type registry
+// (src/catalog-types.js), so a new provider type is described in one place.
+export const MODELS_DEV_PROVIDERS = Object.freeze(Object.fromEntries(Object.entries(PROVIDER_TYPES)
+  .filter(([, registry]) => registry.models_dev).map(([id, registry]) => [id, registry.models_dev])));
 
-export const PROVIDER_INFO = Object.freeze({
-  gemini: Object.freeze({ name: 'Google', homepage: 'https://ai.google.dev' }),
-  groq: Object.freeze({ name: 'Groq', homepage: 'https://groq.com' }),
-  cloudflare: Object.freeze({ name: 'Cloudflare Workers AI', homepage: 'https://developers.cloudflare.com/workers-ai/' }),
-  nvidia: Object.freeze({ name: 'NVIDIA', homepage: 'https://build.nvidia.com' }),
-  openrouter: Object.freeze({ name: 'OpenRouter', homepage: 'https://openrouter.ai' }),
-});
+export const PROVIDER_INFO = Object.freeze(Object.fromEntries(Object.entries(PROVIDER_TYPES)
+  .filter(([, registry]) => registry.info).map(([id, registry]) => [id, registry.info])));
 
 export const FACTS_KV_KEY = 'oiop:models-dev:v1';
 const REFRESH_MS = 24 * 3600_000;

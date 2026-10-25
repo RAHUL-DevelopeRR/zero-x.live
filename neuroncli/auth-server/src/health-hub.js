@@ -28,7 +28,7 @@
  */
 import { FailureKind, HealthState, ProviderHealthTracker } from './provider-health.js';
 import { publicStatus } from './health-share.js';
-import { entryPools, loadCatalogDbModels, offeredEntries, poolConfigured, poolKey, poolSecret } from './catalog.js';
+import { entryPools, loadCatalog, offeredEntries, poolConfigured, poolKey, poolSecret } from './catalog.js';
 import { ADAPTERS, buildUpstreamPayload, classifyUpstreamFailure, requestCompletion, upstreamErrorSummary } from './providers.js';
 import { loadVaultKeys } from './provider-keys.js';
 import { readStream, TEST_TOOL } from './discovery/verify.js';
@@ -271,7 +271,7 @@ export class HealthHub {
   }
 
   async runChecks(now) {
-    await loadCatalogDbModels(this.env);
+    await loadCatalog(this.env);
     const byProvider = this.pools();
     const units = this.checkUnits(byProvider);
     // Forget the checks of keys disabled since.

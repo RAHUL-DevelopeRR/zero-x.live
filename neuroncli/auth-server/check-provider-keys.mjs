@@ -223,6 +223,13 @@ try {
   assert.ok(!('p_pool_key' in argsFor(free[3])), 'the env key keeps the default bucket and the old RPC shape');
   assert.equal(ADAPTERS.groq.getApiKey(env, {}, free[1]), SECRETS.groqB);
   assert.equal(entryPools(env, catalogEntry('@cf/meta/llama-3.3-70b-instruct-fp8-fast')), catalogEntry('@cf/meta/llama-3.3-70b-instruct-fp8-fast').pools);
+  // Expansions are cached per entry object: a refreshed catalog snapshot (a new entry with the same
+  // id, here new free limits) never gets the previous entry's pools.
+  assert.equal(entryPools(env, gpt), entryPools(env, gpt), 'cached for the same entry');
+  const refreshed = { ...gpt, pools: gpt.pools.map(pool => (pool.tier === 'free' ? { ...pool, limits: { ...pool.limits, rpm: 7 } } : pool)) };
+  const refreshedFree = entryPools(env, refreshed).filter(pool => pool.tier === 'free');
+  assert.deepEqual(refreshedFree.map(pool => poolKey(refreshed, pool)), free.map(pool => poolKey(gpt, pool)));
+  assert.ok(refreshedFree.every(pool => pool.limits.rpm === 7), 'the refreshed entry gets its own pools');
   calls.length = 0;
   await requestCompletion(env, {}, gpt, { model: gpt.id, messages: [{ role: 'user', content: 'hi' }], max_tokens: 8 }, undefined, free[1]);
   assert.equal(calls[0].authorization, `Bearer ${SECRETS.groqB}`, 'the vault pool sends its own key upstream');
@@ -437,6 +444,16 @@ try {
   assert.equal((await app.request('https://zero-x.live/admin/keys', {}, { ...env, ASSETS: assets })).status, 404, 'not on the main site');
   assert.equal((await app.request('https://dashboard.zero-x.live/neuroncli/admin/keys/index.html', {}, { ...env, ASSETS: assets })).status, 404,
     'the source folder is not served directly');
+  // The model catalog page (/admin/models, src/routes/catalog-admin.js) is served the same way.
+  const modelsPage = await app.request('https://dashboard.zero-x.live/admin/models', {}, { ...env, ASSETS: assets });
+  assert.equal(await modelsPage.text(), '/neuroncli/admin/models/index.html');
+  assert.equal(modelsPage.headers.get('content-security-policy'), csp, 'the same strict admin CSP, enforced');
+  assert.equal(modelsPage.headers.get('referrer-policy'), 'no-referrer');
+  for (const [path, file] of [['/admin/models/', 'index.html'], ['/admin/models/models.js', 'models.js'], ['/admin/models/models.css', 'models.css']]) {
+    assert.equal(await (await app.request(`https://dashboard.zero-x.live${path}`, {}, { ...env, ASSETS: assets })).text(), `/neuroncli/admin/models/${file}`);
+  }
+  assert.equal((await app.request('https://zero-x.live/admin/models', {}, { ...env, ASSETS: assets })).status, 404, 'not on the main site');
+  assert.equal((await app.request('https://dashboard.zero-x.live/neuroncli/admin/models/models.js', {}, { ...env, ASSETS: assets })).status, 404);
 
   const pair = await crypto.subtle.generateKey({ name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]),
     hash: 'SHA-256' }, true, ['sign', 'verify']);
@@ -466,13 +483,18 @@ try {
   assert.equal(await verifyAccessJwt(guarded, await sign(claims, 'kid-1', stranger.privateKey)), null, 'signed by another key');
   assert.equal((await app.request('https://dashboard.zero-x.live/admin/keys', {}, guarded)).status, 403, 'page: no Access JWT');
   assert.equal((await app.request('https://dashboard.zero-x.live/admin/keys', { headers: { 'Cf-Access-Jwt-Assertion': good } }, guarded)).status, 200);
+  assert.equal((await app.request('https://dashboard.zero-x.live/admin/models', {}, guarded)).status, 403, 'models page: no Access JWT');
+  assert.equal((await app.request('https://dashboard.zero-x.live/admin/models', { headers: { 'Cf-Access-Jwt-Assertion': good } }, guarded)).status, 200);
+  const catalogNoJwt = await admin('/admin/catalog/types', { target: guarded });
+  assert.deepEqual([catalogNoJwt.status, (await catalogNoJwt.json()).error.code], [403, 'access_required'], 'catalog API: Access as for the vault');
+  assert.equal((await admin('/admin/catalog/types', { target: guarded, headers: { 'Cf-Access-Jwt-Assertion': good } })).status, 200);
   const apiNoJwt = await admin('/admin/providers/keys', { target: guarded });
   assert.equal(apiNoJwt.status, 403, 'API: the admin token alone is not enough once Access is configured');
   assert.equal((await apiNoJwt.json()).error.code, 'access_required');
   const apiWithJwt = await admin('/admin/providers/keys', { target: guarded, headers: { 'Cf-Access-Jwt-Assertion': good } });
   assert.equal(apiWithJwt.status, 200);
   assert.equal((await apiWithJwt.json()).access_configured, true);
-  ok('admin page: dashboard host only, enforced CSP without inline script, Access JWT (signature, audience, issuer, expiry) required when configured');
+  ok('admin pages (keys, models): dashboard host only, enforced CSP without inline script, Access JWT (signature, audience, issuer, expiry) required when configured, for the catalog API too');
 
   console.log('PASS: provider key vault: sealed keys, service_role RPCs, validated adds, per-key pools and health, Access-gated admin page');
 } finally {

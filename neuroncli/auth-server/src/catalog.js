@@ -1,12 +1,24 @@
 // Compliance-aware public model catalog (docs/PLATFORM_CONTRACT.md §2,
 // docs/PROVIDER_TERMS.md). Only models verified against the live upstreams are listed;
 // *_MODELS environment lists can disable entries but never add unknown ones.
+//
+// CATALOG below is the code catalog: the reviewed floor, and what serves without a database or
+// with CATALOG_SOURCE=code. With a database the served catalog is the data-driven one
+// (src/catalog-db.js: approved model rows, bounded by src/catalog-guardrails.js, falling back to
+// these entries), and every accessor below reads that snapshot. Callers that route or list models
+// await loadCatalog(env) first.
 import { databaseConfigured, rpcRows } from './account-store.js';
 import { priceFromCost, publicPricing } from './pricing.js';
 import { vaultKeys, vaultKeySecret } from './provider-keys.js';
 import { offerForPool, servesOperatorPools } from './oiop/offers.js';
 import { DEFAULT_POLICY, policyBlock } from './oiop/policy.js';
 import { modelsDevId, providerInfo } from './oiop/models-dev.js';
+import { MODELS_VARS as TYPE_MODELS_VARS, VAULT_KEY_VARS as SLOT_VAULT_KEY_VARS, poolSource, publicIdFor } from './catalog-types.js';
+import { effectiveSpendCapUsd, entryFromSpec } from './catalog-guardrails.js';
+import { CLAUDE_MODEL_SPECS } from './catalog-claude.js';
+import { catalogSnapshot, loadCatalog, loadCatalogDbModels } from './catalog-db.js';
+
+export { loadCatalog, loadCatalogDbModels };
 
 // EU-27 plus Iceland, Liechtenstein and Norway.
 export const EEA_COUNTRIES = Object.freeze(['AT', 'BE', 'BG', 'HR', 'CY', 'CZ', 'DK', 'EE', 'FI', 'FR',
@@ -54,13 +66,21 @@ export const POOL_LIMITS = Object.freeze({
 });
 
 const pool = (tier, source, extra = {}) => Object.freeze({ tier, ...source, ...extra });
-const key = name => ({ key_var: name });
-const WORKERS_AI = { binding: 'cloudflare' };
+// A pool's key comes from a key slot of the provider-type registry (src/catalog-types.js
+// KEY_SLOTS): the slot id names the env var or binding, so data rows can never name a secret.
+const slot = id => ({ ...poolSource(id), key_slot: id });
+const WORKERS_AI = slot('cloudflare.binding');
 
-export const MODELS_VARS = Object.freeze({
-  groq: 'GROQ_MODELS', gemini: 'GEMINI_MODELS', cloudflare: 'CLOUDFLARE_MODELS',
-  nvidia: 'NVIDIA_MODELS', openrouter: 'OPENROUTER_MODELS',
-});
+// Provider -> the *_MODELS variable that narrows its catalog models (src/catalog-types.js).
+// OMNIROUTE_MODELS narrows the OmniRoute discovery adapter instead; no catalog model uses it.
+export const MODELS_VARS = Object.freeze(Object.fromEntries(Object.entries(TYPE_MODELS_VARS)
+  .filter(([provider]) => provider !== 'omniroute')));
+
+// Daily spend caps of the paid pools, in upstream USD per UTC day (Gemini $10, Groq and Workers
+// AI $5; Claude Sonnet 5.5 $10 and Opus 5.5 $6 in src/catalog-claude.js). Postgres enforces them
+// (zerox_reserve_v2 p_pool.cpd, billed at MARKUP); src/catalog-guardrails.js clamps them to the
+// code maximum ($100 a pool, $50 for anthropic) and PAID_DAILY_SPEND_CAP_USD.
+const CAP_USD = Object.freeze({ gemini: 10, groq: 5, cloudflare: 5 });
 
 const STANDARD_EFFORTS = Object.freeze(['low', 'medium', 'high']);
 
@@ -73,8 +93,8 @@ const MODELS = [
     geo_block_free: GEMINI_FREE_GEO_BLOCK, aliases: ['gemini-2.5-flash', 'google/gemini-2.5-flash'],
     reasoning_efforts: ['none', 'low', 'medium', 'high'], reasoning_effort_map: { minimal: 'low' },
     pools: [
-      pool('free', key('GEMINI_API_KEY'), { limits: POOL_LIMITS.gemini_free }),
-      pool('paid', key('GEMINI_PAID_API_KEY'), { price: priceFromCost(0.30, 2.50) }),
+      pool('free', slot('gemini.free'), { limits: POOL_LIMITS.gemini_free }),
+      pool('paid', slot('gemini.paid'), { price: priceFromCost(0.30, 2.50), daily_spend_cap_usd: CAP_USD.gemini }),
     ],
   },
   {
@@ -84,7 +104,7 @@ const MODELS = [
     geo_block_free: GEMINI_FREE_GEO_BLOCK, aliases: ['gemini-3.5-flash', 'google/gemini-3.5-flash'],
     reasoning_efforts: STANDARD_EFFORTS, reasoning_effort_map: { minimal: 'low', none: 'low' },
     // No paid pool until a verified upstream price is recorded here.
-    pools: [pool('free', key('GEMINI_API_KEY'), { limits: POOL_LIMITS.gemini_free })],
+    pools: [pool('free', slot('gemini.free'), { limits: POOL_LIMITS.gemini_free })],
   },
   // Listed by the free-tier key's /v1beta/models on 2026-10-19 and priced "Free of charge" on the
   // pricing page. Free limits are per model, so each entry adds its own daily budget. Live probe
@@ -99,9 +119,9 @@ const MODELS = [
     geo_block_free: GEMINI_FREE_GEO_BLOCK, aliases: [upstream, `google/${upstream}`],
     reasoning_efforts: STANDARD_EFFORTS, reasoning_effort_map: { minimal: 'low', none: 'low' },
     pools: [
-      pool('free', key('GEMINI_API_KEY'), { limits: POOL_LIMITS.gemini_free }),
+      pool('free', slot('gemini.free'), { limits: POOL_LIMITS.gemini_free }),
       // Paid list price through 2026-12-31 (doubles from 2027-01-01).
-      pool('paid', key('GEMINI_PAID_API_KEY'), { price: priceFromCost(input, output) }),
+      pool('paid', slot('gemini.paid'), { price: priceFromCost(input, output), daily_spend_cap_usd: CAP_USD.gemini }),
     ],
   })),
   {
@@ -111,8 +131,8 @@ const MODELS = [
     aliases: ['gemini-2.5-pro', 'google/gemini-2.5-pro'],
     reasoning_efforts: STANDARD_EFFORTS, reasoning_effort_map: { minimal: 'low', none: 'low' },
     // The free tier has no 2.5 Pro quota (404 for new projects): paid only.
-    pools: [pool('paid', key('GEMINI_PAID_API_KEY'), {
-      price: priceFromCost(1.25, 10, { threshold: 200000, input: 2.50, output: 15 }),
+    pools: [pool('paid', slot('gemini.paid'), {
+      price: priceFromCost(1.25, 10, { threshold: 200000, input: 2.50, output: 15 }), daily_spend_cap_usd: CAP_USD.gemini,
     })],
   },
   {
@@ -122,8 +142,8 @@ const MODELS = [
     aliases: ['gpt-oss-120b', 'openai/gpt-oss-120b'], reasoning_efforts: STANDARD_EFFORTS,
     reasoning_effort_map: { minimal: 'low', none: 'low' },
     pools: [
-      pool('free', key('GROQ_API_KEY'), { limits: POOL_LIMITS.groq_free }),
-      pool('paid', key('GROQ_PAID_API_KEY'), { price: priceFromCost(0.15, 0.60) }),
+      pool('free', slot('groq.free'), { limits: POOL_LIMITS.groq_free }),
+      pool('paid', slot('groq.paid'), { price: priceFromCost(0.15, 0.60), daily_spend_cap_usd: CAP_USD.groq }),
     ],
   },
   {
@@ -132,7 +152,7 @@ const MODELS = [
     supports_tools: true, supports_streaming: true, auto_rank: 6,
     aliases: ['qwen3.8-27b', 'qwen/qwen3.8-27b'], reasoning_efforts: ['none', 'default'],
     reasoning_effort_map: { minimal: 'default', low: 'default', medium: 'default', high: 'default' },
-    pools: [pool('free', key('GROQ_API_KEY'), { limits: POOL_LIMITS.groq_free })],
+    pools: [pool('free', slot('groq.free'), { limits: POOL_LIMITS.groq_free })],
   },
   {
     id: 'groq/openai/gpt-oss-20b', display_name: 'GPT-OSS 20B (Groq)', provider: 'groq',
@@ -140,7 +160,7 @@ const MODELS = [
     supports_tools: true, supports_streaming: true, auto_rank: 7,
     aliases: ['gpt-oss-20b', 'openai/gpt-oss-20b'], reasoning_efforts: STANDARD_EFFORTS,
     reasoning_effort_map: { minimal: 'low', none: 'low' },
-    pools: [pool('free', key('GROQ_API_KEY'), { limits: POOL_LIMITS.groq_free })],
+    pools: [pool('free', slot('groq.free'), { limits: POOL_LIMITS.groq_free })],
   },
   {
     // Not part of the 2026-10-16 live probe: enable explicitly with CLOUDFLARE_MODELS.
@@ -150,7 +170,8 @@ const MODELS = [
     aliases: ['workers-ai/gpt-oss-120b', 'cloudflare/gpt-oss-120b'],
     pools: [
       pool('free', WORKERS_AI, { limits: POOL_LIMITS.workers_gpt_oss_free }),
-      pool('paid', WORKERS_AI, { requires_flag: 'CLOUDFLARE_PAID', price: priceFromCost(0.35, 0.75) }),
+      pool('paid', WORKERS_AI, { requires_flag: 'CLOUDFLARE_PAID', price: priceFromCost(0.35, 0.75),
+        daily_spend_cap_usd: CAP_USD.cloudflare }),
     ],
   },
   {
@@ -161,7 +182,8 @@ const MODELS = [
     pools: [
       pool('free', WORKERS_AI, { limits: POOL_LIMITS.workers_llama_free }),
       // Workers AI list price: 26,668 / 204,805 neurons per million tokens at $0.011 / 1K neurons.
-      pool('paid', WORKERS_AI, { requires_flag: 'CLOUDFLARE_PAID', price: priceFromCost(0.293, 2.253) }),
+      pool('paid', WORKERS_AI, { requires_flag: 'CLOUDFLARE_PAID', price: priceFromCost(0.293, 2.253),
+        daily_spend_cap_usd: CAP_USD.cloudflare }),
     ],
   },
   // NVIDIA API Catalog trial keys (terms: evaluation use). Offered to users only when
@@ -178,7 +200,7 @@ const MODELS = [
     id: `nvidia/${upstream}`, display_name: name, provider: 'nvidia', upstream_model: upstream,
     context_window: context, max_output_tokens: maxOutput, supports_tools: true, supports_streaming: true,
     auto_rank: rank, hosted_flag: 'NVIDIA_HOSTED', aliases: [],
-    pools: [pool('free', key('NVIDIA_API_KEY'), { limits: POOL_LIMITS.nvidia_trial })],
+    pools: [pool('free', slot('nvidia.free'), { limits: POOL_LIMITS.nvidia_trial })],
   })),
   // OpenRouter terms restrict reselling: the operator key is used only with OPENROUTER_HOSTED=true.
   // The 50 requests/day free cap is per account across every ':free' model, so two entries.
@@ -191,8 +213,14 @@ const MODELS = [
     context_window: context, max_output_tokens: maxOutput, supports_tools: true, supports_streaming: true,
     supports_vision: vision, auto_rank: rank, hosted_flag: 'OPENROUTER_HOSTED',
     aliases: [`openrouter/${upstream}`],
-    pools: [pool('free', key('OPENROUTER_API_KEY'), { limits: POOL_LIMITS.openrouter_free })],
+    pools: [pool('free', slot('openrouter.free'), { limits: POOL_LIMITS.openrouter_free })],
   })),
+  // Claude Sonnet 5.5 and Claude Opus 5.5 (Anthropic Messages API, src/anthropic-adapter.js): paid
+  // tier only (Pro and Max, billed from credits), key slot anthropic.paid (ANTHROPIC_API_KEY),
+  // never chosen by `auto`. Defined once in src/catalog-claude.js (also the seed of their catalog
+  // rows): 200,000 context (what MAX_BODY_BYTES can carry), 32,000 output, 16,000 default
+  // max_tokens, effort medium by default, list prices with cache rates, caps $10 and $6 a day.
+  ...CLAUDE_MODEL_SPECS.map(spec => entryFromSpec(publicIdFor(spec.provider_type, spec.upstream_model), spec, { source: 'code' })),
 ];
 
 function freezeEntry(entry) {
@@ -203,124 +231,38 @@ function freezeEntry(entry) {
   });
 }
 
-export const CATALOG = Object.freeze(MODELS.map(freezeEntry));
-const BY_ID = new Map(CATALOG.map(entry => [entry.id, entry]));
+// position: the list order of /v1/models and of the catalog rows (10, 20, ...).
+export const CATALOG = Object.freeze(MODELS.map((entry, index) => freezeEntry({ position: (index + 1) * 10, ...entry })));
 export const AUTO_MODEL_ID = 'auto';
 
-// Explicit aliases only: no substring or segment matching.
+// The code catalog's explicit aliases (the served ones are in the catalog snapshot): no
+// substring or segment matching.
 export const MODEL_ALIASES = Object.freeze(Object.fromEntries([
   ['default', AUTO_MODEL_ID],
   ...CATALOG.flatMap(entry => entry.aliases.map(alias => [alias, entry.id])),
 ]));
 
-// ── Verified discovery models (contract §8.4) ──
-// Rows the operator promoted from a verified discovery candidate (zerox_catalog_db_models,
-// src/routes/discovery.js). They join this catalog only with CATALOG_DB_MODELS=true and only
-// through the templates below, which fix everything that decides where a request goes and what
-// it may cost (adapter, key, hosting flag, shared budget). The database supplies the upstream
-// id, display name, context window, output limit and vision. They are free pools only, never
-// chosen by `auto`, never replace a code-defined id, and *_MODELS still narrows them.
-export const DB_MODEL_TEMPLATES = Object.freeze({
-  openrouter: Object.freeze({
-    publicId: upstream => upstream, hosted_flag: 'OPENROUTER_HOSTED',
-    pools: Object.freeze([pool('free', key('OPENROUTER_API_KEY'), { limits: POOL_LIMITS.openrouter_free })]),
-  }),
-  nvidia: Object.freeze({
-    publicId: upstream => `nvidia/${upstream}`, hosted_flag: 'NVIDIA_HOSTED',
-    pools: Object.freeze([pool('free', key('NVIDIA_API_KEY'), { limits: POOL_LIMITS.nvidia_trial })]),
-  }),
-});
-const DB_MODELS_TTL_MS = 60000;
-const DB_MODELS_RETRY_MS = 10000;
-const NO_DB_MODELS = Object.freeze({ entries: Object.freeze([]), byId: new Map() });
-const dbModelCache = new WeakMap();
+// ── The served catalog (the src/catalog-db.js snapshot for env) ──
 
-export function dbModelsEnabled(env) {
-  return env?.CATALOG_DB_MODELS === 'true' && databaseConfigured(env);
-}
-
-const positive = value => (Number.isSafeInteger(Number(value)) && Number(value) > 0 ? Number(value) : null);
-
-// Catalog entry for one zerox_catalog_db_models row, or null when no template fits.
-export function dbCatalogEntry(row) {
-  const template = DB_MODEL_TEMPLATES[row?.provider_id];
-  const upstream = typeof row?.provider_model_id === 'string' ? row.provider_model_id.trim() : '';
-  if (!template || !/^[\x21-\x7e]{1,200}$/.test(upstream)) return null;
-  const id = template.publicId(upstream);
-  const lower = id.toLowerCase();
-  // The row must name what the template builds, and code-defined ids and aliases always win.
-  if (row.public_model_id !== id || BY_ID.has(lower) || Object.hasOwn(MODEL_ALIASES, lower) || lower === AUTO_MODEL_ID) return null;
-  const context = positive(row.context_window);
-  const maxOutput = positive(row.max_output_tokens);
-  if (!context || !maxOutput || maxOutput > context) return null;
-  return freezeEntry({
-    id, display_name: typeof row.display_name === 'string' && row.display_name.trim() ? row.display_name.trim().slice(0, 120) : id,
-    provider: row.provider_id, upstream_model: upstream, context_window: context, max_output_tokens: maxOutput,
-    supports_tools: true, supports_streaming: true, supports_vision: row.supports_vision === true, auto_rank: null,
-    hosted_flag: template.hosted_flag, aliases: [], pools: template.pools, source: 'database',
-    candidate_id: positive(row.candidate_id),
-  });
-}
-
-function dbModels(env) {
-  if (!env || typeof env !== 'object' || !dbModelsEnabled(env)) return NO_DB_MODELS;
-  return dbModelCache.get(env)?.models || NO_DB_MODELS;
-}
-
-/**
- * Loads the promoted discovery models for `env` (60 s cache). Callers that route or list
- * models await this first; synchronous lookups then see the cached rows. While the database
- * does not answer, the last list that loaded stays in use (retried every 10 s).
- */
-export async function loadCatalogDbModels(env) {
-  if (!env || typeof env !== 'object' || !dbModelsEnabled(env)) return NO_DB_MODELS.entries;
-  const cached = dbModelCache.get(env);
-  if (cached?.expires > Date.now()) return cached.models.entries;
-  if (cached?.pending) return cached.pending;
-  const pending = (async () => {
-    let models = cached?.models || NO_DB_MODELS;
-    let ttl = DB_MODELS_TTL_MS;
-    try {
-      const entries = [];
-      const seen = new Set();
-      for (const row of await rpcRows(env, 'zerox_catalog_db_models', {})) {
-        const entry = dbCatalogEntry(row);
-        if (!entry || seen.has(entry.id.toLowerCase())) continue;
-        seen.add(entry.id.toLowerCase());
-        entries.push(entry);
-      }
-      models = { entries: Object.freeze(entries), byId: new Map(entries.map(entry => [entry.id.toLowerCase(), entry])) };
-    } catch (error) {
-      console.error('Neuron catalog database models unavailable; keeping the last list', { name: error.name });
-      ttl = DB_MODELS_RETRY_MS;
-    }
-    dbModelCache.set(env, { models, expires: Date.now() + ttl });
-    return models.entries;
-  })();
-  dbModelCache.set(env, { ...cached, models: cached?.models || NO_DB_MODELS, expires: 0, pending });
-  return pending;
-}
-
-// Code-defined entries plus the loaded discovery models of this deployment.
+// Every model this isolate serves for `env`: the approved rows merged over the code catalog, or
+// the code catalog itself (no database, CATALOG_SOURCE=code, nothing loaded yet).
 export function catalogEntries(env) {
-  const extra = dbModels(env).entries;
-  return extra.length ? [...CATALOG, ...extra] : CATALOG;
+  return catalogSnapshot(env).entries;
 }
 
 export function catalogEntry(id, env) {
-  return BY_ID.get(id) || (typeof id === 'string' ? dbModels(env).byId.get(id.toLowerCase()) : null) || null;
+  return typeof id === 'string' ? catalogSnapshot(env).byId.get(id.toLowerCase()) ?? null : null;
 }
 
 function lookup(value, env) {
   if (value === AUTO_MODEL_ID) return AUTO_MODEL_ID;
-  if (BY_ID.has(value)) return value;
-  if (Object.hasOwn(MODEL_ALIASES, value)) return MODEL_ALIASES[value];
-  return dbModels(env).byId.get(value)?.id ?? null;
+  const snapshot = catalogSnapshot(env);
+  return snapshot.byId.get(value)?.id ?? snapshot.aliases.get(value) ?? null;
 }
 
 // Resolves a requested model to a public id ('auto' included). An `openai/` transport
 // prefix (added by OpenAI-compatible clients) is accepted when the remainder resolves.
-// Discovery models resolve only for an `env` whose models were loaded (loadCatalogDbModels).
+// Catalog rows resolve only for an `env` whose catalog was loaded (loadCatalog).
 export function resolveModelId(requested, env) {
   if (typeof requested !== 'string') return null;
   const value = requested.trim().toLowerCase();
@@ -383,12 +325,10 @@ export function cloudflareBound(env) {
 // the provider becomes its own pool (`<pool key>#<key id>`) with its own health, so several Groq
 // orgs or Gemini projects rotate through the routing; the environment key stays as the last
 // (fallback) pool unless the vault holds the same key.
-export const VAULT_KEY_VARS = Object.freeze({
-  groq: 'GROQ_API_KEY', gemini: 'GEMINI_API_KEY', nvidia: 'NVIDIA_API_KEY', openrouter: 'OPENROUTER_API_KEY',
-});
+export const VAULT_KEY_VARS = SLOT_VAULT_KEY_VARS;
 
 const POOL_SECRETS = new WeakMap(); // vault pool -> plaintext key (never a property)
-const expandedPools = new WeakMap(); // env -> { keys, byEntry }
+const expandedPools = new WeakMap(); // env -> { keys, byEntry: WeakMap<entry, pools> }
 
 // The model's upstream budget across N keys is N times one key's (each org or project has its
 // own). Reservations check each key's own budget (src/capacity.js reservationArgs); the sum is
@@ -424,13 +364,15 @@ function expandPools(env, entry, keys) {
 }
 
 // The pools of an entry in this isolate: the catalog's, with vault keys expanded once loaded.
+// Cached per entry object, not per id: a refreshed catalog snapshot brings new entry objects
+// (new prices, slots or limits) and must never be served the previous entry's pools.
 export function entryPools(env, entry) {
   const keys = vaultKeys(env);
   if (!keys.length || !VAULT_KEY_VARS[entry.provider]) return entry.pools;
   let cache = expandedPools.get(env);
-  if (!cache || cache.keys !== keys) expandedPools.set(env, cache = { keys, byEntry: new Map() });
-  if (!cache.byEntry.has(entry.id)) cache.byEntry.set(entry.id, expandPools(env, entry, keys));
-  return cache.byEntry.get(entry.id);
+  if (!cache || cache.keys !== keys) expandedPools.set(env, cache = { keys, byEntry: new WeakMap() });
+  if (!cache.byEntry.has(entry)) cache.byEntry.set(entry, expandPools(env, entry, keys));
+  return cache.byEntry.get(entry);
 }
 
 // The upstream API key of a pool (null for bindings and unconfigured pools).
@@ -440,8 +382,11 @@ export function poolSecret(env, pool) {
   return typeof value === 'string' && value ? value : null;
 }
 
+// Paid pools also need a price and a usable daily spend cap: without them a request would be
+// free or unbounded, so the pool counts as not configured (fail closed).
 export function poolConfigured(env, entry, pool) {
   if (pool.requires_flag && env?.[pool.requires_flag] !== 'true') return false;
+  if (pool.tier === 'paid' && (!pool.price || effectiveSpendCapUsd(env, entry, pool) === null)) return false;
   if (pool.binding === 'cloudflare') return cloudflareBound(env);
   if (pool.key_id) return POOL_SECRETS.has(pool);
   const value = env?.[pool.key_var];
@@ -653,8 +598,8 @@ function describeEntry(env, entry, tiers, country, policy) {
   };
 }
 
-function describeAuto(models) {
-  const candidates = models.filter(model => catalogEntry(model.id)?.auto_rank != null && model.capabilities.tools);
+function describeAuto(models, env) {
+  const candidates = models.filter(model => catalogEntry(model.id, env)?.auto_rank != null && model.capabilities.tools);
   const available = candidates.filter(model => model.available);
   const pool = available.length ? available : candidates;
   const reasons = candidates.map(model => model.unavailable_reason);
@@ -693,5 +638,5 @@ export function listModelsForCaller(env = {}, { plan = 'free', country = null, t
   const allowed = Array.isArray(tiers) ? tiers : planPolicy(env, plan).tiers;
   const code = normalizeCountry(country);
   const data = offeredEntries(env).map(entry => describeEntry(env, entry, allowed, code, policy));
-  return { object: 'list', data: [describeAuto(data), ...data] };
+  return { object: 'list', data: [describeAuto(data, env), ...data] };
 }

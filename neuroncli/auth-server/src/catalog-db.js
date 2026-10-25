@@ -12,10 +12,10 @@
 //     approved) changes nothing: the code entry, if any, keeps serving. Code models without a row
 //     are served from code.
 //
-// NOTE for the integration: src/catalog.js accessors (catalogEntries, catalogEntry, lookup and so
-// resolveModelId, describeAuto with env) read catalogSnapshot(env); callers that route or list
-// models await loadCatalog(env) first (loadCatalogDbModels is kept as an alias). This module
-// reads CATALOG only inside functions, so catalog.js may import it back without a cycle problem.
+// src/catalog.js accessors (catalogEntries, catalogEntry, lookup and so resolveModelId, describeAuto
+// with env) read catalogSnapshot(env); callers that route or list models await loadCatalog(env)
+// first (loadCatalogDbModels is kept as an alias). This module reads CATALOG only inside
+// functions, so catalog.js imports it back without a cycle problem.
 import { databaseConfigured, rpcRows } from './account-store.js';
 import { CATALOG } from './catalog.js';
 import { CLAUDE_MODEL_SPECS } from './catalog-claude.js';

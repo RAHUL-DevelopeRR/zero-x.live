@@ -43,7 +43,8 @@ const ORG_MODEL = /^[a-z0-9][a-z0-9._-]{0,40}\/[a-z0-9][a-z0-9._-]{0,80}$/;
 
 const type = fields => ({
   hosted_flag: null, requires_flag: {}, free_geo_block: [], paid_pricing: 'listed_or_band', requires_cache_prices: false,
-  max_daily_spend_usd: 0, paid_daily_cap_usd: null, base_url_env: null, discovery_defaults: null, ...fields,
+  max_daily_spend_usd: 0, paid_daily_cap_usd: null, base_url_env: null, discovery_defaults: null, models_dev: null, info: null,
+  ...fields,
 });
 
 /**
@@ -54,6 +55,8 @@ const type = fields => ({
  * slots: key slots allowed per tier (no slots = the tier is not offered). max_daily_spend_usd:
  * the highest daily spend cap a paid pool of this type may have (0 = no paid pools).
  * paid_daily_cap_usd: the cap code-catalog paid pools get when their entry names none.
+ * models_dev and info: the models.dev provider id and the display name and homepage that
+ * /v1/models shows for the provider (src/oiop/models-dev.js).
  */
 export const PROVIDER_TYPES = deepFreeze({
   gemini: type({
@@ -61,23 +64,25 @@ export const PROVIDER_TYPES = deepFreeze({
     upstream: /^gemini-[a-z0-9][a-z0-9.-]{0,60}$/, slots: { free: ['gemini.free'], paid: ['gemini.paid'] },
     free_geo_block: ['EEA', 'GB', 'CH'], models_var: 'GEMINI_MODELS', max_daily_spend_usd: MAX_DAILY_SPEND_CAP_USD,
     paid_daily_cap_usd: 10, discovery_defaults: { limits: FREE_LIMITS.gemini },
+    models_dev: 'google', info: { name: 'Google', homepage: 'https://ai.google.dev' },
   }),
   groq: type({
     adapter: 'openai-compatible', base_url: 'https://api.groq.com/openai/v1', id_prefix: 'groq/',
     upstream: /^([a-z0-9][a-z0-9._-]{0,40}\/)?[a-z0-9][a-z0-9._-]{0,80}$/, slots: { free: ['groq.free'], paid: ['groq.paid'] },
     models_var: 'GROQ_MODELS', max_daily_spend_usd: MAX_DAILY_SPEND_CAP_USD, paid_daily_cap_usd: 5,
-    discovery_defaults: { limits: FREE_LIMITS.groq },
+    discovery_defaults: { limits: FREE_LIMITS.groq }, models_dev: 'groq', info: { name: 'Groq', homepage: 'https://groq.com' },
   }),
   nvidia: type({
     adapter: 'openai-compatible', base_url: 'https://integrate.api.nvidia.com/v1', id_prefix: 'nvidia/', upstream: ORG_MODEL,
     slots: { free: ['nvidia.free'], paid: [] }, hosted_flag: 'NVIDIA_HOSTED', models_var: 'NVIDIA_MODELS',
-    discovery_defaults: { limits: FREE_LIMITS.nvidia },
+    discovery_defaults: { limits: FREE_LIMITS.nvidia }, models_dev: 'nvidia', info: { name: 'NVIDIA', homepage: 'https://build.nvidia.com' },
   }),
   openrouter: type({
     adapter: 'openai-compatible', base_url: 'https://openrouter.ai/api/v1', id_prefix: '',
     // The operator key serves OpenRouter's free models only.
     upstream: /^[a-z0-9][a-z0-9._-]{0,40}\/[a-z0-9][a-z0-9._-]{0,80}:free$/, slots: { free: ['openrouter.free'], paid: [] },
     hosted_flag: 'OPENROUTER_HOSTED', models_var: 'OPENROUTER_MODELS', discovery_defaults: { limits: FREE_LIMITS.openrouter },
+    models_dev: 'openrouter', info: { name: 'OpenRouter', homepage: 'https://openrouter.ai' },
   }),
   omniroute: type({
     adapter: 'openai-compatible', base_url: null, base_url_env: 'OMNIROUTE_BASE_URL', id_prefix: 'omniroute/',
@@ -89,11 +94,14 @@ export const PROVIDER_TYPES = deepFreeze({
     upstream: /^@cf\/[a-z0-9][a-z0-9_-]{0,40}\/[a-z0-9][a-z0-9._-]{0,80}$/,
     slots: { free: ['cloudflare.binding'], paid: ['cloudflare.binding'] }, requires_flag: { paid: 'CLOUDFLARE_PAID' },
     models_var: 'CLOUDFLARE_MODELS', max_daily_spend_usd: MAX_DAILY_SPEND_CAP_USD, paid_daily_cap_usd: 5,
+    models_dev: 'cloudflare-workers-ai',
+    info: { name: 'Cloudflare Workers AI', homepage: 'https://developers.cloudflare.com/workers-ai/' },
   }),
   anthropic: type({
     adapter: 'anthropic', base_url: 'https://api.anthropic.com', id_prefix: 'anthropic/',
     upstream: /^claude-[a-z0-9][a-z0-9-]{0,60}$/, slots: { free: [], paid: ['anthropic.paid'] },
     models_var: 'ANTHROPIC_MODELS', paid_pricing: 'listed_only', requires_cache_prices: true, max_daily_spend_usd: 50,
+    models_dev: 'anthropic', info: { name: 'Anthropic', homepage: 'https://www.anthropic.com' },
   }),
 });
 

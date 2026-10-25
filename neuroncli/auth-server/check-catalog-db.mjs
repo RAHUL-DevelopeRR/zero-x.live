@@ -4,10 +4,9 @@
 // 20261025000100_catalog_seed.sql. Offline: PGlite for the database, no outbound requests.
 //   node check-catalog-db.mjs
 //
-// Until src/catalog.js reads the loader (integration step), the /v1/models and routing parity
-// sections load a copy of src/catalog.js and src/router.js whose catalogEntries, catalogEntry and
-// lookup read catalogSnapshot(env) (the accessor change the integration makes); once catalog.js
-// imports catalog-db.js the real modules are used instead.
+// src/catalog.js reads the loader, so the /v1/models and routing parity sections use the real
+// catalog.js and router.js. On a tree where catalog.js does not import catalog-db.js they load a
+// copy whose catalogEntries, catalogEntry and lookup read catalogSnapshot(env) instead.
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import { Hono } from 'hono';
@@ -223,7 +222,8 @@ try {
   // ── 3. Guardrails accept the code catalog and rebuild it exactly ──
   {
     const { items } = codeCatalog();
-    assert.equal(items.length, CATALOG.length + 2, 'code catalog = src/catalog.js plus the two Claude rows');
+    assert.equal(items.length, CATALOG.length, 'code catalog = src/catalog.js CATALOG');
+    assert.deepEqual(CATALOG.slice(-2).map(entry => entry.id), [SONNET_ID, OPUS_ID], 'src/catalog.js lists the two Claude rows from src/catalog-claude.js');
     for (const item of items) {
       const validation = validateSpec(item.id, item.spec);
       assert.ok(specValid(validation), `${item.id}: ${JSON.stringify(validation)}`);
