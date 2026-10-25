@@ -245,8 +245,10 @@ async function startGateway(env) {
   return { child, base: `http://127.0.0.1:${port}` };
 }
 
+// A child killed by a signal keeps exitCode null (signalCode is set), so both are checked: a
+// second call must not wait for an 'exit' event that already fired.
 async function stopGateway() {
-  if (!server || server.child.exitCode !== null) return;
+  if (!server || server.child.exitCode !== null || server.child.signalCode !== null) return;
   const exited = once(server.child, 'exit');
   server.child.kill();
   await exited;
