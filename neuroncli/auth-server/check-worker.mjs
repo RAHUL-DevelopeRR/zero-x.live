@@ -83,6 +83,15 @@ assert.equal(await (await app.request('https://neuron.zero-x.live/neuroncli/devi
 assert.equal(await (await app.request('https://neuron.zero-x.live/zx-tokens.css', {}, env)).text(), '/zx-tokens.css');
 assert.equal(await (await app.request('https://neuron.zero-x.live/favicon.ico', {}, env)).text(), '/favicon.ico');
 assert.equal(await (await app.request('https://zero-x.live/favicon.ico', {}, env)).text(), '/favicon.ico');
+// Operator pages (key vault, model catalog) are served only on the dashboard host, under /admin/.
+for (const [path, file] of [['/admin/keys', '/neuroncli/admin/keys/index.html'], ['/admin/models', '/neuroncli/admin/models/index.html'],
+  ['/admin/models/models.js', '/neuroncli/admin/models/models.js']]) {
+  const page = await app.request('https://dashboard.zero-x.live' + path, {}, env);
+  assert.equal(await page.text(), file, path);
+  assert.match(page.headers.get('content-security-policy'), /default-src 'none'/, path + ': strict admin CSP');
+  assert.notEqual((await app.request('https://zero-x.live' + path, {}, env)).status, 200, path + ': not on the main site');
+}
+assert.equal((await app.request('https://dashboard.zero-x.live/neuroncli/admin/models/index.html', {}, env)).status, 404);
 // The local Node server keeps every redirect on the loopback origin.
 for (const [path, target] of [
   ['/neuron', '/neuron-cli'], ['/neuron.html', '/neuron-cli'], ['/neucockpit.html', '/neucockpit'],

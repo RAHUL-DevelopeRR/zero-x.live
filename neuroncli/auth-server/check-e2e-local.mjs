@@ -25,7 +25,7 @@ import { closeAllPglite, getPgliteHandle } from './src/db/pglite.js';
 import { bootstrapPlans, planSql } from './scripts/razorpay-bootstrap.mjs';
 import { devToken, devUserId } from './src/auth-context.js';
 import { catalogEntry } from './src/catalog.js';
-import { costMicrousd } from './src/pricing.js';
+import { costMicrousd, reserveCostMicrousd } from './src/pricing.js';
 
 const LIVE = process.argv.includes('--live');
 const MAX_REAL_CALLS = 10;
@@ -43,7 +43,7 @@ const RAZORPAY_KEY_SECRET = random();
 const RAZORPAY_WEBHOOK_SECRET = random();
 const ADMIN = random(36);
 const FAKE_KEYS = { GROQ_API_KEY: 'e2e-groq-free', GEMINI_API_KEY: 'e2e-gemini-free',
-  GROQ_PAID_API_KEY: 'e2e-groq-paid', GEMINI_PAID_API_KEY: 'e2e-gemini-paid' };
+  GROQ_PAID_API_KEY: 'e2e-groq-paid', GEMINI_PAID_API_KEY: 'e2e-gemini-paid', ANTHROPIC_API_KEY: 'e2e-anthropic-paid' };
 // Provider key vault keys (fake even with --live: the shim sends e2e- keys to the fake upstream).
 const VAULT_KEY = 'e2e-groq-vault-key-0001';
 const REJECTED_VAULT_KEY = 'e2e-groq-rejected-0001';
@@ -73,8 +73,26 @@ const listen = async server => { server.listen(0, '127.0.0.1'); await once(serve
 // ── Fake OpenAI-compatible upstream (Groq and Gemini paths) ──
 const upstream = { calls: [] };
 const USAGE = { prompt_tokens: 120, completion_tokens: 30, total_tokens: 150 };
+const CLAUDE_USAGE = { input_tokens: 800, cache_creation_input_tokens: 4000, cache_read_input_tokens: 16000 };
 const upstreamServer = createServer(async (request, response) => {
   const body = JSON.parse((await readBody(request)) || '{}');
+  // Claude Messages API (the SDK always streams): one text block, then usage with cache counts.
+  if (request.method === 'POST' && request.url.startsWith('/v1/messages')) {
+    upstream.calls.push({ provider: 'anthropic', key: String(request.headers['x-api-key'] || ''), model: body.model, stream: body.stream === true,
+      body, redirect: null });
+    response.writeHead(200, { 'Content-Type': 'text/event-stream', 'request-id': 'req_e2e_claude' });
+    const event = value => response.write(`event: ${value.type}\ndata: ${JSON.stringify(value)}\n\n`);
+    event({ type: 'message_start', message: { id: 'msg_e2e', type: 'message', role: 'assistant', model: body.model, content: [],
+      stop_reason: null, stop_sequence: null, usage: { ...CLAUDE_USAGE, output_tokens: 1 } } });
+    event({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } });
+    event({ type: 'ping' });
+    event({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'pong from Claude' } });
+    event({ type: 'content_block_stop', index: 0 });
+    event({ type: 'message_delta', delta: { stop_reason: 'end_turn', stop_sequence: null }, usage: { output_tokens: 800 } });
+    event({ type: 'message_stop' });
+    response.end();
+    return;
+  }
   const provider = request.url.startsWith('/openai/v1/') ? 'groq' : request.url.startsWith('/v1beta/openai/') ? 'gemini' : null;
   upstream.calls.push({ provider, key: String(request.headers.authorization || '').replace(/^Bearer /, ''), model: body.model,
     stream: body.stream === true, tools: Array.isArray(body.tools) ? body.tools.length : 0, streamOptions: body.stream_options ?? null });
@@ -291,6 +309,8 @@ try {
     SESSION_ENCRYPTION_KEY: random(36), PROVIDER_KEYS_KEK: randomBytes(32).toString('base64'), RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET, RAZORPAY_WEBHOOK_SECRET, RAZORPAY_API_BASE: razorpayBase,
     ...upstreamKeys, E2E_UPSTREAM_BASE: upstreamBase, E2E_LIVE: LIVE ? 'true' : 'false', E2E_REAL_CALLS_FILE: realCallsFile(),
     ...(LIVE ? { ROUTER_MAX_ATTEMPTS: '2' } : {}),
+    // The fake Claude key must not start the weekly research jobs.
+    DISCOVERY_RESEARCH: 'false',
   };
   for (const key of Object.keys(env)) if (env[key] === undefined) delete env[key];
   server = await startGateway(env);
@@ -648,6 +668,45 @@ try {
   assert.equal(billingState.payments.find(payment => payment.id === topupPayment.id).status, 'refunded');
   step('refund webhook', `refund.processed for ${topupPayment.id}: payment refunded, $5 credits taken back once (balance ${account.credits.balance_usd} USD)`);
 
+  // ── 11c. Claude through the native adapter: held at the worst case, settled cache-aware ──
+  const claudeModels = await models(ses);
+  assert.equal(claudeModels['anthropic/claude-sonnet-5-5'].available, true, 'Pro sees Claude');
+  assert.deepEqual(claudeModels['anthropic/claude-sonnet-5-5'].pricing, { input_per_mtok_usd: 2.5, output_per_mtok_usd: 12.5,
+    cache_read_per_mtok_usd: 0.25, cache_write_per_mtok_usd: 3.125 });
+  const claudeMessages = [{ role: 'user', content: 'Reply with pong.' }];
+  const claude = await call('/v1/chat/completions', { method: 'POST', token: ses,
+    body: { model: 'claude-sonnet-5-5', messages: claudeMessages, stream: true, temperature: 0.4 } });
+  assert.equal(claude.status, 200, redact(claude.text).slice(0, 400));
+  assert.deepEqual([claude.headers.get('x-neuron-model'), claude.headers.get('x-oiop-offer')], ['anthropic/claude-sonnet-5-5', 'anthropic.paid']);
+  const claudeEvents = sseEvents(claude.text);
+  assert.ok(claudeEvents.some(event => event?.choices?.[0]?.delta?.content === 'pong from Claude'));
+  assert.equal(claudeEvents.filter(event => event === '[DONE]').length, 1);
+  const claudeUsage = claudeEvents.find(event => event?.usage)?.usage;
+  assert.deepEqual([claudeUsage.prompt_tokens, claudeUsage.prompt_tokens_details.cached_tokens, claudeUsage.prompt_tokens_details.cache_write_tokens],
+    [20800, 16000, 4000], 'usage: prompt = input + cache writes + cache reads');
+  const sentToClaude = upstream.calls.at(-1);
+  assert.deepEqual([sentToClaude.provider, sentToClaude.key, sentToClaude.body.model, sentToClaude.body.max_tokens],
+    ['anthropic', 'e2e-anthropic-paid', 'claude-sonnet-5-5', 16000], 'the model default max_tokens, the anthropic.paid key');
+  assert.ok(!('temperature' in sentToClaude.body) && /^[0-9a-f]{32}$/.test(sentToClaude.body.metadata.user_id));
+  const sonnetPrice = catalogEntry('anthropic/claude-sonnet-5-5').pools[0].price;
+  const claudeCost = costMicrousd(sonnetPrice, 20800, 800, { cache_read_tokens: 16000, cache_write_tokens: 4000 });
+  assert.equal(claudeCost, 28500);
+  assert.ok(reserveCostMicrousd(sonnetPrice, 1, 16000) > claudeCost, 'the hold covered the worst case');
+  const claudeEvent = (await call('/api/usage/events?limit=1', { token: ses })).body.events[0];
+  assert.deepEqual([claudeEvent.request_id, claudeEvent.model, claudeEvent.tier, claudeEvent.prompt_tokens, claudeEvent.cache_read_tokens,
+    claudeEvent.cache_write_tokens, claudeEvent.completion_tokens, claudeEvent.cost_usd],
+  [claude.headers.get('x-request-id'), 'anthropic/claude-sonnet-5-5', 'paid', 20800, 16000, 4000, 800, claudeCost / 1e6],
+  'settled by the 11-argument zerox_settle_v2 with the cache split');
+  const claudeByModel = (await call('/api/usage', { token: ses })).body.by_model.find(row => row.model === 'anthropic/claude-sonnet-5-5');
+  assert.deepEqual([claudeByModel.requests, claudeByModel.cache_read_tokens, claudeByModel.cache_write_tokens], [1, 16000, 4000]);
+  account = (await call('/api/account', { token: ses })).body;
+  assert.equal(Math.round(account.credits.balance_usd * 1e6), 8000000 - cost - claudeCost, 'billed exactly the cache-aware cost');
+  const sonnetPool = (await call('/admin/overview', { token: ADMIN })).body.pools
+    .find(pool => pool.model === 'anthropic/claude-sonnet-5-5' && pool.tier === 'paid');
+  assert.deepEqual([sonnetPool.requests_today, sonnetPool.cost_today_microusd, sonnetPool.spend_cap_microusd], [1, claudeCost, 12500000],
+    'the daily spend cap bucket holds the settled cost; the cap is $10 a day, billed');
+  step('Claude (native adapter)', `claude-sonnet-5-5 streamed through @anthropic-ai/sdk to the fake Messages API: 16,000 default max_tokens, no sampling parameters, hashed user id; settled ${claudeCost} micro-USD for 16K cache reads, 4K cache writes, 800 plain and 800 output tokens; the pool's spend today = the settled cost`);
+
   // ── 12. Cancel → cancel_at_period_end ──
   const cancelled = await call('/api/billing/cancel', { method: 'POST', token: ses, body: {} });
   assert.equal(cancelled.status, 200, redact(cancelled.text));
@@ -839,5 +898,6 @@ if (failed) {
 await writeFile(join(tmpdir(), `zerox-e2e-${LIVE ? 'live' : 'offline'}-steps.json`), JSON.stringify(steps, null, 2)).catch(() => {});
 console.log(`PASS: end-to-end ${LIVE ? '(live Groq/Gemini free pools)' : '(offline)'}: ${steps.length} steps — dev sign-in, CLI session, plan-aware ` +
   'models, streamed tool calls, usage, API keys, daily cap, pool-kept model failures, Pro checkout (reused across tabs), charged webhook once, ' +
-  'duplicate subscription cancelled and refunded, paid-pool credits, top-up, refund clawback, cancel, revoke-all, admin overview, provider key vault, ' +
+  'duplicate subscription cancelled and refunded, paid-pool credits, top-up, refund clawback, Claude billed cache-aware, cancel, revoke-all, admin overview, ' +
+  'provider key vault, ' +
   'static site and CSP');
