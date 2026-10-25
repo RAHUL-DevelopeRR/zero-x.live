@@ -575,11 +575,18 @@ assert.equal(checkout.normalizeCurrency('EUR'), 'USD');
     assert.ok(html.includes(command), 'index.html shows ' + command);
   }
   // npm without @next installs the unsupported 6.2.0 and PyPI has only the unsupported 6.2.4.
-  for (const file of ['index.html', 'neuron-cli.html', 'docs.html', 'dashboard.html', 'pricing.html']) {
+  for (const file of ['index.html', 'neuron-cli.html', 'docs.html', 'dashboard.html', 'pricing.html', 'download.html',
+    'docs/trust.html', 'changelog.html']) {
     const page = read(file);
     assert.doesNotMatch(page, /@zero-x\.live\/neuron(?!@next)/, file + ': npm package named without @next');
     assert.doesNotMatch(page, /pip install neuroncli/, file + ': pip install of the old PyPI package');
     assert.doesNotMatch(page, /install script is not published|installer is not published/, file + ': stale installer notice');
+    assert.doesNotMatch(page, /releases\/latest\/download\/install\./, file + ': unpinned installer (the alpha is a pre-release)');
+    assert.doesNotMatch(page, /href="https:\/\/neuron\.zero-x\.live\/(?:#[\w-]*)?"/, file + ': NeuCockpit lives at https://zero-x.live/neucockpit');
+  }
+  // docs.html lists `neuron auth login` as the alias it is; the pages that only name one command use neuron login.
+  for (const file of ['download.html', 'docs/trust.html', 'changelog.html']) {
+    assert.doesNotMatch(read(file), /neuron auth login/, file + ': the sign-in command is neuron login');
   }
   for (const id of ['get-started', 'features', 'models', 'pricing', 'docs', 'faq', 'products']) assert.ok(ids(html).includes(id), 'index.html section #' + id);
   for (const plan of ['free', 'pro', 'max']) assert.match(html, new RegExp(`data-plan-price="${plan}"`), 'index.html hydrates the ' + plan + ' price');
@@ -631,11 +638,12 @@ assert.equal(checkout.normalizeCurrency('EUR'), 'USD');
 /* Download page (A6), trust page and support (A8), gateway logging policy (A17) */
 {
   const html = read('download.html');
-  for (const command of ['irm https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/latest/download/install.ps1 | iex',
-    'curl -fsSL https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/latest/download/install.sh | sh',
-    'npm install -g @zero-x.live/neuron', 'python -m pip install neuroncli', 'Get-FileHash', 'shasum -a 256', 'gh attestation verify']) {
+  for (const command of [INSTALL_SH, INSTALL_PS1, '<code>@zero-x.live/neuron@next</code>', 'neuron login', 'Get-FileHash',
+    'shasum -a 256', 'gh attestation verify']) {
     assert.ok(html.includes(command), 'download.html shows ' + command);
   }
+  assert.match(text('download.html'), /pip is not available for the alpha/);
+  assert.ok(html.includes('href="https://zero-x.live/neucockpit#downloads"'), 'download.html links the NeuCockpit downloads');
   for (const id of ['desktop', 'cli', 'mobile', 'verify', 'desktop-note', 'cli-release-note', 'cli-binaries', 'checksums-link', 'copy-status']) {
     assert.ok(ids(html).includes(id), 'download.html #' + id);
   }

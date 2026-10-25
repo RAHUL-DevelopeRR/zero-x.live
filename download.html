@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Download Neuron | Desktop app, CLI and checksums</title>
-  <meta name="description" content="Download Neuron by Zero-X: the desktop app for Windows and macOS, install commands for PowerShell, curl, npm and pip, and SHA-256 checksums for every release file.">
+  <meta name="description" content="Download Neuron by Zero-X: the desktop app for Windows and macOS, install commands for PowerShell and curl, and SHA-256 checksums for every release file.">
   <meta name="robots" content="index,follow,max-image-preview:large">
   <link rel="canonical" href="https://zero-x.live/download">
   <meta name="theme-color" content="#0A0A0C">
@@ -15,12 +15,12 @@
   <meta property="og:title" content="Download Neuron">
   <meta property="og:description" content="The Neuron desktop app, CLI install commands and release checksums.">
   <meta property="og:url" content="https://zero-x.live/download">
-  <meta property="og:image" content="https://zero-x.live/Assets/zerox-favicon-centered.png">
+  <meta property="og:image" content="https://zero-x.live/Assets/zerox-share.png">
   <meta property="og:image:alt" content="Zero-X logo">
-  <meta name="twitter:card" content="summary">
+  <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Download Neuron">
   <meta name="twitter:description" content="The Neuron desktop app, CLI install commands and release checksums.">
-  <meta name="twitter:image" content="https://zero-x.live/Assets/zerox-favicon-centered.png">
+  <meta name="twitter:image" content="https://zero-x.live/Assets/zerox-share.png">
   <meta name="twitter:image:alt" content="Zero-X logo">
   <link rel="stylesheet" href="/site-fonts.css">
   <link rel="stylesheet" href="/zx-tokens.css">
@@ -75,33 +75,21 @@
 
     <section id="cli" class="zx-section--tight" aria-labelledby="cli-title">
       <h2 id="cli-title">Command line</h2>
-      <p>Installs the <code>neuron</code> command and its full-screen terminal UI. Pick one method.</p>
-      <p id="cli-release-note" class="zx-muted">The npm and pip packages are available now.</p>
+      <p>Installs the <code>neuron</code> command and its full-screen terminal UI. Pick the command for your system.</p>
+      <p id="cli-release-note" class="zx-muted">Neuron 7.0.0-alpha.1 is a <a href="https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/tag/v7.0.0-alpha.1">GitHub pre-release</a>. A pre-release is never marked as the latest release, so keep the version in the command.</p>
       <div>
         <div>
-          <h3>Windows (PowerShell)</h3>
-          <div class="zx-code zx-code--copy zx-code--wrap"><pre><code id="cmd-powershell">irm https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/latest/download/install.ps1 | iex</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="cmd-powershell" data-copy-label="PowerShell install command">Copy</button></div>
-        </div>
-        <div>
           <h3>macOS and Linux</h3>
-          <div class="zx-code zx-code--copy zx-code--wrap"><pre><code id="cmd-shell">curl -fsSL https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/latest/download/install.sh | sh</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="cmd-shell" data-copy-label="curl install command">Copy</button></div>
-        </div>
-      </div>
-      <p class="zx-help" data-needs-release>The install scripts download Neuron from its GitHub releases and work from the first public release. Until then, install with npm or pip.</p>
-      <div class="zx-mt">
-        <div>
-          <h3>npm</h3>
-          <div class="zx-code zx-code--copy"><pre><code id="cmd-npm">npm install -g @zero-x.live/neuron</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="cmd-npm" data-copy-label="npm install command">Copy</button></div>
-          <p class="zx-help">Needs Node.js. Downloads the native binary for your platform and checks its SHA-256.</p>
+          <div class="zx-code zx-code--copy zx-code--wrap"><pre><code id="cmd-shell">curl -fsSL https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.1/install.sh | sh -s -- --version 7.0.0-alpha.1</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="cmd-shell" data-copy-label="curl install command">Copy</button></div>
         </div>
         <div>
-          <h3>pip</h3>
-          <div class="zx-code zx-code--copy"><pre><code id="cmd-pip">python -m pip install neuroncli</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="cmd-pip" data-copy-label="pip install command">Copy</button></div>
-          <p class="zx-help">Needs Python 3.9 or later. PyPI releases can trail npm; check with <code>neuron --version</code>.</p>
+          <h3>Windows (PowerShell 5.1 or 7)</h3>
+          <div class="zx-code zx-code--copy zx-code--wrap"><pre><code id="cmd-powershell">&amp; ([scriptblock]::Create((irm https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.1/install.ps1))) -Version 7.0.0-alpha.1</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="cmd-powershell" data-copy-label="PowerShell install command">Copy</button></div>
         </div>
       </div>
+      <p class="zx-help">The installers download <code>neuron</code> and <code>neuron-tui</code> from GitHub Releases and verify their SHA-256 checksums. npm (<code>@zero-x.live/neuron@next</code>) comes once the alpha is published there; pip is not available for the alpha.</p>
       <p class="zx-visually-hidden" id="copy-status" role="status" aria-live="polite"></p>
-      <p>Then sign in once with <code>neuron auth login</code> and run <code>neuron</code> in a project. The <a href="/docs#quickstart">quickstart</a> has the details.</p>
+      <p>Then sign in once with <code>neuron login</code> and run <code>neuron</code> in a project. The <a href="/docs#quickstart">quickstart</a> has the details.</p>
 
       <h3 class="zx-mt-lg">Direct downloads</h3>
       <div class="zx-table-wrap">
@@ -131,7 +119,7 @@
       <div class="zx-code"><span class="zx-code__label">macOS and Linux</span><pre><code>shasum -a 256 neuron-macos-arm64</code></pre></div>
       <p>Release binaries also carry a GitHub build attestation that proves which workflow built them:</p>
       <div class="zx-code"><pre><code>gh attestation verify neuron-linux-x64 --repo RAHUL-DevelopeRR/neuron-v2</code></pre></div>
-      <p>The npm package checks the binary's SHA-256 itself before installing it. If a checksum does not match, do not run the file; tell us at <a href="mailto:support@zero-x.live">support@zero-x.live</a>.</p>
+      <p>The install scripts check each binary's SHA-256 before installing it. If a checksum does not match, do not run the file; tell us at <a href="mailto:support@zero-x.live">support@zero-x.live</a>.</p>
     </section>
 
     <section id="more" class="zx-section--tight" aria-labelledby="more-title">
@@ -141,7 +129,7 @@
         <li><a href="/changelog">What's new</a> in each release.</li>
         <li><a href="/docs">Documentation</a> and <a href="/docs#support">help and support</a>.</li>
         <li>Release data for tools: <a href="/releases/cli/latest.json">CLI manifest</a> and <a href="/releases/desktop/latest.json">desktop manifest</a>.</li>
-        <li>Looking for NeuCockpit, the local AI file search app? It has its own <a href="https://neuron.zero-x.live/#downloads">NeuCockpit downloads</a>.</li>
+        <li>Looking for NeuCockpit, the local AI file search app? It has its own <a href="https://zero-x.live/neucockpit#downloads">NeuCockpit downloads</a>.</li>
       </ul>
     </section>
   </main>
@@ -164,7 +152,7 @@
         <h2>Company</h2>
         <a href="/about">About</a>
         <a href="/contact">Contact</a>
-        <a href="https://neuron.zero-x.live/">NeuCockpit</a>
+        <a href="https://zero-x.live/neucockpit">NeuCockpit</a>
       </nav>
       <nav aria-label="Legal">
         <h2>Legal</h2>
