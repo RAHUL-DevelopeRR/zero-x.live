@@ -282,7 +282,7 @@
     $('free-pool').hidden = !type.slots.free.length;
     $('paid-pool').hidden = !type.slots.paid.length;
     $('f-paid-hint').textContent = type.slots.paid.length ? 'Cap at most $' + type.max_daily_spend_usd + ' a day. ' +
-      (type.paid_pricing === 'listed_only' ? 'Only models with a list price in code can be paid.' : 'Listed models must use their list price.') : '';
+      'Only models with a list price in code can be paid, at exactly that price.' : '';
     upstreamChanged();
   }
 

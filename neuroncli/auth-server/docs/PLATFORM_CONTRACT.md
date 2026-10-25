@@ -718,9 +718,13 @@ Code: `src/catalog-types.js`, `src/list-prices.js`, `src/catalog-guardrails.js`,
 - Code bounds every row: provider types (adapter, base URL, public id prefix, upstream id
   grammar, allowed key slots per tier, hosting flag, spend ceiling) in `src/catalog-types.js`; a
   row names a key slot id (`anthropic.paid` → `ANTHROPIC_API_KEY`), never an env var or a URL.
-  Listed models' paid prices must equal `LIST_PRICES` (`src/list-prices.js`, cache rates included;
-  effective-dated changes apply on their date); unlisted ones sit in a price band, except
-  `anthropic`, which is listed-only. `MARKUP` (1.25) exists only in `src/pricing.js`.
+  A paid pool serves only for a model listed in `LIST_PRICES` (`src/list-prices.js`), at exactly
+  that price (cache rates included; effective-dated changes apply on their date), for every
+  provider type: a new paid model is a reviewed code change. The `anthropic` entries are Sonnet 5.5
+  and Opus 5.5 only, and `ANTHROPIC_MODELS` in `wrangler.toml` names the same two. A free pool on
+  the Workers AI binding (key slot `cloudflare.binding`, which bills past the free allowance)
+  serves only for a model in `BILLED_FREE_LIMITS` (`src/catalog-types.js`), with rpm, rpd, tpm and
+  tpd all set and none above the code ceiling. `MARKUP` (1.25) exists only in `src/pricing.js`.
 - Loader (`src/catalog-db.js`): `zerox_catalog_snapshot()` every 45 s per isolate (at once after an
   approval in that isolate). An active row serves its approved revision once it passes the
   guardrails; a failing pool is dropped, a failing model falls back to its code entry. A disabled

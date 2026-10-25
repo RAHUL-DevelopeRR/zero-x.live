@@ -34,7 +34,7 @@ const TYPES = { markup: 1.25, types: [
     slots: { free: [], paid: [{ id: 'anthropic.paid', env: 'ANTHROPIC_API_KEY', configured: true }] },
     list_prices: { 'claude-opus-5-5': { input_usd_per_mtok: 4, output_usd_per_mtok: 20, cache_read_usd_per_mtok: 0.2,
       cache_write_usd_per_mtok: 5, cache_write_1h_usd_per_mtok: 8 } } },
-  { id: 'groq', id_prefix: 'groq/', max_daily_spend_usd: 100, paid_pricing: 'listed_or_band',
+  { id: 'groq', id_prefix: 'groq/', max_daily_spend_usd: 100, paid_pricing: 'listed_only',
     slots: { free: [{ id: 'groq.free', configured: true }], paid: [{ id: 'groq.paid', configured: false }] }, list_prices: {} },
 ] };
 const MODELS = {

@@ -16,6 +16,8 @@ CLI_SESSION_TTL_HOURS = "720"
 PRICING_URL = "https://zero-x.live/pricing"
 NVIDIA_HOSTED = "false"
 OPENROUTER_HOSTED = "false"
+# With ANTHROPIC_API_KEY set, the anthropic.paid key serves these Claude models only (wrangler.toml).
+ANTHROPIC_MODELS = "claude-sonnet-5-5,claude-opus-5-5"
 RAZORPAY_KEY_ID = ""
 
 [triggers]

@@ -13,7 +13,9 @@ import { vaultKeys, vaultKeySecret } from './provider-keys.js';
 import { offerForPool, servesOperatorPools } from './oiop/offers.js';
 import { DEFAULT_POLICY, policyBlock } from './oiop/policy.js';
 import { modelsDevId, providerInfo } from './oiop/models-dev.js';
-import { MODELS_VARS as TYPE_MODELS_VARS, VAULT_KEY_VARS as SLOT_VAULT_KEY_VARS, poolSource, publicIdFor } from './catalog-types.js';
+import {
+  BILLED_FREE_LIMITS, MODELS_VARS as TYPE_MODELS_VARS, VAULT_KEY_VARS as SLOT_VAULT_KEY_VARS, poolSource, publicIdFor,
+} from './catalog-types.js';
 import { effectiveSpendCapUsd, entryFromSpec } from './catalog-guardrails.js';
 import { CLAUDE_MODEL_SPECS } from './catalog-claude.js';
 import { catalogSnapshot, loadCatalog, loadCatalogDbModels } from './catalog-db.js';
@@ -53,12 +55,13 @@ const GEMINI_FREE_GEO_BLOCK = Object.freeze(['EEA', 'GB', 'CH']);
 // max_tokens stays fitted to the per-minute budget (router.js fitMaxTokens), which Groq checks
 // per request. Upstream 429s still park a pool for the provider's delay (provider-health.js).
 // Workers AI pools are sized so both models together stay under the 10,000 neurons/day free
-// allocation, assuming at most ~15% of tokens are output tokens.
+// allocation, assuming at most ~15% of tokens are output tokens. The binding bills past it, so
+// these are also the ceilings catalog rows cannot exceed (src/catalog-types.js BILLED_FREE_LIMITS).
 export const POOL_LIMITS = Object.freeze({
   groq_free: Object.freeze({ rpm: 30, rpd: 1000, tpm: 8000, tpd: 200000 }),
   gemini_free: Object.freeze({ rpm: 5, rpd: 250, tpm: 120000, tpd: 5000000 }),
-  workers_llama_free: Object.freeze({ rpm: 20, rpd: 300, tpm: 60000, tpd: 120000 }),
-  workers_gpt_oss_free: Object.freeze({ rpm: 20, rpd: 200, tpm: 60000, tpd: 90000 }),
+  workers_llama_free: BILLED_FREE_LIMITS.cloudflare['@cf/meta/llama-3.3-70b-instruct-fp8-fast'],
+  workers_gpt_oss_free: BILLED_FREE_LIMITS.cloudflare['@cf/openai/gpt-oss-120b'],
   // build.nvidia.com/faq (2026-10-19): up to 40 RPM and 10,000 requests per day; no token caps
   // are published, and other users' traffic can throttle the shared endpoints.
   nvidia_trial: Object.freeze({ rpm: 40, rpd: 10000, tpm: null, tpd: null }),

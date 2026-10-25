@@ -17,7 +17,9 @@ import { isOperator } from '../operator-auth.js';
 import { accessConfigured, passedAccess, verifyAccessJwt } from '../access-auth.js';
 import { MARKUP } from '../pricing.js';
 import { LIST_PRICES, listPriceFor, MAX_DAILY_SPEND_CAP_USD } from '../list-prices.js';
-import { KEY_SLOTS, PROVIDER_TYPES, providerType, publicIdFor, slotConfigured, typeMaxCapMicrousd } from '../catalog-types.js';
+import {
+  BILLED_FREE_LIMITS, KEY_SLOTS, PROVIDER_TYPES, providerType, publicIdFor, slotConfigured, typeMaxCapMicrousd,
+} from '../catalog-types.js';
 import {
   apiFromSpec, normalizeSpec, publicSpecPricing, REASONING_EFFORTS, riskyChanges, sameSpec, specDiff, specFromApi,
   specValid, validateSpec,
@@ -187,6 +189,8 @@ function typesView(env) {
       paid_pricing: registry.paid_pricing, requires_cache_prices: registry.requires_cache_prices,
       max_daily_spend_usd: typeMaxCapMicrousd(id) / 1_000_000, paid_daily_cap_usd: registry.paid_daily_cap_usd,
       free_limits: registry.discovery_defaults?.limits ?? null, list_prices: prices,
+      // Free pools on a billed slot (Workers AI): the only models allowed and their limit ceilings.
+      billed_free_limits: BILLED_FREE_LIMITS[id] ?? null,
     };
   });
 }

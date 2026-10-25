@@ -22,11 +22,11 @@ import { ADAPTERS } from './src/providers.js';
 import { MARKUP, priceFromCost } from './src/pricing.js';
 import { LIST_PRICES, listPriceFor, listPriceMicro, MAX_DAILY_SPEND_CAP_USD } from './src/list-prices.js';
 import {
-  baseUrlFor, CATALOG_ACTIONS, CATALOG_STATUSES, catalogCan, KEY_SLOTS, MODELS_VARS, poolSource, PROVIDER_TYPE_IDS,
+  baseUrlFor, BILLED_FREE_LIMITS, CATALOG_ACTIONS, CATALOG_STATUSES, catalogCan, KEY_SLOTS, MODELS_VARS, poolSource, PROVIDER_TYPE_IDS,
   PROVIDER_TYPES, publicIdFor, slotAllowed, TIERS, typeMaxCapMicrousd, upstreamAllowed, VAULT_KEY_VARS,
 } from './src/catalog-types.js';
 import {
-  apiFromSpec, billedDailyCapMicrousd, canonicalSpec, codeSpec, effectiveSpendCapUsd, entryFromSpec, priceFromSpec,
+  apiFromSpec, billedDailyCapMicrousd, canonicalSpec, codeSpec, droppedTiers, effectiveSpendCapUsd, entryFromSpec, priceFromSpec,
   riskyChanges, specDiff, specFromApi, specValid, validateSpec,
 } from './src/catalog-guardrails.js';
 import {
@@ -290,14 +290,50 @@ try {
       ['unknown provider type', SONNET_ID, variant(SONNET, s => { s.provider_type = 'evil'; }), 'unknown_provider_type'],
       ['priced free pool', 'gemini/gemini-2.5-flash', variant(codeCatalog().byId.get('gemini/gemini-2.5-flash').spec, s => {
         s.pools[0].daily_spend_cap_microusd = 5_000_000; }), 'free:free_pool_priced'],
-      ['unlisted Gemini price out of band', 'gemini/gemini-9-flash', variant(codeCatalog().byId.get('gemini/gemini-2.5-flash').spec, s => {
-        s.upstream_model = 'gemini-9-flash'; s.aliases = []; paid(s).price.input = 1; }), 'paid:unlisted_price_out_of_band'],
+      // Paid pools are listed only, for every provider type: an unlisted model would be billed (and
+      // its daily cap counted) at whatever the row declares, far below a real Pro-class price.
+      ['unlisted Gemini model', 'gemini/gemini-pro-latest', variant(codeCatalog().byId.get('gemini/gemini-2.5-flash').spec, s => {
+        s.upstream_model = 'gemini-pro-latest'; s.aliases = []; paid(s).price = { input: 50_000, output: 100_000, cache_read: null,
+          cache_write: null, cache_write_1h: null, long: null }; paid(s).daily_spend_cap_microusd = 100_000_000; }), 'paid:unlisted_paid_not_allowed'],
+      ['unlisted Groq model', 'groq/moonshotai/kimi-k3', variant(codeCatalog().byId.get('groq/openai/gpt-oss-120b').spec, s => {
+        s.upstream_model = 'moonshotai/kimi-k3'; s.aliases = []; }), 'paid:unlisted_paid_not_allowed'],
+      ['unlisted Workers AI model', '@cf/meta/llama-4-scout-17b-16e-instruct', variant(codeCatalog().byId.get('@cf/meta/llama-3.3-70b-instruct-fp8-fast').spec, s => {
+        s.upstream_model = '@cf/meta/llama-4-scout-17b-16e-instruct'; s.aliases = []; }), 'paid:unlisted_paid_not_allowed'],
+      // Claude's refusal-fallback targets have no list price, so no row can serve them.
+      ...['claude-opus-5', 'claude-opus-4-8'].map(upstream => [`refusal fallback ${upstream}`, `anthropic/${upstream}`, variant(OPUS, s => {
+        s.upstream_model = upstream; s.aliases = []; Object.assign(paid(s), { daily_spend_cap_microusd: 50_000_000, price: { input: 5_000_000,
+          output: 25_000_000, cache_read: 500_000, cache_write: 6_250_000, cache_write_1h: 10_000_000, long: null } }); }), 'paid:unlisted_paid_not_allowed']),
+      // A free pool on the Workers AI binding bills the account past the free allowance: only the
+      // models in BILLED_FREE_LIMITS, with every limit set and none above the code ceiling.
+      ['free Workers AI pool for an unlisted model', '@cf/meta/llama-4-scout-17b-16e-instruct', {
+        provider_type: 'cloudflare', upstream_model: '@cf/meta/llama-4-scout-17b-16e-instruct', display_name: 'Llama 4 Scout',
+        context_window: 131072, max_output_tokens: 8192, auto_rank: 1,
+        pools: [{ tier: 'free', key_slot: 'cloudflare.binding', limits: {} }] }, 'free:free_pool_not_listed'],
+      ['free Workers AI pool without limits', '@cf/meta/llama-3.3-70b-instruct-fp8-fast', variant(codeCatalog().byId.get('@cf/meta/llama-3.3-70b-instruct-fp8-fast').spec, s => {
+        s.pools[0].limits = { rpm: null, rpd: null, tpm: null, tpd: null }; }), 'free:free_limits_required'],
+      ['free Workers AI pool with one limit missing', '@cf/openai/gpt-oss-120b', variant(codeCatalog().byId.get('@cf/openai/gpt-oss-120b').spec, s => {
+        s.pools[0].limits.tpd = null; }), 'free:free_limits_required'],
+      ['free Workers AI pool above the code ceiling', '@cf/meta/llama-3.3-70b-instruct-fp8-fast', variant(codeCatalog().byId.get('@cf/meta/llama-3.3-70b-instruct-fp8-fast').spec, s => {
+        s.pools[0].limits.tpd = 10_000_000; }), 'free:free_limits_above_max'],
       ['default max_tokens above the output limit', SONNET_ID, variant(SONNET, s => { s.default_max_tokens = 64000; }), 'default_max_tokens_invalid'],
       ['default effort not offered', OPUS_ID, variant(OPUS, s => { s.default_reasoning_effort = 'none'; }), 'effort_invalid'],
     ];
     for (const [name, id, spec, expected] of cases) assert.ok(reasons(id, spec).includes(expected), `${name}: ${reasons(id, spec)}`);
     const unlisted = variant(codeCatalog().byId.get('gemini/gemini-2.5-flash').spec, s => { s.upstream_model = 'gemini-9-flash'; s.aliases = []; });
-    assert.ok(specValid(validateSpec('gemini/gemini-9-flash', unlisted)), 'an unlisted Gemini model inside the band passes');
+    assert.deepEqual(droppedTiers(validateSpec('gemini/gemini-9-flash', unlisted)), ['paid'], 'an unlisted Gemini model may only be free');
+    assert.ok(specValid(validateSpec('gemini/gemini-9-flash', { ...unlisted, pools: unlisted.pools.filter(pool => pool.tier === 'free') })));
+    assert.ok(Object.values(PROVIDER_TYPES).every(registry => registry.paid_pricing === 'listed_only'), 'every provider type: listed only');
+    assert.deepEqual(Object.keys(LIST_PRICES).filter(key => key.startsWith('anthropic:')), ['anthropic:claude-sonnet-5-5', 'anthropic:claude-opus-5-5'],
+      'the anthropic.paid key can reach Sonnet 5.5 and Opus 5.5 only');
+    // Free Workers AI pools at or below the code ceiling pass; the code catalog uses the ceiling itself.
+    const tighter = variant(codeCatalog().byId.get('@cf/meta/llama-3.3-70b-instruct-fp8-fast').spec, s => {
+      s.pools[0].limits = { rpm: 5, rpd: 100, tpm: 10000, tpd: 50000 }; });
+    assert.ok(specValid(validateSpec('@cf/meta/llama-3.3-70b-instruct-fp8-fast', tighter)), 'tighter free limits pass');
+    for (const [upstream, ceiling] of Object.entries(BILLED_FREE_LIMITS.cloudflare)) {
+      const entry = CATALOG.find(item => item.upstream_model === upstream);
+      assert.deepEqual(entry.pools.find(pool => pool.tier === 'free').limits, ceiling, `${upstream}: the code pool sits at the ceiling`);
+    }
+    assert.deepEqual(Object.entries(KEY_SLOTS).filter(([, slot]) => slot.billed).map(([id]) => id), ['cloudflare.binding']);
     // No URL can ride along: the API form refuses unknown fields, and specs drop them.
     const api = apiFromSpec(SONNET);
     assert.ok(specFromApi({ ...api, base_url: 'https://evil.example/v1' }).errors.includes('unknown_field:base_url'));
@@ -312,7 +348,7 @@ try {
       WHERE table_schema = 'public' AND table_name LIKE 'zerox_catalog_%'`);
     assert.ok(columns.length > 40);
     assert.ok(!columns.some(column => /url|host|endpoint|key_var|env|secret/.test(column.column_name)), 'no catalog column can hold a URL or env var');
-    ok(`${cases.length} guardrail attacks rejected with their reason (foreign slot, $0 and off-list prices, caps above the code maximum, path injection, id and alias squatting); no URL or env var can enter a row`);
+    ok(`${cases.length} guardrail attacks rejected with their reason (foreign slot, $0, off-list and unlisted paid prices, refusal-fallback models, unbounded free Workers AI pools, caps above the code maximum, path injection, id and alias squatting); no URL or env var can enter a row`);
   }
 
   // ── 5. The seed equals code ──
@@ -558,6 +594,26 @@ try {
     assert.equal(snapshot.byId.get('cohere/north-mini-code:free'), codeCatalog().byId.get('cohere/north-mini-code:free').entry,
       'code models without a row serve from code');
     assert.deepEqual(buildSnapshot([]).entries.map(entry => entry.id), codeSnapshot().entries.map(entry => entry.id));
+    // Rows written straight into the tables (service_role) still pass the guardrails before they
+    // serve: no uncapped free Workers AI, and no unlisted paid model at a made-up price.
+    const scout = { id: '@cf/meta/llama-4-scout-17b-16e-instruct', provider_type: 'cloudflare', status: 'active', revision_id: 900,
+      spec: { provider_type: 'cloudflare', upstream_model: '@cf/meta/llama-4-scout-17b-16e-instruct', display_name: 'Llama 4 Scout',
+        context_window: 131072, max_output_tokens: 8192, auto_rank: 1, position: 0,
+        pools: [{ tier: 'free', key_slot: 'cloudflare.binding', price: null, limits: {}, daily_spend_cap_microusd: null }] } };
+    const uncapped = row('@cf/meta/llama-3.3-70b-instruct-fp8-fast');
+    uncapped.spec.pools[0].limits = { rpm: null, rpd: null, tpm: null, tpd: null };
+    const proLatest = { id: 'gemini/gemini-pro-latest', provider_type: 'gemini', status: 'active', revision_id: 901,
+      spec: { provider_type: 'gemini', upstream_model: 'gemini-pro-latest', display_name: 'Gemini Pro latest', context_window: 1048576,
+        max_output_tokens: 65536, pools: [{ tier: 'paid', key_slot: 'gemini.paid', price: { input: 50_000, output: 100_000 },
+          limits: {}, daily_spend_cap_microusd: 100_000_000 }] } };
+    const bounded = buildSnapshot([scout, uncapped, proLatest]);
+    assert.ok(!bounded.byId.has(scout.id), 'a free Workers AI row for an unlisted model is not served');
+    assert.deepEqual(bounded.verdicts.get(scout.id).reasons, ['no_usable_pools']);
+    assert.deepEqual(bounded.verdicts.get(scout.id).dropped_pools, ['free']);
+    assert.deepEqual(bounded.byId.get(uncapped.id).pools.map(pool => pool.tier), ['paid'], 'a free Workers AI pool without limits is dropped');
+    assert.deepEqual(bounded.verdicts.get(uncapped.id).reasons, ['free:free_limits_required']);
+    assert.ok(!bounded.byId.has(proLatest.id), 'an unlisted paid model is not served at its declared price');
+    assert.deepEqual(bounded.verdicts.get(proLatest.id).reasons, ['no_usable_pools']);
     const later = buildSnapshot(rows, { now: Date.UTC(2027, 0, 2) });
     assert.deepEqual(later.byId.get('gemini/gemini-3.6-flash').pools.map(pool => pool.tier), ['free'], '2027-01-02: the old 3.6 Flash price is no longer list');
     assert.deepEqual(later.verdicts.get('gemini/gemini-3.6-flash').reasons, ['paid:price_mismatch_list']);

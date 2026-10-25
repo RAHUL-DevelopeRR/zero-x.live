@@ -17,7 +17,10 @@ const deepFreeze = value => {
 };
 
 // Slot id -> where the pool's secret comes from. `vault`: the provider key vault
-// (src/provider-keys.js) can add more keys for this slot's free pools.
+// (src/provider-keys.js) can add more keys for this slot's free pools. `billed`: the operator
+// pays for this slot past a free allowance whatever the pool's tier (the Workers AI binding bills
+// the Cloudflare account past 10,000 neurons a day), so its free pools are bounded by
+// BILLED_FREE_LIMITS.
 export const KEY_SLOTS = deepFreeze({
   'gemini.free': { env: 'GEMINI_API_KEY', vault: 'gemini' },
   'gemini.paid': { env: 'GEMINI_PAID_API_KEY' },
@@ -26,7 +29,7 @@ export const KEY_SLOTS = deepFreeze({
   'nvidia.free': { env: 'NVIDIA_API_KEY', vault: 'nvidia' },
   'openrouter.free': { env: 'OPENROUTER_API_KEY', vault: 'openrouter' },
   'omniroute.free': { env: 'OMNIROUTE_API_KEY' },
-  'cloudflare.binding': { binding: 'cloudflare' },
+  'cloudflare.binding': { binding: 'cloudflare', billed: true },
   'anthropic.paid': { env: 'ANTHROPIC_API_KEY' },
 });
 
@@ -39,10 +42,38 @@ const FREE_LIMITS = deepFreeze({
   openrouter: { rpm: 20, rpd: 50, tpm: null, tpd: null },
 });
 
+// Free pools on a billed slot (KEY_SLOTS `billed`), per provider type and upstream model: only
+// these models may have one, with every limit set and none above these numbers. A row can neither
+// add a model here nor lift a limit, so free traffic on the slot stays inside the free allowance
+// (and outside every spend cap, plan gate and the CLOUDFLARE_PAID kill switch) only as far as
+// reviewed code allows. Workers AI: sized so both models together stay under the 10,000
+// neurons/day free allocation, assuming at most ~15% of tokens are output tokens (src/catalog.js
+// POOL_LIMITS uses these objects).
+export const BILLED_FREE_LIMITS = deepFreeze({
+  cloudflare: {
+    '@cf/meta/llama-3.3-70b-instruct-fp8-fast': { rpm: 20, rpd: 300, tpm: 60000, tpd: 120000 },
+    '@cf/openai/gpt-oss-120b': { rpm: 20, rpd: 200, tpm: 60000, tpd: 90000 },
+  },
+});
+
+// The limit ceiling of a free pool of `typeId:upstream` on a billed slot, or null when the model
+// may not have one.
+export function billedFreeLimits(typeId, upstream) {
+  const models = typeof typeId === 'string' && Object.hasOwn(BILLED_FREE_LIMITS, typeId) ? BILLED_FREE_LIMITS[typeId] : null;
+  return models && typeof upstream === 'string' && Object.hasOwn(models, upstream) ? models[upstream] : null;
+}
+
+export function slotBilled(slotId) {
+  return typeof slotId === 'string' && Object.hasOwn(KEY_SLOTS, slotId) && KEY_SLOTS[slotId].billed === true;
+}
+
 const ORG_MODEL = /^[a-z0-9][a-z0-9._-]{0,40}\/[a-z0-9][a-z0-9._-]{0,80}$/;
 
+// paid_pricing is 'listed_only' for every type: a paid pool serves only for a (type, upstream)
+// listed in src/list-prices.js, at exactly that price, so each paid model (and so each paid
+// pool and its daily cap) comes from a reviewed code change.
 const type = fields => ({
-  hosted_flag: null, requires_flag: {}, free_geo_block: [], paid_pricing: 'listed_or_band', requires_cache_prices: false,
+  hosted_flag: null, requires_flag: {}, free_geo_block: [], paid_pricing: 'listed_only', requires_cache_prices: false,
   max_daily_spend_usd: 0, paid_daily_cap_usd: null, base_url_env: null, discovery_defaults: null, models_dev: null, info: null,
   ...fields,
 });
@@ -52,7 +83,8 @@ const type = fields => ({
  * may call (null: a binding, or base_url_env names a validated secret). id_prefix + upstream id =
  * the public model id. upstream: the upstream id grammar (model ids travel in JSON bodies, except
  * Workers AI's REST fallback, which puts them in the URL path, hence its strict pattern).
- * slots: key slots allowed per tier (no slots = the tier is not offered). max_daily_spend_usd:
+ * slots: key slots allowed per tier (no slots = the tier is not offered; a billed slot's free
+ * pools are limited to BILLED_FREE_LIMITS). max_daily_spend_usd:
  * the highest daily spend cap a paid pool of this type may have (0 = no paid pools).
  * paid_daily_cap_usd: the cap code-catalog paid pools get when their entry names none.
  * models_dev and info: the models.dev provider id and the display name and homepage that
@@ -100,7 +132,7 @@ export const PROVIDER_TYPES = deepFreeze({
   anthropic: type({
     adapter: 'anthropic', base_url: 'https://api.anthropic.com', id_prefix: 'anthropic/',
     upstream: /^claude-[a-z0-9][a-z0-9-]{0,60}$/, slots: { free: [], paid: ['anthropic.paid'] },
-    models_var: 'ANTHROPIC_MODELS', paid_pricing: 'listed_only', requires_cache_prices: true, max_daily_spend_usd: 50,
+    models_var: 'ANTHROPIC_MODELS', requires_cache_prices: true, max_daily_spend_usd: 50,
     models_dev: 'anthropic', info: { name: 'Anthropic', homepage: 'https://www.anthropic.com' },
   }),
 });

@@ -60,8 +60,9 @@ OPENROUTER_HOSTED = "true"
 # Worker secret ANTHROPIC_API_KEY, which deploy.yml pushes from the GitHub secret; without it they
 # list as not_configured. The same key enables the weekly discovery research and credits jobs;
 # DISCOVERY_RESEARCH = "false" turns those off. ANTHROPIC_MODELS narrows the Claude models offered
-# like the other *_MODELS; leave it unset to offer both. The base URL is pinned in code.
-# ANTHROPIC_MODELS = "claude-sonnet-5-5,claude-opus-5-5"
+# like the other *_MODELS: a second gate beside the list prices in src/list-prices.js, so the
+# anthropic.paid key serves these two only, whatever catalog rows say. The base URL is pinned in code.
+ANTHROPIC_MODELS = "claude-sonnet-5-5,claude-opus-5-5"
 # DISCOVERY_RESEARCH = "false"
 # Model catalog source (src/catalog-db.js). Unset: the approved database rows when the database is
 # configured (cached 45 s per isolate; a database outage keeps the last catalog that loaded, else

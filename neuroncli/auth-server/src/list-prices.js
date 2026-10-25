@@ -6,9 +6,10 @@
 // MAX_DAILY_SPEND_CAP_USD from this module (billing design §1.2), so callers may import them from
 // either file and there is still a single table.
 //
-// A paid catalog row whose (provider type, upstream model) is listed here must carry exactly
-// these prices, cache rates included; a row for an unlisted model of a provider that allows it
-// must stay inside the band in catalog-guardrails.js.
+// Every key here is a model a paid catalog row may serve, and only these: a paid pool serves only
+// when its (provider type, upstream model) is listed, at exactly these prices, cache rates
+// included (catalog-guardrails.js, 'unlisted_paid_not_allowed' otherwise). So add a row only for
+// a model meant to be sold on the paid tier; prices kept for any other purpose do not belong here.
 
 // Per paid pool and UTC day, in upstream USD: no catalog row, provider type or environment
 // setting can raise a pool's daily spend cap above this (catalog-types.js max_daily_spend_usd
@@ -23,10 +24,8 @@ export const LIST_PRICES = Object.freeze({
   // writes cost 1.25x input for the 5-minute TTL and 2x for the 1-hour TTL. No long-context rate.
   'anthropic:claude-sonnet-5-5': row({ input: 2, output: 10, cache_read: 0.20, cache_write: 2.50, cache_write_1h: 4 }),
   'anthropic:claude-opus-5-5': row({ input: 4, output: 20, cache_read: 0.20, cache_write: 5, cache_write_1h: 8 }),
-  // Server-side refusal fallback targets, priced only so they can be billed if fallbacks are ever
-  // enabled (they are not: the adapter never sends `fallbacks`). Not catalog rows.
-  'anthropic:claude-opus-5': row({ input: 5, output: 25, cache_read: 0.50, cache_write: 6.25, cache_write_1h: 10 }),
-  'anthropic:claude-opus-4-8': row({ input: 5, output: 25, cache_read: 0.50, cache_write: 6.25, cache_write_1h: 10 }),
+  // Not listed: Claude's server-side refusal fallback targets. The adapter never sends
+  // `fallbacks`, so they are never billed, and a list price here would let a catalog row serve them.
   // The existing paid pools of src/catalog.js (same numbers as its priceFromCost calls).
   'gemini:gemini-2.5-flash': row({ input: 0.30, output: 2.50 }),
   'gemini:gemini-3.6-flash': row({ input: 0.75, output: 3.75 }),

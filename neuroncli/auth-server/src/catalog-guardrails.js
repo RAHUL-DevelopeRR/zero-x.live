@@ -1,9 +1,11 @@
 // Guardrails for data-driven catalog rows (src/catalog-db.js, docs/PLATFORM_CONTRACT.md §2).
 // Every row is bounded by reviewed code before it can serve: the provider type and key slot must
-// be in src/catalog-types.js, a listed model's paid price must equal src/list-prices.js exactly
-// (cache rates included), an unlisted one must sit inside a band, and every paid pool needs a
-// daily spend cap no higher than the code maximum. Spend caps are enforced in Postgres
-// (zerox_reserve_v2, p_pool.cpd); this module only decides which rows and pools may be offered.
+// be in src/catalog-types.js, a paid pool serves only for a model listed in src/list-prices.js
+// and at exactly that price (cache rates included), every paid pool needs a daily spend cap no
+// higher than the code maximum, and a free pool on a billed slot (Workers AI) only for a model in
+// catalog-types.js BILLED_FREE_LIMITS, with every limit set and none above it. Spend caps are
+// enforced in Postgres (zerox_reserve_v2, p_pool.cpd); this module only decides which rows and
+// pools may be offered.
 //
 // A spec is the canonical description of one model revision. Money is upstream micro-USD per
 // million tokens (integers); MARKUP lives only in src/pricing.js and is applied there.
@@ -16,8 +18,8 @@
 import { MARKUP, priceFromCost, publicPricing } from './pricing.js';
 import { listPriceMicro, MAX_DAILY_SPEND_CAP_USD } from './list-prices.js';
 import {
-  PROVIDER_TYPES, TIERS, poolSource, providerType, publicIdFor, slotAllowed, slotForPool, typeMaxCapMicrousd,
-  upstreamAllowed,
+  PROVIDER_TYPES, TIERS, billedFreeLimits, poolSource, providerType, publicIdFor, slotAllowed, slotBilled, slotForPool,
+  typeMaxCapMicrousd, upstreamAllowed,
 } from './catalog-types.js';
 import { canonicalJson } from './oiop/manifest.js';
 
@@ -25,11 +27,6 @@ export { LIST_PRICES, listPriceFor, listPriceMicro } from './list-prices.js';
 
 export const HARD_MAX_DAILY_SPEND_USD = MAX_DAILY_SPEND_CAP_USD;
 export const REASONING_EFFORTS = Object.freeze(['none', 'minimal', 'low', 'medium', 'high', 'default']);
-// Unlisted paid models (providers whose paid_pricing allows it): upstream micro-USD per Mtok.
-export const UNLISTED_PRICE_BAND = Object.freeze({
-  input: Object.freeze([50_000, 100_000_000]), output: Object.freeze([100_000, 100_000_000]),
-  cache: Object.freeze([10_000, 100_000_000]),
-});
 const MAX_PRICE_MICROUSD = 1_000_000_000;
 
 const MODEL_ID = /^[a-z0-9@][a-z0-9@./:_-]{0,199}$/;
@@ -115,13 +112,17 @@ function priceShapeValid(price) {
     isInt(price.long.input, 1, MAX_PRICE_MICROUSD) && isInt(price.long.output, 1, MAX_PRICE_MICROUSD);
 }
 
-function inBand(price) {
-  const within = (value, [min, max]) => value >= min && value <= max;
-  if (!within(price.input, UNLISTED_PRICE_BAND.input) || !within(price.output, UNLISTED_PRICE_BAND.output)) return false;
-  if (['cache_read', 'cache_write', 'cache_write_1h'].some(key => price[key] !== null && !within(price[key], UNLISTED_PRICE_BAND.cache))) return false;
-  if (price.long && (price.long.input < price.input || price.long.output < price.output ||
-    !within(price.long.input, UNLISTED_PRICE_BAND.input) || !within(price.long.output, UNLISTED_PRICE_BAND.output))) return false;
-  return true;
+// A free pool on a billed slot (catalog-types.js KEY_SLOTS `billed`): the model must be in
+// BILLED_FREE_LIMITS and the pool must set every limit, none above the code ceiling.
+function billedFreeReasons(typeId, spec, pool) {
+  const ceiling = billedFreeLimits(typeId, spec.upstream_model);
+  if (!ceiling) return ['free_pool_not_listed'];
+  const reasons = [];
+  if (LIMIT_KEYS.some(key => pool.limits[key] === null)) reasons.push('free_limits_required');
+  if (LIMIT_KEYS.some(key => isInt(pool.limits[key], 0, 1e15) && (ceiling[key] === null || pool.limits[key] > ceiling[key]))) {
+    reasons.push('free_limits_above_max');
+  }
+  return reasons;
 }
 
 function poolReasons(typeId, spec, pool, now) {
@@ -133,6 +134,7 @@ function poolReasons(typeId, spec, pool, now) {
   if (LIMIT_KEYS.some(key => pool.limits[key] !== null && !isInt(pool.limits[key], 0, 1e15))) reasons.push('limits_invalid');
   if (tier === 'free') {
     if (pool.price !== null || pool.daily_spend_cap_microusd !== null) reasons.push('free_pool_priced');
+    if (slotBilled(pool.key_slot)) reasons.push(...billedFreeReasons(typeId, spec, pool));
     return reasons;
   }
   const price = pool.price;
@@ -140,11 +142,11 @@ function poolReasons(typeId, spec, pool, now) {
   else if (!priceShapeValid(price)) reasons.push('price_invalid');
   else if (!(price.input > 0) || !(price.output > 0)) reasons.push('paid_without_price');
   else {
+    // Listed only, for every provider type: a model without a list price would be billed at
+    // whatever the row declares, and its daily cap counts that declared price, not the upstream's.
     const list = upstreamAllowed(typeId, spec.upstream_model) ? listPriceMicro(typeId, spec.upstream_model, now) : null;
-    if (list) {
-      if (!samePrice(price, list)) reasons.push('price_mismatch_list');
-    } else if (registry.paid_pricing === 'listed_only') reasons.push('unlisted_paid_not_allowed');
-    else if (!inBand(price)) reasons.push('unlisted_price_out_of_band');
+    if (!list) reasons.push('unlisted_paid_not_allowed');
+    else if (!samePrice(price, list)) reasons.push('price_mismatch_list');
     if (registry.requires_cache_prices && (price.cache_read === null || price.cache_write === null)) reasons.push('cache_price_missing');
   }
   const cap = pool.daily_spend_cap_microusd;
