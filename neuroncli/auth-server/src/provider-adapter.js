@@ -4,18 +4,27 @@ import { poolSecret } from './catalog.js';
 // Usage reported before a stream ended, for adapters whose OpenAI usage chunk only comes at the
 // end (Claude sends its input and cache counts in message_start, the usage chunk at
 // message_delta). An adapter registers `usageSoFar(outputBytes)` on the streaming Response it
-// returns; providers.js startCompletion hands it to createCompletionStream, which settles an
-// aborted or failed stream with it instead of the byte estimate. Keyed by the Response object,
-// which callers cannot reach or forge.
+// returns, and on the attempt's AbortSignal (unique per attempt) once the upstream answered.
+// providers.js startCompletion hands it to createCompletionStream, which settles an aborted or
+// failed stream with it instead of the byte estimate; when the attempt fails before it commits
+// (an error Response, a timeout, an abort: non-streaming Claude calls are streamed upstream) it
+// passes it on with the failure (`usage` on the result, partialUsageOf(error) on a throw), so
+// chat-handler settles what the model already ran. Keyed by objects callers cannot reach or forge.
 const PARTIAL_USAGE = new WeakMap();
 
-export function setPartialUsage(response, usageSoFar) {
-  if (response && typeof usageSoFar === 'function') PARTIAL_USAGE.set(response, usageSoFar);
-  return response;
+export function setPartialUsage(target, usageSoFar) {
+  if (target && typeof target === 'object' && typeof usageSoFar === 'function') PARTIAL_USAGE.set(target, usageSoFar);
+  return target;
 }
 
-export function partialUsageOf(response) {
-  return (response && PARTIAL_USAGE.get(response)) || null;
+export function partialUsageOf(target) {
+  return (target && typeof target === 'object' && PARTIAL_USAGE.get(target)) || null;
+}
+
+// The usage a probe reports now, or null (no probe, nothing reported, or the probe failed).
+export function usageNow(usageSoFar, outputBytes = 0) {
+  if (typeof usageSoFar !== 'function') return null;
+  try { return usageSoFar(outputBytes) ?? null; } catch { return null; }
 }
 
 /**

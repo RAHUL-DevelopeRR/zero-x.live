@@ -19,6 +19,7 @@ import {
 } from './src/anthropic-request.js';
 import { ClaudeStreamTranslator, openaiUsage, refusalNote, streamErrorBody } from './src/anthropic-stream.js';
 import { ClaudeTurnCache, claudeTurnHooks } from './src/anthropic-turns.js';
+import { partialUsageOf } from './src/provider-adapter.js';
 import { settlementArgs } from './src/capacity.js';
 import { catalogEntry } from './src/catalog.js';
 
@@ -835,10 +836,42 @@ try {
     assert.equal(failed.ok, false);
     assert.equal(failed.status, 529);
     assert.equal(classifyUpstreamFailure(failed.status, failed.bodyText).kind, FailureKind.SERVER);
+    // The failure carries what message_start reported, so chat-handler settles the model run.
+    const reportedStart = E.start({ input_tokens: 4000, cache_creation_input_tokens: 0, cache_read_input_tokens: 16000, output_tokens: 1 });
+    const TEXT = 'Here is the first sentence.';
+    const reportedUsage = { prompt_tokens: 20000, completion_tokens: 8, total_tokens: 20008,
+      prompt_tokens_details: { cached_tokens: 16000, cache_write_tokens: 0, cache_write_1h_tokens: 0 } };
+    assert.deepEqual(failed.usage, { prompt_tokens: 10, completion_tokens: 1, total_tokens: 11,
+      prompt_tokens_details: { cached_tokens: 0, cache_write_tokens: 0, cache_write_1h_tokens: 0 } });
+    upstream = request => sseResponse([reportedStart, ...E.text(0, [TEXT]).slice(0, 2), E.error('overloaded_error', 'Overloaded')], request);
+    const overloaded = await startCompletion(ENV, SESSION, SONNET, POOL, payloadFor(messages, { entry: SONNET, stream: false }), { timeouts: TIMEOUTS });
+    assert.deepEqual([overloaded.status, overloaded.usage], [529, reportedUsage]);
+    // A timeout (ttfb + idle in total for a buffered call) and a client abort carry it on the error.
+    upstream = request => sseResponse([reportedStart, ...E.text(0, [TEXT]).slice(0, 2), { hang: true }], request);
+    const timedOut = await startCompletion(ENV, SESSION, SONNET, POOL, payloadFor(messages, { entry: SONNET, stream: false }),
+      { timeouts: { ttfbMs: 150, idleMs: 150 } }).then(() => null, error => error);
+    assert.equal(timedOut.kind, FailureKind.TIMEOUT);
+    assert.deepEqual(partialUsageOf(timedOut)?.(), reportedUsage);
+    const client = new AbortController();
+    upstream = request => { setTimeout(() => client.abort(), 50); return sseResponse([reportedStart, ...E.text(0, [TEXT]).slice(0, 2), { hang: true }], request); };
+    const abortedCall = await startCompletion(ENV, SESSION, SONNET, POOL, payloadFor(messages, { entry: SONNET, stream: false }),
+      { clientSignal: client.signal, timeouts: TIMEOUTS }).then(() => null, error => error);
+    assert.ok(abortedCall, 'the abort rejects');
+    assert.deepEqual(partialUsageOf(abortedCall)?.(), reportedUsage);
+    // Streamed: an error right after message_start fails before the first data event (not committed).
+    upstream = request => sseResponse([reportedStart, E.error('overloaded_error', 'Overloaded')], request);
+    const uncommitted = await startCompletion(ENV, SESSION, SONNET, POOL, payloadFor(messages, { entry: SONNET }), { timeouts: TIMEOUTS })
+      .then(() => null, error => error);
+    assert.deepEqual(partialUsageOf(uncommitted)?.(), { ...reportedUsage, completion_tokens: 1, total_tokens: 20001 });
+    // Before message_start nothing was reported: no usage, the attempt is refunded as before.
+    upstream = httpError(529, 'overloaded_error', 'Overloaded');
+    const early = await startCompletion(ENV, SESSION, OPUS, POOL, payloadFor(messages, { stream: false }), { timeouts: TIMEOUTS });
+    assert.deepEqual([early.status, early.usage], [529, null]);
     // Ending before message_delta is a 502.
     upstream = request => sseResponse([E.start(), ...E.text(0, ['x']).slice(0, 2)], request);
     const cut = await startCompletion(ENV, SESSION, OPUS, POOL, payloadFor(messages, { stream: false }), { timeouts: TIMEOUTS });
     assert.equal(cut.status, 502);
+    assert.equal(cut.usage.prompt_tokens, 10);
     // A refusal is a completed answer with content_filter and the note.
     upstream = request => sseResponse([E.start(), E.delta('refusal', { output_tokens: 0 }, { category: 'bio', explanation: 'x' }), E.stop()], request);
     const refused = await startCompletion(ENV, SESSION, OPUS, POOL, payloadFor(messages, { stream: false }), { timeouts: TIMEOUTS });

@@ -220,6 +220,9 @@ export class AnthropicAdapter extends ProviderAdapter {
     }
 
     const translator = new ClaudeStreamTranslator({ model: entry.id, toolNames: mapped.toolNames });
+    // An attempt that fails from here on (an error event, a timeout, an abort; streamed or not) is
+    // settled from what message_start reported (provider-adapter.js setPartialUsage).
+    setPartialUsage(signal, outputBytes => translator.usageSoFar(outputBytes));
     const onTurn = turns && mapped.rememberTurns ? () => {
       const record = translator.turnRecord();
       if (record) for (const fingerprint of record.fingerprints) turns.remember(fingerprint, record.blocks);

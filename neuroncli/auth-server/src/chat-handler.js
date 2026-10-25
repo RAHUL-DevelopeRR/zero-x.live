@@ -5,6 +5,7 @@ import {
 } from './providers.js';
 import { globalSignatureCache } from './provider-request.js';
 import { claudeTurnHooks, globalClaudeTurnCache } from './anthropic-turns.js';
+import { partialUsageOf, usageNow } from './provider-adapter.js';
 import { globalRouter } from './router.js';
 import { FailureKind, globalHealthTracker } from './provider-health.js';
 import { hubHealthForRouting, hubHealthRows, publishHealth } from './health-hub-client.js';
@@ -136,7 +137,9 @@ const ERROR_CODES_BY_KIND = {
 // Failures after the upstream ran the model (a model-side rejection such as tool_use_failed, a
 // first-byte, idle or response timeout). The upstream counted them against its own limits, so
 // they keep their share of the shared pool budget ('failed_upstream'); everything else (429,
-// 5xx, network and auth failures) is returned to the pool ('refunded').
+// 5xx, network and auth failures) is returned to the pool ('refunded'). An attempt whose upstream
+// reported usage before it failed (Claude's message_start, then an error event, a timeout or an
+// abort) ran the model whatever its kind: it is settled 'failed_upstream' too, from that usage.
 const GENERATED_KINDS = new Set([FailureKind.MODEL_ERROR, FailureKind.TIMEOUT]);
 
 function minimum(values) {
@@ -406,14 +409,15 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
           console.error('Neuron upstream request failed', { ...log, kind });
           logUpstreamDetail(log, kind, error?.summary);
         }
-        return { ok: false, kind, retryAfterSeconds: error?.retryAfterSeconds ?? null, latencyMs, errorCode: ERROR_CODES_BY_KIND[kind] };
+        return { ok: false, kind, retryAfterSeconds: error?.retryAfterSeconds ?? null, latencyMs, errorCode: ERROR_CODES_BY_KIND[kind],
+          usage: usageNow(partialUsageOf(error)) };
       }
       if (!started.ok) {
         const failure = classifyUpstreamFailure(started.status, started.bodyText, started.headers);
         recordFailure(key, failure.kind, failure.retryAfterSeconds, started.latencyMs, null, failure.dailyQuota);
         console.error('Neuron upstream rejected request', { ...log, status: started.status, kind: failure.kind });
         logUpstreamDetail(log, failure.kind, upstreamErrorSummary(started.status, started.bodyText, { secrets }));
-        return { ok: false, ...failure, latencyMs: started.latencyMs, errorCode: ERROR_CODES_BY_KIND[failure.kind] };
+        return { ok: false, ...failure, latencyMs: started.latencyMs, errorCode: ERROR_CODES_BY_KIND[failure.kind], usage: started.usage ?? null };
       }
       const responseHeaders = { ...headers, 'x-neuron-model': entry.id, 'Cache-Control': 'no-store' };
       const info = { reservation, candidate, startedAt };
@@ -477,15 +481,18 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
     // Without an explicit status a failed attempt is settled by how it failed (see GENERATED_KINDS):
     // the user gets the request back either way (within the daily refund allowance for
     // failed_upstream), while the pool keeps attempts the upstream counted.
+    // `reported`: usage the upstream reported before the attempt failed (cache split included),
+    // which replaces the prompt estimate wherever usage is billed.
     const releasePending = async (status = null, outcome = {}) => {
       if (!pending) return;
-      const { reservation, candidate, latencyMs = 0, errorCode = null, kind = null } = pending;
+      const { reservation, candidate, latencyMs = 0, errorCode = null, kind = null, reported = null } = pending;
       pending = null;
-      const generated = !status && GENERATED_KINDS.has(kind);
+      const generated = !status && (reported !== null || GENERATED_KINDS.has(kind));
       const settled = status || (generated ? 'failed_upstream' : 'refunded');
-      const usage = generated ? { prompt_tokens: promptTokens, completion_tokens: 0 } : undefined;
+      const usage = generated ? reported ?? { prompt_tokens: promptTokens, completion_tokens: 0 } : undefined;
       await settleDb(reservation, candidate, { status: settled, latencyMs, errorCode, usage, ...outcome }, false);
     };
+    const abortedUsage = () => pending?.reported ?? { prompt_tokens: promptTokens, completion_tokens: 0 };
 
     try {
       for (const candidate of candidates) {
@@ -546,7 +553,10 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
         }
         if (candidate === first) firstMiss = result.kind;
         failures.push(result);
-        if (reservation) pending = { reservation, candidate, latencyMs: result.latencyMs, errorCode: result.errorCode, kind: result.kind };
+        if (reservation) {
+          pending = { reservation, candidate, latencyMs: result.latencyMs, errorCode: result.errorCode, kind: result.kind,
+            reported: result.usage ?? null };
+        }
         if (result.kind === FailureKind.ABORTED) break;
         if (result.kind === FailureKind.RATE_LIMITED) {
           attempts--;
@@ -576,7 +586,7 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
     // failures are refunded (contract §3.3: upstream_error refunds the request, §6: within the
     // daily allowance when the model ran).
     const clientSide = final.code === 'context_length_exceeded' || final.code === 'invalid_request';
-    if (aborted) await releasePending('error', { usage: { prompt_tokens: promptTokens, completion_tokens: 0 } });
+    if (aborted) await releasePending('error', { usage: abortedUsage() });
     else if (clientSide) await releasePending('error', { usage: { prompt_tokens: 0, completion_tokens: 0 } });
     else await releasePending();
     await settleKv({ actualTokens: aborted ? promptTokens : 0, refundRequest: !aborted && !clientSide });

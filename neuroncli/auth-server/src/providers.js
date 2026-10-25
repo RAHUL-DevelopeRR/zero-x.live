@@ -1,5 +1,5 @@
 import { CloudflareWorkersAIAdapter } from './cloudflare-adapter.js';
-import { OpenAICompatibleAdapter, partialUsageOf } from './provider-adapter.js';
+import { OpenAICompatibleAdapter, partialUsageOf, setPartialUsage, usageNow } from './provider-adapter.js';
 import { AnthropicAdapter } from './anthropic-adapter.js';
 import { toolCallSignature } from './provider-request.js';
 import { FailureKind, failureKindForStatus } from './provider-health.js';
@@ -886,8 +886,10 @@ function parseEvent(data) {
  * deadlines: the first body byte within ttfbMs; after that, bytes (SSE comments and
  * keep-alives count) at most idleMs apart, with the first data event due within
  * ttfbMs + idleMs. Non-streaming calls get ttfbMs + idleMs in total.
- * Resolves { ok:false, status, headers, bodyText } for HTTP errors and
- * { ok:true, json | stream } on success; throws timeout/abort/protocol errors.
+ * Resolves { ok:false, status, headers, bodyText, usage } for HTTP errors and
+ * { ok:true, json | stream } on success; throws timeout/abort/protocol errors. `usage` (and
+ * partialUsageOf(error) on a throw) is what the upstream reported before it failed (Claude's
+ * message_start counts), or null.
  */
 export async function startCompletion(env, session, entry, pool, payload, { clientSignal, timeouts = streamTimeouts(env), request = {} } = {}) {
   const controller = new AbortController();
@@ -902,11 +904,21 @@ export async function startCompletion(env, session, entry, pool, payload, { clie
   };
   const phase = payload.stream ? 'first_byte' : 'response';
   const guard = promise => guarded(promise, { deadline, phase, signal, controller });
-  const response = await guard(requestCompletion(env, session, entry, payload, signal, pool, request));
+  // Usage the adapter registered for this attempt, carried out of a failure.
+  const reported = error => {
+    const usageSoFar = partialUsageOf(signal);
+    const usage = usageNow(usageSoFar);
+    if (usage && error && typeof error === 'object') setPartialUsage(error, () => usage);
+    return error;
+  };
+  const response = await guard(requestCompletion(env, session, entry, payload, signal, pool, request)).catch(error => {
+    throw reported(error);
+  });
   try {
     if (!response.ok) {
       const bodyText = await guard(readBounded(response)).catch(() => '');
-      return { ok: false, status: response.status, headers: response.headers, bodyText, latencyMs: Date.now() - started };
+      return { ok: false, status: response.status, headers: response.headers, bodyText, latencyMs: Date.now() - started,
+        usage: usageNow(partialUsageOf(signal)) };
     }
     if (!payload.stream) {
       const json = await guard(response.json().catch(() => {
@@ -926,7 +938,7 @@ export async function startCompletion(env, session, entry, pool, payload, { clie
     controller.abort(error);
     if (reader) await reader.cancel();
     else response.body?.cancel?.().catch?.(() => {});
-    throw error;
+    throw reported(error);
   }
 }
 
@@ -1054,10 +1066,7 @@ export function createCompletionStream({ reader, first, model, controller, clien
   let done = false;
   let cancelled = false;
   let finished = false;
-  const reportedUsage = () => {
-    if (state.usage || typeof usageSoFar !== 'function') return state.usage;
-    try { return usageSoFar(state.outputBytes) ?? null; } catch { return null; }
-  };
+  const reportedUsage = () => state.usage ?? usageNow(usageSoFar, state.outputBytes);
   const finish = async outcome => {
     if (finished) return;
     finished = true;

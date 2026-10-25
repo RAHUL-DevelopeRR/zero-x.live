@@ -1520,6 +1520,39 @@ try {
         args.p_cache_write_tokens, args.p_cost_microusd], [`res-${ending}`, 'error', 20000, 8, 16000, 0, 14100],
       `${ending}: message_start counts with the cache split, not the byte estimate`);
     }
+    // Non-streaming Claude calls are streamed upstream too. A failure after message_start (an
+    // error event, the ttfb + idle budget running out, a client abort) ran the model: it keeps the
+    // cost message_start reported in the pool (failed_upstream, the caller refunded within the daily
+    // allowance) instead of a zero-cost refund, or every prompt token at the input rate.
+    for (const [ending, extra, expected] of [['error', {}, ['failed_upstream', 'upstream_error', 502]],
+      ['timeout', FAST, ['failed_upstream', 'upstream_timeout', 504]], ['abort', {}, ['error', 'client_disconnected', null]]]) {
+      const partialSettled = [];
+      const client = new AbortController();
+      gw.tracker.reset(); // each failure counts against the pool's circuit
+      reset({ 'rpc:zerox_plan_policies_v2': policiesRpc, 'rpc:zerox_reserve_v2': () => Response.json([okReserve({ reservation_id: `res-ns-${ending}` })]),
+        'rpc:zerox_settle_v2': call => { partialSettled.push(call.body); return Response.json([{ status: 'settled' }]); },
+        anthropic: call => {
+          if (ending === 'abort') setTimeout(() => client.abort(), 50); // Esc while Claude is writing
+          return partialClaude(call, ending === 'error' ? 'error' : 'abort');
+        } });
+      const answer = await gw.call({ ...env, ...extra }, { model: 'claude-sonnet-5-5', messages }, { token: 'ses_pro', signal: client.signal })
+        .catch(error => error);
+      if (expected[2]) assert.equal(answer.status, expected[2], `non-stream ${ending}`);
+      for (let wait = 0; wait < 50 && !partialSettled.length; wait++) await new Promise(resolve => setTimeout(resolve, 10));
+      assert.equal(partialSettled.length, 1, `non-stream ${ending}: settled once`);
+      const args = partialSettled[0];
+      assert.deepEqual([args.p_reservation_id, args.p_status, args.p_error_code, args.p_prompt_tokens, args.p_completion_tokens,
+        args.p_cache_read_tokens, args.p_cache_write_tokens, args.p_cost_microusd],
+      [`res-ns-${ending}`, expected[0], expected[1], 20000, 8, 16000, 0, 14100], `non-stream ${ending}: settled from message_start`);
+    }
+    // A Claude failure before message_start (a 529 answer) reported nothing: still a full refund.
+    const refundedSettled = [];
+    gw.tracker.reset();
+    reset({ 'rpc:zerox_plan_policies_v2': policiesRpc, 'rpc:zerox_reserve_v2': () => Response.json([okReserve({ reservation_id: 'res-529' })]),
+      'rpc:zerox_settle_v2': call => { refundedSettled.push(call.body); return Response.json([{ status: 'settled' }]); },
+      anthropic: () => Response.json({ type: 'error', error: { type: 'overloaded_error', message: 'Overloaded' } }, { status: 529 }) });
+    await expectError(await gw.call(env, { model: 'claude-sonnet-5-5', messages }, { token: 'ses_pro' }), 502, 'upstream_error');
+    assert.deepEqual(refundedSettled.map(args => [args.p_status, args.p_prompt_tokens, args.p_cost_microusd]), [['refunded', 0, 0]]);
 
     // A spent daily spend cap names the model and the reset time; no credits is 402 with the hold explained.
     resetPoolBudgets();
