@@ -108,7 +108,8 @@ Nothing below needs Supabase, Razorpay or provider accounts.
 - `GET /health` answers `{status, service, version}`; with `Authorization: Bearer
   $GATEWAY_ADMIN_TOKEN` it adds the configuration flags. `GET /ready` checks plan policies,
   session storage and the catalog.
-- `GET /admin/overview` (operator token) returns users, revenue, today's usage and every pool
+- `GET /admin/overview` (operator token, plus Cloudflare Access when configured, like every
+  operator API) returns users, revenue, today's usage and every pool
   with its counters, shared budget and circuit state.
 - `https://dashboard.zero-x.live/admin/keys` (Cloudflare Access + operator token) adds, lists and
   disables free-tier provider keys (`/admin/providers/keys`, contract §11.1). Keys are stored

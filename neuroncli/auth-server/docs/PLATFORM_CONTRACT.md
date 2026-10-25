@@ -180,10 +180,17 @@ credential (never an `nzx_` key). Session tokens are stored hashed (SHA-256) in 
 
 ### 3.6 Admin
 
-`GET /admin/overview` (Bearer `GATEWAY_ADMIN_TOKEN`) → `{users:{total, active_today,
-by_plan}, revenue:{active_subscriptions, mrr_usd_estimate}, usage_today:{requests, tokens,
-cost_usd}, pools:[{model, tier, requests_today, tokens_today, limits, health, keys?}]}` (`keys`: vault
-keys, section 8.4)
+`GET /admin/overview` (Bearer `GATEWAY_ADMIN_TOKEN` plus Cloudflare Access when configured, as
+§11.1) → `{users:{total, active_today, by_plan}, revenue:{active_subscriptions,
+mrr_usd_estimate}, usage_today:{requests, tokens, cost_usd}, pools:[{model, tier,
+requests_today, tokens_today, limits, health, keys?}]}` (`keys`: vault keys, section 8.4)
+
+Every operator API (`/admin/*` and `GET /v1/providers/health`) needs the operator token and, when
+`CF_ACCESS_TEAM_DOMAIN` and `CF_ACCESS_AUD` are set, a valid Access JWT on every host the Worker
+answers, workers.dev included (`401 invalid_session` without the token, `403 access_required`
+without the JWT). `GET /admin/discovery` is a static page shell with no data. The operator
+branch of `GET /health` (configuration flags only) stays on the token alone, so the deploy
+canary can read it on any host.
 
 ### 3.7 Existing endpoints kept
 

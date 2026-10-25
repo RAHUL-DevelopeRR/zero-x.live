@@ -1,6 +1,7 @@
 import { rpc, databaseConfigured } from '../account-store.js';
 import { errorResponse, sendApiError } from '../auth-context.js';
 import { isOperator } from '../operator-auth.js';
+import { passedAccess } from '../access-auth.js';
 import { entryPools, loadCatalog, offeredEntries, poolConfigured, poolKey } from '../catalog.js';
 import { globalHealthTracker } from '../provider-health.js';
 import { billedDailyCapMicrousd } from '../catalog-guardrails.js';
@@ -105,9 +106,11 @@ export async function runScheduledMaintenance(env) {
 }
 
 export function registerAdminRoutes(api) {
-  // GET /admin/overview (Bearer GATEWAY_ADMIN_TOKEN) → zerox_admin_overview().overview
+  // GET /admin/overview (Bearer GATEWAY_ADMIN_TOKEN, plus Cloudflare Access when configured, as
+  // for every operator API) → zerox_admin_overview().overview
   api.get('/admin/overview', async c => {
     if (!await isOperator(c)) return errorResponse(c, 401, 'invalid_session', 'Operator authentication required.');
+    if (!await passedAccess(c)) return errorResponse(c, 403, 'access_required', 'Cloudflare Access authentication required.');
     try {
       const [row] = await Promise.all([rpc(c.env, 'zerox_admin_overview', {}), loadCatalog(c.env)]);
       const overview = row?.overview && typeof row.overview === 'object' ? row.overview : null;

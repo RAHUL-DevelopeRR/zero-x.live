@@ -863,8 +863,10 @@ api.get('/v1/models/stream', async (c) => {
     'X-Accel-Buffering': 'no' } });
 });
 
+// Operator token plus Cloudflare Access when configured, as for the /admin APIs (contract §3.6).
 api.get('/v1/providers/health', async (c) => {
   if (!await isOperator(c)) return errorResponse(c, 401, 'invalid_session', 'Operator authentication required.');
+  if (!await passedAccess(c)) return errorResponse(c, 403, 'access_required', 'Cloudflare Access authentication required.');
   c.header('Cache-Control', 'no-store');
   await loadCatalog(c.env);
   // pools: per-pool circuit state of this isolate (provider:upstream_model:tier).

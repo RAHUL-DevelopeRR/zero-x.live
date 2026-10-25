@@ -503,7 +503,30 @@ try {
   const apiWithJwt = await admin('/admin/providers/keys', { target: guarded, headers: { 'Cf-Access-Jwt-Assertion': good } });
   assert.equal(apiWithJwt.status, 200);
   assert.equal((await apiWithJwt.json()).access_configured, true);
-  ok('admin pages (keys, models): dashboard host only, enforced CSP without inline script, Access JWT (signature, audience, issuer, expiry) required when configured, for the catalog and discovery APIs too');
+  // The operator overview (users, revenue, credits, vault key rows) and the provider health view
+  // need Access too, on every host the Worker answers (workers.dev included).
+  const forgedJwt = await sign(claims, 'kid-1', stranger.privateKey);
+  const otherAppJwt = await sign({ ...claims, aud: ['b'.repeat(64)] });
+  for (const path of ['/admin/overview', '/v1/providers/health']) {
+    for (const host of ['dashboard.zero-x.live', 'neuron-gateway.rahul.workers.dev']) {
+      for (const [label, headers] of [['no Access JWT', {}], ['forged Access JWT', { 'Cf-Access-Jwt-Assertion': forgedJwt }],
+        ['other Access application', { 'Cf-Access-Jwt-Assertion': otherAppJwt }]]) {
+        const refused = await admin(path, { host, target: guarded, headers });
+        assert.deepEqual([refused.status, (await refused.json()).error?.code], [403, 'access_required'],
+          `${host}${path}: the operator token with ${label} is refused`);
+      }
+    }
+    const passed = await admin(path, { target: guarded, headers: { 'Cf-Access-Jwt-Assertion': good } });
+    assert.equal(passed.status, 200, `${path}: operator token plus a valid Access JWT`);
+    assert.equal(passed.headers.get('cache-control'), 'no-store');
+    assert.equal((await admin(path, { token: null, target: guarded, headers: { 'Cf-Access-Jwt-Assertion': good } })).status, 401,
+      `${path}: an Access JWT is not the operator token`);
+  }
+  // The operator branch of /health (configuration flags only) stays on the token alone: the deploy
+  // canary reads it on any host.
+  const healthFlags = await (await admin('/health', { host: 'neuron-gateway.rahul.workers.dev', target: guarded })).json();
+  assert.equal(healthFlags.admin_access_configured, true, '/health: configuration flags on the operator token');
+  ok('admin pages (keys, models): dashboard host only, enforced CSP without inline script, Access JWT (signature, audience, issuer, expiry) required when configured, for the catalog, discovery, overview and provider health APIs too');
 
   console.log('PASS: provider key vault: sealed keys, service_role RPCs, validated adds, per-key pools and health, Access-gated admin page');
 } finally {

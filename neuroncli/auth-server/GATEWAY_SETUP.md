@@ -40,9 +40,9 @@ secret store, never in a committed file. `.dev.vars.example` lists them with com
 | `CLI_SESSION_TTL_HOURS` | var | `720` | CLI session lifetime (reported as `expires_at`). |
 | `SESSION_TTL_HOURS` | var | `24` | Lifetime of sessions created before hashed storage. |
 | `SESSION_ENCRYPTION_KEY` | **secret** | unset | ≥ 32 chars (`openssl rand -base64 32`); seals users' own OpenRouter keys (AES-GCM). Rotating it disconnects those keys. |
-| `GATEWAY_ADMIN_TOKEN` | **secret** | unset | ≥ 32 random chars; `/admin/overview`, `/admin/discovery/*`, `/admin/providers/keys`, `/admin/catalog/*`, `/v1/providers/health`, full `/health`. |
+| `GATEWAY_ADMIN_TOKEN` | **secret** | unset | ≥ 32 random chars; `/admin/overview`, `/admin/discovery/*`, `/admin/providers/keys`, `/admin/catalog/*`, `/v1/providers/health`, full `/health`. With Cloudflare Access configured, every one of these except full `/health` also needs an Access JWT. |
 | `PROVIDER_KEYS_KEK` | **secret** | unset | 32 random bytes, base64 (`openssl rand -base64 32`): encrypts the provider key vault (contract §11.1). Unset = no vault; the admin page answers 503. Losing or rotating it means re-adding the keys. |
-| `CF_ACCESS_TEAM_DOMAIN`, `CF_ACCESS_AUD` | var | unset | Cloudflare Access team domain (`<team>.cloudflareaccess.com`) and the audience tag of the Access application on `dashboard.zero-x.live/admin`. When both are set, the key vault and model catalog pages and their APIs (`/admin/providers/keys`, `/admin/catalog/*`) also require a valid Access JWT. |
+| `CF_ACCESS_TEAM_DOMAIN`, `CF_ACCESS_AUD` | var | unset | Cloudflare Access team domain (`<team>.cloudflareaccess.com`) and the audience tag of the Access application on `dashboard.zero-x.live/admin`. When both are set, the key vault and model catalog pages and every operator API (`/admin/*`, `/v1/providers/health`) also require a valid Access JWT, on every host (workers.dev included). Full `/health` stays on the operator token alone. |
 | `OIOP_SIGNING_JWK` | **secret** | unset | Ed25519 private JWK for signing offer manifests (`node scripts/oiop-keygen.mjs`); its public half is served at `/oiop/keys.json`. Unset: manifests can be viewed but not signed. |
 | `OIOP_SCRUB` | var | `all` | Prompt secret scrubber: `all`, `untrusted` (T2/T3 offers only) or `off` (contract §12.3). |
 | `HEALTH_CANARIES` | var | on | `false` stops HealthHub's canary requests (contract §12.5). |
@@ -251,8 +251,9 @@ Work through these in order; nothing in this repository does them for you.
    **Provider key vault:** apply `migrations/20261024000000_provider_keys.sql` and
    `migrations/20261024000100_provider_key_budgets.sql` (per-key budgets) before deploying. In Cloudflare Zero
    Trust, add a self-hosted Access application for `dashboard.zero-x.live` with path `admin` (it
-   covers the key vault and model catalog pages, their scripts, `/admin/providers/keys` and
-   `/admin/catalog/*`) and a policy allowing only your identity; put its audience tag in `CF_ACCESS_AUD` and the team domain in
+   covers the key vault and model catalog pages, their scripts and every `/admin/*` API), add
+   `dashboard.zero-x.live` path `v1/providers/health` as a second hostname of the same application
+   (one audience tag), and a policy allowing only your identity; put its audience tag in `CF_ACCESS_AUD` and the team domain in
    `CF_ACCESS_TEAM_DOMAIN` (`wrangler.toml` `[vars]`). Then open
    `https://dashboard.zero-x.live/admin/keys`, unlock it with `GATEWAY_ADMIN_TOKEN` and add keys;
    each is checked with one free request first. Free-tier terms and quotas apply per provider
@@ -276,7 +277,8 @@ Work through these in order; nothing in this repository does them for you.
    once browser consoles show no CSP report-only violations.
 9. **Canary.** `npm test`, deploy, then check `/ready`, `/health` with the operator token, a
    dashboard sign-in, `neuron auth login`, a streamed tool call with the matching Neuron build,
-   and `/admin/overview`.
+   and `https://dashboard.zero-x.live/admin/overview` through Access (once Access is configured,
+   the operator APIs refuse the token alone on every host).
 
 ## Refunds and disputes
 
