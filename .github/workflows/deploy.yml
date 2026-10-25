@@ -37,14 +37,18 @@ jobs:
       - name: Database migrations (manual)
         run: echo "::notice title=Database migrations::Migrations are applied manually before merge. This workflow does not run them."
 
-      # The original provider secrets stay required. Billing, admin, paid-pool and session
-      # encryption secrets are optional: a missing one is skipped (its feature stays disabled)
-      # instead of failing the deploy. Only secret names are printed, never values.
+      # Only the database secret is required. Provider keys can live in the provider key vault
+      # (dashboard.zero-x.live/admin/keys, encrypted under PROVIDER_KEYS_KEK) instead of GitHub
+      # secrets; the provider secrets below then only serve as the fallback pool. Every optional
+      # secret that is missing is skipped (its feature stays disabled) instead of failing the
+      # deploy. Only secret names are printed, never values. ANTHROPIC_API_KEY serves Claude
+      # Sonnet 5.5 and Opus 5.5 (paid pools, Pro and Max) and the weekly discovery research jobs;
+      # a new secret must be listed in OPTIONAL_SECRETS and in both env blocks to reach the Worker.
       - name: Select configured Worker secrets
         id: worker-secrets
         env:
-          REQUIRED_SECRETS: SUPABASE_SECRET_KEY GROQ_API_KEY OPENROUTER_API_KEY GEMINI_API_KEY NVIDIA_API_KEY
-          OPTIONAL_SECRETS: RAZORPAY_KEY_SECRET RAZORPAY_WEBHOOK_SECRET GATEWAY_ADMIN_TOKEN GROQ_PAID_API_KEY GEMINI_PAID_API_KEY SESSION_ENCRYPTION_KEY DEVICE_APPROVAL_SECRET
+          REQUIRED_SECRETS: SUPABASE_SECRET_KEY
+          OPTIONAL_SECRETS: GROQ_API_KEY OPENROUTER_API_KEY GEMINI_API_KEY NVIDIA_API_KEY RAZORPAY_KEY_SECRET RAZORPAY_WEBHOOK_SECRET GATEWAY_ADMIN_TOKEN GROQ_PAID_API_KEY GEMINI_PAID_API_KEY SESSION_ENCRYPTION_KEY DEVICE_APPROVAL_SECRET PROVIDER_KEYS_KEK ANTHROPIC_API_KEY
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
@@ -57,6 +61,8 @@ jobs:
           GEMINI_PAID_API_KEY: ${{ secrets.GEMINI_PAID_API_KEY }}
           SESSION_ENCRYPTION_KEY: ${{ secrets.SESSION_ENCRYPTION_KEY }}
           DEVICE_APPROVAL_SECRET: ${{ secrets.DEVICE_APPROVAL_SECRET }}
+          PROVIDER_KEYS_KEK: ${{ secrets.PROVIDER_KEYS_KEK }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           names=""
           for name in $REQUIRED_SECRETS; do
@@ -94,6 +100,8 @@ jobs:
           GEMINI_PAID_API_KEY: ${{ secrets.GEMINI_PAID_API_KEY }}
           SESSION_ENCRYPTION_KEY: ${{ secrets.SESSION_ENCRYPTION_KEY }}
           DEVICE_APPROVAL_SECRET: ${{ secrets.DEVICE_APPROVAL_SECRET }}
+          PROVIDER_KEYS_KEK: ${{ secrets.PROVIDER_KEYS_KEK }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
       # Ask Bing and the other IndexNow engines to recrawl the public pages this push changed.
       # The key file at the site root is public by design. A failed ping never fails the deploy.

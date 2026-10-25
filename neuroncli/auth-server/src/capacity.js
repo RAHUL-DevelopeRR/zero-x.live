@@ -3,7 +3,9 @@
 // shared pool budget atomically in Postgres (zerox_reserve_v2); anonymous/dev sessions
 // without a database keep the session-KV daily allocation.
 import { databaseConfigured, rpc } from './account-store.js';
-import { billableUsage, costMicrousd, estimateOutputTokens } from './pricing.js';
+import { poolKey } from './catalog.js';
+import { billableUsage, costMicrousd, estimateOutputTokens, reserveCostMicrousd } from './pricing.js';
+import { billedDailyCapMicrousd } from './catalog-guardrails.js';
 
 export function usesLedger(env, session) {
   return Boolean(session?.account_backed && session.user_id) && databaseConfigured(env || {});
@@ -38,6 +40,9 @@ const RESERVE_MESSAGES = {
   user_daily_tokens: 'This request exceeds your remaining daily token allocation. It resets at midnight UTC; upgrade for more.',
   user_rpm: 'Too many requests per minute for your plan. Retry after the indicated delay.',
   user_concurrency: 'Too many requests are running at once for your plan. Retry when one finishes.',
+  insufficient_credits: 'Claude and other paid models need credits for the most a request can cost (its prompt plus max_tokens) ' +
+    'before it starts, and credits held by your running requests count as used until they finish. Lower max_tokens, top up, ' +
+    'or wait for your renewal.',
 };
 
 export function nextUtcMidnight(now = Date.now()) {
@@ -55,16 +60,35 @@ export function reservedTokens(promptTokens, maxTokens) {
   return promptTokens + Math.min(maxTokens, RESERVED_OUTPUT_TOKENS);
 }
 
-export function reservationArgs({ session, requestId, entry, pool, promptTokens, maxTokens }) {
+// The shared budget is counted per model and tier in Postgres. A provider key vault pool
+// (src/catalog.js entryPools) reserves against its own key's bucket and budget (p_pool_key), so a
+// key that spent its org or project budget returns pool_exhausted and the chat handler moves on
+// to the model's next key. Other pools omit p_pool_key and share the model's default bucket.
+//
+// Paid pools hold the worst case of the attempt in credits (pricing.js reserveCostMicrousd) and
+// carry the pool's daily spend cap as p_pool.cpd (billed micro-USD per UTC day, the effective cap
+// of src/catalog-guardrails.js): Postgres refuses the reservation with pool_exhausted until 00:00
+// UTC once the day's holds and settled cost would pass it. A paid pool without a price or a cap
+// is never offered (catalog.js poolConfigured); reaching here without one is a bug, so it throws.
+export function reservationArgs({ env = {}, session, requestId, entry, pool, promptTokens, maxTokens }) {
+  const { limits } = pool;
+  const paid = pool.tier === 'paid';
+  let budget = limits ? { rpm: limits.rpm ?? null, rpd: limits.rpd ?? null,
+    tpm: limits.tpm ?? null, tpd: limits.tpd ?? null } : null;
+  if (paid) {
+    const cpd = billedDailyCapMicrousd(env, entry, pool);
+    if (!pool.price || cpd === null) throw Object.assign(new Error('paid_pool_unpriced'), { name: 'PaidPoolUnpriced' });
+    budget = { ...(budget ?? { rpm: null, rpd: null, tpm: null, tpd: null }), cpd };
+  }
   return {
     p_user_id: session.user_id,
     p_request_id: requestId,
     p_model: entry.id,
     p_tier: pool.tier,
     p_tokens: reservedTokens(promptTokens, maxTokens),
-    p_cost_microusd: pool.tier === 'paid' ? costMicrousd(pool.price, promptTokens, maxTokens) : 0,
-    p_pool: pool.limits ? { rpm: pool.limits.rpm ?? null, rpd: pool.limits.rpd ?? null,
-      tpm: pool.limits.tpm ?? null, tpd: pool.limits.tpd ?? null } : null,
+    p_cost_microusd: paid ? reserveCostMicrousd(pool.price, promptTokens, maxTokens) : 0,
+    p_pool: budget,
+    ...(pool.key_id ? { p_pool_key: poolKey(entry, pool) } : {}),
   };
 }
 
@@ -87,26 +111,30 @@ export function reserveError(row) {
 }
 
 // zerox_settle_v2 arguments. Refunds bill nothing; otherwise real usage (Gemini: from
-// total_tokens) or, when the upstream sent none, the byte-based estimate.
+// total_tokens) or, when the upstream sent none, the byte-based estimate. The pool bucket
+// (model, tier and vault key) is the one stored on the reservation. Prompt-cache reads and
+// writes (5-minute and 1-hour writes together) are part of p_prompt_tokens; each is billed at its
+// own rate (migration 20261025000200, the 11-argument zerox_settle_v2).
 export function settlementArgs({ reservationId, entry, pool, usage, promptEstimate = 0, outputBytes = 0,
   status, latencyMs = 0, errorCode = null }) {
-  let prompt = 0;
-  let completion = 0;
+  let billed = null;
   if (status !== 'refunded') {
-    const billed = billableUsage(usage, { prompt_tokens: promptEstimate, completion_tokens: estimateOutputTokens(outputBytes) });
-    prompt = billed.prompt_tokens;
-    completion = billed.completion_tokens;
+    billed = billableUsage(usage, { prompt_tokens: promptEstimate, completion_tokens: estimateOutputTokens(outputBytes) });
   }
+  const prompt = billed?.prompt_tokens ?? 0;
+  const completion = billed?.completion_tokens ?? 0;
   return {
     p_reservation_id: reservationId,
     p_prompt_tokens: prompt,
     p_completion_tokens: completion,
-    p_cost_microusd: pool.tier === 'paid' ? costMicrousd(pool.price, prompt, completion) : 0,
+    p_cost_microusd: billed && pool.tier === 'paid' ? costMicrousd(pool.price, prompt, completion, billed) : 0,
     p_status: status,
     p_latency_ms: Math.max(0, Math.round(latencyMs)),
     p_provider: entry.provider,
     p_upstream_model: entry.upstream_model,
     p_error_code: errorCode,
+    p_cache_read_tokens: billed?.cache_read_tokens ?? 0,
+    p_cache_write_tokens: (billed?.cache_write_tokens ?? 0) + (billed?.cache_write_1h_tokens ?? 0),
   };
 }
 

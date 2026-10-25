@@ -1,0 +1,11 @@
+/* Provider key vault page (dashboard.zero-x.live/admin/keys). Everything else comes from
+   /zx-tokens.css; this file exists because the page's CSP allows no inline style. */
+.keys-intro { max-width: 760px; }
+.keys-section-head { margin-top: 32px; margin-bottom: 12px; }
+.keys-section-head h2, h2.keys-section-head, #add h2 { font-size: 1.35rem; margin-bottom: 0; }
+#add h2 { margin-bottom: 16px; }
+.keys-fallback { color: var(--zx-muted); margin: 0; }
+.zx-table td { white-space: nowrap; }
+.zx-table td.keys-label { white-space: normal; overflow-wrap: anywhere; min-width: 140px; }
+#unlock .zx-form-row { align-items: flex-start; }
+#unlock .zx-btn { margin-top: 30px; }

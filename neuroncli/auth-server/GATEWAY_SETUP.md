@@ -40,7 +40,14 @@ secret store, never in a committed file. `.dev.vars.example` lists them with com
 | `CLI_SESSION_TTL_HOURS` | var | `720` | CLI session lifetime (reported as `expires_at`). |
 | `SESSION_TTL_HOURS` | var | `24` | Lifetime of sessions created before hashed storage. |
 | `SESSION_ENCRYPTION_KEY` | **secret** | unset | ≥ 32 chars (`openssl rand -base64 32`); seals users' own OpenRouter keys (AES-GCM). Rotating it disconnects those keys. |
-| `GATEWAY_ADMIN_TOKEN` | **secret** | unset | ≥ 32 random chars; `/admin/overview`, `/admin/discovery/*`, `/v1/providers/health`, full `/health`. |
+| `GATEWAY_ADMIN_TOKEN` | **secret** | unset | ≥ 32 random chars; `/admin/overview`, `/admin/discovery/*`, `/admin/providers/keys`, `/admin/catalog/*`, `/v1/providers/health`, full `/health`. With Cloudflare Access configured, every one of these except full `/health` also needs an Access JWT. |
+| `PROVIDER_KEYS_KEK` | **secret** | unset | 32 random bytes, base64 (`openssl rand -base64 32`): encrypts the provider key vault (contract §11.1). Unset = no vault; the admin page answers 503. Losing or rotating it means re-adding the keys. |
+| `CF_ACCESS_TEAM_DOMAIN`, `CF_ACCESS_AUD` | var | unset | Cloudflare Access team domain (`<team>.cloudflareaccess.com`) and the audience tag of the Access application on `dashboard.zero-x.live/admin`. When both are set, the key vault and model catalog pages and every operator API (`/admin/*`, `/v1/providers/health`) also require a valid Access JWT, on every host (workers.dev included). Full `/health` stays on the operator token alone. |
+| `OIOP_SIGNING_JWK` | **secret** | unset | Ed25519 private JWK for signing offer manifests (`node scripts/oiop-keygen.mjs`); its public half is served at `/oiop/keys.json`. Unset: manifests can be viewed but not signed. |
+| `OIOP_SCRUB` | var | `all` | Prompt secret scrubber: `all`, `untrusted` (T2/T3 offers only) or `off` (contract §12.3). |
+| `HEALTH_CANARIES` | var | on | `false` stops HealthHub's canary requests (contract §12.5). |
+| `DISCOVERY_CREDITS` | var | on | With `ANTHROPIC_API_KEY`, the weekly job that finds free cloud and AI credit programs (contract §12.6); `false` turns it off. |
+| `DISCOVERY_RESEARCH` | var | on | With `ANTHROPIC_API_KEY`, the weekly research and credits jobs (Claude with web search, capped by `DISCOVERY_RESEARCH_MAX_USD`); `false` turns both off. |
 | `CSP_ENFORCE` | var | `false` | `true` sends `Content-Security-Policy` instead of `-Report-Only`. |
 | `PRICING_URL` | var | `https://zero-x.live/pricing` | `upgrade_url` in errors (https only). |
 
@@ -60,18 +67,23 @@ them in `zerox_plan_policy.razorpay_plan_id_inr/usd`.
 
 | Variable | Kind | Default | Purpose |
 |---|---|---|---|
-| `GROQ_API_KEY`, `GEMINI_API_KEY` | **secret** | — | Free pools (Groq free org; Gemini free tier, refused for EEA/GB/CH callers). |
+| `GROQ_API_KEY`, `GEMINI_API_KEY` | **secret** | unset | Free pools (Groq free org; Gemini free tier, refused for EEA/GB/CH callers). Optional once the provider key vault holds keys: each vault key is its own pool and these serve last. |
 | `GROQ_PAID_API_KEY`, `GEMINI_PAID_API_KEY` | **secret** | unset | Paid pools for Pro/Max (Groq Developer plan, billing-linked Gemini project). Unset = no paid pool. |
+| `ANTHROPIC_API_KEY` | **secret** | unset | Claude Sonnet 5.5 and Claude Opus 5.5 paid pools (Pro and Max, billed from credits; key slot `anthropic.paid`) and the weekly discovery research agent. Set it with `gh secret set ANTHROPIC_API_KEY`; deploy pushes it to the Worker. Unset: both Claude models list as `not_configured`. Also set a monthly spend limit for the key's workspace in the Anthropic console (see "Model catalog and Claude"). |
+| `ANTHROPIC_THINKING_REPLAY` | var | on | `false` stops replaying Claude's signed thinking blocks into the next turn and stops sending the thinking-binding beta (contract §13.3). |
+| `PAID_DAILY_SPEND_CAP_USD` | var | unset | A number above 0 lowers every paid pool's daily spend cap (upstream USD per UTC day) to at most this value; it can never raise one (contract §13.4). |
+| `CATALOG_SOURCE` | var | unset | Unset: the approved catalog rows when the database is configured, over the code catalog. `code`: kill switch, `src/catalog.js` only (contract §13.1). |
 | `CLOUDFLARE_PAID` | var | unset | `true` adds paid Workers AI pools (Workers Paid accounts only). |
 | `NVIDIA_HOSTED` + `NVIDIA_API_KEY` | var + **secret** | `false` | NVIDIA trial keys are evaluation-only: keep `false` in production. |
 | `OPENROUTER_HOSTED` + `OPENROUTER_API_KEY` | var + **secret** | `false` | The operator key is not resold: keep `false`. Users' own keys (BYOK) work regardless. |
 | `OPENROUTER_MODELS` | var | `cohere/north-mini-code:free` | Allowlist for users' own OpenRouter keys. |
 | `OPENROUTER_FREE_ONLY`, `OPENROUTER_CALLBACK_URL` | var | —, `https://zero-x.live/neuroncli/callback/` | BYOK discovery filter and PKCE callback. |
-| `GROQ_MODELS`, `GEMINI_MODELS`, `CLOUDFLARE_MODELS`, `NVIDIA_MODELS` | var | unset | Can only **narrow** the verified catalog in `src/catalog.js`; unknown ids are ignored and reported. `CLOUDFLARE_MODELS` can opt in `@cf/openai/gpt-oss-120b`. |
+| `GROQ_MODELS`, `GEMINI_MODELS`, `CLOUDFLARE_MODELS`, `NVIDIA_MODELS`, `ANTHROPIC_MODELS` | var | unset (`ANTHROPIC_MODELS`: Sonnet 5.5 and Opus 5.5 in `wrangler.toml`) | Can only **narrow** the verified catalog (the approved rows over `src/catalog.js`); unknown ids are ignored and reported. `CLOUDFLARE_MODELS` can opt in `@cf/openai/gpt-oss-120b`. `ANTHROPIC_MODELS` keeps the `anthropic.paid` key on the two Claude models even if a catalog row names another. |
 | `TRUST_CF_IPCOUNTRY` | var (Node) | unset | `true` only when the Node origin is reachable exclusively through Cloudflare. Workers use `request.cf.country`. |
 | `ALLOW_UNKNOWN_COUNTRY` | var | unset | Local development only: serve free Gemini when the caller's country is unknown (fails closed otherwise). |
 | `UPSTREAM_TTFB_TIMEOUT_MS` / `UPSTREAM_IDLE_TIMEOUT_MS` | var | `45000` / `90000` | First byte / gap between bytes (SSE keep-alives count). The first data event is due within their sum. |
 | `ROUTER_MAX_ATTEMPTS` | var | `3` | Upstream attempts per request; plans with paid capacity keep the last one for a paid pool. |
+| `ROUTER_MAX_RATE_LIMITED` | var | `6` | Upstream 429s per request; they do not count against `ROUTER_MAX_ATTEMPTS`. |
 | `OMNIROUTE_*`, `BEDROCK_*`, `AZURE_*` | var + **secret** | unset | Optional adapters for operator health probes; not part of the hosted catalog (see PROVIDERS.md). |
 
 No new variables control request shaping or 429 handling; both are always on:
@@ -109,13 +121,82 @@ without it the cron logs "Discovery is unavailable" once per isolate and carries
 | Variable | Kind | Default | Purpose |
 |---|---|---|---|
 | `DISCOVERY_ENABLED` | var | on | `false` stops the discovery jobs (the review page still works). |
-| `ANTHROPIC_API_KEY` | **secret** | unset | Enables the weekly research agent (Claude Haiku 5.5 with web search). |
+| `ANTHROPIC_API_KEY` | **secret** | unset | Also enables the weekly research agent (Claude Haiku 5.5 with web search) and the credits job; `DISCOVERY_RESEARCH=false` turns both off. |
 | `DISCOVERY_RESEARCH_MAX_USD` | var | `0.25` | Spending cap per research run (0.02 to 2); searches and output tokens are sized to it. |
-| `CATALOG_DB_MODELS` | var | unset | `true` serves promoted (verified) discovery models alongside `src/catalog.js`. |
+| `CATALOG_DB_MODELS` | var | unset | No longer read (a warning is logged once): promoting a verified candidate creates a draft catalog row, served once approved on `/admin/models`. |
 | `DISCOVERY_KEY_<ID>` + `DISCOVERY_BASE_<ID>` | **secret** + var | unset | Key and https base URL for verifying candidates of a provider the gateway has no adapter for (`<ID>`: provider id in upper case, `-` as `_`). Built-in providers use their own keys. |
 
 The jobs parse up to ~10 MB of JSON a day in one cron invocation (models.dev is ~6 MB), which
 needs the Workers Paid CPU allowance.
+
+## Model catalog and Claude
+
+The served catalog is the data-driven one (contract §13): approved model rows in Postgres,
+reviewed on `https://dashboard.zero-x.live/admin/models`, each bounded by the code guardrails
+(provider types, key slots, list prices and spend ceilings live in `src/catalog-types.js`,
+`src/list-prices.js` and `src/catalog-guardrails.js`) and falling back to `src/catalog.js`.
+Claude Sonnet 5.5 and Claude Opus 5.5 are two of those rows: paid only (Pro and Max), billed from
+credits at Anthropic's list price plus 25 % with cache reads and writes at their own rates.
+
+**Migration order.** The new Worker calls the 11-argument `zerox_settle_v2` and reads
+`zerox_catalog_snapshot`, so apply every migration **before** the deploy. Production main stops at
+`20261021000000`; check with `SELECT version FROM supabase_migrations.schema_migrations ORDER BY version;`
+and apply, in order:
+
+1. `20261023000000_session_devices.sql`
+2. `20261023000100_push_tokens.sql`
+3. `20261024000000_provider_keys.sql`
+4. `20261024000100_provider_key_budgets.sql`
+5. `20261024000200_oiop_offers.sql`
+6. `20261024000300_credit_programs.sql`
+7. `20261025000000_catalog_models.sql` (model rows, revisions, audit log, draft → active approval)
+8. `20261025000100_catalog_seed.sql` (the 16 code models active at revision 1, the `anthropic.paid` offer, earlier promoted discovery models as drafts)
+9. `20261025000200_paid_billing_caps.sql` (per-pool daily spend caps `p_pool.cpd`, cache-aware settlement, rpm per client request, paid holds released after 60 minutes)
+10. `20261025000300_plan_features_claude.sql` (plan feature strings; tiers, limits and credits unchanged)
+
+`DATABASE_URL=… node scripts/apply-migrations.mjs --status`, then `--apply`; or run each file in the
+Supabase SQL editor followed by
+`INSERT INTO supabase_migrations.schema_migrations (version, name) VALUES ('<version>', '<name>') ON CONFLICT DO NOTHING;`.
+The old Worker keeps working against the new functions: `zerox_reserve_v2` keeps its signature
+(the old Worker sends no `cpd`, so no cap applies to it) and `zerox_settle_v2` defaults the two
+cache arguments. Verify:
+
+- `SELECT pg_get_function_identity_arguments('public.zerox_settle_v2'::regproc);` lists 11 arguments;
+- `SELECT id, lifecycle FROM public.zerox_offers WHERE id = 'anthropic.paid';` returns `active`;
+- `SELECT id, status FROM public.zerox_catalog_snapshot() WHERE status = 'active';` returns 16 rows;
+- `SELECT plan, allowed_tiers, monthly_credit_microusd, jsonb_array_length(features) FROM public.zerox_plan_policy ORDER BY sort;`
+  returns free `{free}` 0 4, pro `{free,paid}` 8000000 5, max `{free,paid}` 35000000 5, ultrawork `{free,paid}` 8000000 5.
+
+**Spend limits, three layers.** (1) Postgres: each paid pool has a daily spend cap, checked
+atomically with every reservation (`p_pool.cpd`, billed micro-USD per UTC day; holds count while
+requests run): Claude Sonnet 5.5 $10, Claude Opus 5.5 $6, the Gemini paid pools $10, Groq and
+Workers AI $5 (upstream USD). Code clamps every cap to $100 a pool ($50 for Claude) and to
+`PAID_DAILY_SPEND_CAP_USD` when set. (2) Each Claude request holds its worst case in credits
+before it starts (every prompt token at the cache-write rate plus all of `max_tokens`), so a
+stream never runs past the user's balance. (3) In the Anthropic console, set a monthly spend
+limit on the workspace of `ANTHROPIC_API_KEY` (about $500 covers both daily caps for a month)
+and an alert below it; this also bounds the weekly discovery research.
+
+**Approvals.** `/admin/models` lists every row, its served source and validation, and the diff of
+a pending revision. Approving needs the operator token plus Cloudflare Access (the same Access
+application on `dashboard.zero-x.live/admin` as the key vault) and the reviewed revision ids;
+price, cap-up, key-slot, paid-pool and auto-rank changes also need the model id typed. The
+database requires the approver fields and keeps an append-only audit log; nothing is ever
+deleted. An approved change serves at once in the approving isolate and within a minute
+everywhere; `/v1/models/stream` tells clients through `catalog_version`.
+
+**Rollback.** Set `CATALOG_SOURCE = "code"` (wrangler.toml `[vars]`) and deploy: the gateway serves
+`src/catalog.js` only, whatever the rows say. The down scripts are in `migrations/down/` (the
+runner skips that directory) and run newest first by hand. The catalog ones (`20261025000100`,
+`20261025000000`) are safe once `CATALOG_SOURCE = "code"` is deployed. The billing ones
+(`20261025000300`, `20261025000200`) restore the 9-argument `zerox_settle_v2`, which this gateway
+version no longer calls: revert the Worker to the previous version first.
+
+**Smoke test after deploy.** `/v1/models` as Pro lists both Claude models `available: true`; as Free
+they show `upgrade_required`. A Pro request to `claude-sonnet-5-5` with `max_tokens` 1024 produces a
+usage event with `cache_read_tokens`/`cache_write_tokens` and the cost the dashboard shows.
+`node check-live-providers.mjs --claude` (with `ANTHROPIC_API_KEY` in `.dev.vars`, about $0.05)
+checks one streamed tool call per Claude model and a prompt-cache read on the repeat.
 
 ## Deploy gate
 
@@ -154,13 +235,31 @@ Work through these in order; nothing in this repository does them for you.
    (`--allow-live`) and set `RAZORPAY_KEY_ID` to the `rzp_live_` id. Read "Refunds and disputes"
    below before taking live payments.
 4. **Paid upstream capacity.** Create a Groq Developer-plan key and a billing-linked Gemini
-   project key and store them as `GROQ_PAID_API_KEY` and `GEMINI_PAID_API_KEY`. Without them Pro
-   and Max have no paid pool (credits cannot be spent). Check the real Gemini free-tier limits in
+   project key and store them as `GROQ_PAID_API_KEY` and `GEMINI_PAID_API_KEY`, and an Anthropic
+   API key as `ANTHROPIC_API_KEY` (`gh secret set ANTHROPIC_API_KEY`; set the console spend limit
+   first, see "Model catalog and Claude"). Without them Pro and Max have no paid pool (credits
+   cannot be spent). Check the real Gemini free-tier limits in
    AI Studio (or the `quotas` field of `Neuron upstream error detail` log lines) against
    `POOL_LIMITS` in `src/catalog.js`; the free Gemini budget is 5 rpm / 120K tpm per model after
    the project was rate limited below its published limits on 2026-10-16.
-5. **Operator secrets.** Set `GATEWAY_ADMIN_TOKEN` (≥ 32 random characters) and
-   `SESSION_ENCRYPTION_KEY` (`openssl rand -base64 32`) as GitHub Actions secrets.
+5. **Operator secrets.** Set `GATEWAY_ADMIN_TOKEN` (≥ 32 random characters),
+   `SESSION_ENCRYPTION_KEY` and `PROVIDER_KEYS_KEK` (each `openssl rand -base64 32`) as GitHub
+   Actions secrets. Keep a copy of `PROVIDER_KEYS_KEK`: without it the vault's keys cannot be read.
+   **OIOP offers:** apply `migrations/20261024000200_oiop_offers.sql` (backfills the offers of the
+   code catalog, so nothing stops serving) and `migrations/20261024000300_credit_programs.sql`
+   (credit programs, seeded), and set `OIOP_SIGNING_JWK` to sign manifests.
+   **Provider key vault:** apply `migrations/20261024000000_provider_keys.sql` and
+   `migrations/20261024000100_provider_key_budgets.sql` (per-key budgets) before deploying. In Cloudflare Zero
+   Trust, add a self-hosted Access application for `dashboard.zero-x.live` with path `admin` (it
+   covers the key vault and model catalog pages, their scripts and every `/admin/*` API), add
+   `dashboard.zero-x.live` path `v1/providers/health` as a second hostname of the same application
+   (one audience tag), and a policy allowing only your identity; put its audience tag in `CF_ACCESS_AUD` and the team domain in
+   `CF_ACCESS_TEAM_DOMAIN` (`wrangler.toml` `[vars]`). Then open
+   `https://dashboard.zero-x.live/admin/keys`, unlock it with `GATEWAY_ADMIN_TOKEN` and add keys;
+   each is checked with one free request first. Free-tier terms and quotas apply per provider
+   account; how many accounts to pool is the operator's call. Once the vault serves, the
+   `GROQ_API_KEY`/`GEMINI_API_KEY`/`NVIDIA_API_KEY`/`OPENROUTER_API_KEY` secrets are only the
+   fallback and may be removed.
 6. **Legal and support review (owner).** Confirm the refund windows in `refund.html` and remove
    its owner-review note before taking live payments; review `privacy.html` (processor list,
    free-tier training notice, grievance officer) and `terms.html` (liability cap, governing law,
@@ -178,7 +277,8 @@ Work through these in order; nothing in this repository does them for you.
    once browser consoles show no CSP report-only violations.
 9. **Canary.** `npm test`, deploy, then check `/ready`, `/health` with the operator token, a
    dashboard sign-in, `neuron auth login`, a streamed tool call with the matching Neuron build,
-   and `/admin/overview`.
+   and `https://dashboard.zero-x.live/admin/overview` through Access (once Access is configured,
+   the operator APIs refuse the token alone on every host).
 
 ## Refunds and disputes
 

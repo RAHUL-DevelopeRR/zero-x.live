@@ -8,7 +8,7 @@ export const PRICING_URL = 'https://zero-x.live/pricing';
 export const DASHBOARD_URL = 'https://dashboard.zero-x.live/';
 export const CHECKOUT_THEME_COLOR = '#00E5FF';
 
-const API_PATH = /^\/(?:api|v1|auth)\/[A-Za-z0-9/_.?=&%-]*$/;
+const API_PATH = /^\/(?:api|v1|auth|releases)\/[A-Za-z0-9/_.?=&%-]*$/;
 const RAZORPAY_KEY = /^rzp_(?:live|test)_[A-Za-z0-9]{6,64}$/;
 const PROVIDER_ID = /^[A-Za-z0-9_-]{4,128}$/;
 const PACK_ID = /^credits_[0-9]{1,6}$/;

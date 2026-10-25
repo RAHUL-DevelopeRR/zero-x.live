@@ -1,0 +1,25 @@
+/* Model catalog page (dashboard.zero-x.live/admin/models). Everything else comes from
+   /zx-tokens.css; this file exists because the page's CSP allows no inline style. */
+.models-intro { max-width: 760px; }
+.models-section-head { margin-top: 32px; margin-bottom: 12px; }
+.models-section-head h2, #detail h2, #editor h2 { font-size: 1.35rem; margin-bottom: 0; }
+#detail h3 { font-size: 1.05rem; margin: 20px 0 8px; }
+#editor h2 { margin-bottom: 16px; }
+.models-actions { gap: 8px; flex-wrap: wrap; }
+.models-checks { gap: 20px; flex-wrap: wrap; margin: 12px 0; }
+.models-list { color: var(--zx-muted); margin: 8px 0; padding-left: 20px; }
+.models-list li { overflow-wrap: anywhere; }
+.models-danger, .models-list li.models-danger { color: var(--zx-danger, #f87171); }
+.models-spec { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 8px 0; }
+.models-spec dt { color: var(--zx-muted); }
+.models-spec dd { margin: 0; overflow-wrap: anywhere; }
+.models-pool { border: 1px solid var(--zx-border, rgba(255, 255, 255, 0.12)); border-radius: 12px; padding: 12px 16px; margin: 16px 0 0; }
+.models-pool legend { padding: 0 6px; }
+.zx-table td { white-space: nowrap; }
+.zx-table td.models-id { white-space: normal; overflow-wrap: anywhere; min-width: 180px; }
+.zx-table tr.models-risky td { color: var(--zx-danger, #f87171); }
+#unlock .zx-form-row { align-items: flex-start; }
+#unlock .zx-btn { margin-top: 30px; }
+@media (max-width: 640px) {
+  .models-spec { grid-template-columns: 1fr; }
+}

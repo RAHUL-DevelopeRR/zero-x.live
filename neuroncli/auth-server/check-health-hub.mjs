@@ -24,7 +24,10 @@ function fakeState(saved = new Map()) {
   };
 }
 
+// HEALTH_CANARIES=false: these checks count every upstream request of the list, status-page and
+// half-open probe paths; the OIOP canaries are covered by check-oiop.mjs.
 const ENV = {
+  HEALTH_CANARIES: 'false',
   GROQ_API_KEY: 'groq-test', GEMINI_API_KEY: 'gemini-test', NVIDIA_API_KEY: 'nvidia-test', NVIDIA_HOSTED: 'true',
   OPENROUTER_API_KEY: 'or-test', OPENROUTER_HOSTED: 'true',
   OPENROUTER_MODELS: 'cohere/north-mini-code:free,minimax/minimax-m3.1-flash:free',
@@ -84,14 +87,14 @@ try {
   assert.ok(state.saved.get('hub').records[GEMINI_25], 'state is persisted');
   console.log('ok - reports: busy (short 429), blurred (model gone), real success brightens, bad body 400, persisted');
 
-  // 2. Alarm: free checks. Lists and status pages, two per alarm, staggered.
+  // 2. Alarm: free checks. Lists (one per key), key checks and status pages, four per alarm, staggered.
   upstream = lists;
   calls.length = 0;
   offset = 31_000;
   await hub.alarm();
   assert.equal(state.alarm, base + offset + ALARM_INTERVAL_MS, 'the alarm re-arms itself');
   const checked = calls.map(call => call.url);
-  assert.equal(checked.filter(url => !url.includes('chat/completions')).length, 2, 'two checks per alarm');
+  assert.equal(checked.filter(url => !url.includes('chat/completions')).length, 4, 'four checks per alarm');
   for (let i = 0; i < 3; i++) { offset += 31_000; await hub.alarm(); }
   snap = hub.snapshot();
   assert.equal(snap.pools[GROQ_QWEN].status, 'blurred', 'missing from the Groq list -> greyed out');

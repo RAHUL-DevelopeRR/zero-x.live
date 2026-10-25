@@ -2,7 +2,8 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { accountRpc, databaseConfigured } from './account-store.js';
 import { modelCatalog, resolveModelCatalog, providerHealth, providerConfiguration } from './providers.js';
-import { callerCountry, catalogWarnings, inheritCallerCountry } from './catalog.js';
+import { callerCountry, catalogEntries, catalogWarnings, inheritCallerCountry, loadCatalog } from './catalog.js';
+import { refreshModelsDevFacts } from './oiop/models-dev.js';
 import { globalHealthTracker } from './provider-health.js';
 import { createChatHandler } from './chat-handler.js';
 import { loadPlanLimits } from './plan-policy.js';
@@ -12,7 +13,7 @@ import {
   sessionEncryptionConfigured,
 } from './session-store.js';
 import {
-  ApiError, bearerToken, claimsPlan, devAuthEnabled, devEmailFromToken, devRuntimeEnabled, devUserId, errorResponse,
+  ApiError, backgroundRunner, bearerToken, claimsPlan, devAuthEnabled, devEmailFromToken, devRuntimeEnabled, devUserId, errorResponse,
   identityProfileFromUser, INVALID_SESSION, isLoopbackHost, loadCliSession, readIdentityConfig, resolveCaller,
   SERVICE_UNAVAILABLE, SESSION_TOKEN_PATTERN, syncAccount, syncDevAccount, verifySupabaseToken,
 } from './auth-context.js';
@@ -22,12 +23,23 @@ import { registerAdminRoutes, runScheduledMaintenance } from './routes/admin.js'
 import { registerBillingRoutes } from './routes/billing.js';
 import { registerKeyRoutes } from './routes/keys.js';
 import { registerPlanRoutes, v1ModelsPayload, v1ModelStatusPayload } from './routes/plans.js';
-import { registerSessionIndex, registerSessionRoutes, unregisterSessionIndex } from './routes/sessions.js';
+import { registerSessionIndex, registerSessionRoutes, sessionClient, unregisterSessionIndex } from './routes/sessions.js';
 import { registerDeviceRoutes } from './routes/device.js';
 import { registerDiscoveryRoutes } from './routes/discovery.js';
+import { RELEASE_MANIFEST_PATH, registerReleaseRoutes } from './routes/releases.js';
+import { registerChangelogRoutes } from './routes/changelog.js';
+import { registerPushRoutes } from './routes/push.js';
+import { registerRelayRoutes } from './routes/relay.js';
 import { runDiscoveryTick } from './discovery/jobs.js';
+import { registerProviderKeyRoutes } from './routes/provider-keys.js';
+import { registerOfferRoutes } from './routes/offers.js';
+import { registerCatalogAdminRoutes } from './routes/catalog-admin.js';
+import { registerCreditRoutes } from './routes/credits.js';
+import { loadVaultKeys, vaultConfigured } from './provider-keys.js';
+import { accessConfigured, passedAccess } from './access-auth.js';
 // Durable Object classes are exported from the Worker entry (wrangler.toml [[durable_objects]]).
 export { HealthHub } from './health-hub.js';
+export { RelayRoom } from './relay.js';
 import { registerWebhookRoutes } from './routes/webhooks.js';
 
 const SERVICE = 'neuroncli-gateway-worker';
@@ -43,7 +55,7 @@ app.onError((error, c) => {
 
 // Paths are served both at the root and under the legacy /neuroncli/auth-server mount.
 const routePath = pathname => pathname.startsWith(API_MOUNT + '/') ? pathname.slice(API_MOUNT.length) : pathname;
-const isApiRoute = path => ['/auth/', '/api/', '/v1/', '/admin/', '/webhooks/'].some(prefix => path.startsWith(prefix)) ||
+const isApiRoute = path => ['/auth/', '/api/', '/v1/', '/admin/', '/webhooks/', '/relay/', '/oiop/'].some(prefix => path.startsWith(prefix)) ||
   path === '/health' || path === '/ready';
 
 // ── Security headers ──
@@ -60,10 +72,43 @@ const CONTENT_SECURITY_POLICY = [
   "base-uri 'self'",
 ].join('; ');
 
+// Public, cacheable API answers (everything else under /api/ is no-store).
+const PUBLIC_API_PATHS = ['/api/plans', '/api/changelog.json'];
+
+// The operator pages on dashboard.zero-x.live, served from neuroncli/admin/ under /admin/ only, so
+// one Cloudflare Access application on dashboard.zero-x.live/admin covers the pages, their
+// scripts and their APIs: the provider key vault (/admin/keys, src/routes/provider-keys.js) and
+// the model catalog (/admin/models, src/routes/catalog-admin.js).
+const ADMIN_PAGE_FILES = Object.freeze({
+  '/admin/keys': '/neuroncli/admin/keys/index.html',
+  '/admin/keys/': '/neuroncli/admin/keys/index.html',
+  '/admin/keys/keys.js': '/neuroncli/admin/keys/keys.js',
+  '/admin/keys/keys.css': '/neuroncli/admin/keys/keys.css',
+  '/admin/models': '/neuroncli/admin/models/index.html',
+  '/admin/models/': '/neuroncli/admin/models/index.html',
+  '/admin/models/models.js': '/neuroncli/admin/models/models.js',
+  '/admin/models/models.css': '/neuroncli/admin/models/models.css',
+});
+// No inline script or style, nothing from another origin except the site fonts.
+const ADMIN_CONTENT_SECURITY_POLICY = [
+  "default-src 'none'",
+  "script-src 'self'",
+  "style-src 'self'",
+  "font-src 'self' https://cdn.fontshare.com https://fonts.gstatic.com",
+  "img-src 'self'",
+  "connect-src 'self'",
+  "form-action 'none'",
+  "frame-ancestors 'none'",
+  "base-uri 'none'",
+].join('; ');
+
 app.use('*', async (c, next) => {
   const url = new URL(c.req.url);
   const path = routePath(url.pathname);
   await next();
+  // A WebSocket upgrade (the relay, src/routes/relay.js) comes back from its Durable Object with
+  // immutable headers, and headers mean nothing on it.
+  if (c.res.status === 101 || c.res.webSocket) return;
   c.header('X-Content-Type-Options', 'nosniff');
   c.header('Referrer-Policy', 'strict-origin-when-cross-origin');
   c.header('X-Frame-Options', 'DENY');
@@ -72,17 +117,20 @@ app.use('*', async (c, next) => {
   // rest of the site stays report-only until CSP_ENFORCE=true.
   const signInPage = url.pathname.startsWith('/neuroncli/') ||
     ((url.hostname === 'neuron.zero-x.live' || isLoopbackHost(url.host)) && url.pathname.startsWith('/device'));
-  const enforceCsp = c.env?.CSP_ENFORCE === 'true' || signInPage;
-  c.header(enforceCsp ? 'Content-Security-Policy' : 'Content-Security-Policy-Report-Only', CONTENT_SECURITY_POLICY);
+  const adminPage = Object.hasOwn(ADMIN_PAGE_FILES, url.pathname);
+  const enforceCsp = c.env?.CSP_ENFORCE === 'true' || signInPage || adminPage;
+  c.header(enforceCsp ? 'Content-Security-Policy' : 'Content-Security-Policy-Report-Only',
+    adminPage ? ADMIN_CONTENT_SECURITY_POLICY : CONTENT_SECURITY_POLICY);
+  if (adminPage) c.header('Referrer-Policy', 'no-referrer');
   if (path.startsWith('/auth/') || signInPage) {
     c.header('Cache-Control', 'no-store');
     c.header('Referrer-Policy', url.pathname.startsWith('/neuroncli/login/') ? 'origin' : 'no-referrer');
   }
-  if (['/api/', '/admin/', '/webhooks/'].some(prefix => path.startsWith(prefix)) && path !== '/api/plans') {
+  if (['/api/', '/admin/', '/webhooks/', '/relay/'].some(prefix => path.startsWith(prefix)) && !PUBLIC_API_PATHS.includes(path)) {
     c.header('Cache-Control', 'no-store');
   }
   if (url.hostname === 'dashboard.zero-x.live' || url.pathname.startsWith('/neuroncli/') || path === '/health' ||
-      ['/auth/', '/api/', '/v1/', '/admin/', '/webhooks/'].some(prefix => path.startsWith(prefix))) {
+      ['/auth/', '/api/', '/v1/', '/admin/', '/webhooks/', '/relay/', '/oiop/'].some(prefix => path.startsWith(prefix))) {
     c.header('X-Robots-Tag', 'noindex, nofollow');
   }
 });
@@ -99,7 +147,8 @@ async function notFoundPage(c) {
 
 // Pages served from https://zero-x.live/<page> (clean URLs).
 const SITE_PAGES = ['/about', '/privacy', '/terms', '/find-files-by-content', '/wheres-that-file',
-  '/pricing', '/neuron-cli', '/docs', '/refund', '/contact', '/shipping', '/neucockpit', '/ai-coding-agent'];
+  '/pricing', '/neuron-cli', '/docs', '/docs/trust', '/download', '/changelog', '/refund', '/contact', '/shipping',
+  '/neucockpit', '/ai-coding-agent'];
 
 // Hostname-based subdomain routing middleware
 app.use('*', async (c, next) => {
@@ -119,6 +168,9 @@ app.use('*', async (c, next) => {
     return c.redirect(url.toString(), 308);
   }
 
+  // The admin pages' files are only reachable through /admin/keys and /admin/models on the dashboard host.
+  if (path.startsWith('/neuroncli/admin/')) return (await notFoundPage(c)) || c.text('Not Found', 404);
+
   if (c.req.method === 'GET' || c.req.method === 'HEAD') {
     if (hostname === 'dashboard.zero-x.live' && path === '/robots.txt')
       return c.text('User-agent: *\nDisallow: /\n');
@@ -134,6 +186,11 @@ app.use('*', async (c, next) => {
         ((hostname === 'neuron.zero-x.live' || loopback) && (path === '/device' || path === '/device/')))) {
       return c.env.ASSETS.fetch(new Request(new URL('/neuroncli/device/index.html', url), c.req.raw));
     }
+    // Operator pages (key vault, model catalog): dashboard host (or the local Node server), behind Cloudflare Access.
+    if (c.env?.ASSETS && Object.hasOwn(ADMIN_PAGE_FILES, path) && (hostname === 'dashboard.zero-x.live' || loopback)) {
+      if (!await passedAccess(c)) return c.text('Cloudflare Access authentication required.', 403);
+      return c.env.ASSETS.fetch(new Request(new URL(ADMIN_PAGE_FILES[path], url), c.req.raw));
+    }
     let target = null;
     let fragment = '';
     const site = loopback ? '' : 'https://zero-x.live';
@@ -142,11 +199,12 @@ app.use('*', async (c, next) => {
       if (path !== clean) target = clean;
     }
     // neuron.zero-x.live belongs to Neuron: its home is the Neuron CLI page, and /device (above)
-    // stays the sign-in page. NeuCockpit lives at https://zero-x.live/neucockpit.
+    // stays the sign-in page. NeuCockpit lives at https://zero-x.live/neucockpit. /download is the
+    // Neuron download page the apps link to (A6), so it is a site page, not a redirect.
     else if (hostname === 'neuron.zero-x.live' && ['', '/index', '/index2'].includes(clean)) target = 'https://zero-x.live/neuron-cli';
     else if (['/neuron','/neuroncli'].includes(clean)) target = site + '/neuron-cli';
     else if (clean === '/legacy') target = site + '/neucockpit';
-    else if (['/start','/download'].includes(clean)) { target = site + '/neuron-cli'; fragment = '#install'; }
+    else if (clean === '/start') { target = site + '/neuron-cli'; fragment = '#install'; }
     else if (clean === '/features') { target = site + '/neucockpit'; fragment = '#features'; }
     else if (clean === '/dashboard') target = 'https://dashboard.zero-x.live/';
     else if (['/index','/index2'].includes(clean)) target = loopback ? '/' : `https://${hostname === 'www.zero-x.live' ? 'zero-x.live' : hostname}/`;
@@ -177,6 +235,10 @@ app.use('*', async (c, next) => {
     }
   }
 
+  // Release manifests are answered by the API (R2 first, then the committed copy), and API paths
+  // with a dot (/api/changelog.json) are routes, not files.
+  if (RELEASE_MANIFEST_PATH.test(path) || isApiRoute(routePath(path))) return next();
+
   const isAsset = path.startsWith('/Assets/') || path.startsWith('/assets/') ||
     (path.includes('.') && !path.endsWith('/'));
   if (isAsset && c.env?.ASSETS) {
@@ -191,7 +253,8 @@ app.use('*', async (c, next) => {
 // ── CORS: identity routes accept only the Zero-X origins; the OpenAI surface stays open ──
 const IDENTITY_ORIGINS = ['https://zero-x.live', 'https://www.zero-x.live', 'https://dashboard.zero-x.live'];
 const DEV_ORIGIN = /^http:\/\/(127\.0\.0\.1|localhost)(:\d{1,5})?$/;
-const CORS_HEADERS = ['Content-Type', 'Authorization'];
+const CORS_HEADERS = ['Content-Type', 'Authorization', 'X-Neuron-Trust-Tiers', 'X-Neuron-Allow-Training',
+  'X-Neuron-Conversation'];
 const CORS_METHODS = ['GET', 'POST', 'DELETE', 'OPTIONS'];
 const identityCors = cors({
   origin: (origin, c) => IDENTITY_ORIGINS.includes(origin) || (devRuntimeEnabled(c.env) && DEV_ORIGIN.test(origin)) ? origin : null,
@@ -200,12 +263,21 @@ const identityCors = cors({
 const openCors = cors({
   origin: '*', allowHeaders: CORS_HEADERS, allowMethods: CORS_METHODS, maxAge: 600,
   exposeHeaders: ['X-Request-Id', 'X-Neuron-Plan', 'X-Neuron-Model', 'X-Neuron-Quota-Remaining-Requests',
-    'X-Neuron-Quota-Remaining-Tokens', 'Retry-After'],
+    'X-Neuron-Quota-Remaining-Tokens', 'X-OIOP-Offer', 'X-OIOP-Fallback', 'X-OIOP-Redacted', 'Retry-After'],
 });
 app.use('*', async (c, next) => {
   const path = routePath(new URL(c.req.url).pathname);
-  if (path.startsWith('/auth/') || path.startsWith('/api/')) return identityCors(c, next);
+  // WebSockets are not subject to CORS; the relay authenticates them itself.
+  if (path.startsWith('/relay/') && c.req.header('Upgrade')?.toLowerCase() === 'websocket') return next();
+  if (path.startsWith('/auth/') || path.startsWith('/api/') || path.startsWith('/relay/')) return identityCors(c, next);
   if (path.startsWith('/v1/') || path === '/health' || path === '/ready') return openCors(c, next);
+  return next();
+});
+
+// Provider key vault keys become pools in src/catalog.js once loaded into this isolate (60 s
+// cache; a slow database delays a request by at most 3 s, then the previous keys serve).
+app.use('*', async (c, next) => {
+  if (vaultConfigured(c.env) && isApiRoute(routePath(new URL(c.req.url).pathname))) await loadVaultKeys(c.env);
   return next();
 });
 
@@ -300,7 +372,7 @@ async function userResponse(c, user, fallbackUserId = "") {
 
 // ── Session persistence: hashed keys (raw-key read fallback), sealed provider keys ──
 async function getSession(c, token) {
-  return loadCliSession(c.env, token);
+  return loadCliSession(c.env, token, { waitUntil: backgroundRunner(c) });
 }
 
 async function setSession(c, token, session) {
@@ -350,7 +422,7 @@ async function validateSession(c, { apiKeys = false } = {}) {
   if (token.startsWith('dev_')) return devAuthEnabled(c) ? credentialSession(c, token, 'dev') : null;
   if (!SESSION_TOKEN_PATTERN.test(token)) return null;
 
-  const session = await loadCliSession(c.env, token);
+  const session = await loadCliSession(c.env, token, { waitUntil: backgroundRunner(c) });
   if (!session) return null;
   if (!session.account_backed) {
     if (session.openrouter_key) session.owned_provider_only = true;
@@ -434,6 +506,8 @@ api.get('/health', async (c) => {
     billing_configured: razorpayConfigured(c.env),
     webhook_configured: webhookConfigured(c.env),
     session_encryption: sessionEncryptionConfigured(c.env),
+    provider_key_vault: vaultConfigured(c.env),
+    admin_access_configured: accessConfigured(c.env),
     csp_enforced: c.env.CSP_ENFORCE === 'true',
   });
 });
@@ -561,6 +635,7 @@ const createIdentityCliSessionHandler = async (c) => {
   const account = await userResponse(c, user, auth.userId);
   const minted = await mintCliSession(c, account, {
     fingerprint: fp, version: typeof body.version === 'string' ? body.version : 'unknown',
+    client: sessionClient({ client_name: 'neuron-cli', ...body }),
   });
   if (!minted) return errorResponse(c, 503, 'service_unavailable', 'Sign-in could not be completed. Please retry shortly.');
 
@@ -574,10 +649,11 @@ const createIdentityCliSessionHandler = async (c) => {
 };
 
 // Stores a new account-backed ses_ session for `account` (a userResponse) and indexes it for
-// revoke-all. Shared by the browser login and the device flow. Returns null when the index
-// write fails: a session missing from the index could not be signed out by revoke-all, so it
-// is dropped and sign-in fails (the client retries).
-async function mintCliSession(c, account, { fingerprint, version }) {
+// revoke-all and the linked-devices list, with the device it belongs to (`client`, or the
+// device-flow grant `deviceGrantId`). Shared by the browser login and the device flow. Returns
+// null when the index write fails: a session missing from the index could not be signed out by
+// revoke-all, so it is dropped and sign-in fails (the client retries).
+async function mintCliSession(c, account, { fingerprint, version, client = null, deviceGrantId = null }) {
   const token = newSessionToken();
   const { created, expires, ttlSeconds } = newSessionTimes(c.env);
   await setSession(c, token, {
@@ -595,7 +671,7 @@ async function mintCliSession(c, account, { fingerprint, version }) {
     tokens_used: account.usage.tokens_used,
     provider_used: null,
   });
-  if (!await registerSessionIndex(c.env, account.user_id, token, expires)) {
+  if (!await registerSessionIndex(c.env, account.user_id, token, expires, { client, deviceGrantId })) {
     await deleteSession(c, token).catch(() => {});
     return null;
   }
@@ -739,9 +815,60 @@ api.get('/v1/models/status', async (c) => {
   return c.json(body);
 });
 
+// GET /v1/models/stream (contract §12.4): a server-sent event stream that emits
+// `catalog.updated` with the /v1/models/status body whenever it changes (availability, health,
+// offers and policy), checked every 15 s, with a keep-alive comment otherwise. The stream ends
+// after 10 minutes; EventSource clients reconnect with Last-Event-ID (the ETag) and get an event
+// only if the catalog changed meanwhile.
+const sleep = (ms, signal) => new Promise(resolve => {
+  const timer = setTimeout(resolve, ms);
+  signal?.addEventListener('abort', () => { clearTimeout(timer); resolve(); }, { once: true });
+});
+api.get('/v1/models/stream', async (c) => {
+  const caller = await modelsCaller(c);
+  if (caller.response) return caller.response;
+  const intervalMs = Math.max(20, Number(c.env?.MODELS_STREAM_INTERVAL_MS) || 15_000);
+  const lifetimeMs = Math.max(intervalMs, Number(c.env?.MODELS_STREAM_LIFETIME_MS) || 600_000);
+  const signal = c.req.raw.signal;
+  const encoder = new TextEncoder();
+  let last = c.req.header('Last-Event-ID') || null;
+  let closed = false;
+  const body = new ReadableStream({
+    start(controller) {
+      const send = text => { if (!closed) controller.enqueue(encoder.encode(text)); };
+      (async () => {
+        const started = Date.now();
+        send('retry: 5000\n\n');
+        try {
+          while (!closed && !signal?.aborted && Date.now() - started < lifetimeMs) {
+            const { etag, body: status } = await v1ModelStatusPayload(c, caller.session);
+            if (etag !== last) {
+              last = etag;
+              send(`id: ${etag}\nevent: catalog.updated\ndata: ${JSON.stringify(status)}\n\n`);
+            } else {
+              send(': keepalive\n\n');
+            }
+            await sleep(Math.min(intervalMs, lifetimeMs - (Date.now() - started)), signal);
+          }
+        } catch (error) {
+          console.warn('Model stream stopped', { name: error?.name });
+        } finally {
+          if (!closed) { closed = true; try { controller.close(); } catch { /* already closed */ } }
+        }
+      })();
+    },
+    cancel() { closed = true; },
+  });
+  return new Response(body, { headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache',
+    'X-Accel-Buffering': 'no' } });
+});
+
+// Operator token plus Cloudflare Access when configured, as for the /admin APIs (contract §3.6).
 api.get('/v1/providers/health', async (c) => {
   if (!await isOperator(c)) return errorResponse(c, 401, 'invalid_session', 'Operator authentication required.');
+  if (!await passedAccess(c)) return errorResponse(c, 403, 'access_required', 'Cloudflare Access authentication required.');
   c.header('Cache-Control', 'no-store');
+  await loadCatalog(c.env);
   // pools: per-pool circuit state of this isolate (provider:upstream_model:tier).
   return c.json({ provider_configuration: providerConfiguration(c.env), providers: await providerHealth(c.env),
     pools: globalHealthTracker.getSnapshot(), catalog_warnings: catalogWarnings(c.env) });
@@ -867,6 +994,14 @@ registerBillingRoutes(api);
 registerWebhookRoutes(api);
 registerAdminRoutes(api);
 registerDiscoveryRoutes(api);
+registerReleaseRoutes(api);
+registerChangelogRoutes(api);
+registerPushRoutes(api);
+registerRelayRoutes(api);
+registerProviderKeyRoutes(api);
+registerOfferRoutes(api);
+registerCatalogAdminRoutes(api);
+registerCreditRoutes(api);
 
 app.route(API_MOUNT, api);
 app.route('/', api);
@@ -918,7 +1053,11 @@ app.scheduled = (controller, env, ctx) => {
   const discovery = runDiscoveryTick(env).catch(error => {
     console.warn('Discovery tick failed', { message: String(error?.message).slice(0, 200) });
   });
-  const task = Promise.allSettled([runScheduledMaintenance(env), discovery]).then(([maintenance]) => {
+  // models.dev facts for /v1/models, at most once a day (src/oiop/models-dev.js).
+  const facts = loadCatalog(env).then(() => refreshModelsDevFacts(env, catalogEntries(env))).catch(error => {
+    console.warn('models.dev facts refresh failed', { message: String(error?.message).slice(0, 200) });
+  });
+  const task = Promise.allSettled([runScheduledMaintenance(env), discovery, facts]).then(([maintenance]) => {
     if (maintenance.status === 'rejected') throw maintenance.reason;
     return maintenance.value;
   });
