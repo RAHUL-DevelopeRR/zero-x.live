@@ -269,6 +269,23 @@ const ADDRESS = '6/2, N. Pugalur, Karur 639113, Tamil Nadu, India';
   assert.match(text('terms.html'), /upstream provider's price plus 25%/);
   assert.match(text('terms.html'), /may not resell, sublicense, rent or share access/);
   assert.match(text('terms.html'), /at least 18 years old/);
+
+  // Claude on Pro and Max (Anthropic as a processor, credit holds, daily spend limits).
+  for (const file of ['privacy.html', 'terms.html']) assert.match(text(file), /Effective date: 25 October 2026\. Replaces the (?:policy|terms) dated 24 October 2026/, file + ' effective date');
+  const anthropicRow = read('privacy.html').match(/<tr><th scope="row"><a href="https:\/\/www\.anthropic\.com\/legal\/privacy">Anthropic<\/a><\/th>([\s\S]*?)<\/tr>/);
+  assert.ok(anthropicRow, 'privacy: Anthropic is listed as a processor');
+  assert.match(anthropicRow[1], /does not use these prompts or responses to train its models/);
+  assert.doesNotMatch(anthropicRow[1], /\d+[ -]days?/, 'privacy: no Anthropic retention period until it is confirmed in docs/PROVIDER_TERMS.md');
+  assert.match(privacy, /On Pro and Max, requests to Claude Sonnet 5\.5 or Claude Opus 5\.5 go to Anthropic/);
+  assert.match(privacy, /read from or written to Anthropic's prompt cache/);
+  assert.match(text('terms.html'), /including Anthropic, Groq, Google, Cloudflare, NVIDIA and OpenRouter;/);
+  assert.match(text('terms.html'), /paid-capacity models, including Claude Sonnet 5\.5 and Claude Opus 5\.5/);
+  assert.match(text('terms.html'), /we hold the most it could cost[\s\S]*daily spending limit shared by all users/);
+  const pricingPage = text('pricing.html');
+  assert.match(pricingPage, /Claude Sonnet 5\.5 \$2\.50 \$0\.25 \$3\.125 \$12\.50/, 'pricing: Sonnet 5.5 at list price plus 25%');
+  assert.match(pricingPage, /Claude Opus 5\.5 \$5\.00 \$0\.25 \$6\.25 \$25\.00/, 'pricing: Opus 5.5 at list price plus 25%');
+  assert.match(pricingPage, /Anthropic \(Claude Sonnet 5\.5 and Claude Opus 5\.5\)/, 'pricing: the provider FAQ names Anthropic');
+  assert.match(text('dashboard.html'), /Credits pay for Claude Sonnet 5\.5, Claude Opus 5\.5 and other paid capacity/);
 }
 
 /* ───────────── Prices and limits match PLATFORM_CONTRACT.md §1 ───────────── */

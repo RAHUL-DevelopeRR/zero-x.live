@@ -9,13 +9,14 @@ import { randomUUID } from 'node:crypto';
 import { copyFile, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { PGlite } from '@electric-sql/pglite';
 import { rpc, rpcRows } from './src/account-store.js';
 import { closeAllPglite, getPgliteHandle, migrate } from './src/db/pglite.js';
 import { listMigrations } from './src/db/migrations.js';
 
 const root = dirname(fileURLToPath(import.meta.url));
+const site = join(root, '..', '..');
 const env = { DATABASE_DRIVER: 'pglite' };
 const sleep = ms => new Promise(done => setTimeout(done, ms));
 const utcDay = offset => new Date(Date.now() + offset * 86400000).toISOString().slice(0, 10);
@@ -296,6 +297,14 @@ try {
     ['ultrawork', ['free', 'paid'], 2000, 10000000, 10, 8000000, 30, 4],
   ], 'Free has the free tier only, Pro and Max add paid; limits, prices and credits unchanged');
   assert.deepEqual(Object.fromEntries(plans.map(plan => [plan.plan, plan.features])), PLAN_FEATURES);
+  // The static fallbacks on the site show the same strings until /api/plans answers.
+  const { PLAN_CATALOG: sitePlans } = await import(pathToFileURL(join(site, 'pricing.js')).href);
+  for (const plan of sitePlans.plans) assert.deepEqual(plan.features, PLAN_FEATURES[plan.id], `site pricing.js fallback features for ${plan.id}`);
+  const pricingHtml = await readFile(join(site, 'pricing.html'), 'utf8');
+  for (const id of ['free', 'pro', 'max']) {
+    const list = pricingHtml.match(new RegExp(`<ul data-plan-features="${id}">([\\s\\S]*?)</ul>`))[1];
+    assert.deepEqual([...list.matchAll(/<li>([^<]+)<\/li>/g)].map(match => match[1]), PLAN_FEATURES[id], `pricing.html features for ${id}`);
+  }
   const freeUser = await newUser('free', { credits: 5000000 });
   assert.equal((await reserve(freeUser, { p_model: capModel, p_tier: 'paid', p_cost_microusd: 1000 })).status, 'upgrade_required',
     'credits alone do not open paid pools on Free');
@@ -308,7 +317,7 @@ try {
     [['free', ['free']], ['pro', ['free', 'paid']], ['max', ['free', 'paid']], ['ultrawork', ['free', 'paid']]]);
   assert.equal((await sql("SELECT updated_at FROM public.zerox_plan_policy WHERE plan = 'pro'"))[0].updated_at.getTime(), stamp.getTime(),
     'rows already up to date are not rewritten');
-  ok('plans: Free free-only, Pro/Max/ultrawork free+paid, limits and credits unchanged, Claude feature strings, re-run repairs drifted tiers');
+  ok('plans: Free free-only, Pro/Max/ultrawork free+paid, limits and credits unchanged, features equal the site fallback and pricing.html, re-run repairs drifted tiers');
 
   // ---------------------------------------------------------------- down scripts and re-runs
   // Baseline: every migration except the two under test, on a fresh PGlite.

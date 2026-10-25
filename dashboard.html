@@ -144,10 +144,11 @@
         <div class="zx-table-wrap">
           <table class="zx-table">
             <caption class="zx-visually-hidden">Usage by model, last 30 days</caption>
-            <thead><tr><th scope="col">Model</th><th scope="col" class="zx-num">Requests</th><th scope="col" class="zx-num">Prompt tokens</th><th scope="col" class="zx-num">Completion tokens</th><th scope="col" class="zx-num">Cost</th></tr></thead>
+            <thead><tr><th scope="col">Model</th><th scope="col" class="zx-num">Requests</th><th scope="col" class="zx-num">Prompt tokens</th><th scope="col" class="zx-num">Cached prompt tokens</th><th scope="col" class="zx-num">Completion tokens</th><th scope="col" class="zx-num">Cost</th></tr></thead>
             <tbody id="usage-models"></tbody>
           </table>
         </div>
+        <p class="zx-help">Cached prompt tokens are prompt tokens Anthropic served from its prompt cache; they are billed at $0.25 per million instead of the full input price.</p>
 
         <h3 class="zx-mt-lg">Recent requests</h3>
         <div id="events-error" class="zx-alert zx-alert--error zx-mb" role="alert"></div>
@@ -224,7 +225,7 @@ neuron -p "Run the tests and summarise failures"</code></pre></div>
           </article>
           <article class="zx-card" aria-labelledby="topup-title">
             <h3 id="topup-title">Add credits</h3>
-            <p class="zx-muted">Top-up credits pay for paid-capacity models on Pro and Max. Free-pool requests never use credits.</p>
+            <p class="zx-muted">Credits pay for Claude Sonnet 5.5, Claude Opus 5.5 and other paid capacity on Pro and Max. Free models never use credits.</p>
             <div class="zx-field zx-mb zx-field--short">
               <label for="topup-currency">Pay in</label>
               <select id="topup-currency" class="zx-select"><option value="USD">USD</option><option value="INR">INR</option></select>

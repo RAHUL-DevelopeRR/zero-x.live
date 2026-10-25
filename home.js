@@ -7,7 +7,7 @@ import { apiFetch } from './billing-checkout.js';
 
 export const PROVIDER_NAMES = Object.freeze({
   'zero-x': 'Zero-X', gemini: 'Google Gemini', groq: 'Groq', cloudflare: 'Cloudflare Workers AI',
-  nvidia: 'NVIDIA', openrouter: 'OpenRouter',
+  nvidia: 'NVIDIA', openrouter: 'OpenRouter', anthropic: 'Anthropic',
 });
 const MAX_MODELS = 60;
 const DEFAULT_POLL_SECONDS = 30;

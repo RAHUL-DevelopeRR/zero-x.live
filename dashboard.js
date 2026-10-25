@@ -195,6 +195,8 @@ export function normalizeUsage(data, now) {
     model: row.model.slice(0, 120),
     requests: toNumber(row.requests) || 0,
     prompt_tokens: toNumber(row.prompt_tokens) || 0,
+    cache_read_tokens: toNumber(row.cache_read_tokens) || 0,
+    cache_write_tokens: toNumber(row.cache_write_tokens) || 0,
     completion_tokens: toNumber(row.completion_tokens) || 0,
     cost_usd: toNumber(row.cost_usd) || 0,
   })).sort((a, b) => b.requests - a.requests);
@@ -222,6 +224,8 @@ export function normalizeEvents(data) {
     tier: text(event.tier, 16),
     status: text(event.status, 24),
     prompt_tokens: toNumber(event.prompt_tokens) || 0,
+    cache_read_tokens: toNumber(event.cache_read_tokens) || 0,
+    cache_write_tokens: toNumber(event.cache_write_tokens) || 0,
     completion_tokens: toNumber(event.completion_tokens) || 0,
     cost_usd: toNumber(event.cost_usd) || 0,
     latency_ms: toNumber(event.latency_ms),
@@ -230,6 +234,16 @@ export function normalizeEvents(data) {
   const cursor = source.next_before;
   const nextBefore = (typeof cursor === 'number' && Number.isSafeInteger(cursor)) || (typeof cursor === 'string' && /^[A-Za-z0-9_-]{1,40}$/.test(cursor)) ? String(cursor) : null;
   return { events, nextBefore };
+}
+
+/** Recent requests "Tokens" cell: "20,800 (16,000 cached)" with a title when the prompt cache served part of the prompt. */
+export function eventTokens(event) {
+  const total = formatCount(event.prompt_tokens + event.completion_tokens);
+  if (!(event.cache_read_tokens > 0)) return { text: total, title: null };
+  return {
+    text: total + ' (' + formatCount(event.cache_read_tokens) + ' cached)',
+    title: formatCount(event.cache_read_tokens) + ' read from the prompt cache, ' + formatCount(event.cache_write_tokens) + ' written to it',
+  };
 }
 
 export function normalizeKeys(data) {
@@ -366,6 +380,11 @@ export function createDashboard({ doc = globalThis.document, win = globalThis.wi
     return el('td', className ? { class: className } : {}, content);
   }
 
+  function tokensCell(event) {
+    const tokens = eventTokens(event);
+    return el('td', { class: 'zx-num', title: tokens.title }, tokens.text);
+  }
+
   function emptyRow(columns, message) {
     return el('tr', {}, el('td', { colspan: columns, class: 'zx-empty', text: message }));
   }
@@ -490,8 +509,10 @@ export function createDashboard({ doc = globalThis.document, win = globalThis.wi
     setText('ov-reset', formatResetIn(usage.resets_at, now()) || 'Daily limits reset at 00:00 UTC.');
     setText('ov-credits', formatUsd(credits.balance_usd));
     setText('ov-credits-detail', plan.id === 'free'
-      ? 'Credits pay for paid-capacity models on Pro and Max.'
-      : credits.monthly_grant_usd !== null ? formatUsd(credits.monthly_grant_usd) + ' added at each renewal.' : 'Used for paid-capacity requests.');
+      ? 'Credits pay for Claude Sonnet 5.5, Claude Opus 5.5 and other paid capacity on Pro and Max.'
+      : credits.monthly_grant_usd !== null
+        ? formatUsd(credits.monthly_grant_usd) + ' added at each renewal. Pays for Claude Sonnet 5.5, Claude Opus 5.5 and other paid capacity.'
+        : 'Pays for Claude and other paid capacity.');
     setAlert('dash-alert', account.suspended ? 'This account is suspended, so requests are blocked. Email ' + SUPPORT_EMAIL + ' for help.' : '');
 
     setText('acct-id', account.user.id || '—');
@@ -585,8 +606,9 @@ export function createDashboard({ doc = globalThis.document, win = globalThis.wi
       el('th', { scope: 'row' }, el('code', { text: row.model })),
       cell(formatCount(row.requests), 'zx-num'),
       cell(formatCount(row.prompt_tokens), 'zx-num'),
+      cell(formatCount(row.cache_read_tokens), 'zx-num'),
       cell(formatCount(row.completion_tokens), 'zx-num'),
-      cell(formatUsd(row.cost_usd), 'zx-num'))) : [emptyRow(5, 'No requests in the last 30 days.')]));
+      cell(formatUsd(row.cost_usd), 'zx-num'))) : [emptyRow(6, 'No requests in the last 30 days.')]));
   }
 
   async function loadUsage() {
@@ -609,7 +631,7 @@ export function createDashboard({ doc = globalThis.document, win = globalThis.wi
       el('td', {}, el('code', { text: event.model || '—' })),
       cell(event.tier ? badge(event.tier, event.tier === 'paid' ? 'purple' : '') : '—'),
       cell(event.status ? badge(event.status, eventStatusTone(event.status)) : '—'),
-      cell(formatCount(event.prompt_tokens + event.completion_tokens), 'zx-num'),
+      tokensCell(event),
       cell(formatUsd(event.cost_usd), 'zx-num'),
       cell(event.latency_ms !== null ? formatCount(event.latency_ms) + ' ms' : '—', 'zx-num'),
       el('td', {}, el('code', { text: event.request_id || '—' })))) : [emptyRow(8, state.page ? 'No older requests.' : 'No requests yet. Run neuron in a project to get started.')]));
@@ -766,7 +788,7 @@ export function createDashboard({ doc = globalThis.document, win = globalThis.wi
     status.replaceChildren(badge(summary.label, summary.tone));
     setText('sub-period-label', summary.periodLabel || 'Period');
     setText('sub-period', summary.periodText || '—');
-    setText('sub-note', !sub ? 'You are on the Free plan. Upgrade for higher limits and paid-capacity models.'
+    setText('sub-note', !sub ? 'You are on the Free plan. Upgrade for Claude Sonnet 5.5 and Claude Opus 5.5, billed from included credits, and higher daily limits.'
       : sub.cancel_at_period_end ? 'Your plan will not renew. You keep access until the date above.'
         : summary.label === 'Payment issue' ? 'Razorpay could not collect the last payment. Update your payment method from the Razorpay email or cancel.'
           : summary.label === 'Awaiting payment' ? 'Checkout started. If you paid, your plan activates as soon as Razorpay confirms the payment; otherwise finish checkout from Pricing.'

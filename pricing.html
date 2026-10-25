@@ -47,7 +47,7 @@
       <nav class="zx-breadcrumb" aria-label="Breadcrumb"><a href="/">Zero-X</a> / Pricing</nav>
       <p class="zx-eyebrow">Neuron CLI plans</p>
       <h1 id="pricing-title">Start free. Upgrade when you need more.</h1>
-      <p class="zx-lead">The Free plan runs on shared free model pools with daily caps. Pro and Max raise those caps and add paid-capacity models, billed from credits included with your plan.</p>
+      <p class="zx-lead">The Free plan runs on shared free model pools with daily caps. Pro and Max add Claude Sonnet 5.5 and Claude Opus 5.5, billed from the credits included with your plan, and raise the daily limits on the free models. Every plan has the same Neuron features.</p>
       <div class="zx-row">
         <div class="zx-segmented" role="group" aria-label="Show prices in">
           <button type="button" data-currency="USD" aria-pressed="true">USD</button>
@@ -69,9 +69,10 @@
           </div>
           <p class="zx-plan__price"><span data-plan-price="free">$0</span> <small>/ month</small></p>
           <ul data-plan-features="free">
-            <li>Shared free model pools</li>
+            <li>Free models from Groq, Google Gemini, Cloudflare Workers AI, NVIDIA and OpenRouter</li>
             <li>100 requests and 500K tokens per day</li>
-            <li>Best-effort availability</li>
+            <li>10 requests per minute, 2 at once</li>
+            <li>Every Neuron feature, the same on all plans</li>
           </ul>
           <a class="zx-btn zx-btn--block" href="/neuron-cli#install">Install Neuron free</a>
         </article>
@@ -83,9 +84,11 @@
           </div>
           <p class="zx-plan__price"><span data-plan-price="pro">$10</span> <small>/ month</small></p>
           <ul data-plan-features="pro">
-            <li>Free pools plus paid-capacity models</li>
-            <li>2,000 requests and 10M tokens per day</li>
+            <li>Claude Sonnet 5.5 and Claude Opus 5.5, billed from credits</li>
             <li>$8 of credits included every month</li>
+            <li>Free models with higher limits: 2,000 requests and 10M tokens per day</li>
+            <li>30 requests per minute, 4 at once</li>
+            <li>Every Neuron feature, the same on all plans</li>
           </ul>
           <button class="zx-btn zx-btn--primary zx-btn--block" type="button" data-upgrade="pro">Upgrade to Pro</button>
         </article>
@@ -96,9 +99,11 @@
           </div>
           <p class="zx-plan__price"><span data-plan-price="max">$40</span> <small>/ month</small></p>
           <ul data-plan-features="max">
-            <li>Free pools plus paid-capacity models</li>
-            <li>10,000 requests and 50M tokens per day</li>
+            <li>Claude Sonnet 5.5 and Claude Opus 5.5, billed from credits</li>
             <li>$35 of credits included every month</li>
+            <li>Free models with higher limits: 10,000 requests and 50M tokens per day</li>
+            <li>60 requests per minute, 8 at once</li>
+            <li>Every Neuron feature, the same on all plans</li>
           </ul>
           <button class="zx-btn zx-btn--block" type="button" data-upgrade="max">Upgrade to Max</button>
         </article>
@@ -115,11 +120,22 @@
           <p>Free usage costs no credits but counts toward your daily request and token caps. When a shared pool runs out, requests fail with <code>capacity_exhausted</code> until it resets or another free model has capacity. Availability is best effort.</p>
         </div>
         <div class="zx-card zx-card--flat">
-          <h3>Pro and Max: paid capacity from credits</h3>
-          <p>Paid plans use the free pools first, then switch to paid-capacity models when free capacity is unavailable. Paid-capacity requests are billed from your credit balance at the upstream provider's price plus 25%.</p>
-          <p>Pro includes <span data-plan-credit="pro">$8</span> and Max includes <span data-plan-credit="max">$35</span> of credits at every monthly renewal. You can buy top-ups if you run low. The dashboard shows the cost of every request.</p>
+          <h3>Pro and Max: Claude from credits</h3>
+          <p>Claude Sonnet 5.5 and Claude Opus 5.5 run when you choose them in Neuron (<code>/model</code>); <code>auto</code> stays on the free models. Each Claude request is billed from your credit balance at Anthropic's price plus 25%, using the token counts Anthropic reports, with cached prompt tokens at their lower rate. Daily request and token limits count every request, Claude included.</p>
+          <p>Pro includes <span data-plan-credit="pro">$8</span> and Max includes <span data-plan-credit="max">$35</span> of credits at every monthly renewal, and you can add $5 or $20 top-ups. When the free pools are busy, Pro and Max can also use paid capacity of the free-tier models, billed the same way. The dashboard shows the cost of every request.</p>
         </div>
       </div>
+      <div class="zx-table-wrap zx-mt">
+        <table class="zx-table">
+          <caption>Claude prices billed from credits, per million tokens: Anthropic's list price plus 25%.</caption>
+          <thead><tr><th scope="col">Model</th><th scope="col" class="zx-num">Input</th><th scope="col" class="zx-num">Cached input</th><th scope="col" class="zx-num">Cache write</th><th scope="col" class="zx-num">Output</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">Claude Sonnet 5.5</th><td class="zx-num">$2.50</td><td class="zx-num">$0.25</td><td class="zx-num">$3.125</td><td class="zx-num">$12.50</td></tr>
+            <tr><th scope="row">Claude Opus 5.5</th><td class="zx-num">$5.00</td><td class="zx-num">$0.25</td><td class="zx-num">$6.25</td><td class="zx-num">$25.00</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="zx-help">A typical Neuron turn (20K prompt tokens, 80% of them cached, and 800 output tokens) costs about $0.027 on Sonnet 5.5 and $0.049 on Opus 5.5, so $8 of credits covers about 300 Sonnet or 160 Opus turns. Before a Claude request starts, the most it could cost is held from your balance and the unused part is released when it finishes, so a request never stops halfway for lack of credits.</p>
     </section>
 
     <section class="zx-container zx-section--tight" id="compare" aria-labelledby="compare-title">
@@ -137,7 +153,8 @@
             <tr><th scope="row">Tokens per day</th><td data-plan-limit="free:daily_tokens">500K</td><td data-plan-limit="pro:daily_tokens">10M</td><td data-plan-limit="max:daily_tokens">50M</td></tr>
             <tr><th scope="row">Requests per minute</th><td data-plan-limit="free:rpm">10</td><td data-plan-limit="pro:rpm">30</td><td data-plan-limit="max:rpm">60</td></tr>
             <tr><th scope="row">Concurrent requests</th><td data-plan-limit="free:concurrency">2</td><td data-plan-limit="pro:concurrency">4</td><td data-plan-limit="max:concurrency">8</td></tr>
-            <tr><th scope="row">Model pools</th><td>Free pools</td><td>Free and paid</td><td>Free and paid</td></tr>
+            <tr><th scope="row">Models</th><td>Free models</td><td>Free models, Claude Sonnet 5.5 and Claude Opus 5.5</td><td>Free models, Claude Sonnet 5.5 and Claude Opus 5.5</td></tr>
+            <tr><th scope="row">Neuron features</th><td>All</td><td>All</td><td>All</td></tr>
             <tr><th scope="row">Credits included each month</th><td data-plan-credit="free">$0</td><td data-plan-credit="pro">$8</td><td data-plan-credit="max">$35</td></tr>
             <tr><th scope="row">Credit top-ups</th><td>No</td><td>Yes</td><td>Yes</td></tr>
             <tr><th scope="row">API keys for CI and scripts</th><td>Yes</td><td>Yes</td><td>Yes</td></tr>
@@ -150,7 +167,7 @@
 
     <section class="zx-container zx-section" id="topups" aria-labelledby="topups-title">
       <h2 id="topups-title">Credit top-ups</h2>
-      <p class="zx-muted">One-time packs for Pro and Max subscribers who use more paid capacity than their plan includes. Credits are spent only on paid-capacity requests and need an active Pro or Max plan to be used.</p>
+      <p class="zx-muted">One-time packs for Pro and Max subscribers who use more than their plan includes. Credits pay for Claude Sonnet 5.5, Claude Opus 5.5 and other paid capacity, and need an active Pro or Max plan to be used.</p>
       <div class="zx-grid zx-grid--2">
         <article class="zx-card" aria-labelledby="topup-5-title">
           <h3 id="topup-5-title"><span data-topup-credit="credits_5">$5</span> of credits</h3>
@@ -178,7 +195,7 @@
         </details>
         <details>
           <summary>What happens when I reach a limit?</summary>
-          <p>At the daily request or token cap, the gateway returns <code>insufficient_quota</code> with the reset time (00:00 UTC). Going over your per-minute rate returns <code>rate_limited</code> and Neuron retries after the delay. If a paid-capacity request needs more credits than you have, it returns <code>insufficient_credits</code>; top up or wait for your next renewal. Nothing is charged automatically beyond your plan.</p>
+          <p>At the daily request or token cap, the gateway returns <code>insufficient_quota</code> with the reset time (00:00 UTC). Going over your per-minute rate returns <code>rate_limited</code> and Neuron retries after the delay. If a paid-capacity request needs more credits than you have, it returns <code>insufficient_credits</code>; top up or wait for your next renewal. Nothing is charged automatically beyond your plan. A Claude request holds the most it could cost until it finishes, so with a low balance a request with a large <code>max_tokens</code> can return <code>insufficient_credits</code>; lower <code>max_tokens</code> or top up. Each Claude model also has a daily spending limit shared by all users; when it is reached the model returns <code>capacity_exhausted</code> until 00:00 UTC.</p>
         </details>
         <details>
           <summary>Can I cancel? Do you give refunds?</summary>
@@ -186,7 +203,7 @@
         </details>
         <details>
           <summary>Who sees my prompts and code?</summary>
-          <p>Your requests are sent to the upstream provider that serves the selected model: Groq, Google Gemini API, Cloudflare Workers AI, NVIDIA API Catalog or OpenRouter (the free OpenRouter models Zero-X offers, or your own OpenRouter account if you connect one). Free tiers of some providers may use prompts to improve their models and allow human review, so do not send secrets or code you are not allowed to share on the Free plan. The <a href="/privacy">privacy policy</a> lists every processor.</p>
+          <p>Your requests are sent to the upstream provider that serves the selected model: Anthropic (Claude Sonnet 5.5 and Claude Opus 5.5), Groq, Google Gemini API, Cloudflare Workers AI, NVIDIA API Catalog or OpenRouter (the free OpenRouter models Zero-X offers, or your own OpenRouter account if you connect one). Anthropic does not train its models on requests sent through its API. Free tiers of some providers may use prompts to improve their models and allow human review, so do not send secrets or code you are not allowed to share on the Free plan. The <a href="/privacy">privacy policy</a> lists every processor.</p>
         </details>
         <details>
           <summary>Can I use my own API key (BYOK)?</summary>

@@ -42,7 +42,7 @@
   <main id="main" class="zx-container zx-legal zx-section--tight">
     <nav class="zx-breadcrumb" aria-label="Breadcrumb"><a href="/">Zero-X</a> / Terms of Service</nav>
     <h1>Terms of Service</h1>
-    <p class="zx-updated">Effective date: 24 October 2026. Replaces the terms dated 16 October 2026.</p>
+    <p class="zx-updated">Effective date: 25 October 2026. Replaces the terms dated 24 October 2026.</p>
     <p>These terms are an agreement between you and Zero-X (6/2, N. Pugalur, Karur 639113, Tamil Nadu, India) for the Zero-X website, account dashboard, the gateway and API used by Neuron CLI, paid plans and the connected cloud features of NeuCockpit. By creating an account or using the services you accept them. Software distributed under its own licence, such as Neuron CLI, remains subject to that licence.</p>
 
     <h2 id="eligibility">Eligibility and accounts</h2>
@@ -67,10 +67,11 @@
 
     <h2 id="credits">Credits</h2>
     <ul>
-      <li>Credits are a prepaid balance, recorded in US dollars, that pays for requests served by paid-capacity models. Each paid-capacity request is charged at the upstream provider's price plus 25%, as shown per request in the dashboard. Free-pool requests do not use credits.</li>
+      <li>Credits are a prepaid balance, recorded in US dollars, that pays for requests served by paid-capacity models, including Claude Sonnet 5.5 and Claude Opus 5.5. Each paid-capacity request is charged at the upstream provider's price plus 25%, as shown per request in the dashboard. Free-pool requests do not use credits.</li>
       <li>Pro and Max include a monthly credit amount that is added at each successful renewal. You can buy additional credits as top-up packs.</li>
       <li>Credits can only be used while you have an active Pro or Max plan. They have no cash value, cannot be transferred or exchanged, and are forfeited if the account is closed or terminated for breach of these terms.</li>
       <li>When a request would need more credits than you have, it is refused with <code>insufficient_credits</code>; we do not charge beyond your balance.</li>
+      <li>Before a paid request starts we hold the most it could cost, based on its prompt and its <code>max_tokens</code>, and release the unused part when it finishes. Held credits cannot pay for other requests while they are held. Each paid model also has a daily spending limit shared by all users.</li>
     </ul>
 
     <h2 id="fair-use">Fair use and daily caps</h2>
@@ -83,7 +84,7 @@
       <li>create or distribute malware, attack or probe systems you do not own, or send spam;</li>
       <li>generate content that sexually exploits minors, promotes violence, harasses people, or deceives people by impersonation;</li>
       <li>process content you are not entitled to share with the upstream providers;</li>
-      <li>violate the usage policies of the upstream providers that serve your requests, including Groq, Google, Cloudflare, NVIDIA and OpenRouter;</li>
+      <li>violate the usage policies of the upstream providers that serve your requests, including Anthropic, Groq, Google, Cloudflare, NVIDIA and OpenRouter;</li>
       <li>extract provider credentials, interfere with the gateway, load test it, or reverse engineer it except where the law allows.</li>
     </ul>
 

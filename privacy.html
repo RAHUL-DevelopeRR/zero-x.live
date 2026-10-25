@@ -42,7 +42,7 @@
   <main id="main" class="zx-container zx-legal zx-section--tight">
     <nav class="zx-breadcrumb" aria-label="Breadcrumb"><a href="/">Zero-X</a> / Privacy Policy</nav>
     <h1>Privacy Policy</h1>
-    <p class="zx-updated">Effective date: 25 October 2026. Replaces the policy dated 24 October 2026; this version states exactly what the gateway stores and for how long.</p>
+    <p class="zx-updated">Effective date: 25 October 2026. Replaces the policy dated 24 October 2026; this version states exactly what the gateway stores and for how long, and adds Anthropic, which serves the Claude models on Pro and Max.</p>
     <p>This policy covers the Zero-X website (zero-x.live and its subdomains), the account dashboard, the Zero-X gateway used by Neuron CLI, paid plans and the cloud features of NeuCockpit. Zero-X, 6/2, N. Pugalur, Karur 639113, Tamil Nadu, India, decides how this information is used.</p>
 
     <h2 id="summary">Summary</h2>
@@ -57,7 +57,7 @@
     <h3>Account</h3>
     <p>When you sign in with Google, GitHub or an email link, we receive an account identifier and the profile information that method provides: email address, name and profile image when available. The Google sign-in integration does not request access to Gmail, Drive, Calendar or your contacts, and Google profile data is used only for account features; it is never added to model requests. We never receive your sign-in provider password.</p>
     <h3>Usage records</h3>
-    <p>For every gateway request we record the time, model, provider, pool (free or paid), status, prompt and completion token counts, credit cost, latency and a request ID, plus daily counters for your plan limits. These records power the dashboard, enforce limits, settle credits and help resolve billing questions.</p>
+    <p>For every gateway request we record the time, model, provider, pool (free or paid), status, prompt and completion token counts (for Claude models, also how many prompt tokens were read from or written to Anthropic's prompt cache), credit cost, latency and a request ID, plus daily counters for your plan limits. These records power the dashboard, enforce limits, settle credits and help resolve billing questions.</p>
     <h3>CLI sign-in, sessions and API keys</h3>
     <p>When you run <code>neuron login</code>, we store the sign-in request so that you can check it came from your device before you approve it at neuron.zero-x.live/device. The request holds its short code, a hash of the device code, the Neuron version, and the device name and operating system that your computer reports. It also holds the IP address the request came from, with its approximate country, region, city and network. Codes expire after 10 minutes, and the request is deleted about a day after its code expires. Neuron CLI sessions are stored under SHA-256 hashes of their tokens. API keys are stored as SHA-256 hashes with their name, prefix, creation time and last-used time. We cannot recover a full key after it is shown to you once.</p>
     <h3>Payments</h3>
@@ -69,8 +69,8 @@
 
     <h2 id="prompts">Prompts, code and model responses</h2>
     <p>Neuron CLI runs on your computer and decides which file contents, command output and messages to include in each request. Those requests travel to the Zero-X gateway, which forwards them to an upstream model provider and returns the response.</p>
-    <p id="gateway-logging"><strong>The gateway stores usage metadata only.</strong> It records the usage records listed above and nothing else about a request. The text of prompts, files, command output and model responses is held in memory only while the request is forwarded, and is never written to our database or logs. The one exception is for Google Gemini models: the gateway keeps the opaque continuation tokens Gemini returns with tool calls (not your text) in memory for up to 6 hours, so a multi-step conversation can continue.</p>
-    <p>The upstream provider processes the request under its own terms. <strong>Free tiers may use prompts and responses to improve their models and may allow human review.</strong> Paid plans can route requests to paid provider tiers when free capacity is unavailable. If you connect your own provider key directly in Neuron, those requests do not pass through Zero-X at all.</p>
+    <p id="gateway-logging"><strong>The gateway stores usage metadata only.</strong> It records the usage records listed above and nothing else about a request. The text of prompts, files, command output and model responses is held in memory only while the request is forwarded, and is never written to our database or logs. Two exceptions let a multi-step conversation continue, and both stay in memory only: for Google Gemini models, the gateway keeps the opaque continuation tokens Gemini returns with tool calls (not your text) for up to 6 hours; for Claude models, it keeps Claude's replies (their reasoning summaries with Anthropic's signatures, their text and their tool calls) for up to 2 hours after the conversation last used them, so the next request in the conversation can send that reasoning back to Anthropic unchanged.</p>
+    <p>The upstream provider processes the request under its own terms. <strong>Free tiers may use prompts and responses to improve their models and may allow human review.</strong> Paid plans can route requests to paid provider tiers when free capacity is unavailable. On Pro and Max, requests to Claude Sonnet 5.5 or Claude Opus 5.5 go to Anthropic. If you connect your own provider key directly in Neuron, those requests do not pass through Zero-X at all.</p>
     <p>NeuCockpit's local search and local AI features process the documents you choose on your own computer. Its optional cloud AI features send the message and any included document text through the same gateway.</p>
 
     <h2 id="processors">Service providers that may receive your data</h2>
@@ -79,6 +79,7 @@
         <caption>Providers process data under their own privacy policies and may do so outside India.</caption>
         <thead><tr><th scope="col">Provider</th><th scope="col">What it receives</th><th scope="col">Notes</th></tr></thead>
         <tbody>
+          <tr><th scope="row"><a href="https://www.anthropic.com/legal/privacy">Anthropic</a></th><td>Prompts and responses for Claude models (Claude Sonnet 5.5 and Claude Opus 5.5)</td><td>Paid models on Pro and Max, served through Zero-X's Anthropic API account under Anthropic's commercial terms. Anthropic does not use these prompts or responses to train its models. It deletes them after a limited retention period set out in its commercial terms, and may keep requests its safety systems flag for longer to review them. Prompt caching keeps the processed start of a conversation for about 5 minutes after its last use so the next turn costs less.</td></tr>
           <tr><th scope="row"><a href="https://groq.com/privacy-policy/">Groq</a></th><td>Prompts and responses for Groq-hosted models</td><td>Free and paid tiers.</td></tr>
           <tr><th scope="row"><a href="https://ai.google.dev/gemini-api/terms">Google Gemini API</a></th><td>Prompts and responses for Gemini models</td><td>On the free tier Google may use prompts and responses to improve its products and human reviewers may read them. The free pool is not used for callers in the EEA, the UK or Switzerland.</td></tr>
           <tr><th scope="row"><a href="https://www.cloudflare.com/privacypolicy/">Cloudflare</a></th><td>Prompts and responses for Workers AI models; website and API traffic; temporary session data</td><td>Hosts the website and gateway and runs Workers AI models.</td></tr>
@@ -98,7 +99,7 @@
     <h2 id="retention">How long we keep it</h2>
     <ul>
       <li><strong>Account, usage metadata and key records:</strong> while your account exists. After a verified deletion request we delete them within 30 days.</li>
-      <li><strong>Prompt and response text:</strong> not stored. It exists on the gateway only in memory while a request is in flight (Gemini continuation tokens: up to 6 hours in memory).</li>
+      <li><strong>Prompt and response text:</strong> not stored. It exists on the gateway only in memory while a request is in flight (Gemini continuation tokens: up to 6 hours in memory; Claude's replies, kept to continue a conversation: up to 2 hours after last use, in memory).</li>
       <li><strong>Operational logs:</strong> request IDs, model, provider, status and error codes, never prompt or response text or keys. Kept for at most 7 days.</li>
       <li><strong>Device sign-in requests:</strong> the device name, IP address and approximate location shown on the approval page, deleted one day after the request expires (requests expire after 10 minutes).</li>
       <li><strong>Payment notifications from Razorpay:</strong> 90 days, used to process each payment event once.</li>
