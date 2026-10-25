@@ -4,13 +4,16 @@
 //                          models with >= 64K context; mark catalog entries whose upstream id is
 //                          gone in HealthHub
 //   omniroute      weekly  OmniRoute's MIT free-tier catalog (omniroute.js)
-//   research       weekly  Claude with web search, only with ANTHROPIC_API_KEY (research.js);
-//                          providers it finds are also proposed as OIOP offers (discovered)
+//   research       weekly  Claude with web search, only with ANTHROPIC_API_KEY (research.js),
+//                          off with DISCOVERY_RESEARCH=false; providers it finds are also
+//                          proposed as OIOP offers (discovered)
 //   credits        weekly  free cloud and AI credit programs, with quoted evidence (credits.js);
-//                          only with ANTHROPIC_API_KEY, off with DISCOVERY_CREDITS=false
+//                          only with ANTHROPIC_API_KEY, off with DISCOVERY_RESEARCH=false or
+//                          DISCOVERY_CREDITS=false
 // Jobs only ever create or refresh candidates, offers in `discovered` and credit programs in
 // `new`. Approval, verification and promotion are operator actions (src/routes/discovery.js,
 // offers.js, credits.js); signing up to a provider or applying for credits stays manual.
+// Promotion only creates a draft catalog row; it serves once approved on /admin/models.
 import { databaseConfigured, rpcRows } from '../account-store.js';
 import { entryPools, loadCatalog, offeredEntries, poolKey } from '../catalog.js';
 import { markPoolsUnavailable } from '../health-hub-client.js';
