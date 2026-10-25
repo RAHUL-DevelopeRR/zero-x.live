@@ -783,7 +783,9 @@ Code: `src/catalog-types.js`, `src/list-prices.js`, `src/catalog-guardrails.js`,
   `message.reasoning_content`), separated from the answer by a blank line.
 - Ignored for Claude: `temperature`, `top_p`, `top_k`, `seed`, penalties, `user`. A forced
   `tool_choice` (`required` or a named function) is sent as `auto` with an instruction to call
-  the tool; `parallel_tool_calls: false` is kept.
+  the tool, as a last top-level system block (after the client's system and its cache breakpoint,
+  never inside the conversation; `response_format: json_object` likewise);
+  `parallel_tool_calls: false` is kept.
 - A refusal is `finish_reason: content_filter` with a fixed `delta.refusal` / `message.refusal`
   note (no server-side fallback model). `usage` carries `prompt_tokens` = input + cache writes +
   cache reads and `prompt_tokens_details: {cached_tokens, cache_write_tokens,

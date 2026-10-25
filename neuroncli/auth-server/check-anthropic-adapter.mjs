@@ -354,35 +354,58 @@ try {
       function: { name: 'bad', parameters: { type: 'array' } } }] })), ClaudeRequestError);
   });
 
-  await test("tool_choice: forced choices become auto plus a trailing system note; 'any' and 'tool' are never sent", () => {
+  await test("tool_choice: forced choices become auto plus a top-level system note that stays put; 'any' and 'tool' are never sent", () => {
     const base = [{ role: 'user', content: 'Weather in Paris?' }];
     const tools = [fn('get_weather', { city: { type: 'string' } })];
-    const note = choice => {
-      const { body } = toClaudeRequest(OPUS, payloadFor(base, { tools, tool_choice: choice }));
+    const REQUIRED = 'You must call at least one of the provided tools in this response.';
+    const note = (choice, entry = OPUS) => {
+      const { body } = toClaudeRequest(entry, payloadFor(base, { entry, tools, tool_choice: choice }));
       assert.ok(!/"type":"(any|tool)"/.test(JSON.stringify(body)), `${JSON.stringify(choice)} must not force a tool`);
+      assert.deepEqual(body.messages.map(message => message.role), ['user'], 'the conversation itself is never edited');
       return body;
     };
     for (const choice of ['required', { type: 'any' }]) {
       const body = note(choice);
       assert.deepEqual(body.tool_choice, { type: 'auto' });
-      assert.deepEqual(body.messages.at(-1), { role: 'system', content: 'You must call at least one of the provided tools in this response.' });
+      assert.deepEqual(body.system, [{ type: 'text', text: REQUIRED }], 'one system block, no breakpoint of its own');
     }
     for (const choice of [{ type: 'function', function: { name: 'get_weather' } }, { type: 'tool', name: 'get_weather' }]) {
       const body = note(choice);
       assert.deepEqual(body.tool_choice, { type: 'auto' });
-      assert.equal(body.messages.at(-1).content, 'You must call the get_weather tool in this response.');
+      assert.equal(body.system.at(-1).text, 'You must call the get_weather tool in this response.');
     }
+    assert.deepEqual(note('required', UNKNOWN).system, [{ type: 'text', text: REQUIRED }], 'models without traits get the same note');
     assert.deepEqual(note('none').tool_choice, { type: 'none' });
-    assert.equal(note('auto').messages.at(-1).role, 'user', 'no note for auto');
+    assert.equal(note('auto').system, undefined, 'no note for auto');
     assert.deepEqual(toClaudeRequest(OPUS, payloadFor(base, { tools, parallel_tool_calls: false })).body.tool_choice,
       { type: 'auto', disable_parallel_tool_use: true });
-    // A trailing client system message absorbs the note (two system turns in a row are not allowed).
-    const merged = toClaudeRequest(OPUS, payloadFor([...base, { role: 'system', content: 'Be brief.' }], { tools, tool_choice: 'required' })).body;
-    assert.deepEqual(merged.messages.at(-1), { role: 'system',
-      content: 'Be brief.\nYou must call at least one of the provided tools in this response.' });
+    // The client's system keeps its breakpoint; the note follows it. A trailing client system
+    // message stays a native system turn of its own.
+    const withSystem = [{ role: 'system', content: 'You are Neuron.' }, ...base, { role: 'system', content: 'Be brief.' }];
+    const merged = toClaudeRequest(OPUS, payloadFor(withSystem, { tools, tool_choice: 'required' })).body;
+    assert.deepEqual(merged.system, [{ type: 'text', text: 'You are Neuron.', cache_control: { type: 'ephemeral' } }, { type: 'text', text: REQUIRED }]);
+    assert.deepEqual(merged.messages.at(-1), { role: 'system', content: 'Be brief.' });
+    assert.equal(JSON.stringify(merged).match(/"cache_control"/g).length, 3, 'still at most 3 breakpoints');
+    // The next request of the same agent loop (same tool_choice) only appends to the conversation:
+    // the note is not in the history the client sends back, and nothing has to be taken out.
+    const replayCache = new ClaudeTurnCache();
+    const hooks = claudeTurnHooks(replayCache, 'user-123');
+    const echoed = { role: 'assistant', content: 'Checking.', tool_calls: [call('toolu_W1', 'get_weather', '{"city":"Paris"}')] };
+    replayCache.remember({ caller: 'user-123', fingerprint: messageFingerprint(echoed), blocks: [{ type: 'thinking', thinking: 'Use the tool.',
+      signature: 'sig-w' }, { type: 'text', text: 'Checking.' }, { type: 'tool_use', id: 'toolu_W1', name: 'get_weather', input: { city: 'Paris' } }] });
+    const options = { restore: message => hooks.lookup(messageFingerprint(message)) };
+    const first = stripCache(toClaudeRequest(OPUS, payloadFor([{ role: 'system', content: 'You are Neuron.' }, ...base],
+      { tools, tool_choice: 'required' }), options).body);
+    const second = stripCache(toClaudeRequest(OPUS, payloadFor([{ role: 'system', content: 'You are Neuron.' }, ...base, echoed,
+      toolMessage('toolu_W1', '18 C')], { tools, tool_choice: 'required' }), options).body);
+    assert.deepEqual(second.system, first.system);
+    assert.deepEqual(second.messages.slice(0, first.messages.length), first.messages, 'request N+1 extends request N');
+    assert.deepEqual(second.messages.map(message => message.role), ['user', 'assistant', 'user']);
+    assert.equal(second.messages[1].content[0].type, 'thinking', 'the replayed turn directly follows the user turn it answered');
     // json_object becomes a note; json_schema becomes output_config.format next to the effort.
     const jsonObject = toClaudeRequest(OPUS, payloadFor(base, { response_format: { type: 'json_object' } })).body;
-    assert.equal(jsonObject.messages.at(-1).content, 'Respond with a single JSON object and no other text.');
+    assert.deepEqual(jsonObject.system, [{ type: 'text', text: 'Respond with a single JSON object and no other text.' }]);
+    assert.deepEqual(jsonObject.messages.map(message => message.role), ['user']);
     const schema = { type: 'object', properties: { a: { type: 'string' } }, required: ['a'], additionalProperties: false };
     const jsonSchema = toClaudeRequest(OPUS, payloadFor(base, { response_format: { type: 'json_schema', json_schema: { name: 'x', schema } } })).body;
     assert.deepEqual(jsonSchema.output_config, { effort: 'medium', format: { type: 'json_schema', schema } });

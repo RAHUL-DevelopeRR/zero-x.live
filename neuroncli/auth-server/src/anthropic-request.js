@@ -329,18 +329,6 @@ function mapToolChoice(choice, parallel) {
   return { mapped, note };
 }
 
-// Gateway notes go after the last user turn: a native system turn (merged into a trailing one),
-// or, for models without mid-conversation system messages, a reminder in the last user turn.
-function appendNote(messages, text, systemMessages) {
-  const last = messages.at(-1);
-  if (systemMessages) {
-    if (last.role === 'system') last.content = `${last.content}\n${text}`;
-    else messages.push({ role: 'system', content: text });
-    return;
-  }
-  last.content = [...last.content, { type: 'text', text: reminder(text) }];
-}
-
 /**
  * Effort and thinking for one request. Effort is always explicit on the 5.5 models (default
  * 'medium'); 'minimal' is 'low'; 'none' is Sonnet's between_tools at 'low', and 'low' on Opus,
@@ -375,26 +363,30 @@ export function toClaudeRequest(entry, payload, { restore = null, metadataUserId
   const { tools, names } = mapTools(payload.tools, stream);
   const { system, messages, replayed } = mapMessages(payload.messages,
     { restore: replay ? restore : null, systemMessages: traits.systemMessages });
-  const notes = [];
-  const betas = [];
-  const body = { model, max_tokens: payload.max_tokens };
-  if (system.length) {
-    system[system.length - 1] = { ...system.at(-1), cache_control: EPHEMERAL };
-    body.system = system;
-  }
-  if (tools) {
-    body.tools = tools;
-    const { mapped, note } = mapToolChoice(payload.tool_choice, payload.parallel_tool_calls);
-    body.tool_choice = mapped;
-    if (note) notes.push(note);
-  }
-  const stops = (typeof payload.stop === 'string' ? [payload.stop] : Array.isArray(payload.stop) ? payload.stop : []).filter(hasText);
-  if (stops.length) body.stop_sequences = stops;
+  const toolChoice = tools ? mapToolChoice(payload.tool_choice, payload.parallel_tool_calls) : null;
   const responseFormat = payload.response_format;
   const format = responseFormat?.type === 'json_schema' && responseFormat.json_schema?.schema &&
     typeof responseFormat.json_schema.schema === 'object'
     ? { type: 'json_schema', schema: responseFormat.json_schema.schema } : null;
+  const notes = [];
+  if (toolChoice?.note) notes.push(toolChoice.note);
   if (responseFormat?.type === 'json_object') notes.push('Respond with a single JSON object and no other text.');
+  const betas = [];
+  const body = { model, max_tokens: payload.max_tokens };
+  if (system.length) system[system.length - 1] = { ...system.at(-1), cache_control: EPHEMERAL };
+  // Gateway notes (a forced tool_choice, json_object) are one more top-level system block, after
+  // the client's system and its breakpoint. They stay put while the client keeps the same
+  // tool_choice, like the tool_choice setting itself. A note appended after the last user turn
+  // was an edit to the conversation that the next request, rebuilt from the client's history
+  // without it, undid: that moved every later message and invalidated the replayed thinking.
+  if (notes.length) system.push({ type: 'text', text: notes.join('\n') });
+  if (system.length) body.system = system;
+  if (tools) {
+    body.tools = tools;
+    body.tool_choice = toolChoice.mapped;
+  }
+  const stops = (typeof payload.stop === 'string' ? [payload.stop] : Array.isArray(payload.stop) ? payload.stop : []).filter(hasText);
+  if (stops.length) body.stop_sequences = stops;
   if (traits.adaptive) {
     if (thinkingOff) {
       body.thinking = { type: 'between_tools' }; // Sonnet 5.5 only; no other field is allowed with it
@@ -413,7 +405,6 @@ export function toClaudeRequest(entry, payload, { restore = null, metadataUserId
     body.output_config = { format };
   }
   if (metadataUserId) body.metadata = { user_id: metadataUserId };
-  if (notes.length) appendNote(messages, notes.join('\n'), traits.systemMessages);
   body.messages = messages;
   body.cache_control = EPHEMERAL; // automatic breakpoint on the growing conversation tail
   body.stream = true;             // always streamed upstream; non-streaming callers get an aggregate
