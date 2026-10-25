@@ -805,7 +805,8 @@ Code: `src/catalog-types.js`, `src/list-prices.js`, `src/catalog-guardrails.js`,
   It resets at 00:00 UTC; choose another model until then."
 - `zerox_reserve_v2` counts `user_rpm` per client request (failover attempts `<id>.<n>` share one).
   `zerox_release_stale_reservations` frees paid holds after 60 minutes, free ones after 15.
-  `zerox_admin_overview` pools and keys add `cost_today_microusd`.
+  `zerox_admin_overview` pools and keys add `cost_today_microusd`; `GET /admin/overview` pools and
+  keys carry it too, and paid pools add `spend_cap_microusd` (the billed daily cap).
 - `/api/usage` `by_model` rows and `/api/usage/events` events add `cache_read_tokens` and
   `cache_write_tokens` (part of `prompt_tokens`). `insufficient_credits` explains that held credits
   count as used and to lower `max_tokens`, top up or wait for renewal.

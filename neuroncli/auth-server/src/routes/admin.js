@@ -3,15 +3,19 @@ import { errorResponse, sendApiError } from '../auth-context.js';
 import { isOperator } from '../operator-auth.js';
 import { entryPools, loadCatalog, offeredEntries, poolConfigured, poolKey } from '../catalog.js';
 import { globalHealthTracker } from '../provider-health.js';
+import { billedDailyCapMicrousd } from '../catalog-guardrails.js';
 
 const counter = value => {
   const number = Number(value);
   return Number.isFinite(number) && number >= 0 ? number : 0;
 };
 
+// cost_today_microusd: the pool's held plus settled credit cost of the UTC day (paid pools), the
+// figure zerox_reserve_v2 checks against the daily spend cap.
 const counters = row => ({
   requests_today: counter(row?.requests_today), tokens_today: counter(row?.tokens_today),
   requests_this_minute: counter(row?.requests_this_minute), tokens_this_minute: counter(row?.tokens_this_minute),
+  cost_today_microusd: counter(row?.cost_today_microusd),
 });
 const budget = limits => limits ? { rpm: limits.rpm ?? null, rpd: limits.rpd ?? null, tpm: limits.tpm ?? null, tpd: limits.tpd ?? null } : null;
 
@@ -22,7 +26,8 @@ const budget = limits => limits ? { rpm: limits.rpm ?? null, rpd: limits.rpd ?? 
 // bucket), budget and health. The pool itself reports the model totals: counters summed over
 // its keys, `limits` the sum of their budgets and its best key's health, since it serves while
 // any key can. Keys disabled since they served today keep their counters (with no budget or
-// health), as they are part of the totals.
+// health), as they are part of the totals. Paid pools add spend_cap_microusd, their daily spend
+// cap in billed micro-USD (p_pool.cpd), to compare with cost_today_microusd.
 export function overviewPools(env, rows = [], tracker = globalHealthTracker) {
   const byPool = new Map(rows.filter(row => row && typeof row === 'object').map(row => [`${row.model}#${row.tier}`, row]));
   const snapshot = tracker.getSnapshot();
@@ -59,6 +64,7 @@ export function overviewPools(env, rows = [], tracker = globalHealthTracker) {
         configured: served.some(item => poolConfigured(env, entry, item)),
         ...counters(row),
         limits: budget(served[0]?.shared_limits || pool.limits),
+        ...(pool.tier === 'paid' ? { spend_cap_microusd: billedDailyCapMicrousd(env, entry, pool) } : {}),
         health: best.health,
         ...(keys.some(key => key.source === 'vault') ? { keys } : {}),
       });

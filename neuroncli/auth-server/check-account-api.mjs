@@ -752,7 +752,11 @@ try {
   assert.equal(groqFree.health.circuit_open, true);
   assert.equal(pools.find(pool => pool.model === 'groq/openai/gpt-oss-120b' && pool.tier === 'paid').limits, null, 'paid pools have no shared budget');
   assert.equal(pools.find(pool => pool.model === 'gemini/gemini-2.5-flash' && pool.tier === 'free').health.status, 'HEALTHY');
-  assert.ok(pools.every(pool => ['model', 'tier', 'requests_today', 'tokens_today', 'limits', 'health'].every(key => key in pool)));
+  assert.ok(pools.every(pool => ['model', 'tier', 'requests_today', 'tokens_today', 'cost_today_microusd', 'limits', 'health'].every(key => key in pool)));
+  const spend = overviewPools({ GROQ_API_KEY: 'g', GROQ_PAID_API_KEY: 'p' }, [{ model: 'groq/openai/gpt-oss-120b', tier: 'paid', requests_today: 3,
+    cost_today_microusd: 4200 }], tracker).find(pool => pool.model === 'groq/openai/gpt-oss-120b' && pool.tier === 'paid');
+  assert.deepEqual([spend.cost_today_microusd, spend.spend_cap_microusd], [4200, 6250000], 'paid pools: spend today against the billed daily cap');
+  assert.ok(!('spend_cap_microusd' in groqFree), 'free pools have no spend cap');
   assert.equal(pools.find(pool => pool.model === 'retired/model').requests_today, 2, 'counters of pools no longer offered stay visible');
   assert.ok(Array.isArray(overview.body.pools) && overview.body.pools.some(pool => pool.limits), 'the route returns the merged pools');
   db.fail.add('zerox_admin_overview');
