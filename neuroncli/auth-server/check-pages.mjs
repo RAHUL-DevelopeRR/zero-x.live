@@ -9,7 +9,7 @@ const root = new URL('../../', import.meta.url);
 const read = file => readFileSync(new URL(file, root), 'utf8');
 const isFile = file => existsSync(new URL(file, root)) && statSync(new URL(file, root)).isFile();
 
-const PUBLIC_PAGES = ['index.html', 'pricing.html', 'neuron-cli.html', 'docs.html', 'refund.html', 'contact.html', 'shipping.html', 'privacy.html', 'terms.html'];
+const PUBLIC_PAGES = ['index.html', 'pricing.html', 'neuron-cli.html', 'docs.html', 'ai-coding-agent.html', 'refund.html', 'contact.html', 'shipping.html', 'privacy.html', 'terms.html'];
 const PRIVATE_PAGES = ['dashboard.html', '404.html', 'neuroncli/index.html'];
 const SITE_SCRIPTS = ['dashboard.js', 'pricing.js', 'billing-checkout.js', 'home.js'];
 const SITE_FILES = [...PUBLIC_PAGES, ...PRIVATE_PAGES, ...SITE_SCRIPTS, 'zx-tokens.css', 'home.css', 'zerox-auth.js', 'neuroncli/login/index.html', 'neuroncli/callback/index.html'];
@@ -313,6 +313,15 @@ for (const file of ['pricing.html', 'neuron-cli.html']) {
     assert.equal(cell.text, formatMoney(currency === 'INR' ? pack.price.inr_paise : pack.price.usd_cents, currency), `${file}: top-up ${cell.key}`);
   }
   for (const cell of dataCells(html, 'data-topup-credit')) assert.equal(cell.text, formatUsdAmount(PLAN_CATALOG.topups.find(t => t.id === cell.key).credit_usd));
+}
+// The coding-agent guide quotes Free plan limits without loading pricing.js, so its static text must match the catalog.
+{
+  const cells = dataCells(read('ai-coding-agent.html'), 'data-plan-limit');
+  assert.ok(cells.length >= 2, 'ai-coding-agent.html: limit cells');
+  for (const cell of cells) {
+    const [id, field] = cell.key.split(':');
+    assert.equal(cell.text, limitLabel(PLAN_CATALOG.plans.find(p => p.id === id), field), `ai-coding-agent.html: ${cell.key}`);
+  }
 }
 {
   const html = read('pricing.html');

@@ -51,6 +51,7 @@ for (const [url, target] of [
   ['https://neuron.zero-x.live/start', 'https://zero-x.live/neuron-cli#install'],
   ['https://neuron.zero-x.live/find-files-by-content', 'https://zero-x.live/find-files-by-content'],
   ['https://zero-x.live/about/', 'https://zero-x.live/about'], ['https://zero-x.live/about.html', 'https://zero-x.live/about'],
+  ['https://zero-x.live/ai-coding-agent.html', 'https://zero-x.live/ai-coding-agent'], ['https://www.zero-x.live/ai-coding-agent', 'https://zero-x.live/ai-coding-agent'],
   ['https://zero-x.live/index2.html', 'https://zero-x.live/'],
 ]) {
   for (const method of ['GET', 'HEAD']) {

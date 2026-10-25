@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>What Is an AI Coding Agent? How Neuron Works | Zero-X</title>
+  <meta name="description" content="An AI coding agent reads your repo, plans a change, edits files and runs your tests. How the loop, permissions and models work, and how to try Neuron free.">
+  <meta name="robots" content="index,follow,max-image-preview:large">
+  <link rel="canonical" href="https://zero-x.live/ai-coding-agent">
+  <meta name="theme-color" content="#0A0A0C">
+  <link rel="icon" type="image/png" sizes="32x32" href="/Assets/zerox-favicon-32.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/Assets/zerox-apple-touch-icon.png">
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="Zero-X">
+  <meta property="og:title" content="What is an AI coding agent?">
+  <meta property="og:description" content="How a coding agent reads, edits and tests your code, what it should be allowed to do, and how to try one in your terminal with Neuron by Zero-X.">
+  <meta property="og:url" content="https://zero-x.live/ai-coding-agent">
+  <meta property="og:image" content="https://zero-x.live/Assets/zerox-share.png">
+  <meta property="og:image:alt" content="Zero-X logo">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="What is an AI coding agent?">
+  <meta name="twitter:description" content="How a coding agent reads, edits and tests your code, and how to try one in your terminal with Neuron by Zero-X.">
+  <meta name="twitter:image" content="https://zero-x.live/Assets/zerox-share.png">
+  <meta name="twitter:image:alt" content="Zero-X logo">
+  <link rel="stylesheet" href="/site-fonts.css">
+  <link rel="stylesheet" href="/zx-tokens.css">
+  <script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"TechArticle","@id":"https://zero-x.live/ai-coding-agent#article","headline":"What is an AI coding agent?","description":"How an AI coding agent reads, edits and tests code, what it should be allowed to do, which models it uses and how to try Neuron in your terminal.","datePublished":"2026-10-24","dateModified":"2026-10-24","author":{"@id":"https://zero-x.live/#organization"},"publisher":{"@id":"https://zero-x.live/#organization"},"mainEntityOfPage":"https://zero-x.live/ai-coding-agent","isPartOf":{"@id":"https://zero-x.live/#website"},"about":[{"@type":"Thing","name":"AI coding agent"},{"@id":"https://zero-x.live/#neuron"}],"image":"https://zero-x.live/Assets/zerox-share.png"},{"@type":"FAQPage","@id":"https://zero-x.live/ai-coding-agent#faq","mainEntity":[{"@type":"Question","name":"Is a coding agent the same as an AI agent?","acceptedAnswer":{"@type":"Answer","text":"A coding agent is one kind of AI agent. An AI agent is any program where a model chooses actions and uses tools toward a goal. A coding agent's tools are for software work: reading and editing files, searching code and running commands."}},{"@type":"Question","name":"Is Neuron free?","acceptedAnswer":{"@type":"Answer","text":"Neuron is open source under the MIT licence. The Zero-X Free plan gives you hosted models with daily limits at no cost, or you can use your own API key. Pro and Max raise the limits."}},{"@type":"Question","name":"Does Neuron work on Windows?","acceptedAnswer":{"@type":"Answer","text":"Yes. A Windows x64 build installs with PowerShell, and Neuron can run PowerShell commands as well as shell commands. Windows on Arm runs the x64 build under emulation."}},{"@type":"Question","name":"Can I run a coding agent in CI?","acceptedAnswer":{"@type":"Answer","text":"Yes. Create an API key in the Zero-X dashboard, store it as a CI secret in NEURON_TOKEN and run neuron -p with your task. Never commit the key."}}]},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Zero-X","item":"https://zero-x.live/"},{"@type":"ListItem","position":2,"name":"AI coding agent guide","item":"https://zero-x.live/ai-coding-agent"}]}]}</script>
+</head>
+<body>
+  <a class="zx-skip" href="#main">Skip to content</a>
+  <header class="zx-header">
+    <div class="zx-container zx-header__inner">
+      <a class="zx-brand" href="/"><img src="/Assets/zerox-favicon-32.png" width="28" height="28" alt="">Zero-X</a>
+      <nav class="zx-nav" aria-label="Main">
+        <a href="/neuron-cli">Neuron CLI</a>
+        <a href="/pricing">Pricing</a>
+        <a href="/docs">Docs</a>
+        <a class="zx-btn zx-btn--sm" href="https://dashboard.zero-x.live/">Dashboard</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main" class="zx-container zx-legal zx-section--tight">
+    <nav class="zx-breadcrumb" aria-label="Breadcrumb"><a href="/">Zero-X</a> / AI coding agent guide</nav>
+    <article>
+    <h1>What is an AI coding agent?</h1>
+    <p class="zx-updated">A guide by <a href="/about">Zero-X</a>, the team behind Neuron. Published 24 October 2026.</p>
+    <p class="zx-lead">An AI coding agent is a program that uses a large language model to work on a codebase the way a developer does at a terminal. It reads files, decides what to change, edits them, runs commands such as your tests or build, looks at the result and repeats until the task is done or it needs your decision.</p>
+    <p>This guide explains how that loop works, what an agent should be allowed to do, where your code goes and which tasks suit an agent. The examples use <a href="/neuron-cli">Neuron</a>, the open-source coding agent Zero-X builds for macOS, Linux and Windows.</p>
+
+    <h2 id="compared">Coding agents, autocomplete and chat assistants</h2>
+    <p>Three kinds of AI developer tools are often grouped together:</p>
+    <ul>
+      <li><strong>Autocomplete</strong> suggests the next lines while you type in an editor. You accept or reject each suggestion.</li>
+      <li><strong>A chat assistant</strong> answers questions and writes snippets. You copy the code into your project and run it yourself.</li>
+      <li><strong>A coding agent</strong> acts on the project. It has tools to read and change files and to run commands, so it can take a task from finding the relevant code to passing tests, and then show you what it did.</li>
+    </ul>
+    <p>The difference is who closes the loop. With autocomplete and chat, you run the code and bring the errors back. An agent runs the check itself, reads the failure and tries again.</p>
+
+    <h2 id="loop">How the agent loop works</h2>
+    <ol class="zx-steps">
+      <li><p><strong>Explore.</strong> The agent searches the repository, for example with glob and grep, and reads the files that matter for your request instead of the whole project.</p></li>
+      <li><p><strong>Plan.</strong> It decides what to change. For longer jobs Neuron keeps a task list so each step stays visible.</p></li>
+      <li><p><strong>Edit.</strong> It writes new files or edits existing ones.</p></li>
+      <li><p><strong>Check.</strong> It runs your tests, build or linter, reads the output and fixes what failed.</p></li>
+      <li><p><strong>Report.</strong> It tells you what changed and why, so you can review the diff before you commit.</p></li>
+    </ol>
+    <p>Each pass through the loop is a model request plus the tool calls it makes. A small fix may take a few passes and a larger change takes more, which is why daily request and token limits matter.</p>
+
+    <h2 id="permissions">What the agent may do without asking</h2>
+    <p>An agent that can run commands needs clear limits. Neuron has three permission modes:</p>
+    <ul>
+      <li><code>read-only</code> only reads and searches. It is a safe way to start in a repository you do not know yet.</li>
+      <li><code>workspace-write</code> is the default.</li>
+      <li><code>danger-full-access</code> applies only when you choose it with <code>--permission-mode</code>.</li>
+    </ul>
+    <p>When a tool call needs approval, Neuron asks you: allow once, allow for the session, deny, or deny with a note. Every shell line is classified as a whole. Neuron also ignores a folder's own settings, hooks and MCP servers until you trust that folder.</p>
+    <p>Whichever agent you use, start from a git repository with a clean working tree. Every change the agent makes is then a diff you can review, keep or discard.</p>
+
+    <h2 id="models">Which model runs it, and who sees your code</h2>
+    <p>The agent is the loop and its tools; the model decides each step. Neuron can use:</p>
+    <ul>
+      <li>Hosted models through Zero-X after <code>neuron login</code>, from providers including Google Gemini, Groq, NVIDIA, OpenRouter and Cloudflare Workers AI. Choose <code>auto</code> and Neuron picks a tool-capable model whose context window fits the request. See the <a href="/neuron-cli#models">current model list</a>.</li>
+      <li>Your own provider. Set <code>OPENAI_API_KEY</code> and <code>OPENAI_BASE_URL</code> for any OpenAI-compatible endpoint, or connect your own OpenRouter account.</li>
+    </ul>
+    <p>The files and messages an agent includes in a request go to the provider serving the model. Free tiers of some providers may use prompts to improve their models. The Zero-X gateway records usage metadata (model, tokens, cost, latency) and is not designed to store prompt or response text. Read the <a href="/privacy">privacy policy</a> before you point an agent at code you cannot share.</p>
+
+    <h2 id="tasks">Good first tasks</h2>
+    <p>Agents do best with a concrete request and a way to check the result. A few to try:</p>
+    <ul>
+      <li>Explain how requests are authenticated in this repo.</li>
+      <li>Add a test for an expired token and fix whatever fails.</li>
+      <li>Run the test suite and summarise the failures.</li>
+      <li>Rename this function everywhere and update its callers.</li>
+      <li>Document the configuration options in the README.</li>
+    </ul>
+    <p>A vague goal such as "improve the code" gives the agent nothing to verify. Name the files, the behaviour you expect and the command that proves it works.</p>
+
+    <h2 id="limits">Limits to keep in mind</h2>
+    <ul>
+      <li>Models can be wrong and sound certain. Review the diff and run the checks yourself before you merge.</li>
+      <li>A model sees only what fits in its context window, and long sessions fill it. In Neuron's line REPL, <code>/compact</code> shrinks a long session.</li>
+      <li>Free hosted models come from shared pools with best-effort availability. Neuron's Free plan allows <span data-plan-limit="free:daily_requests">100</span> requests and <span data-plan-limit="free:daily_tokens">500K</span> tokens a day; <a href="/pricing">Pro and Max</a> raise the limits.</li>
+      <li>Neuron 7.0.0-alpha.1 is an alpha, so expect rough edges and read the <a href="https://github.com/RAHUL-DevelopeRR/neuron-v2/blob/HEAD/CHANGELOG.md">known limitations</a>. The binaries are not code-signed (Windows) or notarized (macOS).</li>
+    </ul>
+
+    <h2 id="try">Try a coding agent in your terminal</h2>
+    <p>Neuron installs with one command on macOS, Linux and Windows.</p>
+    <div class="zx-code"><span class="zx-code__label">macOS and Linux</span><pre><code>curl -fsSL https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.1/install.sh | sh -s -- --version 7.0.0-alpha.1</code></pre></div>
+    <div class="zx-code"><span class="zx-code__label">Windows (PowerShell)</span><pre><code>&amp; ([scriptblock]::Create((irm https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.1/install.ps1))) -Version 7.0.0-alpha.1</code></pre></div>
+    <p>Then sign in once and start Neuron in a project:</p>
+    <div class="zx-code"><span class="zx-code__label">First run</span><pre><code>neuron login
+cd path/to/your-project
+neuron</code></pre></div>
+    <p><code>neuron login</code> shows a short code to approve at neuron.zero-x.live/device. For CI, create an API key in the dashboard and run Neuron headless with <code>neuron -p</code>. The <a href="/docs#quickstart">quickstart</a> covers folder trust, models and commands.</p>
+    <div class="zx-row">
+      <a class="zx-btn zx-btn--primary" href="/neuron-cli#install">Install Neuron</a>
+      <a class="zx-btn" href="/docs">Read the docs</a>
+      <a class="zx-btn zx-btn--ghost" href="/pricing">Compare plans</a>
+    </div>
+
+    <h2 id="faq">Questions</h2>
+    <div class="zx-faq">
+      <details>
+        <summary>Is a coding agent the same as an AI agent?</summary>
+        <p>A coding agent is one kind of AI agent. An AI agent is any program where a model chooses actions and uses tools toward a goal. A coding agent's tools are for software work: reading and editing files, searching code and running commands.</p>
+      </details>
+      <details>
+        <summary>Is Neuron free?</summary>
+        <p>Neuron is open source under the MIT licence. The Zero-X Free plan gives you hosted models with daily limits at no cost, or you can use your own API key. <a href="/pricing">Pro and Max</a> raise the limits.</p>
+      </details>
+      <details>
+        <summary>Does Neuron work on Windows?</summary>
+        <p>Yes. A Windows x64 build installs with PowerShell, and Neuron can run PowerShell commands as well as shell commands. Windows on Arm runs the x64 build under emulation.</p>
+      </details>
+      <details>
+        <summary>Can I run a coding agent in CI?</summary>
+        <p>Yes. Create an API key in the <a href="https://dashboard.zero-x.live/">Zero-X dashboard</a>, store it as a CI secret in <code>NEURON_TOKEN</code> and run <code>neuron -p</code> with your task. Never commit the key.</p>
+      </details>
+    </div>
+    </article>
+  </main>
+
+  <footer class="zx-footer">
+    <div class="zx-container zx-footer__grid">
+      <div>
+        <a class="zx-brand" href="/">Zero-X</a>
+        <p>Neuron CLI and NeuCockpit. Built in Tamil Nadu, India.</p>
+      </div>
+      <nav aria-label="Product">
+        <h2>Product</h2>
+        <a href="/neuron-cli">Neuron CLI</a>
+        <a href="/pricing">Pricing</a>
+        <a href="/docs">Docs</a>
+        <a href="/ai-coding-agent" aria-current="page">AI coding agent guide</a>
+        <a href="https://dashboard.zero-x.live/">Dashboard</a>
+      </nav>
+      <nav aria-label="Company">
+        <h2>Company</h2>
+        <a href="/about">About</a>
+        <a href="/contact">Contact</a>
+        <a href="https://zero-x.live/neucockpit">NeuCockpit</a>
+      </nav>
+      <nav aria-label="Legal">
+        <h2>Legal</h2>
+        <a href="/terms">Terms of Service</a>
+        <a href="/privacy">Privacy Policy</a>
+        <a href="/refund">Cancellation and refunds</a>
+        <a href="/shipping">Shipping and delivery</a>
+      </nav>
+    </div>
+    <p class="zx-container zx-footer__legal">© 2026 Zero-X · <a href="mailto:support@zero-x.live">support@zero-x.live</a></p>
+  </footer>
+</body>
+</html>

@@ -1,0 +1,28 @@
+# Zero-X
+
+> Zero-X (also written Zero X or ZeroX) builds Neuron, an open-source AI coding agent for the terminal, and NeuCockpit, local AI file search for desktop. Zero-X is based in Tamil Nadu, India. Website: https://zero-x.live/
+
+- Neuron reads a repository, plans a change, edits files and runs commands such as tests or builds, asking before anything its permission mode does not allow.
+- Neuron is written in Rust and MIT-licensed. The current release is 7.0.0-alpha.1, a GitHub pre-release for macOS, Linux and Windows.
+- Neuron uses hosted models through the Zero-X gateway after `neuron login`, or any OpenAI-compatible endpoint with your own API key. A Free plan is available; Pro and Max plans raise the daily limits.
+- Zero-X is not affiliated with Anthropic, OpenAI, Google, Groq, Cloudflare or any other model provider, and is not connected with the Infinix ZERO X phones or the Zero X electric motorcycle.
+
+## Neuron, the AI coding agent
+
+- [Neuron CLI](https://zero-x.live/neuron-cli): features, permission modes, install commands, first run and the model list
+- [What is an AI coding agent?](https://zero-x.live/ai-coding-agent): how the agent loop, permissions and models work, with Neuron as the example
+- [Docs](https://zero-x.live/docs): quickstart, CLI commands, configuration, the OpenAI-compatible Zero-X API, error codes and limits
+- [Pricing](https://zero-x.live/pricing): Free, Pro and Max plans and credit top-ups
+- [Source code and releases](https://github.com/RAHUL-DevelopeRR/neuron-v2): Rust source, changelog and release binaries
+
+## NeuCockpit, local AI file search
+
+- [NeuCockpit](https://zero-x.live/neucockpit): find documents by meaning and summarize them with local AI on Windows, macOS and Linux
+- [Find a file when you forgot its name](https://zero-x.live/find-files-by-content): a practical guide to searching by contents
+
+## Company
+
+- [About Zero-X](https://zero-x.live/about): what Zero-X builds, official links and contact address
+- [Contact](https://zero-x.live/contact): support@zero-x.live
+- [Privacy Policy](https://zero-x.live/privacy): what the gateway records and how prompts reach model providers
+- [Terms of Service](https://zero-x.live/terms)

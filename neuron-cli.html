@@ -24,7 +24,7 @@
   <meta name="twitter:image:alt" content="Zero-X logo">
   <link rel="stylesheet" href="/site-fonts.css">
   <link rel="stylesheet" href="/zx-tokens.css">
-  <script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"SoftwareApplication","@id":"https://zero-x.live/neuron-cli#software","name":"Neuron CLI","applicationCategory":"DeveloperApplication","operatingSystem":"Windows, macOS, Linux","url":"https://zero-x.live/neuron-cli","description":"A repo-aware AI coding agent for the terminal that reads, edits and tests code with the user's permission.","publisher":{"@id":"https://zero-x.live/#organization"},"offers":{"@type":"Offer","name":"Free","price":"0","priceCurrency":"USD","url":"https://zero-x.live/pricing#plan-free"},"softwareVersion":"7.0.0-alpha.1","downloadUrl":"https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/tag/v7.0.0-alpha.1"},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Zero-X","item":"https://zero-x.live/"},{"@type":"ListItem","position":2,"name":"Neuron CLI","item":"https://zero-x.live/neuron-cli"}]}]}</script>
+  <script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"SoftwareApplication","@id":"https://zero-x.live/#neuron","name":"Neuron CLI","applicationCategory":"DeveloperApplication","operatingSystem":"Windows, macOS, Linux","url":"https://zero-x.live/neuron-cli","description":"A repo-aware AI coding agent for the terminal that reads, edits and tests code with the user's permission.","publisher":{"@id":"https://zero-x.live/#organization"},"offers":{"@type":"Offer","name":"Free","price":"0","priceCurrency":"USD","url":"https://zero-x.live/pricing#plan-free"},"softwareVersion":"7.0.0-alpha.1","downloadUrl":"https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/tag/v7.0.0-alpha.1","alternateName":["Neuron","Neuron by Zero-X","Zero-X Neuron"],"applicationSubCategory":"AI coding agent","isAccessibleForFree":true,"license":"https://opensource.org/licenses/MIT","featureList":["Reads, writes and edits files in your repository","Runs shell or PowerShell commands, tests and builds","Permission modes: read-only, workspace-write and danger-full-access","Full-screen terminal UI and a line REPL","MCP servers and subagents","Headless runs for CI with neuron -p","Hosted models through Zero-X or your own OpenAI-compatible API key"]},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Zero-X","item":"https://zero-x.live/"},{"@type":"ListItem","position":2,"name":"Neuron CLI","item":"https://zero-x.live/neuron-cli"}]}]}</script>
   <script type="module" src="/pricing.js"></script>
 </head>
 <body>
@@ -59,6 +59,7 @@
 
     <section class="zx-container zx-section" id="features" aria-labelledby="features-title">
       <h2 id="features-title">What Neuron does</h2>
+      <p class="zx-muted">New to coding agents? Read <a href="/ai-coding-agent">what an AI coding agent is and how its loop works</a>.</p>
       <div class="zx-grid zx-grid--4">
         <article class="zx-card"><h3>Repo-aware agent loop</h3><p class="zx-muted">Neuron explores the files that matter, makes a plan, edits code and checks the result by running your tests or build, then reports what changed.</p></article>
         <article class="zx-card"><h3>Built-in tools</h3><p class="zx-muted">Read, write and edit files, search with glob and grep, run shell or PowerShell commands, fetch web pages and keep a task list for longer jobs.</p></article>
@@ -204,6 +205,7 @@ neuron -p "Run the test suite and summarise the failures"</code></pre></div>
         <a href="/neuron-cli">Neuron CLI</a>
         <a href="/pricing">Pricing</a>
         <a href="/docs">Docs</a>
+        <a href="/ai-coding-agent">AI coding agent guide</a>
         <a href="https://dashboard.zero-x.live/">Dashboard</a>
       </nav>
       <nav aria-label="Company">

@@ -21,6 +21,8 @@
 }
 .zx-home-hero > * { min-width: 0; }
 .zx-home-hero h1 { font-size: clamp(2.25rem, 7.5vw, 4rem); letter-spacing: -.025em; max-width: 14ch; }
+/* The eyebrow sits inside the h1 so the heading names Zero-X; it still looks like a standalone eyebrow. */
+.zx-home-hero h1 .zx-eyebrow { display: block; width: max-content; font-weight: 400; line-height: 1.5; }
 .zx-home-hero .zx-lead { max-width: 620px; }
 @media (min-width: 960px) {
   .zx-home-hero { grid-template-columns: minmax(0, 1.05fr) minmax(0, .95fr); gap: 56px; padding-block: 88px 40px; }
