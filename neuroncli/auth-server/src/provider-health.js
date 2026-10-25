@@ -38,7 +38,8 @@ export function failureKindForStatus(status) {
   if (status === 400 || status === 422) return FailureKind.INVALID;
   if (status === 404) return FailureKind.MODEL_UNAVAILABLE;
   if (status === 429) return FailureKind.RATE_LIMITED;
-  if (status === 401 || status === 403) return FailureKind.AUTH;
+  // 402: the upstream account is out of credit (Claude billing_error), like a revoked key.
+  if (status === 401 || status === 402 || status === 403) return FailureKind.AUTH;
   if (status === 408) return FailureKind.TIMEOUT;
   return FailureKind.SERVER;
 }

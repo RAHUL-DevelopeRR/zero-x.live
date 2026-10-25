@@ -4,8 +4,8 @@
 // stubbed globalThis.fetch serving canned Claude SSE streams and error responses, and the
 // adapter's output goes through the gateway's own startCompletion / createCompletionStream.
 //
-// The adapter is not registered in providers.js yet (the integration step does that); this
-// script registers it in ADAPTERS for its own run.
+// providers.js registers ADAPTERS.anthropic; this script swaps in its own instances (fast
+// keep-alives, isolated beta state) and puts the registered one back at the end.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import {
@@ -596,13 +596,13 @@ try {
       }
     }
     // 402 billing_error arrives with its status and Claude's body. provider-health.js maps 402 to
-    // AUTH once the integration's one-line failureKindForStatus change lands; either way it is a
-    // provider-side failure: refunded to the user and never "free capacity exhausted".
+    // AUTH (the account is out of credit, like a revoked key): a provider-side failure, refunded
+    // to the user, the pool parked, and never "free capacity exhausted".
     upstream = httpError(402, 'billing_error', 'Your credit balance is too low');
     const billing = await startCompletion(ENV, SESSION, OPUS, POOL, payloadFor([{ role: 'user', content: 'hi' }]), { timeouts: TIMEOUTS });
     assert.equal(billing.status, 402);
     assert.equal(JSON.parse(billing.bodyText).error.type, 'billing_error');
-    assert.ok([FailureKind.AUTH, FailureKind.SERVER].includes(classifyUpstreamFailure(402, billing.bodyText, billing.headers).kind));
+    assert.equal(classifyUpstreamFailure(402, billing.bodyText, billing.headers).kind, FailureKind.AUTH);
     // A redirect is never followed with the key: the 3xx fails the attempt as SERVER.
     upstream = () => new Response('moved', { status: 302, headers: { location: 'https://evil.example/v1/messages' } });
     const before = calls.length;

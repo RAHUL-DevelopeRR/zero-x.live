@@ -4,11 +4,12 @@ import {
   ownedCatalog, startCompletion, streamTimeouts, upstreamErrorSummary,
 } from './providers.js';
 import { globalSignatureCache } from './provider-request.js';
+import { claudeTurnHooks, globalClaudeTurnCache } from './anthropic-turns.js';
 import { globalRouter } from './router.js';
 import { FailureKind, globalHealthTracker } from './provider-health.js';
 import { hubHealthForRouting, hubHealthRows, publishHealth } from './health-hub-client.js';
 import { readShared } from './health-share.js';
-import { callerCountry, loadCatalogDbModels, loadPlanPolicies, planPolicy, poolSecret, resolveModelId } from './catalog.js';
+import { callerCountry, loadCatalog, loadPlanPolicies, planPolicy, poolSecret, resolveModelId } from './catalog.js';
 import { touchVaultKey } from './provider-keys.js';
 import { billableUsage, estimateOutputTokens, estimatePromptTokens, utf8Bytes } from './pricing.js';
 import { exhaustedBudget, notePoolExhausted, notePoolReserved, poolBudgetState } from './pool-budget.js';
@@ -21,8 +22,13 @@ import {
 } from './capacity.js';
 
 const ROLES = new Set(['system', 'developer', 'user', 'assistant', 'tool']);
+// 1 MiB holds roughly 300K tokens of prompt, which is why no catalog model advertises more
+// context than the gateway can carry (Claude rows: 200,000).
 const MAX_BODY_BYTES = 1048576;
+// The largest max_tokens a client may send; every catalog model's max_output_tokens fits under it
+// (check-routing-v2), and the router clamps each request to its model's own limit.
 export const MAX_OUTPUT_TOKENS = 65536;
+// Without max_tokens a request gets this, or its model's default_max_tokens (router.js).
 const DEFAULT_MAX_TOKENS = 4096;
 const EFFORTS = new Set(['none', 'minimal', 'low', 'medium', 'high', 'default']);
 
@@ -165,13 +171,22 @@ async function orderBySharedHealth(env, candidates, sharedHealth = null, now = D
     .map(item => item.candidate);
 }
 
+// A paid model whose daily spend cap (p_pool.cpd) is spent for every user until 00:00 UTC.
+function spendLimitMessage(exhausted) {
+  if (!exhausted.length || !exhausted.every(row => row.budget === 'cpd')) return undefined;
+  const names = [...new Set(exhausted.map(row => row.model))];
+  return `${names.length === 1 ? names[0] : 'This model'} has reached today's spending limit on Zero-X. ` +
+    'It resets at 00:00 UTC; choose another model until then.';
+}
+
 // The client-facing error once every candidate failed (contract §3.3).
 function finalError({ failures, exhausted, paidDenied }) {
   const paid = paidDenied ? reserveError(paidDenied) : null;
   if (!failures.length) {
     if (paid) return paid;
     if (exhausted.length) {
-      return { code: 'capacity_exhausted', retryAfterSeconds: minimum(exhausted.map(row => row.retry_after_seconds)) ?? 60 };
+      return { code: 'capacity_exhausted', retryAfterSeconds: minimum(exhausted.map(row => row.retry_after_seconds)) ?? 60,
+        message: spendLimitMessage(exhausted) };
     }
     return { code: 'service_unavailable' };
   }
@@ -196,7 +211,7 @@ function finalError({ failures, exhausted, paidDenied }) {
 }
 
 export function createChatHandler({ validateSession, setSession, getSession, planLimits, router = globalRouter,
-  healthTracker = globalHealthTracker, signatureCache = globalSignatureCache }) {
+  healthTracker = globalHealthTracker, signatureCache = globalSignatureCache, claudeTurns = globalClaudeTurnCache }) {
   return async c => {
     const requestId = newRequestId();
     const env = c.env || {};
@@ -223,10 +238,11 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
     const ledger = usesLedger(env, session);
     if (session.account_backed && !ledger) return fail('service_unavailable');
     const policy = planPolicy(env, session.plan, ledger ? await loadPlanPolicies(env) : undefined);
-    const [, , sharedHealth] = await Promise.all([loadCatalogDbModels(env), loadOffers(env), hubHealthForRouting(env)]);
+    const [, , sharedHealth] = await Promise.all([loadCatalog(env), loadOffers(env), hubHealthForRouting(env)]);
     headers['x-neuron-plan'] = policy.id;
     const promptTokens = estimatePromptTokens(body.messages, body.tools);
-    const requestedMax = body.max_completion_tokens ?? body.max_tokens ?? DEFAULT_MAX_TOKENS;
+    const explicitMax = body.max_completion_tokens ?? body.max_tokens;
+    const requestedMax = explicitMax ?? DEFAULT_MAX_TOKENS;
     // phase ('first_byte' | 'idle' | 'response') tells liveness timeouts from slow generations;
     // caller lets the tracker require timeouts from several callers before parking a shared pool,
     // and keeps one caller on the same vault key of a model (router.js rotateKeyPools).
@@ -240,6 +256,7 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
         needs: requestNeeds(body),
         promptTokens,
         maxTokens: requestedMax,
+        maxTokensExplicit: isSet(explicitMax),
         tiers: sessionTiers(env, session, policy),
         country: callerCountry(c.req.raw, env),
         ownedCatalog: isOwnedSession(session) ? await ownedCatalog(env, session) : null,
@@ -337,8 +354,13 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
     const clientSignal = c.req.raw.signal;
 
     // Gemini thought signatures are kept per caller and upstream model (provider-request.js):
-    // recorded from responses, restored into the next turn's history.
+    // recorded from responses, restored into the next turn's history. Claude's thinking turns
+    // (signed thinking blocks) are kept per caller the same way (anthropic-turns.js) and replayed
+    // into the next request; the adapter hashes the user id into metadata.user_id.
     const signatureHooks = entry => {
+      if (entry.provider === 'anthropic') {
+        return { request: { caller, turns: claudeTurnHooks(claudeTurns, caller) }, onToolSignature: null };
+      }
       if (entry.provider !== 'gemini') return { request: {}, onToolSignature: null };
       const scope = { caller, model: entry.upstream_model };
       return {
@@ -476,9 +498,11 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
           // concurrency slot or counts as a second request.
           await releasePending();
           let row;
+          let args;
           try {
-            row = await reserveCapacity(env, reservationArgs({ session, entry: candidate.entry, pool: candidate.pool,
-              requestId: reservations ? `${requestId}.${reservations}` : requestId, promptTokens, maxTokens: candidate.maxTokens }));
+            args = reservationArgs({ env, session, entry: candidate.entry, pool: candidate.pool,
+              requestId: reservations ? `${requestId}.${reservations}` : requestId, promptTokens, maxTokens: candidate.maxTokens });
+            row = await reserveCapacity(env, args);
           } catch (error) {
             console.error('Neuron capacity reservation unavailable', { name: error?.name, request_id: requestId });
             return fail('service_unavailable');
@@ -491,9 +515,10 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
             if (candidate === first) firstMiss = row.status;
             if (PAID_DENIED_STATUSES.has(row.status)) paidDenied = row;
             else {
-              // pool_exhausted: the shared budget of this pool is spent for every user.
-              exhausted.push(row);
-              const budget = exhaustedBudget(candidate.pool.limits, row.retry_after_seconds);
+              // pool_exhausted: the shared budget of this pool (a paid pool's daily spend cap
+              // included) is spent for every user.
+              const budget = exhaustedBudget(args.p_pool, row.retry_after_seconds);
+              exhausted.push({ ...row, budget, model: candidate.entry.display_name });
               notePoolExhausted(candidate.key, { budget, retryAfterSeconds: row.retry_after_seconds });
               console.warn('Neuron pool budget exhausted', { pool: candidate.key, model: candidate.entry.id,
                 budget, retry_after_seconds: row.retry_after_seconds ?? null, request_id: requestId });

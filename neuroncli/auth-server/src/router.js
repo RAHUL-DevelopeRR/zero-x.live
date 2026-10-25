@@ -125,13 +125,16 @@ export class RoutingEngine {
     return score;
   }
 
+  // `maxTokens` is the client's max_tokens, or the gateway default when `maxTokensExplicit` is
+  // false: then a model's own default_max_tokens applies instead (Claude counts thinking inside
+  // max_tokens, so 4,096 would cut answers short), before the pool fit and the credit hold.
   // `affinity` (the caller) picks which vault key of a model is tried first; without one the
   // keys are taken in turn. `conversation` (chat-handler.js conversationKey) with the caller keys
   // the sticky model choice of `auto`. `policy` is the
   // caller's data policy (src/oiop/policy.js), `needs` what the request requires (lacks()),
   // `sharedHealth` the HealthHub rows by pool key and `budgetState` pool-budget.js's view.
-  route({ env = {}, requestedModel, needsTools = false, needs = {}, promptTokens, maxTokens, tiers = ['free'],
-    country = null, ownedCatalog = null, affinity = null, conversation = null, policy = DEFAULT_POLICY,
+  route({ env = {}, requestedModel, needsTools = false, needs = {}, promptTokens, maxTokens, maxTokensExplicit = true,
+    tiers = ['free'], country = null, ownedCatalog = null, affinity = null, conversation = null, policy = DEFAULT_POLICY,
     sharedHealth = null, budgetState = null, now = Date.now() }) {
     const required = { ...needs, tools: Boolean(needs.tools || needsTools) };
     if (ownedCatalog) return this.routeOwned({ env, requestedModel, needs: required, maxTokens, ownedCatalog, policy });
@@ -154,12 +157,13 @@ export class RoutingEngine {
     const evaluated = [];
     const turn = affinity ? hashText(String(affinity)) : this.turn++;
     for (const entry of entries) {
+      const requested = !maxTokensExplicit && entry.default_max_tokens > 0 ? entry.default_max_tokens : maxTokens;
       for (const verdict of rotateKeyPools(poolVerdicts(env, entry, tiers, country), turn)) {
         const key = poolKey(entry, verdict.pool);
-        const fit = fitMaxTokens(entry, verdict.pool, promptTokens, maxTokens);
+        const fit = fitMaxTokens(entry, verdict.pool, promptTokens, requested);
         // Ruled out only by the pool's per-minute token budget, not by the context window.
         const overBudget = fit === 0 && Boolean(verdict.pool.limits?.tpm) &&
-          fitMaxTokens(entry, { ...verdict.pool, limits: null }, promptTokens, maxTokens) > 0;
+          fitMaxTokens(entry, { ...verdict.pool, limits: null }, promptTokens, requested) > 0;
         evaluated.push({ ...verdict, entry, key, fits: fit > 0, overBudget, maxTokens: fit,
           blocked: policyBlock(verdict.offer, policy),
           healthy: this.healthTracker.isAvailable(key, now) && !sharedUnavailable(sharedHealth?.get(key), now) });

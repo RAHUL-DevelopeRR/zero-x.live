@@ -285,6 +285,16 @@ const ADDRESS = '6/2, N. Pugalur, Karur 639113, Tamil Nadu, India';
   assert.match(pricingPage, /Claude Sonnet 5\.5 \$2\.50 \$0\.25 \$3\.125 \$12\.50/, 'pricing: Sonnet 5.5 at list price plus 25%');
   assert.match(pricingPage, /Claude Opus 5\.5 \$5\.00 \$0\.25 \$6\.25 \$25\.00/, 'pricing: Opus 5.5 at list price plus 25%');
   assert.match(pricingPage, /Anthropic \(Claude Sonnet 5\.5 and Claude Opus 5\.5\)/, 'pricing: the provider FAQ names Anthropic');
+  // The price table shows exactly what the gateway bills (src/catalog.js: list price x MARKUP).
+  const { catalogEntry } = await import('./src/catalog.js');
+  const dollars = micro => `$${(micro / 1e6).toFixed(Math.max(2, String(micro / 1e6).split('.')[1]?.length ?? 0))}`;
+  for (const [id, name] of [['anthropic/claude-sonnet-5-5', 'Claude Sonnet 5.5'], ['anthropic/claude-opus-5-5', 'Claude Opus 5.5']]) {
+    const price = catalogEntry(id).pools.find(pool => pool.tier === 'paid').price;
+    const row = [price.input_microusd_per_mtok, price.cache_read_microusd_per_mtok, price.cache_write_microusd_per_mtok,
+      price.output_microusd_per_mtok].map(dollars).join(' ');
+    assert.ok(pricingPage.includes(`${name} ${row}`), `pricing: ${name} row equals the gateway's billed rates (${row})`);
+  }
+  assert.match(text('docs.html'), /and for Claude cache_read_per_mtok_usd and cache_write_per_mtok_usd/, 'docs: the Claude cache price fields');
   assert.match(text('dashboard.html'), /Credits pay for Claude Sonnet 5\.5, Claude Opus 5\.5 and other paid capacity/);
 }
 

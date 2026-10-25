@@ -1,11 +1,13 @@
 import { CloudflareWorkersAIAdapter } from './cloudflare-adapter.js';
 import { OpenAICompatibleAdapter } from './provider-adapter.js';
+import { AnthropicAdapter } from './anthropic-adapter.js';
 import { toolCallSignature } from './provider-request.js';
 import { FailureKind, failureKindForStatus } from './provider-health.js';
 import {
   AUTO_MODEL_ID, catalogEntries, catalogEntry, catalogWarnings, entryPools, isHosted, isEnabled, listModelsForCaller,
-  loadCatalogDbModels, offeredEntries, poolConfigured, planPolicy,
+  loadCatalog, offeredEntries, poolConfigured, planPolicy,
 } from './catalog.js';
+import { PROVIDER_TYPES, baseUrlFor } from './catalog-types.js';
 import { vaultKeys } from './provider-keys.js';
 import { errorEvent } from './errors.js';
 import { sessionTiers } from './capacity.js';
@@ -13,15 +15,8 @@ import { estimatePromptTokens, estimateOutputTokens, publicPricing, utf8Bytes } 
 
 export { estimatePromptTokens };
 
-function omnirouteBaseResolver(env) {
-  if (!env.OMNIROUTE_BASE_URL) return null;
-  try {
-    const url = new URL(env.OMNIROUTE_BASE_URL);
-    if (url.username || url.password || url.search || url.hash ||
-        !(url.protocol === 'https:' || (url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)))) return null;
-    return url.toString().replace(/\/$/, '');
-  } catch { return null; }
-}
+// OMNIROUTE_BASE_URL as the provider-type registry validates it (https, or http on loopback).
+const omnirouteBaseResolver = env => baseUrlFor('omniroute', env);
 
 function bedrockBaseResolver(env) {
   const region = env.BEDROCK_REGION || env.AWS_REGION;
@@ -31,13 +26,16 @@ function bedrockBaseResolver(env) {
     : `https://bedrock-mantle.${region}.api.aws/v1`;
 }
 
+// Catalog providers call the base URL of their provider type (src/catalog-types.js), the only
+// place upstream hosts are defined: neither catalog rows nor OIOP offers (zerox_offers.base_url,
+// display only) can choose where a request or a key goes.
 export const ADAPTERS = {
   cloudflare: new CloudflareWorkersAIAdapter(),
   openrouter: new OpenAICompatibleAdapter({
     id: 'openrouter',
     keyVar: 'OPENROUTER_API_KEY',
     modelsVar: 'OPENROUTER_MODELS',
-    defaultBase: 'https://openrouter.ai/api/v1',
+    defaultBase: PROVIDER_TYPES.openrouter.base_url,
     defaultFallbackModels: ['openrouter/free'],
   }),
   groq: new OpenAICompatibleAdapter({
@@ -45,7 +43,7 @@ export const ADAPTERS = {
     keyVar: 'GROQ_API_KEY',
     modelsVar: 'GROQ_MODELS',
     toolModelsVar: 'GROQ_TOOL_MODELS',
-    defaultBase: 'https://api.groq.com/openai/v1',
+    defaultBase: PROVIDER_TYPES.groq.base_url,
     providerPrefix: true,
   }),
   gemini: new OpenAICompatibleAdapter({
@@ -53,7 +51,7 @@ export const ADAPTERS = {
     keyVar: 'GEMINI_API_KEY',
     modelsVar: 'GEMINI_MODELS',
     toolModelsVar: 'GEMINI_TOOL_MODELS',
-    defaultBase: 'https://generativelanguage.googleapis.com/v1beta/openai',
+    defaultBase: PROVIDER_TYPES.gemini.base_url,
     providerPrefix: true,
   }),
   nvidia: new OpenAICompatibleAdapter({
@@ -61,9 +59,12 @@ export const ADAPTERS = {
     keyVar: 'NVIDIA_API_KEY',
     modelsVar: 'NVIDIA_MODELS',
     toolModelsVar: 'NVIDIA_TOOL_MODELS',
-    defaultBase: 'https://integrate.api.nvidia.com/v1',
+    defaultBase: PROVIDER_TYPES.nvidia.base_url,
     providerPrefix: true,
   }),
+  // Claude Sonnet 5.5 and Opus 5.5 (Messages API through @anthropic-ai/sdk): api.anthropic.com
+  // only, never a followed redirect, key from the anthropic.paid slot (ANTHROPIC_API_KEY).
+  anthropic: new AnthropicAdapter(),
   omniroute: new OpenAICompatibleAdapter({
     id: 'omniroute',
     keyVar: 'OMNIROUTE_API_KEY',
@@ -88,7 +89,7 @@ export const ADAPTERS = {
   }),
 };
 
-const HTTP_PROVIDER_KEYS = ['openrouter', 'groq', 'gemini', 'nvidia', 'omniroute', 'bedrock', 'azure'];
+const HTTP_PROVIDER_KEYS = ['openrouter', 'groq', 'gemini', 'nvidia', 'anthropic', 'omniroute', 'bedrock', 'azure'];
 const HOSTED_FLAGS = { nvidia: 'NVIDIA_HOSTED', openrouter: 'OPENROUTER_HOSTED' };
 
 export function providerConfiguration(env, session = {}) {
@@ -205,7 +206,7 @@ export async function ownedCatalog(env, session) {
 
 export async function resolveModelCatalog(env, session = {}) {
   if (isOwnedSession(session)) return ownedCatalog(env, session);
-  await loadCatalogDbModels(env);
+  await loadCatalog(env);
   return modelCatalog(env, session);
 }
 
@@ -272,6 +273,9 @@ export const PROVIDER_PARAMS = Object.freeze({
   nvidia: [...SHARED_PARAMS, 'presence_penalty', 'frequency_penalty'],
   openrouter: [...SHARED_PARAMS, 'parallel_tool_calls', 'presence_penalty', 'frequency_penalty', 'user', 'reasoning_effort'],
   cloudflare: ['tools', 'temperature', 'top_p', 'seed', 'presence_penalty', 'frequency_penalty'],
+  // Claude 5.5 rejects sampling parameters (temperature, top_p, top_k) and the adapter builds its
+  // body from a whitelist anyway (src/anthropic-request.js); this list is the first filter.
+  anthropic: ['tools', 'tool_choice', 'stop', 'response_format', 'parallel_tool_calls', 'reasoning_effort'],
 });
 const STANDARD_EFFORTS = new Set(['low', 'medium', 'high']);
 
