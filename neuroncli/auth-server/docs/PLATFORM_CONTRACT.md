@@ -803,6 +803,11 @@ Code: `src/catalog-types.js`, `src/list-prices.js`, `src/catalog-guardrails.js`,
   reads $0.25, cache writes $3.125 (Sonnet) and $6.25 (Opus).
 - Credit hold (reservation): every prompt token at max(input, cache write) plus all of the fitted
   `max_tokens` at the output rate; a running request never exceeds its hold.
+- A Claude stream that ends before `message_delta` (the client disconnects, or Claude sends an
+  error event mid-stream) settles with the usage so far: the input and cache counts of
+  `message_start`, each at its own rate, and completion = max(reported output tokens,
+  ceil(streamed output bytes / 3.5)). Only without any reported counts does it fall back to the
+  byte estimate.
 - Paid pools carry a daily spend cap, enforced in Postgres: `p_pool.cpd` = effective cap (upstream
   USD) × 1e6 × 1.25. `zerox_reserve_v2` refuses with `pool_exhausted` (retry at 00:00 UTC) once the
   pool's held plus settled cost for the UTC day would pass it; `zerox_settle_v2` reconciles to the

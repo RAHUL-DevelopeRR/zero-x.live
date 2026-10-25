@@ -7,6 +7,7 @@
 // separated by a blank line, and the replay record is also keyed by that combined text.
 import Anthropic from '@anthropic-ai/sdk';
 import { turnFingerprint } from './anthropic-request.js';
+import { estimateOutputTokens, utf8Bytes } from './pricing.js';
 
 export const FINISH_REASONS = Object.freeze({ end_turn: 'stop', stop_sequence: 'stop', tool_use: 'tool_calls',
   max_tokens: 'length', model_context_window_exceeded: 'length', refusal: 'content_filter', pause_turn: 'stop',
@@ -88,6 +89,7 @@ export class ClaudeStreamTranslator {
     this.text = '';       // content only
     this.reasoning = '';  // reasoning_content pieces, separators included
     this.visible = '';    // every content and reasoning piece in order (what Neuron shows)
+    this.outputBytes = 0; // UTF-8 bytes of generated text, thinking and tool input so far
     this.usage = {};
     this.stopReason = null;
     this.stopDetails = null;
@@ -135,6 +137,7 @@ export class ClaudeStreamTranslator {
     slot.text += text;
     this.text += text;
     this.visible += text;
+    this.outputBytes += utf8Bytes(text);
     this.lastKind = 'content';
     out.push(this.chunk({ content: text }));
   }
@@ -142,7 +145,23 @@ export class ClaudeStreamTranslator {
   addThinking(slot, text, out) {
     const piece = !slot.text && this.lastKind ? `${SEPARATOR}${text}` : text;
     slot.text += text;
+    this.outputBytes += utf8Bytes(text);
     this.emitReasoning(piece, out);
+  }
+
+  /**
+   * Usage for settling a stream that ended before message_delta (a client abort, a mid-stream
+   * error event): the input and cache counts message_start reported, billed at their own rates,
+   * and completion = max(output_tokens reported so far, ceil(output bytes / 3.5)) over what the
+   * gateway streamed and what this translator read. null when message_start carried no counts,
+   * so the caller falls back to its estimate.
+   */
+  usageSoFar(outputBytes = 0) {
+    const reported = ['input_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens']
+      .some(key => Number.isFinite(this.usage[key]));
+    if (!reported) return null;
+    const streamed = estimateOutputTokens(Math.max(Number(outputBytes) || 0, this.outputBytes));
+    return openaiUsage({ ...this.usage, output_tokens: Math.max(count(this.usage.output_tokens), streamed) });
   }
 
   translate(event) {
@@ -185,6 +204,7 @@ export class ClaudeStreamTranslator {
         else if (delta.type === 'signature_delta' && slot.type === 'thinking') slot.signature += delta.signature ?? '';
         else if (delta.type === 'input_json_delta' && delta.partial_json && slot.type === 'tool_use') {
           slot.json += delta.partial_json;
+          this.outputBytes += utf8Bytes(delta.partial_json);
           out.push(this.chunk({ tool_calls: [{ index: slot.toolIndex, function: { arguments: delta.partial_json } }] }));
         }
         break;

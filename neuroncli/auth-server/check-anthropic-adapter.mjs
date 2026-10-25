@@ -19,6 +19,8 @@ import {
 } from './src/anthropic-request.js';
 import { ClaudeStreamTranslator, openaiUsage, refusalNote, streamErrorBody } from './src/anthropic-stream.js';
 import { ClaudeTurnCache, claudeTurnHooks } from './src/anthropic-turns.js';
+import { settlementArgs } from './src/capacity.js';
+import { catalogEntry } from './src/catalog.js';
 
 const KEY = 'sk-ant-api03-offline-test-key-0123456789abcdefghij';
 const ENV = Object.freeze({ ANTHROPIC_API_KEY: KEY });
@@ -691,6 +693,62 @@ try {
     const early = new AbortController();
     early.abort(new Error('client went away'));
     await assert.rejects(adapter.chatCompletion(ENV, SESSION, OPUS, payload, early.signal, POOL, {}), /client went away/);
+    await sleep(20);
+  });
+
+  await test('abort and mid-stream errors before message_delta settle from message_start usage, cache split included', async () => {
+    // Sonnet: 4,000 uncached input and 16,000 cache-read tokens reported in message_start, then 27
+    // bytes of text. Billing design: 16,000 x $0.25 + 4,000 x $2.50 + 8 x $12.50 per Mtok = 14,100
+    // micro-USD (the byte estimate billed all 20,000 prompt tokens at the input rate: 50,100).
+    const TEXT = 'Here is the first sentence.';
+    assert.equal(Buffer.byteLength(TEXT), 27);
+    const start = E.start({ input_tokens: 4000, cache_creation_input_tokens: 0, cache_read_input_tokens: 16000, output_tokens: 1 });
+    const sonnet = catalogEntry('anthropic/claude-sonnet-5-5');
+    const settle = finish => settlementArgs({ reservationId: 'res-1', entry: sonnet, pool: sonnet.pools[0], usage: finish.usage,
+      outputBytes: finish.outputBytes, promptEstimate: 20000, status: 'error' });
+    const expectedUsage = { prompt_tokens: 20000, completion_tokens: 8, total_tokens: 20008,
+      prompt_tokens_details: { cached_tokens: 16000, cache_write_tokens: 0, cache_write_1h_tokens: 0 } };
+    // A client abort (Esc in Neuron) after the first text.
+    upstream = request => sseResponse([start, ...E.text(0, [TEXT]).slice(0, 2), { delay: 5000 }, E.delta('end_turn'), E.stop()], request);
+    const client = new AbortController();
+    const payload = payloadFor([{ role: 'user', content: 'hi' }], { entry: SONNET });
+    const started = await startCompletion(ENV, SESSION, SONNET, POOL, payload, { clientSignal: client.signal, timeouts: TIMEOUTS });
+    assert.equal(typeof started.stream.usageSoFar, 'function', 'the adapter hands its usage so far to the gateway stream');
+    let aborted = null;
+    const stream = createCompletionStream({ ...started.stream, model: SONNET.id, controller: started.controller, clientSignal: client.signal,
+      timeouts: TIMEOUTS, requestId: 'req_abort_usage', env: ENV, onFinish: async outcome => { aborted = outcome; } });
+    const reader = stream.getReader();
+    const decoder = new TextDecoder();
+    let seen = '';
+    while (!seen.includes(TEXT)) seen += decoder.decode((await reader.read()).value);
+    setTimeout(() => client.abort(), 20);
+    await reader.read().catch(() => null);
+    assert.deepEqual([aborted.status, aborted.kind, aborted.outputBytes], ['error', FailureKind.ABORTED, 27]);
+    assert.deepEqual(aborted.usage, expectedUsage, 'message_start counts, completion = ceil(27 / 3.5)');
+    const abortedArgs = settle(aborted);
+    assert.deepEqual([abortedArgs.p_prompt_tokens, abortedArgs.p_completion_tokens, abortedArgs.p_cache_read_tokens,
+      abortedArgs.p_cache_write_tokens, abortedArgs.p_cost_microusd], [20000, 8, 16000, 0, 14100]);
+    // A mid-stream error event after the first text: the same usage so far.
+    upstream = request => sseResponse([start, ...E.text(0, [TEXT]).slice(0, 2), E.error('overloaded_error', 'Overloaded')], request);
+    const failed = await gatewayRun({ entry: SONNET, payload });
+    assert.deepEqual([failed.finish.status, failed.finish.kind], ['error', FailureKind.SERVER]);
+    assert.deepEqual(failed.finish.usage, expectedUsage);
+    assert.equal(settle(failed.finish).p_cost_microusd, 14100);
+    // Output tokens Claude already reported win over the byte count; a cold turn's cache writes
+    // are billed at the write rate.
+    upstream = request => sseResponse([E.start({ input_tokens: 500, cache_creation_input_tokens: 30000, cache_read_input_tokens: 0, output_tokens: 40 }),
+      ...E.text(0, [TEXT]).slice(0, 2), E.error('api_error', 'Internal')], request);
+    const cold = await gatewayRun({ entry: SONNET, payload });
+    assert.deepEqual([cold.finish.usage.prompt_tokens, cold.finish.usage.completion_tokens, cold.finish.usage.prompt_tokens_details.cache_write_tokens],
+      [30500, 40, 30000]);
+    assert.equal(settle(cold.finish).p_cost_microusd, 500 * 2.5 + 30000 * 3.125 + 40 * 12.5, 'not under-billed at the input rate');
+    // Nothing reported yet (no message_start counts): the gateway's estimate stays.
+    const bare = new ClaudeStreamTranslator({ model: SONNET.id });
+    assert.equal(bare.usageSoFar(100), null);
+    // A completed stream still settles with message_delta's usage.
+    upstream = request => sseResponse([start, ...E.text(0, [TEXT]), E.delta('end_turn', { output_tokens: 12 }), E.stop()], request);
+    const done = await gatewayRun({ entry: SONNET, payload });
+    assert.deepEqual([done.finish.status, done.finish.usage.completion_tokens, done.finish.usage.prompt_tokens_details.cached_tokens], ['ok', 12, 16000]);
     await sleep(20);
   });
 

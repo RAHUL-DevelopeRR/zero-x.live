@@ -9,7 +9,7 @@
 // errors turned back into upstream-shaped Responses, and abort mapping. maxRetries is 0: the
 // router owns failover.
 import Anthropic from '@anthropic-ai/sdk';
-import { ProviderAdapter } from './provider-adapter.js';
+import { ProviderAdapter, setPartialUsage } from './provider-adapter.js';
 import { catalogEntries, poolSecret } from './catalog.js';
 import { FailureKind } from './provider-health.js';
 import { ANTHROPIC, BINDING_BETA, ClaudeRequestError, messageFingerprint, toClaudeRequest } from './anthropic-request.js';
@@ -225,8 +225,11 @@ export class AnthropicAdapter extends ProviderAdapter {
       if (record) for (const fingerprint of record.fingerprints) turns.remember(fingerprint, record.blocks);
     } : null;
     if (!payload.stream) return aggregate(sdkStream, translator, signal, onTurn);
-    return new Response(openAIStream({ sdkStream, translator, liveness, signal, onTurn, keepAliveMs: this.keepAliveMs }),
+    const response = new Response(openAIStream({ sdkStream, translator, liveness, signal, onTurn, keepAliveMs: this.keepAliveMs }),
       { status: 200, headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store' } });
+    // The usage chunk only comes with message_delta: an abort or a mid-stream error before it is
+    // settled from message_start's input and cache counts (createCompletionStream usageSoFar).
+    return setPartialUsage(response, outputBytes => translator.usageSoFar(outputBytes));
   }
 }
 

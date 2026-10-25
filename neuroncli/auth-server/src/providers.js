@@ -1,5 +1,5 @@
 import { CloudflareWorkersAIAdapter } from './cloudflare-adapter.js';
-import { OpenAICompatibleAdapter } from './provider-adapter.js';
+import { OpenAICompatibleAdapter, partialUsageOf } from './provider-adapter.js';
 import { AnthropicAdapter } from './anthropic-adapter.js';
 import { toolCallSignature } from './provider-request.js';
 import { FailureKind, failureKindForStatus } from './provider-health.js';
@@ -921,7 +921,7 @@ export async function startCompletion(env, session, entry, pool, payload, { clie
     const first = await guard(reader.next());
     if (first === null || first === '[DONE]') throw new UpstreamProtocolError('Provider stream ended before the first event');
     parseEvent(first);
-    return { ok: true, stream: { reader, first }, controller, latencyMs: Date.now() - started };
+    return { ok: true, stream: { reader, first, usageSoFar: partialUsageOf(response) }, controller, latencyMs: Date.now() - started };
   } catch (error) {
     controller.abort(error);
     if (reader) await reader.cancel();
@@ -1037,9 +1037,13 @@ function normalizeStreamValue(value, state) {
  * Client-facing SSE stream for a committed upstream attempt. Applies the idle timeout
  * between upstream chunks, normalizes chunks and calls onFinish exactly once with
  * { status:'ok'|'error', usage, outputBytes, errorCode, kind } before the final event.
+ * `usageSoFar(outputBytes)` (provider-adapter.js setPartialUsage) supplies the usage when the
+ * stream ends without a usage chunk (a client abort or a mid-stream error before Claude's
+ * message_delta): the input and cache counts the provider already reported, instead of the
+ * byte estimate settlement would otherwise bill.
  */
 export function createCompletionStream({ reader, first, model, controller, clientSignal, timeouts, onFinish, requestId, env,
-  onToolSignature = null, restorer = null }) {
+  onToolSignature = null, restorer = null, usageSoFar = null }) {
   const encoder = new TextEncoder();
   const state = {
     id: `chatcmpl-${crypto.randomUUID()}`, created: Math.floor(Date.now() / 1000), model,
@@ -1050,11 +1054,15 @@ export function createCompletionStream({ reader, first, model, controller, clien
   let done = false;
   let cancelled = false;
   let finished = false;
+  const reportedUsage = () => {
+    if (state.usage || typeof usageSoFar !== 'function') return state.usage;
+    try { return usageSoFar(state.outputBytes) ?? null; } catch { return null; }
+  };
   const finish = async outcome => {
     if (finished) return;
     finished = true;
     try {
-      await onFinish({ usage: state.usage, outputBytes: state.outputBytes, ...outcome });
+      await onFinish({ usage: reportedUsage(), outputBytes: state.outputBytes, ...outcome });
     } catch (error) {
       console.error('Neuron stream settlement failed', { name: error?.name });
     }

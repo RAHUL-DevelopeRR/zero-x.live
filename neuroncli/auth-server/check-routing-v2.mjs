@@ -1478,6 +1478,49 @@ try {
       settled[0].p_cache_write_tokens, settled[0].p_cost_microusd, settled[0].p_provider],
     ['ok', 20800, 800, 16000, 4000, 28500, 'anthropic'], 'cache reads at $0.25, writes at $3.125, the rest at $2.50 per Mtok');
 
+    // A client abort (Esc in Neuron) or a mid-stream error event before message_delta settles from
+    // the counts message_start reported: 16,000 cache reads at $0.25, 4,000 input at $2.50 and
+    // ceil(27 / 3.5) = 8 output tokens at $12.50 per Mtok = 14,100 micro-USD. The byte estimate
+    // would have billed every prompt token at the input rate.
+    const TEXT = 'Here is the first sentence.';
+    const partialClaude = (call, ending) => {
+      const frames = claudeTurn({ text: TEXT, usage: { input_tokens: 4000, cache_creation_input_tokens: 0, cache_read_input_tokens: 16000 } })
+        .slice(0, 3).map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+      if (ending === 'error') frames.push(`event: error\ndata: ${JSON.stringify({ type: 'error', error: { type: 'overloaded_error', message: 'Overloaded' } })}\n\n`);
+      return new Response(new ReadableStream({
+        start(controller) {
+          for (const frame of frames) controller.enqueue(encoder.encode(frame));
+          if (ending === 'error') controller.close();
+          else call.signal?.addEventListener('abort', () => { try { controller.error(new DOMException('aborted', 'AbortError')); } catch { /* closed */ } });
+        },
+      }), { headers: { 'content-type': 'text/event-stream', 'request-id': 'req_claude' } });
+    };
+    for (const ending of ['abort', 'error']) {
+      const partialSettled = [];
+      reset({ 'rpc:zerox_plan_policies_v2': policiesRpc, 'rpc:zerox_reserve_v2': () => Response.json([okReserve({ reservation_id: `res-${ending}` })]),
+        'rpc:zerox_settle_v2': call => { partialSettled.push(call.body); return Response.json([{ status: 'settled' }]); },
+        anthropic: call => partialClaude(call, ending) });
+      const client = new AbortController();
+      const partial = await gw.call(env, { model: 'claude-sonnet-5-5', messages, stream: true }, { token: 'ses_pro', signal: client.signal });
+      assert.equal(partial.status, 200);
+      const reader = partial.body.getReader();
+      const decoder = new TextDecoder();
+      let seen = '';
+      while (!seen.includes(TEXT)) seen += decoder.decode((await reader.read()).value);
+      if (ending === 'abort') client.abort();
+      for (;;) {
+        const step = await reader.read().catch(() => ({ done: true }));
+        if (step.done) break;
+        seen += decoder.decode(step.value);
+      }
+      if (ending === 'error') assert.match(seen, /"code":"upstream_error"/);
+      assert.equal(partialSettled.length, 1, `${ending}: settled once`);
+      const args = partialSettled[0];
+      assert.deepEqual([args.p_reservation_id, args.p_status, args.p_prompt_tokens, args.p_completion_tokens, args.p_cache_read_tokens,
+        args.p_cache_write_tokens, args.p_cost_microusd], [`res-${ending}`, 'error', 20000, 8, 16000, 0, 14100],
+      `${ending}: message_start counts with the cache split, not the byte estimate`);
+    }
+
     // A spent daily spend cap names the model and the reset time; no credits is 402 with the hold explained.
     resetPoolBudgets();
     reset({ 'rpc:zerox_plan_policies_v2': policiesRpc,

@@ -1,6 +1,23 @@
 ﻿import { normalizeProviderRequest } from './provider-request.js';
 import { poolSecret } from './catalog.js';
 
+// Usage reported before a stream ended, for adapters whose OpenAI usage chunk only comes at the
+// end (Claude sends its input and cache counts in message_start, the usage chunk at
+// message_delta). An adapter registers `usageSoFar(outputBytes)` on the streaming Response it
+// returns; providers.js startCompletion hands it to createCompletionStream, which settles an
+// aborted or failed stream with it instead of the byte estimate. Keyed by the Response object,
+// which callers cannot reach or forge.
+const PARTIAL_USAGE = new WeakMap();
+
+export function setPartialUsage(response, usageSoFar) {
+  if (response && typeof usageSoFar === 'function') PARTIAL_USAGE.set(response, usageSoFar);
+  return response;
+}
+
+export function partialUsageOf(response) {
+  return (response && PARTIAL_USAGE.get(response)) || null;
+}
+
 /**
  * ProviderAdapter - Common interface for upstream AI model providers.
  */
