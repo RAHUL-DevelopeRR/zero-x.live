@@ -25,7 +25,7 @@ import { closeAllPglite, getPgliteHandle } from './src/db/pglite.js';
 import { bootstrapPlans, planSql } from './scripts/razorpay-bootstrap.mjs';
 import { devToken, devUserId } from './src/auth-context.js';
 import { catalogEntry } from './src/catalog.js';
-import { costMicrousd, reserveCostMicrousd } from './src/pricing.js';
+import { costMicrousd, estimatePromptTokens, reserveCostMicrousd } from './src/pricing.js';
 
 const LIVE = process.argv.includes('--live');
 const MAX_REAL_CALLS = 10;
@@ -86,6 +86,8 @@ const upstreamServer = createServer(async (request, response) => {
       stop_reason: null, stop_sequence: null, usage: { ...CLAUDE_USAGE, output_tokens: 1 } } });
     event({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } });
     event({ type: 'ping' });
+    // A slow turn keeps its credit hold in flight while a concurrent request reserves (step 11d).
+    if (JSON.stringify(body.messages || []).includes('E2E_SLOW_CLAUDE')) await new Promise(done => setTimeout(done, 600));
     event({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'pong from Claude' } });
     event({ type: 'content_block_stop', index: 0 });
     event({ type: 'message_delta', delta: { stop_reason: 'end_turn', stop_sequence: null }, usage: { output_tokens: 800 } });
@@ -282,6 +284,10 @@ const messages = [{ role: 'user', content: 'Use the read_file tool to read a.js 
 const tools = [{ type: 'function', function: { name: 'read_file', description: 'Read a file from the workspace',
   parameters: { type: 'object', properties: { path: { type: 'string', description: 'File path' } }, required: ['path'] } } }];
 
+const CREDITS_EMAIL = 'e2e.credits@example.test';
+const CREDITS_START = 300000; // $0.30
+const creditsUserId = await devUserId(CREDITS_EMAIL);
+
 let failed = null;
 try {
   dataRoot = await mkdtemp(join(tmpdir(), 'zerox-e2e-'));
@@ -299,6 +305,11 @@ try {
   // Cap fixture: a small free-plan token allocation so the daily cap is reached without
   // spending upstream calls (a 60K-token prompt exceeds it).
   await handle.db.query("UPDATE public.zerox_plan_policy SET daily_tokens = 50000 WHERE plan = 'free'");
+  // Credit-hold fixture (step 11d): a Pro account (granted by the operator) holding $0.30.
+  await handle.db.query('INSERT INTO auth.users (id, email) VALUES ($1, $2) ON CONFLICT DO NOTHING', [creditsUserId, CREDITS_EMAIL]);
+  await handle.db.query('SELECT * FROM public.zerox_sync_account($1, $2::jsonb)', [creditsUserId, JSON.stringify({ email: CREDITS_EMAIL, name: 'e2e.credits' })]);
+  await handle.db.query(`UPDATE public.zerox_accounts SET plan = 'pro', plan_source = 'manual', credit_balance_microusd = $2
+    WHERE clerk_id = $1`, [creditsUserId, CREDITS_START]);
   await closeAllPglite();
   step('database prepared', `${handle.applied.length} migrations applied in a fresh PGlite directory; scripts/razorpay-bootstrap.mjs created 4 plans on the fake Razorpay and their ids were stored`);
 
@@ -707,6 +718,60 @@ try {
     'the daily spend cap bucket holds the settled cost; the cap is $10 a day, billed');
   step('Claude (native adapter)', `claude-sonnet-5-5 streamed through @anthropic-ai/sdk to the fake Messages API: 16,000 default max_tokens, no sampling parameters, hashed user id; settled ${claudeCost} micro-USD for 16K cache reads, 4K cache writes, 800 plain and 800 output tokens; the pool's spend today = the settled cost`);
 
+  // ── 11d. Credit holds for Claude Opus 5.5: the worst case is held before any upstream call ──
+  const creditsSession = await call('/auth/cli/session', { method: 'POST', token: devToken(CREDITS_EMAIL),
+    body: { machine_fingerprint: 'e2e-credits', version: 'e2e' } });
+  assert.equal(creditsSession.status, 200, redact(creditsSession.text));
+  const poor = creditsSession.body.session_token;
+  const creditsBalance = async () => Math.round((await call('/api/account', { token: poor })).body.credits.balance_usd * 1e6);
+  assert.equal((await call('/api/account', { token: poor })).body.plan.id, 'pro');
+  assert.equal(await creditsBalance(), CREDITS_START);
+  const opusPrice = catalogEntry('anthropic/claude-opus-5-5').pools[0].price;
+  const opusMessages = [{ role: 'user', content: 'Reply with pong.' }];
+  const claudeCalls = () => upstream.calls.filter(item => item.provider === 'anthropic').length;
+  // (a) max_tokens 32,000: the hold (32,000 x $25 per Mtok = $0.80, plus the prompt) is more than $0.30.
+  const callsBeforeHold = claudeCalls();
+  const tooBig = await call('/v1/chat/completions', { method: 'POST', token: poor,
+    body: { model: 'claude-opus-5-5', messages: opusMessages, max_tokens: 32000, stream: true } });
+  assert.match(expectError(tooBig, 402, 'insufficient_credits').message, /most a request can cost/);
+  assert.equal(claudeCalls(), callsBeforeHold, 'no upstream call without the credit hold');
+  assert.ok(reserveCostMicrousd(opusPrice, estimatePromptTokens(opusMessages), 32000) > CREDITS_START);
+  // max_tokens 4,096 fits: served, then billed exactly the cache-aware cost of what Claude reported.
+  const fits = await call('/v1/chat/completions', { method: 'POST', token: poor,
+    body: { model: 'claude-opus-5-5', messages: opusMessages, max_tokens: 4096, stream: true } });
+  assert.equal(fits.status, 200, redact(fits.text).slice(0, 400));
+  assert.equal(sseEvents(fits.text).filter(event => event === '[DONE]').length, 1);
+  assert.deepEqual([upstream.calls.at(-1).body.model, upstream.calls.at(-1).body.max_tokens], ['claude-opus-5-5', 4096]);
+  const opusCost = costMicrousd(opusPrice, 20800, 800, { cache_read_tokens: 16000, cache_write_tokens: 4000 });
+  assert.equal(opusCost, 53000, '16K cache reads at $0.25, 4K cache writes at $6.25, 800 input at $5 and 800 output at $25 per Mtok');
+  assert.equal(await creditsBalance(), CREDITS_START - opusCost, 'the balance drops by exactly the cache-aware cost');
+  const fitsEvent = (await call('/api/usage/events?limit=1', { token: poor })).body.events[0];
+  assert.deepEqual([fitsEvent.request_id, fitsEvent.model, fitsEvent.cost_usd], [fits.headers.get('x-request-id'), 'anthropic/claude-opus-5-5', opusCost / 1e6]);
+  // (b) Two concurrent requests whose holds (max_tokens 8,000: about $0.20 each) exceed the $0.247 left.
+  // In either order exactly one hold fits: one is served in full, the other refused before Claude.
+  const slowMessages = [{ role: 'user', content: 'Reply with pong. E2E_SLOW_CLAUDE' }];
+  const hold = reserveCostMicrousd(opusPrice, estimatePromptTokens(slowMessages), 8000);
+  const left = CREDITS_START - opusCost;
+  assert.ok(hold <= left && 2 * hold > left && left - opusCost < hold, `hold ${hold} against ${left} left`);
+  const callsBeforeRace = claudeCalls();
+  const race = await Promise.all([1, 2].map(() => call('/v1/chat/completions', { method: 'POST', token: poor,
+    body: { model: 'claude-opus-5-5', messages: slowMessages, max_tokens: 8000, stream: true } })));
+  const raceServed = race.filter(result => result.status === 200);
+  const raceRefused = race.filter(result => result.status === 402);
+  assert.deepEqual([raceServed.length, raceRefused.length], [1, 1], `statuses ${race.map(result => result.status).join(', ')}`);
+  expectError(raceRefused[0], 402, 'insufficient_credits');
+  const raceEvents = sseEvents(raceServed[0].text);
+  assert.ok(raceEvents.some(event => event?.choices?.[0]?.delta?.content === 'pong from Claude'));
+  assert.ok(raceEvents.some(event => event?.choices?.[0]?.finish_reason === 'stop'));
+  assert.ok(raceEvents.some(event => event?.usage?.completion_tokens === 800));
+  assert.equal(raceEvents.filter(event => event === '[DONE]').length, 1, 'the served stream completes in full');
+  assert.ok(!raceEvents.some(event => event?.error), 'credits never run out mid-stream');
+  assert.equal(claudeCalls(), callsBeforeRace + 1, 'the refused request never reached Claude');
+  assert.equal(await creditsBalance(), CREDITS_START - 2 * opusCost);
+  const creditRequests = { fits: fits.headers.get('x-request-id'), race: raceServed[0].headers.get('x-request-id'),
+    refused: [tooBig.body.error.request_id, raceRefused[0].body.error.request_id] };
+  step('Claude credit holds', `Pro account with $0.30: Opus max_tokens 32,000 -> 402 insufficient_credits, no upstream call; max_tokens 4,096 served and billed ${opusCost} micro-USD; two concurrent requests holding ${hold} each against ${left} -> one 200 streamed in full, one 402 before Claude`);
+
   // ── 12. Cancel → cancel_at_period_end ──
   const cancelled = await call('/api/billing/cancel', { method: 'POST', token: ses, body: {} });
   assert.equal(cancelled.status, 200, redact(cancelled.text));
@@ -879,6 +944,26 @@ try {
   assert.match(missing.headers.get('content-type'), /text\/html/);
   assert.equal(missing.text, readFileSync(join(siteRoot, '404.html'), 'utf8'), 'the branded 404.html is the body');
   step('static website smoke', `10 pages 200 with CSP origins allowed (${pageChecks.join(', ')}); /dashboard.html -> 301 /dashboard; /404-test -> branded 404`);
+
+  // ── 16. The credit-hold steps in the ledger (the gateway is stopped so PGlite can be opened) ──
+  await stopGateway();
+  const ledgerDb = (await getPgliteHandle(dbEnv)).db;
+  const ledger = (await ledgerDb.query(`SELECT r.request_id, l.ref, 'usage:' || r.id::text AS reservation_ref, l.reason,
+      l.delta_microusd::bigint AS delta, l.balance_after_microusd::bigint AS after, l.shortfall_microusd::bigint AS shortfall
+    FROM public.zerox_credit_ledger AS l JOIN public.zerox_reservations AS r ON l.ref = 'usage:' || r.id::text
+    WHERE l.user_id = $1 ORDER BY l.id`, [creditsUserId])).rows;
+  assert.deepEqual(ledger.map(row => [row.request_id, row.ref === row.reservation_ref, row.reason, Number(row.delta), Number(row.after), Number(row.shortfall)]), [
+    [creditRequests.fits, true, 'usage', -53000, CREDITS_START - 53000, 0],
+    [creditRequests.race, true, 'usage', -53000, CREDITS_START - 106000, 0],
+  ], 'one usage:<reservation id> row per served request, nothing else');
+  const refusedHolds = (await ledgerDb.query(`SELECT count(*)::int AS n FROM public.zerox_reservations
+    WHERE user_id = $1 AND split_part(request_id, '.', 1) = ANY($2::text[])`, [creditsUserId, creditRequests.refused])).rows[0].n;
+  assert.equal(refusedHolds, 0, 'a refused hold leaves no reservation');
+  const [held] = (await ledgerDb.query(`SELECT count(*) FILTER (WHERE status = 'active')::int AS active,
+      coalesce(sum(cost_microusd), 0)::bigint AS charged FROM public.zerox_reservations WHERE user_id = $1`, [creditsUserId])).rows;
+  assert.deepEqual([held.active, Number(held.charged)], [0, 106000], 'every hold settled to its real cost');
+  await closeAllPglite();
+  step('credit ledger', `${ledger.length} usage:<reservation id> rows (-53,000 micro-USD each, balance ${CREDITS_START} -> ${CREDITS_START - 106000}); the two refused requests left no reservation`);
 } catch (error) {
   failed = error;
 } finally {
@@ -898,6 +983,6 @@ if (failed) {
 await writeFile(join(tmpdir(), `zerox-e2e-${LIVE ? 'live' : 'offline'}-steps.json`), JSON.stringify(steps, null, 2)).catch(() => {});
 console.log(`PASS: end-to-end ${LIVE ? '(live Groq/Gemini free pools)' : '(offline)'}: ${steps.length} steps — dev sign-in, CLI session, plan-aware ` +
   'models, streamed tool calls, usage, API keys, daily cap, pool-kept model failures, Pro checkout (reused across tabs), charged webhook once, ' +
-  'duplicate subscription cancelled and refunded, paid-pool credits, top-up, refund clawback, Claude billed cache-aware, cancel, revoke-all, admin overview, ' +
-  'provider key vault, ' +
-  'static site and CSP');
+  'duplicate subscription cancelled and refunded, paid-pool credits, top-up, refund clawback, Claude billed cache-aware, Claude credit holds ' +
+  '(402 before any upstream call, one of two concurrent holds), cancel, revoke-all, admin overview, provider key vault, ' +
+  'static site and CSP, credit ledger');
