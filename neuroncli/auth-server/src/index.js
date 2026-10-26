@@ -158,12 +158,15 @@ app.use('*', async (c, next) => {
   // The local Node server keeps visitors on the loopback origin (relative redirects).
   const loopback = isLoopbackHost(url.host);
 
+  // relay.zero-x.live carries the relay's WebSockets (docs/RELAY.md) and nothing else.
+  if (hostname === 'relay.zero-x.live' && path !== '/v1/relay' && path !== '/health') return c.text('Not Found', 404);
+
   // Let Hono handle OPTIONS/CORS preflight
   if (c.req.method === 'OPTIONS') {
     return next();
   }
 
-  if (url.protocol === 'http:' && ['zero-x.live','www.zero-x.live','neuron.zero-x.live','dashboard.zero-x.live'].includes(hostname)) {
+  if (url.protocol === 'http:' && ['zero-x.live','www.zero-x.live','neuron.zero-x.live','dashboard.zero-x.live','relay.zero-x.live'].includes(hostname)) {
     url.protocol = 'https:';
     return c.redirect(url.toString(), 308);
   }
@@ -268,7 +271,7 @@ const openCors = cors({
 app.use('*', async (c, next) => {
   const path = routePath(new URL(c.req.url).pathname);
   // WebSockets are not subject to CORS; the relay authenticates them itself.
-  if (path.startsWith('/relay/') && c.req.header('Upgrade')?.toLowerCase() === 'websocket') return next();
+  if ((path === '/v1/relay' || path.startsWith('/relay/')) && c.req.header('Upgrade')?.toLowerCase() === 'websocket') return next();
   if (path.startsWith('/auth/') || path.startsWith('/api/') || path.startsWith('/relay/')) return identityCors(c, next);
   if (path.startsWith('/v1/') || path === '/health' || path === '/ready') return openCors(c, next);
   return next();
@@ -277,7 +280,9 @@ app.use('*', async (c, next) => {
 // Provider key vault keys become pools in src/catalog.js once loaded into this isolate (60 s
 // cache; a slow database delays a request by at most 3 s, then the previous keys serve).
 app.use('*', async (c, next) => {
-  if (vaultConfigured(c.env) && isApiRoute(routePath(new URL(c.req.url).pathname))) await loadVaultKeys(c.env);
+  const path = routePath(new URL(c.req.url).pathname);
+  // The relay never calls a provider.
+  if (vaultConfigured(c.env) && isApiRoute(path) && path !== '/v1/relay') await loadVaultKeys(c.env);
   return next();
 });
 

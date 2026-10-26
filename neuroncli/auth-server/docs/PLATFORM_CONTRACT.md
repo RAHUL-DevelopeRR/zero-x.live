@@ -516,7 +516,9 @@ Feature-parity plan rows A9, A10, A12, A13 and A11. Migrations
   current}]}`, most recently used first. `id` is 24 hex characters derived from the token hash;
   `current` marks the CLI session making the request.
 - `DELETE /api/sessions/:id` → `{status:'revoked', current}`; `404 not_found` for an unknown or
-  another account's session. It also closes that session's relay sockets.
+  another account's session. It also closes that session's relay sockets. `DELETE
+  /api/sessions/current` signs out the calling CLI (`ses_`) session (the phone app's sign-out;
+  `400` for other credentials).
 - Sign-in records the device: `POST /auth/cli/session` accepts optional `device_name`, `os`,
   `client_name`, `client_version` (or `version`); the device flow uses what `/auth/device/code`
   reported. Display data only.
@@ -544,10 +546,12 @@ The page is `https://zero-x.live/changelog`. Optional secret `GITHUB_RELEASES_TO
 
 ### 10.4 Relay and push
 
-Protocol, limits, close codes and push rules: `docs/RELAY.md`. Endpoints `wss://zero-x.live/relay/v1/host`,
-`/relay/v1/client`, `POST /relay/v1/ticket`, `GET /relay/v1/hosts`, and `POST|GET /api/push/tokens`,
-`DELETE /api/push/tokens/:id`. Durable Object binding `RELAY` (class `RelayRoom`). Optional secret
-`EXPO_ACCESS_TOKEN`.
+Protocol (`neuron-relay/1`, 2026-10-26), limits, close codes and push rules: `docs/RELAY.md`.
+Endpoints `wss://relay.zero-x.live/v1/relay` (also on `zero-x.live`), `POST /relay/v1/ticket`,
+`GET /relay/v1/hosts`, and `POST|GET /api/push/devices`, `DELETE /api/push/devices/:device_id`
+(migration `20261026000000_push_devices.sql`). The first relay draft (`/relay/v1/host|client`,
+`/api/push/tokens`) was never deployed and is gone. Durable Object binding `RELAY` (class
+`RelayRoom`). Optional secret `EXPO_ACCESS_TOKEN`.
 
 ### 10.5 RPCs
 
@@ -561,6 +565,10 @@ Protocol, limits, close codes and push rules: `docs/RELAY.md`. Endpoints `wss://
 | `zerox_push_list` | `p_user_id` | rows including `token` (server use only) |
 | `zerox_push_delete` | `p_user_id, p_id` | `{deleted boolean}` |
 | `zerox_push_delivered` | `p_sent uuid[], p_unregistered text[]` | `{sent, removed}` |
+| `zerox_push_device_register` | `p_user_id, p_device_id, p_token, p_platform, p_needs_me, p_finished` | the phone's row without the token |
+| `zerox_push_device_list` | `p_user_id` | rows `{device_id, platform, notify_needs_input, notify_finished, created_at, updated_at, last_sent_at}` |
+| `zerox_push_device_targets` | `p_user_id, p_device_ids text[]` | rows including `token` (server use only) |
+| `zerox_push_device_delete` | `p_user_id, p_device_id` | `{removed boolean}` |
 
 ## 11. v1.6 amendments (provider key vault, 2026-10-24)
 

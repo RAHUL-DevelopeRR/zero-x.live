@@ -129,7 +129,8 @@ export async function revokeSession(env, userId, id) {
 // POST /api/sessions/revoke-all {api_keys?: boolean} → {revoked, api_keys_revoked?}
 // GET /api/sessions → {sessions:[{id, device_name, os, client:{name, version}, created_at,
 //   last_used_at, expires_at, current}]}
-// DELETE /api/sessions/:id → {status:'revoked', current}
+// DELETE /api/sessions/:id → {status:'revoked', current}; DELETE /api/sessions/current signs out
+// the calling Neuron session (the phone app's sign-out).
 export function registerSessionRoutes(api) {
   api.post('/api/sessions/revoke-all', withCaller(INTERACTIVE_CREDENTIALS, async (c, caller) => {
     const body = await c.req.json().catch(() => ({}));
@@ -152,7 +153,12 @@ export function registerSessionRoutes(api) {
     c.json({ sessions: await listSessions(c.env, caller.user_id, await currentHash(c)) })));
 
   api.delete('/api/sessions/:id', withCaller(INTERACTIVE_CREDENTIALS, async (c, caller) => {
-    const id = c.req.param('id');
+    let id = c.req.param('id');
+    if (id === 'current') {
+      const hash = await currentHash(c);
+      if (!hash) throw new ApiError(400, 'invalid_request', '`current` signs out a Neuron (ses_) session; sign out of the website on the website.', { param: 'id' });
+      id = await sessionId(hash);
+    }
     if (!SESSION_ID_PATTERN.test(id)) throw new ApiError(400, 'invalid_request', '`id` must be a session id from GET /api/sessions.', { param: 'id' });
     const revoked = await revokeSession(c.env, caller.user_id, id);
     if (!revoked) throw new ApiError(404, 'not_found', 'No such session. It may already be signed out.');

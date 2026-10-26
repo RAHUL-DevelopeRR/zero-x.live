@@ -25,6 +25,12 @@ custom_domain = true
 pattern = "neuron.zero-x.live"
 custom_domain = true
 
+# The relay's WebSockets (docs/RELAY.md): only /v1/relay and /health answer on this host. Deploying
+# creates the DNS record; it fails if relay.zero-x.live already has one.
+[[routes]]
+pattern = "relay.zero-x.live"
+custom_domain = true
+
 
 [vars]
 
@@ -107,7 +113,7 @@ tag = "v1-health-hub"
 new_sqlite_classes = ["HealthHub"]
 
 # RelayRoom (src/relay.js, docs/RELAY.md): one Durable Object per account that relays end-to-end
-# encrypted frames between a computer running Neuron and the user's phone or browser.
+# encrypted frames (`neuron-relay/1`) between a computer running Neuron and the user's phone.
 [[durable_objects.bindings]]
 name = "RELAY"
 class_name = "RelayRoom"

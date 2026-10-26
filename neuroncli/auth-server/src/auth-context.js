@@ -75,11 +75,13 @@ async function database(call) {
 
 // ── Credentials ──
 const TOKEN_PATTERN = /^[A-Za-z0-9._~+/-]{8,4096}=*$/;
+// A credential in the shape every token has, or '' (also for tokens from elsewhere than the
+// Authorization header, such as the relay's WebSocket subprotocol).
+export const credentialToken = value => typeof value === 'string' && TOKEN_PATTERN.test(value) ? value : '';
 export function bearerToken(c) {
   const header = c.req.header('Authorization') || '';
   if (!header.startsWith('Bearer ')) return '';
-  const token = header.slice(7).trim();
-  return TOKEN_PATTERN.test(token) ? token : '';
+  return credentialToken(header.slice(7).trim());
 }
 
 export const SESSION_TOKEN_PATTERN = /^ses_[A-Za-z0-9_-]{1,128}$/;
@@ -299,13 +301,13 @@ export const INTERACTIVE_CREDENTIALS = Object.freeze(['session', 'supabase', 'de
 // the account owner, so a stolen CLI session cannot turn itself into a lasting key.
 export const ACCOUNT_OWNER_CREDENTIALS = Object.freeze(['supabase', 'dev']);
 
-// Resolves the Authorization header to a caller (docs/PLATFORM_CONTRACT.md §3.1):
-// {kind, user_id, email, name, image_url, plan, suspended, session?, key_id?}.
-// Throws ApiError: 401 invalid_session, 403 api_key_not_allowed or session_not_allowed,
-// 503 when a backend is down.
-export async function resolveCaller(c, { allow = ALL_CREDENTIALS } = {}) {
+// Resolves the Authorization header (or `token`, when the caller found it elsewhere) to a caller
+// (docs/PLATFORM_CONTRACT.md §3.1): {kind, user_id, email, name, image_url, plan, suspended,
+// session?, key_id?}. Throws ApiError: 401 invalid_session, 403 api_key_not_allowed or
+// session_not_allowed, 503 when a backend is down.
+export async function resolveCaller(c, { allow = ALL_CREDENTIALS, token: given } = {}) {
   const env = c.env;
-  const token = bearerToken(c);
+  const token = given === undefined ? bearerToken(c) : credentialToken(given);
   if (!token) throw invalidSession();
 
   if (token.startsWith('dev_')) {

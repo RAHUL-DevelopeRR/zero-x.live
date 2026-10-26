@@ -116,7 +116,8 @@ try {
     '20261019000000_device_auth.sql', '20261019120000_provider_discovery.sql', '20261021000000_device_pending_retry.sql',
     '20261023000000_session_devices.sql', '20261023000100_push_tokens.sql', '20261024000000_provider_keys.sql',
     '20261024000100_provider_key_budgets.sql', '20261024000200_oiop_offers.sql',
-    '20261024000300_credit_programs.sql', '20261025000200_paid_billing_caps.sql', '20261025000300_plan_features_claude.sql'];
+    '20261024000300_credit_programs.sql', '20261025000200_paid_billing_caps.sql', '20261025000300_plan_features_claude.sql',
+    '20261026000000_push_devices.sql'];
   assert.deepEqual(migrations.map(migration => migration.file).filter(file => businessMigrations.includes(file)), businessMigrations);
   assert.equal((await sql('SELECT count(*)::int AS n FROM supabase_migrations.schema_migrations'))[0].n, migrations.length);
   await assert.rejects(rpc(env, 'zerox_does_not_exist', {}), error =>
@@ -1240,7 +1241,9 @@ try {
     // v1.5 linked devices and sliding expiry (contract section 10)
     'zerox_session_register', 'zerox_session_list', 'zerox_session_touch', 'zerox_session_revoke',
     // v1.5 push tokens for the relay (contract section 10)
-    'zerox_push_register', 'zerox_push_list', 'zerox_push_delete', 'zerox_push_delivered'];
+    'zerox_push_register', 'zerox_push_list', 'zerox_push_delete', 'zerox_push_delivered',
+    // push by relay device id (neuron-relay/1, docs/RELAY.md section 7)
+    'zerox_push_device_register', 'zerox_push_device_list', 'zerox_push_device_targets', 'zerox_push_device_delete'];
   for (const name of contractRpcs) assert.ok(functions.some(row => row.proname === name), `${name} exists`);
   for (const row of functions) {
     assert.equal(row.prosecdef, false, `${row.signature} is SECURITY INVOKER`);
