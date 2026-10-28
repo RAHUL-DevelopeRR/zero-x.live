@@ -659,45 +659,70 @@ try {
   });
 
   // Production (28 Oct): nvidia gpt-oss-20b timed out on its first byte for the same user at
-  // 16:56, 16:58 and 17:10. One caller's timeout marks a pool degraded without opening its
-  // circuit, so it kept its rank and the user waited through the 45 s TTFB again each time.
-  await test('auto tries degraded pools after healthy ones of their tier and before parked ones', async () => {
+  // 16:56, 16:58 and 17:10. One caller's timeout does not open a pool's circuit, so the pool kept
+  // its rank and the user waited through the 45 s TTFB again each time. A first-byte or idle
+  // timeout now marks the pool slow (slow_until) for five minutes or until a success.
+  await test('auto tries slow pools after healthy ones of their tier and before parked ones', async () => {
+    const A = 'gemini:gemini-2.5-flash:free';
     const order = () => upstreamCalls().map(call => `${call.target}:${call.body.model}`);
     const failing = { gemini: () => new Response('down', { status: 500 }), groq: () => new Response('down', { status: 500 }) };
     const healthy = ['gemini:gemini-3.5-flash', 'groq:openai/gpt-oss-120b', 'groq:qwen/qwen3.8-27b', 'groq:openai/gpt-oss-20b'];
-    // The HealthHub snapshot: A (gemini-2.5-flash, best auto_rank) degraded, B available, C blurred.
-    const pools = { 'gemini:gemini-2.5-flash:free': { status: 'degraded', until: 0, at: Date.now() },
-      'gemini:gemini-3.5-flash:free': { status: 'available', until: 0, at: Date.now() },
-      'gemini:gemini-3.6-flash:free': { status: 'blurred', until: Date.now() + 3_600_000, at: Date.now() } };
-    const HEALTH_HUB = { idFromName: name => name, get: () => ({
-      fetch: async url => String(url).endsWith('/snapshot') ? Response.json({ pools }) : new Response('ok') }) };
-    resetHubClientCache();
-    try {
-      const hub = gateway();
-      hub.addSession('ses_anon', {});
+    const ranked = ['gemini:gemini-2.5-flash', 'gemini:gemini-3.5-flash', 'gemini:gemini-3.6-flash', ...healthy.slice(1)];
+    // HealthHub snapshot rows as src/health-hub.js sends them: slow_until only while it lasts.
+    const hubOrder = async rowA => {
+      const pools = { [A]: { until: 0, at: Date.now(), ...rowA },
+        'gemini:gemini-3.5-flash:free': { status: 'available', until: 0, at: Date.now() },
+        'gemini:gemini-3.6-flash:free': { status: 'blurred', until: Date.now() + 3_600_000, at: Date.now() } };
+      const HEALTH_HUB = { idFromName: name => name, get: () => ({
+        fetch: async url => String(url).endsWith('/snapshot') ? Response.json({ pools }) : new Response('ok') }) };
+      resetHubClientCache();
+      try {
+        const gw = gateway();
+        gw.addSession('ses_anon', {});
+        reset(failing);
+        await gw.call({ ...KEYS, HEALTH_HUB, ROUTER_MAX_ATTEMPTS: '10' }, { model: 'auto', messages, tools }, { country: 'US' });
+        return order();
+      } finally { resetHubClientCache(); }
+    };
+    assert.deepEqual(await hubOrder({ status: 'degraded', slow_until: Date.now() + 60_000 }),
+      [...healthy, 'gemini:gemini-2.5-flash', 'gemini:gemini-3.6-flash'],
+      'B and the other healthy pools first, then slow A, then blurred C (still tried)');
+    assert.deepEqual(await hubOrder({ status: 'degraded' }), ['gemini:gemini-2.5-flash', ...healthy, 'gemini:gemini-3.6-flash'],
+      'degraded without slow_until (one 5xx anywhere, a slow non-streaming response) keeps its rank');
+    assert.equal((await hubOrder({ status: 'available', slow_until: Date.now() - 1 }))[0], 'gemini:gemini-2.5-flash',
+      'an expired mark keeps its rank');
+
+    // Without a hub row, this isolate's own records decide the same way.
+    const localOrder = async (prepare, tracker = new ProviderHealthTracker()) => {
+      const gw = gateway({ tracker });
+      gw.addSession('ses_anon', {});
+      await prepare(tracker);
       reset(failing);
-      await hub.call({ ...KEYS, HEALTH_HUB, ROUTER_MAX_ATTEMPTS: '10' }, { model: 'auto', messages, tools }, { country: 'US' });
-      assert.deepEqual(order(), [...healthy, 'gemini:gemini-2.5-flash', 'gemini:gemini-3.6-flash'],
-        'B and the other healthy pools first, then degraded A, then blurred C (still tried)');
-    } finally { resetHubClientCache(); }
-
-    // Without a hub row, this isolate's own first-byte timeout on A demotes it the same way...
-    const local = gateway();
-    local.addSession('ses_anon', {});
-    local.tracker.recordFailure('gemini:gemini-2.5-flash:free', { kind: FailureKind.TIMEOUT, phase: 'first_byte', caller: 'user-1' });
-    assert.equal(local.tracker.getRecord('gemini:gemini-2.5-flash:free').status, HealthState.DEGRADED);
-    reset(failing);
-    await local.call({ ...KEYS, ROUTER_MAX_ATTEMPTS: '10' }, { model: 'auto', messages, tools }, { country: 'US' });
-    assert.deepEqual(order(), [healthy[0], 'gemini:gemini-3.6-flash', ...healthy.slice(1), 'gemini:gemini-2.5-flash']);
-
-    // ...while one 5xx (also DEGRADED, circuit closed) keeps the pool's rank.
-    const flaky = gateway();
-    flaky.addSession('ses_anon', {});
-    flaky.tracker.recordFailure('gemini:gemini-2.5-flash:free', { kind: FailureKind.SERVER });
-    assert.equal(flaky.tracker.getRecord('gemini:gemini-2.5-flash:free').status, HealthState.DEGRADED);
-    reset(failing);
-    await flaky.call({ ...KEYS, ROUTER_MAX_ATTEMPTS: '10' }, { model: 'auto', messages, tools }, { country: 'US' });
-    assert.equal(order()[0], 'gemini:gemini-2.5-flash');
+      await gw.call({ ...KEYS, ROUTER_MAX_ATTEMPTS: '10' }, { model: 'auto', messages, tools }, { country: 'US' });
+      return order();
+    };
+    const timeout = (tracker, phase = 'first_byte', caller = 'user-1') =>
+      tracker.recordFailure(A, { kind: FailureKind.TIMEOUT, phase, caller });
+    assert.deepEqual(await localOrder(tracker => timeout(tracker)),
+      [healthy[0], 'gemini:gemini-3.6-flash', ...healthy.slice(1), 'gemini:gemini-2.5-flash'], 'one first-byte timeout');
+    assert.equal((await localOrder(tracker => timeout(tracker, 'idle'))).at(-1), 'gemini:gemini-2.5-flash', 'one idle timeout');
+    assert.deepEqual(await localOrder(tracker => tracker.recordFailure(A, { kind: FailureKind.SERVER })), ranked,
+      'one 5xx (DEGRADED, circuit closed) keeps the rank');
+    assert.deepEqual(await localOrder(tracker => timeout(tracker, 'response')), ranked,
+      'so does a slow non-streaming response (it may be a long generation)');
+    assert.deepEqual(await localOrder(tracker => { timeout(tracker); tracker.recordSuccess(A); }), ranked, 'a success clears the mark');
+    // Two callers' timeouts park the pool for its cooldown; once that ends it is still slow, so
+    // the worse pool does not rank above a pool with a single timeout.
+    assert.equal((await localOrder(tracker => {
+      timeout(tracker, 'first_byte', 'user-1');
+      timeout(tracker, 'first_byte', 'user-2');
+      assert.equal(tracker.getRecord(A).status, HealthState.DOWN);
+      tracker.getRecord(A).circuit_open_until = Date.now() - 1;
+    })).at(-1), 'gemini:gemini-2.5-flash', 'half-open after its cooldown and still slow');
+    assert.deepEqual(await localOrder(async tracker => {
+      timeout(tracker);
+      await new Promise(resolve => setTimeout(resolve, 40));
+    }, new ProviderHealthTracker({ slowWindowMs: 20 })), ranked, 'the mark ends after slowWindowMs (five minutes by default)');
   });
 
   await test('413 skips a pool for this request only and never opens its circuit', async () => {
@@ -765,6 +790,19 @@ try {
     assert.equal(gw.tracker.getRecord('groq:openai/gpt-oss-120b:free').failed_attempts, 0);
     assert.equal(gw.tracker.isAvailable('groq:openai/gpt-oss-120b:free'), true);
     assert.equal(gw.session('ses_anon').tokens_used, estimatePromptTokens(messages), 'the processed prompt is billed');
+
+    // On Workers the settlement after a disconnect goes through waitUntil: nobody waits for the
+    // answer, and work outside waitUntil may be cancelled when the invocation ends.
+    const waited = [];
+    const ctx = { waitUntil: promise => waited.push(promise), passThroughOnException() {} };
+    gw.addSession('ses_left', {});
+    reset({ groq: untilAborted });
+    const leaving = new AbortController();
+    setTimeout(() => leaving.abort(), 30);
+    assert.equal((await gw.call({ ...KEYS }, { model: 'auto', messages }, { token: 'ses_left', signal: leaving.signal, country: 'DE', ctx })).status, 502);
+    assert.equal(waited.length, 1, 'the KV settlement is handed to waitUntil');
+    await Promise.all(waited);
+    assert.equal(gw.session('ses_left').tokens_used, estimatePromptTokens(messages));
   });
 
   await test('time-to-first-byte timeout fails over before anything reaches the client', async () => {
@@ -1242,6 +1280,126 @@ try {
     tried.length = 0;
     await expectError(await freeOnly.call(accountEnv(), { model: 'auto', messages, tools }, { token: 'ses_free', country: 'US' }), 502, 'upstream_error');
     assert.equal(tried.length, 3, 'free plans spend every attempt on free pools');
+  });
+
+  // Review of the failover budget: with the defaults (budget 50 s, first byte 45 s), a free pool's
+  // first-byte timeout left under 5 s, so a paying user's request ended as a 504 before the
+  // attempt kept for paid capacity. Plans with paid capacity keep the last 30 % of the budget
+  // for it; the free attempt is cut at 70 % and the cut is not blamed on the free pool.
+  await test('plans with paid capacity keep the end of the failover budget for the paid attempt', async () => {
+    const gw = accountGateway();
+    const tried = [];
+    const settled = [];
+    reset({ 'rpc:zerox_plan_policies_v2': policiesRpc,
+      'rpc:zerox_reserve_v2': call => Response.json([okReserve({ reservation_id: `res-${call.body.p_tier}-${tried.length}` })]),
+      'rpc:zerox_settle_v2': call => { settled.push(call.body); return Response.json([{ status: 'settled' }]); },
+      gemini: call => {
+        tried.push({ key: call.headers.Authorization, at: Date.now() });
+        return call.headers.Authorization === 'Bearer gemini-paid-key'
+          ? sse([chunk({ content: 'paid' }, 'stop'), '[DONE]']) : untilAborted(call);
+      } });
+    // Scaled down from 50 s / 45 s: the free pool would need 900 ms to its first byte.
+    const env = accountEnv({ UPSTREAM_FAILOVER_BUDGET_MS: '1000', UPSTREAM_TTFB_TIMEOUT_MS: '900' });
+    const started = Date.now();
+    const response = await gw.call(env, { model: 'auto', messages, tools, stream: true }, { token: 'ses_pro', country: 'US' });
+    assert.equal(response.status, 200);
+    assert.ok((await response.text()).includes('"content":"paid"'));
+    const elapsed = Date.now() - started;
+    assert.ok(elapsed < 1000, `answered within the budget (${elapsed} ms)`);
+    assert.deepEqual(tried.map(item => item.key), ['Bearer gemini-free-key', 'Bearer gemini-paid-key']);
+    const cutAt = tried[1].at - tried[0].at;
+    assert.ok(cutAt >= 650 && cutAt < 900, `the free attempt was cut at 70 % of the budget (${cutAt} ms)`);
+    assert.deepEqual(settled.map(row => [row.p_status, row.p_error_code]), [['failed_upstream', 'upstream_timeout'], ['ok', null]],
+      'the cut attempt reached the upstream, so the pool keeps it');
+    const free = gw.tracker.records.get('gemini:gemini-2.5-flash:free');
+    assert.ok(!free || (free.failed_attempts === 0 && !free.slow_until), 'the budget cut is not blamed on the free pool');
+
+    // Free plans have no paid attempt to keep time for: their free attempts get the whole budget.
+    const freeOnly = gateway();
+    freeOnly.addSession('ses_free', { account_backed: true, user_id: ACCOUNT, plan: 'free' });
+    tried.length = 0;
+    const freeStart = Date.now();
+    await expectError(await freeOnly.call(env, { model: 'auto', messages, tools, stream: true }, { token: 'ses_free', country: 'US' }),
+      504, 'upstream_timeout');
+    assert.ok(Date.now() - freeStart >= 900, 'the first free attempt got its full 900 ms');
+    assert.ok(freeOnly.tracker.records.get('gemini:gemini-2.5-flash:free').slow_until > Date.now(), 'its own timeout counts');
+  });
+
+  // Review of the failover budget: when the budget, not the pool's own first-byte timeout, ended
+  // an attempt, the pool was recorded as timed out (and reported to the HealthHub), so a healthy
+  // pool was demoted, and with two callers parked, because an earlier candidate failed slowly.
+  await test('a failover budget cut is not recorded against the pool', async () => {
+    const gw = gateway();
+    gw.addSession('ses_free', { account_backed: true, user_id: ACCOUNT, plan: 'free' });
+    gw.addSession('ses_next', { account_backed: true, user_id: ACCOUNT, plan: 'free' });
+    const reports = [];
+    const HEALTH_HUB = { idFromName: name => name, get: () => ({ fetch: async (url, init) => {
+      if (String(url).endsWith('/report')) reports.push(...JSON.parse(init.body).outcomes);
+      return String(url).endsWith('/snapshot') ? Response.json({ pools: {} }) : Response.json({ ok: true });
+    } }) };
+    const settled = [];
+    const delayed = (ms, make) => new Promise(resolve => setTimeout(() => resolve(make()), ms));
+    reset({ 'rpc:zerox_plan_policies_v2': policiesRpc,
+      'rpc:zerox_reserve_v2': () => Response.json([okReserve({ plan: 'free' })]),
+      'rpc:zerox_settle_v2': call => { settled.push(call.body); return Response.json([{ status: 'settled' }]); },
+      // A answers 503 after 500 ms; B's first data event comes 700 ms after it starts, inside its
+      // own 800 ms first-byte timeout but after the 1000 ms budget.
+      gemini: call => call.body.model === 'gemini-2.5-flash' ? delayed(500, () => new Response('overloaded', { status: 503 }))
+        : new Response(new ReadableStream({ async start(controller) {
+          await new Promise(resolve => setTimeout(resolve, 700));
+          try { controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk({ content: 'late' }))}\n\n`)); } catch { /* cancelled */ }
+        } }), { headers: { 'Content-Type': 'text/event-stream' } }) });
+    resetHubClientCache();
+    try {
+      const env = accountEnv({ HEALTH_HUB, UPSTREAM_FAILOVER_BUDGET_MS: '1000', UPSTREAM_TTFB_TIMEOUT_MS: '800' });
+      const started = Date.now();
+      await expectError(await gw.call(env, { model: 'auto', messages, tools, stream: true }, { token: 'ses_free', country: 'US' }),
+        504, 'upstream_timeout');
+      assert.ok(Date.now() - started < 1300, 'ended at the budget');
+      assert.deepEqual(upstreamCalls().map(call => call.body.model), ['gemini-2.5-flash', 'gemini-3.5-flash']);
+      await new Promise(resolve => setTimeout(resolve, 20));
+      const B = 'gemini:gemini-3.5-flash:free';
+      const record = gw.tracker.records.get(B);
+      assert.ok(!record || (record.failed_attempts === 0 && record.status === HealthState.HEALTHY && !record.slow_until),
+        'B is not marked timed out or slow');
+      assert.ok(!reports.some(outcome => outcome.key === B), 'nothing about B is reported to the HealthHub');
+      assert.ok(reports.some(outcome => outcome.key === 'gemini:gemini-2.5-flash:free' && outcome.kind === FailureKind.SERVER),
+        "A's own 503 is reported");
+      assert.deepEqual(settled.map(row => [row.p_status, row.p_error_code]),
+        [['refunded', 'upstream_error'], ['failed_upstream', 'upstream_timeout']]);
+
+      // The next caller's `auto` still tries B right after A (one 503 keeps A's rank too).
+      reset({ ...handlers, gemini: call => call.body.model === 'gemini-2.5-flash' ? new Response('overloaded', { status: 503 })
+        : sse([chunk({ content: 'ok' }, 'stop'), '[DONE]']) });
+      const next = await gw.call(env, { model: 'auto', messages, tools, stream: true }, { token: 'ses_next', country: 'US' });
+      assert.equal(next.headers.get('x-neuron-model'), 'gemini/gemini-3.5-flash');
+      await next.text();
+      assert.deepEqual(upstreamCalls().map(call => call.body.model), ['gemini-2.5-flash', 'gemini-3.5-flash']);
+    } finally { resetHubClientCache(); }
+  });
+
+  // Review of the failover budget: a spent budget answered 504 upstream_timeout whatever the
+  // attempts said, so a slow 400 was refunded as a timeout and pool refusals lost Retry-After.
+  await test('a spent failover budget keeps client errors and capacity refusals', async () => {
+    const gw = gateway();
+    gw.addSession('ses_anon', {});
+    const env = { ...KEYS, UPSTREAM_FAILOVER_BUDGET_MS: '1000' };
+    reset({ gemini: () => new Promise(resolve => setTimeout(() => resolve(Response.json(
+      { error: { message: 'Invalid value for temperature', type: 'invalid_request_error' } }, { status: 400 })), 930)) });
+    await expectError(await gw.call(env, { model: 'auto', messages, tools }, { country: 'US' }), 400, 'invalid_request');
+    assert.equal(upstreamCalls().length, 1, 'the budget ran out after the slow 400');
+    assert.equal(gw.session('ses_anon').requests, 1, 'a client error is not refunded');
+
+    const account = gateway();
+    account.addSession('ses_free', { account_backed: true, user_id: ACCOUNT, plan: 'free' });
+    reset({ 'rpc:zerox_plan_policies_v2': policiesRpc,
+      'rpc:zerox_reserve_v2': () => new Promise(resolve => setTimeout(() => resolve(Response.json([{ status: 'pool_exhausted',
+        retry_after_seconds: 42 }])), 650)) });
+    const refused = await expectError(await account.call(accountEnv({ UPSTREAM_FAILOVER_BUDGET_MS: '600' }),
+      { model: 'auto', messages, tools }, { token: 'ses_free', country: 'US' }), 503, 'capacity_exhausted');
+    assert.equal(refused.retry_after_seconds, 42);
+    assert.equal(rpcCalls('zerox_reserve_v2').length, 1);
+    resetPoolBudgets();
   });
 
   await test('an unexpected failure after reserving releases the reservation', async () => {

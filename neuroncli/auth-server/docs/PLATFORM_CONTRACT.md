@@ -307,7 +307,10 @@ Sync the copy in `neuron-v2`; nothing here changes what the CLI sends or must ha
   errors. Rejections the upstream did not count (429, 5xx, network and auth failures) stay full
   refunds of user and pool. Sessions without an account ledger are unchanged.
 - **Circuit (§2).** A first-byte or idle timeout parks a shared pool only once two distinct callers
-  timed out on it within 60 s; one caller's slow prompts cannot park a pool for everyone.
+  timed out on it within 60 s; one caller's slow prompts cannot park a pool for everyone. Each such
+  timeout marks the pool slow for five minutes (until a success clears it): `auto` still offers it,
+  after the healthy pools of its tier. Before a stream is committed, failover is bounded by
+  `UPSTREAM_FAILOVER_BUDGET_MS` (50 s); an attempt that budget cut is not counted against its pool.
 - **Dev identity (§3.1).** `dev_` credentials are refused under `NODE_ENV=production` and on
   requests whose `Origin` is not a loopback origin (`http://127.0.0.1`, `localhost`, `[::1]`).
 - **Sessions (§3.4, §3.7).** `POST /api/sessions/revoke-all` accepts `{api_keys: true}` to also

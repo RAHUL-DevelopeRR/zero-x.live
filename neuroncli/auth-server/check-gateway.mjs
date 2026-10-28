@@ -253,6 +253,47 @@ try {
     `failed over within the budget, then stopped (${upstreamStarts.length} candidates)`);
   assert.ok(upstreamStarts.every(at => at - budgetStart < budgetMs), 'no candidate started after the budget ran out');
 
+  // Only an attempt's own first-byte timeout counts against its pool. With 400 ms to the first
+  // byte, the first candidate times out on its own (marked slow) and the second is cut by the
+  // 600 ms budget: that pool was not given its full time, so nothing is recorded for it.
+  globalHealthTracker.reset();
+  upstreamStarts = [];
+  budgetStart = Date.now();
+  response = await request('/v1/chat/completions', { model: 'auto', messages, stream: true }, 'ses_budget',
+    { ...budgetEnv, UPSTREAM_TTFB_TIMEOUT_MS: '400' });
+  elapsed = Date.now() - budgetStart;
+  assert.equal(response.status, 504);
+  assert.equal((await response.json()).error.code, 'upstream_timeout');
+  assert.equal(upstreamStarts.length, 2);
+  assert.ok(elapsed >= budgetMs - 20 && elapsed < budgetMs + 300, `the second attempt ended with the budget (${elapsed} ms)`);
+  const recorded = [...globalHealthTracker.records.values()];
+  assert.equal(recorded.length, 1, 'the budget cut is not recorded against the second pool');
+  assert.equal(recorded[0].last_failure_kind, 'timeout');
+  assert.ok(recorded[0].slow_until > Date.now(), "the first pool's own timeout marks it slow");
+
+  // A non-streaming response may take longer than the budget to generate, so it is due by the
+  // end of the budget plus the idle timeout instead (1000 + 600 ms here), not after its own
+  // first-byte plus idle timeouts (1200 ms from a start at about 700 ms).
+  globalHealthTracker.reset();
+  upstreamStarts = [];
+  globalThis.fetch = async (url, options) => {
+    upstreamStarts.push(Date.now());
+    if (upstreamStarts.length === 1) {
+      await new Promise(resolve => setTimeout(resolve, 700));
+      return new Response('overloaded', { status: 503 });
+    }
+    return silent(options);
+  };
+  budgetStart = Date.now();
+  response = await request('/v1/chat/completions', { model: 'auto', messages }, 'ses_budget',
+    { ...budgetEnv, UPSTREAM_FAILOVER_BUDGET_MS: '1000', UPSTREAM_TTFB_TIMEOUT_MS: '600', UPSTREAM_IDLE_TIMEOUT_MS: '600' });
+  elapsed = Date.now() - budgetStart;
+  assert.equal(response.status, 504, 'a 5xx, then the budget ran out');
+  assert.equal((await response.json()).error.code, 'upstream_timeout');
+  assert.equal(upstreamStarts.length, 2);
+  assert.ok(elapsed >= 1550 && elapsed < 1850, `the non-streaming attempt ended at budget + idle (${elapsed} ms)`);
+  assert.equal(globalHealthTracker.records.size, 1, 'only the 503 is recorded');
+
   // SSE comments before the first data event extend a candidate's wait (up to TTFB + idle),
   // but not past the budget.
   globalHealthTracker.reset();
@@ -281,9 +322,10 @@ try {
   assert.equal(upstreamStarts.length, 1);
 
   // A client that leaves while the first candidate waits for its first byte ends the request:
-  // no other candidate is tried and the reservation is settled at once as client_disconnected,
-  // so the abandoned request does not hold the user's concurrency slot. Workers only fire
-  // request.signal on a disconnect with the enable_request_signal compatibility flag.
+  // no other candidate is tried and the reservation is settled as client_disconnected, so the
+  // abandoned request does not hold the user's concurrency slot. Workers only fire
+  // request.signal on a disconnect with the enable_request_signal compatibility flag, and may
+  // cancel work outside waitUntil once the client is gone, so the settlement goes through it.
   for (const config of ['wrangler.toml', 'wrangler.api.toml']) {
     assert.match(readFileSync(new URL(config, import.meta.url), 'utf8'),
       /^compatibility_flags\s*=\s*\[[^\]]*"enable_request_signal"/m, `${config} fires request.signal on disconnect`);
@@ -291,6 +333,7 @@ try {
   globalHealthTracker.reset();
   upstreamStarts = [];
   const leaverRpc = [];
+  let leaverSettled = false;
   store.set('ses_leaver', JSON.stringify({ ...session, user_id: accountId, account_backed: true }));
   globalThis.fetch = async (url, options) => {
     if (url.includes('/rest/v1/rpc/')) {
@@ -298,7 +341,11 @@ try {
       if (rpc === 'zerox_get_account') return Response.json([{ clerk_id: accountId, plan: 'free', daily_requests: 3, daily_tokens_used: 5000, last_usage_reset: day }]);
       if (rpc === 'zerox_plan_policies_v2') return Response.json(B1_POLICY_ROWS);
       if (rpc === 'zerox_reserve_v2') return Response.json([{ status: 'ok', reservation_id: `res-leaver-${leaverRpc.length}`, plan: 'free', remaining_requests: 96, remaining_tokens: 470000 }]);
-      if (rpc === 'zerox_settle_v2') return Response.json([{ status: 'settled' }]);
+      if (rpc === 'zerox_settle_v2') {
+        await new Promise(resolve => setTimeout(resolve, 150));
+        leaverSettled = true;
+        return Response.json([{ status: 'settled' }]);
+      }
       return Response.json(null);
     }
     upstreamStarts.push(Date.now());
@@ -306,15 +353,21 @@ try {
   };
   const leaver = new AbortController();
   setTimeout(() => leaver.abort(), 100);
+  const waited = [];
+  const executionCtx = { waitUntil: promise => waited.push(promise), passThroughOnException() {} };
   budgetStart = Date.now();
   response = await app.request('https://zero-x.live/v1/chat/completions', { method: 'POST', signal: leaver.signal,
     headers: { Authorization: 'Bearer ses_leaver', 'Content-Type': 'application/json' },
     body: JSON.stringify({ model: 'auto', messages, stream: true }) },
   { ...budgetEnv, SUPABASE_URL: 'https://test.supabase.co', SUPABASE_SECRET_KEY: 'sb_secret_test',
-    UPSTREAM_TTFB_TIMEOUT_MS: '2000', UPSTREAM_FAILOVER_BUDGET_MS: '10000' });
+    UPSTREAM_TTFB_TIMEOUT_MS: '2000', UPSTREAM_FAILOVER_BUDGET_MS: '10000' }, executionCtx);
   elapsed = Date.now() - budgetStart;
   assert.ok(elapsed < 1000, `the request ended when the client left (${elapsed} ms)`);
   assert.equal(upstreamStarts.length, 1, 'no candidate is tried after the client left');
+  assert.equal(leaverSettled, false, 'the answer did not wait for the settlement');
+  assert.ok(waited.length >= 1, 'the settlement was handed to waitUntil');
+  await Promise.all(waited);
+  assert.equal(leaverSettled, true);
   const leaverReserves = leaverRpc.filter(([rpc]) => rpc === 'zerox_reserve_v2');
   const leaverSettles = leaverRpc.filter(([rpc]) => rpc === 'zerox_settle_v2').map(([, args]) => args);
   assert.equal(leaverReserves.length, 1);

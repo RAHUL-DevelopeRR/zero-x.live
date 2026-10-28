@@ -61,8 +61,8 @@ export function publishHealth(c, env, key, record, outcome, now = Date.now()) {
 }
 
 /**
- * Rows ({status, until, at}) for the given pool keys from the hub's snapshot, or null when
- * there is no hub or it did not answer (the caller then reads KV).
+ * Rows ({status, until, slow_until?, at}) for the given pool keys from the hub's snapshot, or
+ * null when there is no hub or it did not answer (the caller then reads KV).
  */
 export async function hubHealthRows(env, keys, now = Date.now()) {
   const hub = healthHub(env);

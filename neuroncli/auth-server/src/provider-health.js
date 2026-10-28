@@ -65,11 +65,17 @@ const REQUEST_SCOPED = new Set([FailureKind.CONTEXT, FailureKind.INVALID, Failur
  * responses open it after failureThreshold consecutive failures, so one transient 503 does not
  * park a shared pool either. After a cooldown the next failure of a still-failing pool re-opens
  * it immediately.
+ *
+ * Every first-byte or idle timeout also marks the pool slow (slow_until) for slowWindowMs, and a
+ * success clears the mark. A slow pool stays available; `auto` only tries it after the healthy
+ * pools of its tier (chat-handler.js), so the next caller does not wait through the same
+ * timeout while another pool can answer. Other failures (a 5xx, a slow non-streaming response)
+ * never mark it.
  */
 export class ProviderHealthTracker {
   constructor({ failureThreshold = 3, cooldownMs = 30000, modelUnavailableMs = 600000,
     authCooldownMs = 300000, timeoutCooldownMs = 30000, timeoutThreshold = 2, timeoutWindowMs = 60000,
-    maxCooldownMs = 86400000, rateLimitWindowMs = 600000, rateLimitMaxBackoffMs = 900000 } = {}) {
+    maxCooldownMs = 86400000, rateLimitWindowMs = 600000, rateLimitMaxBackoffMs = 900000, slowWindowMs = 300000 } = {}) {
     this.records = new Map();
     // Recent liveness timeouts per pool ({caller, at}); kept apart from the records so caller
     // identities never appear in health snapshots.
@@ -84,6 +90,7 @@ export class ProviderHealthTracker {
     this.maxCooldownMs = maxCooldownMs;
     this.rateLimitWindowMs = rateLimitWindowMs;
     this.rateLimitMaxBackoffMs = rateLimitMaxBackoffMs;
+    this.slowWindowMs = slowWindowMs;
   }
 
   getRecord(key) {
@@ -106,6 +113,8 @@ export class ProviderHealthTracker {
         last_rate_limited_at: null,
         // End of the latest rate-limit cooldown (0 = none yet).
         rate_limited_until: 0,
+        // End of the slow mark after the latest first-byte or idle timeout (0 = none).
+        slow_until: 0,
       };
       if (this.records.size >= 1000) this.records.delete(this.records.keys().next().value);
       this.records.set(key, rec);
@@ -145,6 +154,7 @@ export class ProviderHealthTracker {
     rec.last_latency_ms = latencyMs;
     rec.circuit_open_until = 0;
     rec.rate_limit_strikes = 0;
+    rec.slow_until = 0;
     rec.status = HealthState.HEALTHY;
     return rec;
   }
@@ -184,6 +194,7 @@ export class ProviderHealthTracker {
       open(this.authCooldownMs);
     } else if (kind === FailureKind.TIMEOUT && LIVENESS_PHASES.has(phase)) {
       rec.consecutive_failures++;
+      rec.slow_until = now + this.slowWindowMs;
       if (this.timeoutCallers(key, caller, now) >= this.timeoutThreshold) {
         rec.status = HealthState.DOWN;
         open(this.timeoutCooldownMs);

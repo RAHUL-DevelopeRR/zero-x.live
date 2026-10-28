@@ -112,8 +112,8 @@ export class HealthHub {
     const now = this.now();
     const pools = {};
     for (const [key, record] of this.tracker.records) {
-      const { status, until } = publicStatus(record, now);
-      pools[key] = { status, until, at: this.seen.get(key) ?? record.last_attempt_at ?? null };
+      // { status, until, slow_until? }: chat-handler.js orders `auto` candidates by them.
+      pools[key] = { ...publicStatus(record, now), at: this.seen.get(key) ?? record.last_attempt_at ?? null };
     }
     return { generated_at: now, pools };
   }

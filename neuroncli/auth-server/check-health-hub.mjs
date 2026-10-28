@@ -84,6 +84,36 @@ try {
   assert.ok(state.saved.get('hub').records[GEMINI_25], 'state is persisted');
   console.log('ok - reports: busy (short 429), blurred (model gone), real success brightens, bad body 400, persisted');
 
+  // 1b. Slow pools. Only a first-byte or idle timeout marks a pool slow (slow_until in the
+  // snapshot, which chat-handler.js reads to try it after healthy pools), for five minutes or
+  // until a success. One 5xx or one slow non-streaming response leaves it ranked as before.
+  {
+    const before = offset;
+    const slowHub = new HealthHub(fakeState(), ENV, { now: clock });
+    await slowHub.ready;
+    slowHub.report([{ key: GROQ_120B, success: false, kind: FailureKind.SERVER },
+      { key: GROQ_QWEN, success: false, kind: FailureKind.TIMEOUT, phase: 'response', caller: 'one-user' },
+      { key: NVIDIA_20B, success: false, kind: FailureKind.TIMEOUT, phase: 'first_byte', caller: 'one-user' }]);
+    let pools = slowHub.snapshot().pools;
+    assert.deepEqual([pools[GROQ_120B].status, pools[GROQ_120B].slow_until], ['degraded', undefined], 'one 5xx is not slow');
+    assert.deepEqual([pools[GROQ_QWEN].status, pools[GROQ_QWEN].slow_until], ['degraded', undefined], 'nor a slow response');
+    assert.equal(pools[NVIDIA_20B].slow_until, clock() + 300_000, 'a first-byte timeout: slow for five minutes');
+    slowHub.report([{ key: NVIDIA_20B, success: false, kind: FailureKind.TIMEOUT, phase: 'first_byte', caller: 'other-user' }]);
+    assert.equal(slowHub.snapshot().pools[NVIDIA_20B].status, 'blurred', 'two callers: parked');
+    offset += 31_000;
+    pools = slowHub.snapshot().pools;
+    assert.equal(pools[NVIDIA_20B].status, 'available', 'half-open after the cooldown');
+    assert.ok(pools[NVIDIA_20B].slow_until > clock(), 'and still slow');
+    offset += 270_000;
+    assert.equal(slowHub.snapshot().pools[NVIDIA_20B].slow_until, undefined, 'the mark ends five minutes after the last timeout');
+    slowHub.report([{ key: GEMINI_25, success: false, kind: FailureKind.TIMEOUT, phase: 'idle', caller: 'one-user' }]);
+    assert.ok(slowHub.snapshot().pools[GEMINI_25].slow_until > clock(), 'an idle timeout too');
+    slowHub.report([{ key: GEMINI_25, success: true }]);
+    assert.equal(slowHub.snapshot().pools[GEMINI_25].slow_until, undefined, 'a success clears it');
+    offset = before;
+  }
+  console.log('ok - slow pools: first-byte and idle timeouts only, five minutes or until a success, kept after a cooldown');
+
   // 2. Alarm: free checks. Lists and status pages, two per alarm, staggered.
   upstream = lists;
   calls.length = 0;

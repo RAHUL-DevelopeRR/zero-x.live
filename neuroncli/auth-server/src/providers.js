@@ -760,7 +760,8 @@ function abortReason(signal) {
 
 // Resolves with `promise` unless the deadline passes (aborting the attempt) or the signal
 // aborts first. `deadline()` returns an absolute time and is re-read whenever the timer
-// fires, so byte progress (SSE comments and keep-alives included) can extend it.
+// fires, so byte progress (SSE comments and keep-alives included) can extend it. `phase()`
+// names the deadline that passed.
 function guarded(promise, { deadline, phase, signal, controller }) {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
@@ -784,7 +785,7 @@ function guarded(promise, { deadline, phase, signal, controller }) {
         timer = setTimeout(check, wait());
         return;
       }
-      const error = new UpstreamTimeoutError(phase);
+      const error = new UpstreamTimeoutError(phase());
       finish(reject, error);
       controller?.abort(error);
     };
@@ -887,8 +888,11 @@ function parseEvent(data) {
  * data event arrives, so a dead or erroring upstream can still be failed over. Stream
  * deadlines: the first body byte within ttfbMs; after that, bytes (SSE comments and
  * keep-alives count) at most idleMs apart, with the first data event due within
- * ttfbMs + idleMs, and never after commitBy (the request's failover budget, an absolute time).
- * Non-streaming calls get ttfbMs + idleMs in total.
+ * ttfbMs + idleMs. Non-streaming calls get ttfbMs + idleMs in total.
+ * commitBy (an absolute time) ends the request's failover budget: a stream is due by then, a
+ * non-streaming response (whose generation may outlast the budget) by commitBy + idleMs. When
+ * that, not the attempt's own deadline, ends it, the timeout's phase is 'budget': the pool did
+ * not get its full time, so the cut says nothing about its health.
  * Resolves { ok:false, status, headers, bodyText } for HTTP errors and
  * { ok:true, json | stream } on success; throws timeout/abort/protocol errors.
  */
@@ -898,13 +902,15 @@ export async function startCompletion(env, session, entry, pool, payload,
   const signal = clientSignal ? AbortSignal.any([clientSignal, controller.signal]) : controller.signal;
   const started = Date.now();
   const total = started + timeouts.ttfbMs + timeouts.idleMs;
+  const cutoff = payload.stream ? commitBy : commitBy + timeouts.idleMs;
   let reader = null;
-  const deadline = () => {
+  const own = () => {
     if (!payload.stream) return total;
     const last = reader?.lastByteAt;
-    return Math.min(last ? Math.min(last + timeouts.idleMs, total) : started + timeouts.ttfbMs, commitBy);
+    return last ? Math.min(last + timeouts.idleMs, total) : started + timeouts.ttfbMs;
   };
-  const phase = payload.stream ? 'first_byte' : 'response';
+  const deadline = () => Math.min(own(), cutoff);
+  const phase = () => (cutoff < own() ? 'budget' : payload.stream ? 'first_byte' : 'response');
   const guard = promise => guarded(promise, { deadline, phase, signal, controller });
   const response = await guard(requestCompletion(env, session, entry, payload, signal, pool, request));
   try {
