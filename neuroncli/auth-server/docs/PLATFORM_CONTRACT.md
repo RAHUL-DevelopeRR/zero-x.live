@@ -50,7 +50,7 @@ Each public model has one or more pools:
   supports_tools: true, supports_streaming: true,
   geo_block_free: ['EEA','GB','CH'],       // free pool unavailable for these caller countries
   pools: [
-    { tier: 'free', key_var: 'GEMINI_API_KEY', limits: { rpm: 5, rpd: 250, tpm: 120000, tpd: 5000000 } },
+    { tier: 'free', key_var: 'GEMINI_API_KEY', limits: { rpm: 5, rpd: 20, tpm: 120000, tpd: 5000000 } },
     { tier: 'paid', key_var: 'GEMINI_PAID_API_KEY',
       price: { input_microusd_per_mtok: 375000, output_microusd_per_mtok: 3125000 } },
   ],
@@ -347,9 +347,9 @@ Sync the copy in `neuron-v2`; nothing here changes what the CLI sends or must ha
     `available` is false or `status` is `blurred`.
   - Pool health comes from the HealthHub Durable Object (src/health-hub.js): real outcomes from
     every isolate, plus a 30 s alarm that reads provider model lists and status pages and sends a
-    one-line test request only to idle pools whose cooldown ended (daily caps: Groq 24, Gemini 6,
-    Workers AI 48 per model; NVIDIA and OpenRouter none). A recovered model returns to
-    `available`. Isolates cache the snapshot for 5 s. Without the binding (the Node server) health
+    one-line test request only to idle pools whose cooldown ended (daily caps: Groq 24, Workers AI
+    48 per model; Gemini, NVIDIA and OpenRouter none). Failed checks and every test request log one
+    line (check or pool, outcome or status, time). A recovered model returns to `available`. Isolates cache the snapshot for 5 s. Without the binding (the Node server) health
     is shared through KV instead, up to about a minute old.
   - A pool whose shared budget refused a reservation (`pool_exhausted`) is `busy` until the next
     minute (rpm/tpm) or `blurred` until UTC midnight (rpd/tpd), with that time as

@@ -190,6 +190,97 @@ try {
   assert.equal(groq120bProbes(), 0, 'the daily cap of 24 holds');
   console.log('ok - test requests: half-open + idle only, Groq yes / NVIDIA never, 200 without choices fails, daily cap holds');
 
+  // 3b. Gemini's free tier allows 20 requests per model per day, so it gets no test requests
+  // (its model list is free). Each test request logs one line: pool, outcome, time; no bodies.
+  {
+    assert.equal(PROBE_DAILY_CAPS.gemini, 0);
+    const before = offset;
+    const probeHub = new HealthHub(fakeState(), ENV, { now: clock });
+    await probeHub.ready;
+    probeHub.report([{ key: GROQ_120B, success: false, kind: FailureKind.SERVER },
+      { key: GEMINI_25, success: false, kind: FailureKind.SERVER }]);
+    assert.equal(probeHub.tracker.records.get(GEMINI_25).status, HealthState.DEGRADED);
+    upstream = {
+      'https://api.groq.com/openai/v1/chat/completions': () => json({ choices: [{ message: { role: 'assistant', content: 'OK' } }] }),
+      'https://generativelanguage.googleapis.com/': () => json({ choices: [{ message: { role: 'assistant', content: 'OK' } }] }),
+    };
+    calls.length = 0;
+    offset += 150_000;
+    const lines = [];
+    const realInfo = console.info;
+    const realLog = console.log;
+    console.info = (...args) => lines.push(args);
+    console.log = (...args) => lines.push(args);
+    try {
+      await probeHub.runProbes(probeHub.pools(), clock());
+    } finally {
+      console.info = realInfo;
+      console.log = realLog;
+    }
+    assert.ok(!calls.some(call => call.url.startsWith('https://generativelanguage.googleapis.com/')), 'no test request to Gemini');
+    assert.equal(calls.filter(call => call.url === 'https://api.groq.com/openai/v1/chat/completions').length, 1, 'Groq is still tested');
+    assert.equal(probeHub.snapshot().pools[GROQ_120B].status, 'available');
+    assert.equal(lines.length, 1, 'one log line per test request');
+    const [message, fields] = lines[0];
+    assert.equal(message, 'HealthHub probe');
+    assert.deepEqual(Object.keys(fields).sort(), ['ms', 'outcome', 'pool']);
+    assert.deepEqual([fields.pool, fields.outcome, typeof fields.ms], [GROQ_120B, 'ok', 'number']);
+    offset = before;
+  }
+  console.log('ok - test requests: none for Gemini (cap 0), Groq still tested, one log line {pool, outcome, ms} per test request');
+
+  // 3c. A check that never answers is cut off at its timeout and logged (check, time, status);
+  // the other check of the alarm still runs. A non-200 answer or an unreadable body is logged too.
+  {
+    const before = offset;
+    const hangCalls = [];
+    const hangHub = new HealthHub(fakeState(), ENV, { now: clock, fetchTimeoutMs: 20, fetchImpl: (url, { signal } = {}) => {
+      hangCalls.push(url);
+      if (url === 'https://api.groq.com/openai/v1/models') {
+        // Never answers. Node's AbortSignal.timeout does not hold the event loop open, this timer does.
+        const open = setTimeout(() => {}, 10_000);
+        return new Promise((resolve, reject) => signal.addEventListener('abort', () => { clearTimeout(open); reject(signal.reason); }));
+      }
+      if (url.startsWith('https://generativelanguage.googleapis.com/')) {
+        return Promise.resolve(json({ models: [{ name: 'models/gemini-2.5-flash' }, { name: 'models/gemini-3.5-flash' },
+          { name: 'models/gemini-3.6-flash' }] }));
+      }
+      if (url === 'https://integrate.api.nvidia.com/v1/models') return Promise.resolve(json({}, 503));
+      if (url === 'https://openrouter.ai/api/v1/models') return Promise.resolve(new Response('{"data": [', { status: 200 }));
+      return Promise.resolve(json({ data: [] }));
+    } });
+    await hangHub.ready;
+    const warnings = [];
+    const realWarn = console.warn;
+    console.warn = (...args) => warnings.push(args);
+    try {
+      offset += 31_000;
+      await hangHub.alarm();
+      assert.deepEqual(hangCalls, ['https://api.groq.com/openai/v1/models',
+        'https://generativelanguage.googleapis.com/v1beta/models?pageSize=200'], 'the Gemini list runs after the Groq list hung');
+      assert.equal(hangHub.seen.get(GEMINI_25), clock(), 'and its result is used');
+      assert.equal(warnings.length, 1);
+      assert.equal(warnings[0][0], 'HealthHub check failed');
+      assert.equal(warnings[0][1].check, 'list:groq');
+      assert.equal(warnings[0][1].status, null);
+      assert.equal(typeof warnings[0][1].ms, 'number');
+      warnings.length = 0;
+      offset += 31_000;
+      await hangHub.alarm();
+      const nvidia = warnings.find(([, fields]) => fields?.check === 'list:nvidia');
+      assert.ok(nvidia, 'a 503 on a list is logged');
+      assert.equal(nvidia[1].status, 503);
+      const openrouter = warnings.find(([, fields]) => fields?.check === 'list:openrouter');
+      assert.deepEqual([openrouter?.[1].status, openrouter?.[1].error], [200, 'SyntaxError'], 'so is a 200 whose body cannot be read');
+      assert.ok(!JSON.stringify(warnings).includes('-test'), 'no key in the log');
+      assert.ok(!JSON.stringify(warnings).includes('"data"'), 'no body in the log');
+    } finally {
+      console.warn = realWarn;
+    }
+    offset = before;
+  }
+  console.log('ok - checks: a hung check times out with a warning naming it, the next check still runs, non-200 and unreadable bodies logged');
+
   // 4. A restarted object resumes from storage.
   const reborn = new HealthHub(state, ENV, { now: clock });
   await reborn.ready;

@@ -9,7 +9,8 @@
  *   2. provider status pages (free): Groq lists each model, Cloudflare lists Workers AI;
  *   3. a real one-line request, only for a pool whose cooldown has ended (half-open) and that
  *      no real request has touched for two minutes, within a small daily cap per model.
- *      NVIDIA and OpenRouter get none: their free quotas are too small to spend on checks.
+ *      Gemini, NVIDIA and OpenRouter get none: their free quotas are too small to spend on checks.
+ * A failed list or status-page check and every test request log one line (no bodies or headers).
  * /v1/models reads a snapshot from here; the KV path in health-share.js remains for the Node
  * server, which has no Durable Objects.
  *
@@ -29,8 +30,9 @@ const PROBES_PER_ALARM = 2;
 const STATUS_HOLD_MS = 90_000;    // an outage on a status page holds until the next check
 const FETCH_TIMEOUT_MS = 8_000;
 // Test requests per model per UTC day: about 2.4% of Groq's 1,000 requests, under 4% of the
-// Workers AI daily neurons, a handful for Gemini's small free RPD. 0 = never.
-export const PROBE_DAILY_CAPS = Object.freeze({ groq: 24, gemini: 6, cloudflare: 48, nvidia: 0, openrouter: 0 });
+// Workers AI daily neurons. 0 = never: Gemini's free tier allows 20 requests per model per day
+// (catalog.js POOL_LIMITS), so its free model list is its only check.
+export const PROBE_DAILY_CAPS = Object.freeze({ groq: 24, gemini: 0, cloudflare: 48, nvidia: 0, openrouter: 0 });
 
 // Free model lists. `keyVar` names the key the list is read with; only pools that use that key
 // are judged by it (a paid key's pool is not).
@@ -54,11 +56,13 @@ const STATUS_CHECKS = Object.freeze({
 const utcDay = now => new Date(now).toISOString().slice(0, 10);
 
 export class HealthHub {
-  constructor(state, env, { fetchImpl = (...args) => fetch(...args), now = () => Date.now() } = {}) {
+  constructor(state, env, { fetchImpl = (...args) => fetch(...args), now = () => Date.now(),
+    fetchTimeoutMs = FETCH_TIMEOUT_MS } = {}) {
     this.state = state;
     this.env = env;
     this.fetch_ = fetchImpl;
     this.now = now;
+    this.fetchTimeoutMs = fetchTimeoutMs;
     this.tracker = new ProviderHealthTracker();
     // Last observation per pool (real outcome, list, status page or test request).
     this.seen = new Map();
@@ -190,10 +194,23 @@ export class HealthHub {
     await this.runProbes(byProvider, now);
   }
 
-  async getJson(url, headers = {}) {
-    const response = await this.fetch_(url, { headers, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
-    const body = response.ok ? await response.json().catch(() => null) : null;
-    return { status: response.status, body };
+  // A failed check (thrown, timed out, not 200 or an unreadable body) logs its id, time and
+  // status, never the body or headers; a throw returns null.
+  async getJson(id, url, headers = {}) {
+    const started = this.now();
+    try {
+      const response = await this.fetch_(url, { headers, signal: AbortSignal.timeout(this.fetchTimeoutMs) });
+      let bodyError = null;
+      const body = response.ok ? await response.json().catch(error => { bodyError = error; return null; }) : null;
+      if (response.status !== 200 || bodyError) {
+        console.warn('HealthHub check failed', { check: id, ms: this.now() - started, status: response.status,
+          ...(bodyError ? { error: bodyError.name ?? null } : {}) });
+      }
+      return { status: response.status, body };
+    } catch (error) {
+      console.warn('HealthHub check failed', { check: id, ms: this.now() - started, status: null, error: error?.name ?? null });
+      return null;
+    }
   }
 
   async checkList(provider, pools, now) {
@@ -201,12 +218,8 @@ export class HealthHub {
     const secret = check.keyVar ? this.env[check.keyVar] : null;
     const headers = check.header === 'bearer' && secret ? { Authorization: `Bearer ${secret}` }
       : check.header === 'goog' && secret ? { 'x-goog-api-key': secret } : {};
-    let result;
-    try {
-      result = await this.getJson(check.url, headers);
-    } catch {
-      return; // the list endpoint being slow says nothing about the models
-    }
+    const result = await this.getJson(`list:${provider}`, check.url, headers);
+    if (!result) return; // the list endpoint being slow says nothing about the models
     const judged = pools.filter(({ pool }) => !check.keyVar || pool.key_var === check.keyVar);
     if ((result.status === 401 || result.status === 403) && check.header) {
       for (const { key } of judged) this.mark(key, now, { kind: FailureKind.AUTH });
@@ -223,12 +236,8 @@ export class HealthHub {
 
   async checkStatusPage(provider, pools, now) {
     const check = STATUS_CHECKS[provider];
-    let result;
-    try {
-      result = await this.getJson(check.url);
-    } catch {
-      return;
-    }
+    const result = await this.getJson(`status:${provider}`, check.url);
+    if (!result) return;
     const components = new Map((result.body?.components || []).map(component => [component.name, component.status]));
     if (!components.size) return;
     for (const { entry, key } of pools) {
@@ -277,13 +286,16 @@ export class HealthHub {
         if ((this.probes.counts[key] || 0) >= cap) continue;
         this.probes.counts[key] = (this.probes.counts[key] || 0) + 1;
         sent++;
-        await this.probe(entry, pool, key, now);
+        const started = this.now();
+        const outcome = await this.probe(entry, pool, key, now);
+        console.info('HealthHub probe', { pool: key, outcome, ms: this.now() - started });
       }
     }
   }
 
   // One minimal non-streaming request through the same adapter real traffic uses, so every
   // provider-specific error mapping (Workers AI 3036/3040, Gemini RPC reasons, ...) applies.
+  // Returns the outcome: 'ok', 'no_choices' or the failure kind.
   async probe(entry, pool, key, now) {
     const body = { model: entry.id, stream: false, max_tokens: 8,
       messages: [{ role: 'user', content: 'Reply with the single word OK.' }] };
@@ -299,15 +311,18 @@ export class HealthHub {
           this.tracker.recordSuccess(key, { latencyMs: this.now() - started });
           this.seen.set(key, now);
           this.dirty = true;
-          return;
+          return 'ok';
         }
         this.mark(key, now, { kind: FailureKind.SERVER });
-        return;
+        return 'no_choices';
       }
       const failure = classifyUpstreamFailure(response.status, text, response.headers);
       this.mark(key, now, failure);
+      return failure.kind;
     } catch (error) {
-      this.mark(key, now, { kind: error?.name === 'TimeoutError' ? FailureKind.TIMEOUT : FailureKind.SERVER });
+      const kind = error?.name === 'TimeoutError' ? FailureKind.TIMEOUT : FailureKind.SERVER;
+      this.mark(key, now, { kind });
+      return kind;
     }
   }
 }
