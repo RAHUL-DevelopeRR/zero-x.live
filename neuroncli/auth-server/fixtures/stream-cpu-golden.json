@@ -1,0 +1,21 @@
+{
+  "golden": {
+    "bytes": 627779,
+    "sha256": "2104546e9a2c5fd6e1c7124c5ab3d717058acc81facbe26cca964556a11b7159",
+    "finish": [
+      {
+        "status": "ok",
+        "usage": {
+          "prompt_tokens": 9000,
+          "completion_tokens": 2990,
+          "total_tokens": 11990
+        },
+        "outputBytes": 84700
+      }
+    ]
+  },
+  "cpu": {
+    "ratio": 2.82,
+    "usPerEvent": 5.56
+  }
+}

@@ -821,6 +821,7 @@ export class SseEventReader {
     this.reader = body.getReader();
     this.decoder = new TextDecoder();
     this.buffer = '';
+    this.pendingCr = false;
     this.queue = [];
     this.ended = false;
     this.lastByteAt = null;
@@ -836,13 +837,18 @@ export class SseEventReader {
     while (!this.queue.length && !this.ended) {
       const { value, done } = await this.reader.read();
       if (value?.byteLength) this.lastByteAt = Date.now();
-      this.buffer += done ? this.decoder.decode() : this.decoder.decode(value, { stream: true });
-      this.buffer = this.buffer.replace(/\r\n/g, '\n');
+      // CRLF is folded in the newly decoded text only; a trailing CR waits for the next read.
+      let text = (this.pendingCr ? '\r' : '') + (done ? this.decoder.decode() : this.decoder.decode(value, { stream: true }));
+      this.pendingCr = !done && text.endsWith('\r');
+      if (this.pendingCr) text = text.slice(0, -1);
+      this.buffer += text.includes('\r') ? text.replace(/\r\n/g, '\n') : text;
+      let start = 0;
       let boundary;
-      while ((boundary = this.buffer.indexOf('\n\n')) >= 0) {
-        this.push(this.buffer.slice(0, boundary));
-        this.buffer = this.buffer.slice(boundary + 2);
+      while ((boundary = this.buffer.indexOf('\n\n', start)) >= 0) {
+        this.push(this.buffer.slice(start, boundary));
+        start = boundary + 2;
       }
+      if (start) this.buffer = this.buffer.slice(start);
       if (this.buffer.length > MAX_EVENT_BYTES) throw new UpstreamProtocolError('Provider SSE event exceeds size limit');
       if (done) {
         this.ended = true;
@@ -851,6 +857,11 @@ export class SseEventReader {
       }
     }
     return this.queue.length ? this.queue.shift() : null;
+  }
+
+  // Events already parsed from the bytes read so far; never waits for the upstream.
+  drain() {
+    return this.queue.splice(0);
   }
 
   cancel() {
@@ -984,12 +995,45 @@ function chunkOf(state, choices, extra = {}) {
   return { id: state.id, object: 'chat.completion.chunk', created: state.created, model: state.model, choices, ...extra };
 }
 
+// UTF-8 length of JSON.stringify(text), counted without building either string.
+function jsonStringBytes(text) {
+  let bytes = 2;
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i);
+    if (code === 0x22 || code === 0x5c) bytes += 2;
+    else if (code < 0x20) bytes += code === 8 || code === 9 || code === 10 || code === 12 || code === 13 ? 2 : 6;
+    else if (code < 0x80) bytes += 1;
+    else if (code < 0x800) bytes += 2;
+    else if (code < 0xd800 || code > 0xdfff) bytes += 3;
+    else if (code < 0xdc00 && (text.charCodeAt(i + 1) & 0xfc00) === 0xdc00) {
+      bytes += 4;
+      i++;
+    } else bytes += 6; // a lone surrogate is escaped as \udxxx
+  }
+  return bytes;
+}
+
+// utf8Bytes(deltas) for normalizeToolDeltas output, the output estimate billed when the upstream
+// sends no usage, without serializing every streamed fragment:
+// [{"index":0,"id":"…","type":"function","function":{"name":"…","arguments":"…"}}, …]
+function toolDeltaBytes(deltas) {
+  let bytes = deltas.length ? deltas.length + 1 : 2;
+  for (const { index, id, function: fn } of deltas) {
+    bytes += 24 + String(index).length + (id === undefined ? 0 : 24 + jsonStringBytes(id));
+    if (fn.name !== undefined) bytes += 7 + (typeof fn.name === 'string' ? jsonStringBytes(fn.name) : utf8Bytes(fn.name));
+    if (fn.arguments !== undefined) bytes += 12 + jsonStringBytes(fn.arguments) + (fn.name !== undefined ? 1 : 0);
+  }
+  return bytes;
+}
+
 function normalizeStreamValue(value, state) {
   captureUsage(value, state);
   if (Array.isArray(value.choices)) {
     const choices = value.choices.filter(choice => choice && typeof choice === 'object').map((choice, position) => {
       const index = Number.isInteger(choice.index) ? choice.index : position;
-      const delta = normalizeReasoning({ ...(choice.delta || {}) });
+      // The parsed event is not shared, so its delta is normalized in place.
+      const raw = choice.delta;
+      const delta = normalizeReasoning(raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : { ...(raw || {}) });
       delete delta.extra_content;
       if (Array.isArray(delta.tool_calls) && delta.tool_calls.length) {
         delta.tool_calls = normalizeToolDeltas(delta.tool_calls, state, index);
@@ -998,7 +1042,7 @@ function normalizeStreamValue(value, state) {
         delete delta.tool_calls;
       }
       state.outputBytes += utf8Bytes(delta.content || '') + utf8Bytes(delta.reasoning_content || '') +
-        (delta.tool_calls ? utf8Bytes(delta.tool_calls) : 0);
+        (delta.tool_calls ? toolDeltaBytes(delta.tool_calls) : 0);
       let finish = choice.finish_reason ?? null;
       if (finish) state.sawFinish = true;
       if (finish === 'stop' && state.toolChoices.has(index)) finish = 'tool_calls';
@@ -1012,7 +1056,7 @@ function normalizeStreamValue(value, state) {
   const content = value.response ?? value.text ?? '';
   const calls = Array.isArray(value.tool_calls) && value.tool_calls.length
     ? normalizeToolDeltas(value.tool_calls, state, 0) : [];
-  state.outputBytes += utf8Bytes(content) + (calls.length ? utf8Bytes(calls) : 0);
+  state.outputBytes += utf8Bytes(content) + (calls.length ? toolDeltaBytes(calls) : 0);
   const chunks = [];
   if (content || calls.length) {
     chunks.push(chunkOf(state, [{ index: 0, delta: { ...(content ? { content } : {}), ...(calls.length ? { tool_calls: calls } : {}) }, finish_reason: null }]));
@@ -1041,9 +1085,23 @@ export function createCompletionStream({ reader, first, model, controller, clien
   let done = false;
   let cancelled = false;
   let finished = false;
+  // One idle watchdog and one client abort listener per stream (not per event): either sets
+  // `failure` and cancels the upstream reader, which settles the read in flight.
+  let failure = null;
+  let reading = false;
+  let timer = null;
+  const interrupt = error => {
+    if (failure || done) return;
+    failure = error;
+    controller.abort(error);
+    reader.cancel()?.catch?.(() => {});
+  };
+  const onAbort = () => interrupt(abortReason(clientSignal));
   const finish = async outcome => {
     if (finished) return;
     finished = true;
+    clearTimeout(timer);
+    clientSignal?.removeEventListener('abort', onAbort);
     try {
       await onFinish({ usage: state.usage, outputBytes: state.outputBytes, ...outcome });
     } catch (error) {
@@ -1069,39 +1127,79 @@ export function createCompletionStream({ reader, first, model, controller, clien
     tail.push('[DONE]');
     return tail;
   };
-  const encode = item => encoder.encode(`data: ${typeof item === 'string' ? item : JSON.stringify(item)}\n\n`);
+  // One client chunk for all the events handled in a pull.
+  const encode = items => {
+    let text = '';
+    for (const item of items) text += `data: ${typeof item === 'string' ? item : JSON.stringify(item)}\n\n`;
+    return encoder.encode(text);
+  };
   // Idle budget: measured from the last body bytes (SSE comments and keep-alives included),
-  // re-read whenever the timer fires so progress inside one event extends it.
+  // re-read whenever the timer fires so progress inside one event extends it. It only runs out
+  // while a read is in flight; a timer that fires between reads is re-armed by the next read.
   const streamStarted = Date.now();
   const idleDeadline = () => (reader.lastByteAt ?? streamStarted) + timeouts.idleMs;
+  const watch = () => {
+    timer = null;
+    if (!reading || done || failure) return;
+    const wait = idleDeadline() - Date.now();
+    if (wait > 0) timer = setTimeout(watch, wait);
+    else interrupt(new UpstreamTimeoutError('idle'));
+  };
   // [DONE] completes the attempt even when the upstream keeps its connection open.
   const complete = async () => {
     queue.push(...await finalize());
     done = true;
     void reader.cancel();
   };
+  // Events already parsed from the last upstream read go out in the same client chunk (a reader
+  // without drain(), such as a test double, gets one chunk per event).
+  const handleParsed = () => {
+    for (const data of reader.drain?.() ?? []) {
+      if (state.sawDone) break;
+      queue.push(...handle(data));
+    }
+  };
   queue = handle(first);
+  if (clientSignal?.aborted) onAbort();
+  else clientSignal?.addEventListener('abort', onAbort, { once: true });
 
   return new ReadableStream({
     async pull(stream) {
       try {
+        // The first pull also takes the events that arrived with `first`.
+        if (!done) handleParsed();
         if (state.sawDone && !done) await complete();
         while (!queue.length && !done) {
-          const data = await guarded(reader.next(), { deadline: idleDeadline, phase: 'idle', signal: clientSignal, controller });
+          if (failure) throw failure;
+          reading = true;
+          // Always a macrotask, so a read that settles at once wins over an expired deadline.
+          if (!timer) timer = setTimeout(watch, Math.max(0, idleDeadline() - Date.now()));
+          const data = await reader.next();
+          reading = false;
           if (cancelled) return;
+          if (failure) throw failure;
           if (data === null) {
             queue.push(...await finalize());
             done = true;
           } else {
             queue.push(...handle(data));
+            handleParsed();
             if (state.sawDone) await complete();
           }
         }
-        if (queue.length) stream.enqueue(encode(queue.shift()));
-        else stream.close();
-      } catch (error) {
+        if (queue.length) {
+          const items = queue;
+          queue = [];
+          stream.enqueue(encode(items));
+        }
+        if (done) stream.close();
+      } catch (caught) {
         if (cancelled) return;
+        const error = failure ?? caught;
         done = true;
+        reading = false;
+        // Chunks handled before a malformed event still reach the client ahead of the error.
+        const pending = queue;
         queue = [];
         const client = Boolean(clientSignal?.aborted);
         const timeout = error instanceof UpstreamTimeoutError;
@@ -1118,7 +1216,7 @@ export function createCompletionStream({ reader, first, model, controller, clien
         const code = timeout ? 'upstream_timeout' : 'upstream_error';
         const message = timeout ? 'The model stopped responding. Retry your request.' : 'Generation interrupted. Retry your request.';
         try {
-          stream.enqueue(encode(errorEvent(code, { message, requestId, env })));
+          stream.enqueue(encode([...pending, errorEvent(code, { message, requestId, env })]));
           stream.close();
         } catch { /* consumer already closed */ }
       }
