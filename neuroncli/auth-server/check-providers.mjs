@@ -179,14 +179,16 @@ try {
   assert.equal((await probe('/v1/providers/health', null)).status, 401);
   assert.equal((await probe('/v1/providers/health', null, probeEnv.GATEWAY_ADMIN_TOKEN)).status, 200);
   assert.equal((await probe('/v1/models/health', 'auto', 'bad')).status, 401);
-  const response = await probe('/v1/models/health', 'auto');
+  const response = await probe('/v1/models/health', 'llama-3.3-70b');
   assert.equal(response.status, 200);
   assert.equal((await response.json()).status, 'healthy');
   assert.equal(JSON.parse(sessions.get('ses_probe')).tokens_used, 3);
   assert.equal(JSON.parse(sessions.get('ses_probe')).requests, 1);
+  // Workers AI llama-3.3 is explicit-only, so a gateway with only the AI binding has no auto model.
+  assert.equal((await probe('/v1/models/health', 'auto')).status, 503);
   probeEnv.AI.run = async () => ({ response: '' });
-  assert.equal((await probe('/v1/models/health', 'auto')).status, 502);
+  assert.equal((await probe('/v1/models/health', 'llama-3.3-70b')).status, 502);
   sessions.set('ses_probe', JSON.stringify({ ...JSON.parse(sessions.get('ses_probe')), tokens_used: 256000 }));
-  assert.equal((await probe('/v1/models/health', 'auto')).status, 429);
+  assert.equal((await probe('/v1/models/health', 'llama-3.3-70b')).status, 429);
   console.log('Provider discovery health, verified catalog, per-pool credentials, credential isolation and quota-backed inference probes passed');
 } finally { globalThis.fetch = originalFetch; }

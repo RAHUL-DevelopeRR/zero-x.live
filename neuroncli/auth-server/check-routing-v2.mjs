@@ -353,6 +353,34 @@ try {
     assert.ok(ids(router.route({ ...base, tiers: ['free', 'paid'], country: 'DE' })).includes('gemini/gemini-2.5-flash#paid'));
   });
 
+  // Production (28 Oct, CPU-3/MC-4): Workers AI llama-3.3 answered 400 (5006) to every request
+  // with tool history, so each `auto` request spent an attempt on it once Gemini and Groq were
+  // parked, and its 24K window capped what auto advertised. It stays selectable by name only.
+  await test('auto never picks Workers AI llama-3.3; it stays selectable by name', () => {
+    const LLAMA = '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
+    const env = { ...KEYS, AI: {}, NVIDIA_API_KEY: 'n', NVIDIA_HOSTED: 'true' };
+    const tracker = new ProviderHealthTracker();
+    const router = new RoutingEngine(tracker);
+    const base = { env, requestedModel: 'auto', needsTools: true, promptTokens: 500, maxTokens: 2000, tiers: ['free'], country: 'US' };
+    assert.ok(!ids(router.route(base)).some(id => id.startsWith(LLAMA)));
+    for (const entry of CATALOG.filter(item => item.provider === 'gemini' || item.provider === 'groq')) {
+      for (const item of entry.pools) tracker.recordFailure(poolKey(entry, item), { kind: FailureKind.RATE_LIMITED, retryAfterSeconds: 60 });
+    }
+    assert.deepEqual(ids(router.route(base)), ['nvidia/openai/gpt-oss-20b#free', 'nvidia/nvidia/nemotron-3-ultra-550b-a55b#free'],
+      'with Gemini and Groq parked, auto goes to NVIDIA');
+    assert.deepEqual(ids(router.route({ ...base, requestedModel: 'llama-3.3-70b' })), [`${LLAMA}#free`], 'explicit alias');
+    assert.deepEqual(ids(router.route({ ...base, requestedModel: LLAMA })), [`${LLAMA}#free`], 'explicit id');
+
+    // auto advertises the smallest window among its candidates: 131K (Groq, NVIDIA), not llama's 24K.
+    const list = listModelsForCaller(env, { country: 'US' }).data;
+    const auto = list.find(model => model.id === 'auto');
+    assert.ok(list.some(model => model.id === LLAMA && model.available), 'llama is still listed');
+    const windows = list.filter(model => model.available && catalogEntry(model.id)?.auto_rank != null).map(model => model.context_window);
+    assert.equal(auto.context_window, Math.min(...windows));
+    assert.equal(auto.context_window, 131072);
+    assert.equal(auto.context_length, 131072);
+  });
+
   await test('auto selects by fit: Groq TPM, context windows and max_tokens clamping', () => {
     const groq = catalogEntry('groq/openai/gpt-oss-120b');
     assert.equal(fitMaxTokens(groq, groq.pools[0], 3000, 8192), 5000, 'clamped to the 8K TPM budget');
@@ -360,9 +388,10 @@ try {
     assert.equal(fitMaxTokens(groq, groq.pools[0], 9000, 512), 0, 'prompt above TPM');
     assert.equal(fitMaxTokens(groq, groq.pools[1], 9000, 4096), 4096, 'paid pool has no 8K TPM cap');
     const router = new RoutingEngine(new ProviderHealthTracker());
-    const env = { ...KEYS, AI: {} };
+    // The opt-in Workers AI gpt-oss-120b (60K TPM) is the auto candidate that takes 12K in DE.
+    const env = { ...KEYS, AI: {}, CLOUDFLARE_MODELS: '@cf/openai/gpt-oss-120b' };
     const base = { env, requestedModel: 'auto', needsTools: true, maxTokens: 4096, tiers: ['free'], country: 'DE' };
-    assert.deepEqual(ids(router.route({ ...base, promptTokens: 12000 })), ['@cf/meta/llama-3.3-70b-instruct-fp8-fast#free']);
+    assert.deepEqual(ids(router.route({ ...base, promptTokens: 12000 })), ['@cf/openai/gpt-oss-120b#free']);
     assert.equal(router.route({ ...base, promptTokens: 12000 }).candidates[0].maxTokens, 4096);
     // Groq free (the only free pool in DE without Workers AI) would take the model but not 12K
     // within its 8K TPM: the request is too large for free capacity; paid capacity would take it.

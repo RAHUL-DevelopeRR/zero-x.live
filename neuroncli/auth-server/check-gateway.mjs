@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import app from './src/index.js';
 import { estimatePromptTokens, modelCatalog } from './src/providers.js';
-import { globalHealthTracker } from './src/provider-health.js';
+import { FailureKind, globalHealthTracker } from './src/provider-health.js';
+import { CATALOG, poolKey } from './src/catalog.js';
 import { RESERVED_OUTPUT_TOKENS } from './src/capacity.js';
 import { planPolicyRows } from './contract-rows.mjs';
 
@@ -103,6 +104,31 @@ try {
   const chunks = stream.split('\n\n').filter(event => event.startsWith('data: {')).map(event => JSON.parse(event.slice(6)));
   assert.equal(new Set(chunks.filter(chunk => chunk.choices).map(chunk => chunk.id)).size, 1);
   assert.equal(JSON.parse(store.get('ses_test')).tokens_used, 64);
+
+  // Production (28 Oct, CPU-3): with Gemini and Groq parked, every `auto` request with tool
+  // history spent an attempt on Workers AI llama-3.3, which answered 400 (5006). auto now goes
+  // straight to the next candidate (NVIDIA) without calling the binding.
+  globalHealthTracker.reset();
+  for (const entry of CATALOG.filter(item => item.provider === 'gemini' || item.provider === 'groq')) {
+    for (const pool of entry.pools) globalHealthTracker.recordFailure(poolKey(entry, pool), { kind: FailureKind.RATE_LIMITED, retryAfterSeconds: 60 });
+  }
+  const bindingRuns = [];
+  const parkedEnv = { ...env, ALLOW_UNKNOWN_COUNTRY: 'true',
+    AI: { run: async model => { bindingRuns.push(model); throw new Error('5006: Invalid input'); } } };
+  const parkedUpstreams = [];
+  globalThis.fetch = async url => {
+    parkedUpstreams.push(url);
+    return Response.json({ choices: [{ index: 0, message: { role: 'assistant', content: 'done' }, finish_reason: 'stop' }], usage: { total_tokens: 7 } });
+  };
+  store.set('ses_parked', JSON.stringify(session));
+  const toolHistory = [...messages,
+    { role: 'assistant', content: null, tool_calls: [{ id: 'call-1', type: 'function', function: { name: 'read_file', arguments: '{"path":"hello.js"}' } }] },
+    { role: 'tool', tool_call_id: 'call-1', content: 'console.log(1)', is_error: false }];
+  response = await request('/v1/chat/completions', { model: 'auto', messages: toolHistory, tools }, 'ses_parked', parkedEnv);
+  assert.equal(response.status, 200);
+  assert.deepEqual(bindingRuns, [], 'auto makes no Workers AI binding call');
+  assert.deepEqual(parkedUpstreams, ['https://integrate.api.nvidia.com/v1/chat/completions']);
+  globalHealthTracker.reset();
 
   globalThis.fetch = async (url, options) => {
     assert.equal(url, 'https://api.groq.com/openai/v1/chat/completions');

@@ -150,10 +150,13 @@ const MODELS = [
     ],
   },
   {
+    // Explicit selection only: in production (2026-10-28) it answered 400 (5006) to every request
+    // with tool history, which cost each `auto` request an attempt, and its 24K window capped the
+    // window auto advertises. Rank it again only after a live multi-turn tool-call probe passes.
     id: '@cf/meta/llama-3.3-70b-instruct-fp8-fast', display_name: 'Llama 3.3 70B (Workers AI)',
     provider: 'cloudflare', upstream_model: '@cf/meta/llama-3.3-70b-instruct-fp8-fast',
     context_window: 24000, max_output_tokens: 8192, supports_tools: true, supports_streaming: true,
-    auto_rank: 9, aliases: ['llama-3.3-70b', 'workers-ai/llama-3.3-70b', 'cloudflare/llama-3.3-70b'],
+    auto_rank: null, aliases: ['llama-3.3-70b', 'workers-ai/llama-3.3-70b', 'cloudflare/llama-3.3-70b'],
     pools: [
       pool('free', WORKERS_AI, { limits: POOL_LIMITS.workers_llama_free }),
       // Workers AI list price: 26,668 / 204,805 neurons per million tokens at $0.011 / 1K neurons.
