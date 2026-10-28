@@ -12,8 +12,9 @@ import { callerCountry, loadCatalogDbModels, loadPlanPolicies, planPolicy, resol
 import { billableUsage, estimateOutputTokens, estimatePromptTokens, utf8Bytes } from './pricing.js';
 import { exhaustedBudget, notePoolExhausted, notePoolReserved, poolBudgetState } from './pool-budget.js';
 import {
-  PAID_DENIED_STATUSES, RESERVE_ERRORS, TERMINAL_RESERVE_STATUSES, reservationArgs, reserveCapacity, reserveError,
-  reserveSessionQuota, runInBackground, sessionTiers, settleCapacity, settleSessionQuota, settlementArgs, usesLedger,
+  PAID_DENIED_STATUSES, RESERVATION_LEASE_SECONDS, RESERVATION_RENEW_MS, RESERVE_ERRORS, TERMINAL_RESERVE_STATUSES,
+  renewCapacity, reservationArgs, reserveCapacity, reserveError, reserveSessionQuota, runInBackground, sessionTiers,
+  settleCapacity, settleSessionQuota, settlementArgs, usesLedger,
 } from './capacity.js';
 
 const ROLES = new Set(['system', 'developer', 'user', 'assistant', 'tool']);
@@ -73,6 +74,11 @@ function positiveInt(value, fallback) {
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
+
+// zerox_renew_reservation does not exist until migrations/20261028000000_reservation_leases.sql
+// is applied (PostgREST reports PGRST202, Postgres 42883). Renewal is then skipped for a while.
+const MISSING_FUNCTION_CODES = new Set(['PGRST202', '42883']);
+const RENEWAL_RECHECK_MS = 600000;
 
 const ERROR_CODES_BY_KIND = {
   [FailureKind.CONTEXT]: 'context_length_exceeded',
@@ -155,6 +161,8 @@ function finalError({ failures, exhausted, paidDenied }) {
 
 export function createChatHandler({ validateSession, setSession, getSession, planLimits, router = globalRouter,
   healthTracker = globalHealthTracker, signatureCache = globalSignatureCache }) {
+  // Until when this isolate skips lease renewals because zerox_renew_reservation is missing.
+  let renewalUnavailableUntil = 0;
   return async c => {
     const requestId = newRequestId();
     const env = c.env || {};
@@ -244,10 +252,51 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
     // Settlement I/O after the response has been handed over (stream end, client cancel)
     // runs through waitUntil on Workers so it is not dropped after a disconnect.
     const background = promise => runInBackground(c, promise) ? Promise.resolve() : promise;
+    // A reservation holds the user's concurrency slot for a lease (90 s) that is renewed every
+    // RESERVATION_RENEW_MS while its attempt runs. When Cloudflare kills the isolate mid-stream
+    // (CPU limit, eviction), nothing settles the reservation and waitUntil dies with it; the
+    // timer dies too, so the lease lapses and the slot frees within 90 s. Renewals go to
+    // Postgres, not KV (the Free plan allows 1,000 KV writes a day).
+    const renewMs = positiveInt(env.RESERVATION_RENEW_MS, RESERVATION_RENEW_MS);
+    const leaseSeconds = Math.min(3600, positiveInt(env.RESERVATION_LEASE_SECONDS, RESERVATION_LEASE_SECONDS));
+    const leases = new Map(); // reservation id -> renewal timer
+    const stopLease = id => {
+      if (!leases.has(id)) return;
+      clearInterval(leases.get(id));
+      leases.delete(id);
+    };
+    const stopLeases = () => {
+      for (const id of [...leases.keys()]) stopLease(id);
+    };
+    const holdLease = reservation => {
+      const id = reservation?.reservation_id;
+      if (!id || leases.has(id) || Date.now() < renewalUnavailableUntil) return;
+      const timer = setInterval(() => {
+        if (Date.now() < renewalUnavailableUntil) return stopLease(id);
+        renewCapacity(env, id, leaseSeconds).then(renewed => {
+          // Settled, or released after its lease lapsed: there is nothing left to hold.
+          if (renewed === false) stopLease(id);
+        }, error => {
+          if (!MISSING_FUNCTION_CODES.has(error?.code)) {
+            console.warn('Neuron reservation renewal failed', { name: error?.name, code: error?.code ?? null, request_id: requestId });
+            return;
+          }
+          stopLease(id);
+          if (Date.now() < renewalUnavailableUntil) return;
+          renewalUnavailableUntil = Date.now() + RENEWAL_RECHECK_MS;
+          console.warn('Neuron reservation renewal unavailable', { code: error.code, request_id: requestId });
+        });
+      }, renewMs);
+      timer?.unref?.();
+      leases.set(id, timer);
+    };
     const settleDb = (reservation, candidate, outcome, inBackground) => {
+      stopLease(reservation.reservation_id);
       const args = settlementArgs({ reservationId: reservation.reservation_id, entry: candidate.entry, pool: candidate.pool,
         promptEstimate: promptTokens, ...outcome });
-      const promise = settleCapacity(env, args).catch(error => {
+      // Settling is idempotent, so a failed call is retried once. A reservation left unsettled
+      // keeps its slot only until its lease lapses.
+      const promise = settleCapacity(env, args).catch(() => settleCapacity(env, args)).catch(error => {
         console.error('Neuron settlement failed', { name: error?.name, request_id: requestId });
       });
       return inBackground ? background(promise) : promise;
@@ -411,10 +460,12 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
               requestId: reservations ? `${requestId}.${reservations}` : requestId, promptTokens, maxTokens: candidate.maxTokens }));
           } catch (error) {
             console.error('Neuron capacity reservation unavailable', { name: error?.name, request_id: requestId });
+            stopLeases();
             return fail('service_unavailable');
           }
           if (row.status !== 'ok') {
             if (TERMINAL_RESERVE_STATUSES.has(row.status) || !RESERVE_ERRORS[row.status]) {
+              stopLeases();
               const error = reserveError(row);
               return fail(error.code, error);
             }
@@ -432,6 +483,7 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
           notePoolReserved(candidate.key);
           reservations++;
           reservation = row;
+          holdLease(row);
           current = { reservation, candidate };
           if (row.plan) headers['x-neuron-plan'] = String(row.plan);
           setQuotaHeaders(row.remaining_requests, row.remaining_tokens);
@@ -456,6 +508,7 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
       console.error('Neuron completion failed unexpectedly', { name: error?.name, request_id: requestId });
       if (current) pending = { ...current, errorCode: 'internal_error' };
       await releasePending('refunded');
+      stopLeases();
       await settleKv({ actualTokens: 0, refundRequest: true });
       return fail('upstream_error');
     }
@@ -469,6 +522,8 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
     if (aborted) await releasePending('error', { usage: { prompt_tokens: promptTokens, completion_tokens: 0 } });
     else if (clientSide) await releasePending('error', { usage: { prompt_tokens: 0, completion_tokens: 0 } });
     else await releasePending();
+    // No attempt runs any more (a successful one returned its response above).
+    stopLeases();
     await settleKv({ actualTokens: aborted ? promptTokens : 0, refundRequest: !aborted && !clientSide });
     return fail(final.code, final);
   };

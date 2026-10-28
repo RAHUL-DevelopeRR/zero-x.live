@@ -72,6 +72,7 @@ them in `zerox_plan_policy.razorpay_plan_id_inr/usd`.
 | `ALLOW_UNKNOWN_COUNTRY` | var | unset | Local development only: serve free Gemini when the caller's country is unknown (fails closed otherwise). |
 | `UPSTREAM_TTFB_TIMEOUT_MS` / `UPSTREAM_IDLE_TIMEOUT_MS` | var | `45000` / `90000` | First byte / gap between bytes (SSE keep-alives count). The first data event is due within their sum. |
 | `ROUTER_MAX_ATTEMPTS` | var | `3` | Upstream attempts per request; plans with paid capacity keep the last one for a paid pool. |
+| `RESERVATION_RENEW_MS` / `RESERVATION_LEASE_SECONDS` | var | `30000` / `90` | A running attempt renews its concurrency lease this often, for this long (Postgres `zerox_renew_reservation`; docs/PLATFORM_CONTRACT.md section 8.5). A killed request frees its slot when the lease lapses. |
 | `OMNIROUTE_*`, `BEDROCK_*`, `AZURE_*` | var + **secret** | unset | Optional adapters for operator health probes; not part of the hosted catalog (see PROVIDERS.md). |
 
 No new variables control request shaping or 429 handling; both are always on:

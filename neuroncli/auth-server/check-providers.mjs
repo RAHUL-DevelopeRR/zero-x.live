@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import app from './src/index.js';
-import { ADAPTERS, classifyUpstreamFailure, modelCatalog, providerConfiguration, providerHealth, requestCompletion,
-  resolveModelCatalog, startCompletion } from './src/providers.js';
+import { ADAPTERS, classifyUpstreamFailure, createCompletionStream, modelCatalog, providerConfiguration, providerHealth,
+  requestCompletion, resolveModelCatalog, startCompletion } from './src/providers.js';
 import { CATALOG } from './src/catalog.js';
 
 const originalFetch = globalThis.fetch;
@@ -188,5 +188,36 @@ try {
   assert.equal((await probe('/v1/models/health', 'auto')).status, 502);
   sessions.set('ses_probe', JSON.stringify({ ...JSON.parse(sessions.get('ses_probe')), tokens_used: 256000 }));
   assert.equal((await probe('/v1/models/health', 'auto')).status, 429);
+  // onFinish settles the attempt's reservation (and frees its concurrency slot), so a committed
+  // stream calls it exactly once even when releasing the upstream reader fails: on an upstream
+  // error, on a client cancel and after [DONE].
+  for (const scenario of ['upstream_error', 'client_cancel', 'done']) {
+    const finishes = [];
+    const unhandled = [];
+    const onUnhandled = reason => unhandled.push(reason);
+    process.on('unhandledRejection', onUnhandled);
+    const pending = [JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] }), '[DONE]'];
+    const reader = {
+      lastByteAt: Date.now(),
+      next: scenario === 'upstream_error' ? async () => { throw new Error('connection reset'); }
+        : scenario === 'done' ? async () => pending.shift() ?? new Promise(() => {}) : () => new Promise(() => {}),
+      cancel: async () => { throw new Error('cancel failed'); },
+    };
+    const stream = createCompletionStream({ reader, first: JSON.stringify({ choices: [{ index: 0, delta: { content: 'hi' } }] }),
+      model: 'groq/chat-model', controller: new AbortController(), clientSignal: null, timeouts: { idleMs: 60000 },
+      onFinish: async outcome => { finishes.push(outcome); }, requestId: 'req_cancel', env: {} });
+    const client = stream.getReader();
+    let text = new TextDecoder().decode((await client.read()).value);
+    if (scenario === 'client_cancel') await client.cancel();
+    else for (let read = await client.read(); !read.done; read = await client.read()) text += new TextDecoder().decode(read.value);
+    await new Promise(resolve => setTimeout(resolve, 20));
+    process.off('unhandledRejection', onUnhandled);
+    assert.equal(finishes.length, 1, `${scenario}: onFinish runs exactly once`);
+    assert.equal(finishes[0].status, scenario === 'done' ? 'ok' : 'error', scenario);
+    if (scenario !== 'done') assert.equal(finishes[0].errorCode, scenario === 'upstream_error' ? 'upstream_error' : 'client_disconnected');
+    if (scenario === 'upstream_error') assert.match(text, /upstream_error/, 'the client still gets the error event');
+    if (scenario === 'done') assert.match(text, /\[DONE\]/);
+    assert.deepEqual(unhandled, [], `${scenario}: a failed cancel is not an unhandled rejection`);
+  }
   console.log('Provider discovery health, verified catalog, per-pool credentials, credential isolation and quota-backed inference probes passed');
 } finally { globalThis.fetch = originalFetch; }

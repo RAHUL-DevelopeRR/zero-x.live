@@ -199,6 +199,78 @@ try {
   const quotaError = (await response.json()).error;
   assert.equal(quotaError.code, 'insufficient_quota');
   assert.ok(quotaError.resets_at);
+
+  // A running attempt renews its concurrency lease through zerox_renew_reservation. Before that
+  // migration is applied the RPC is missing (PostgREST PGRST202): the handler warns once, stops
+  // renewing, and the request still completes and settles. A settle that fails is retried once.
+  const leaseCalls = [];
+  let settleFailures = 1;
+  let finishUpstream;
+  const upstreamHeld = new Promise(resolve => { finishUpstream = resolve; });
+  const leaseFetch = async (url, options) => {
+    if (url.includes('/rest/v1/rpc/')) {
+      const rpc = url.split('/').at(-1); leaseCalls.push([rpc, JSON.parse(options.body)]);
+      if (rpc === 'zerox_get_account') return Response.json([{ clerk_id: accountId, plan: 'free', daily_requests: 2, daily_tokens_used: 5000, last_usage_reset: day }]);
+      if (rpc === 'zerox_plan_policies_v2') return Response.json(B1_POLICY_ROWS);
+      if (rpc === 'zerox_reserve_v2') return Response.json([{ status: 'ok', reservation_id: 'res-lease', plan: 'free', remaining_requests: 97, remaining_tokens: 480000 }]);
+      if (rpc === 'zerox_renew_reservation') {
+        return Response.json({ code: 'PGRST202', message: 'Could not find the function public.zerox_renew_reservation(p_lease_seconds, p_reservation_id) in the schema cache',
+          details: null, hint: null }, { status: 404 });
+      }
+      if (rpc === 'zerox_settle_v2') {
+        if (settleFailures-- > 0) return new Response('upstream connect error', { status: 503 });
+        return Response.json([{ status: 'settled' }]);
+      }
+      throw new Error(`Unexpected RPC ${rpc}`);
+    }
+    const encoder = new TextEncoder();
+    return new Response(new ReadableStream({ async start(controller) {
+      controller.enqueue(encoder.encode('data: {"choices":[{"index":0,"delta":{"content":"partial"},"finish_reason":null}]}\n\n'));
+      await upstreamHeld;
+      controller.enqueue(encoder.encode('data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n'));
+      controller.close();
+    } }), { headers: { 'Content-Type': 'text/event-stream' } });
+  };
+  globalThis.fetch = leaseFetch;
+  const leaseLogs = [];
+  const { warn, error: logError } = console;
+  console.warn = (...args) => leaseLogs.push(['warn', ...args]);
+  console.error = (...args) => leaseLogs.push(['error', ...args]);
+  let leaseText = '';
+  try {
+    response = await request('/v1/chat/completions', { model: 'groq/openai/gpt-oss-120b', messages, stream: true }, 'ses_account',
+      { ...accountEnv, RESERVATION_RENEW_MS: '20' });
+    assert.equal(response.status, 200);
+    const leaseReader = response.body.getReader();
+    await new Promise(resolve => setTimeout(resolve, 200));
+    finishUpstream();
+    for (let read = await leaseReader.read(); !read.done; read = await leaseReader.read()) leaseText += new TextDecoder().decode(read.value);
+    // A non-streamed request whose settle fails twice: one retry, then one error log.
+    globalThis.fetch = async (url, options) => {
+      if (url.includes('/rest/v1/rpc/')) return leaseFetch(url, options);
+      return Response.json({ choices: [], usage: { total_tokens: 9 } });
+    };
+    settleFailures = 2;
+    const failedSettle = await request('/v1/chat/completions', { model: 'groq/openai/gpt-oss-120b', messages }, 'ses_account',
+      { ...accountEnv, RESERVATION_RENEW_MS: '20' });
+    assert.equal(failedSettle.status, 200);
+    await new Promise(resolve => setTimeout(resolve, 100));
+  } finally {
+    console.warn = warn;
+    console.error = logError;
+  }
+  assert.ok(leaseText.includes('[DONE]'));
+  const renewCalls = leaseCalls.filter(([rpc]) => rpc === 'zerox_renew_reservation');
+  assert.equal(renewCalls.length, 1, 'renewal stops once the RPC is known to be missing');
+  assert.deepEqual(renewCalls[0][1], { p_reservation_id: 'res-lease', p_lease_seconds: 90 });
+  const settles = leaseCalls.filter(([rpc]) => rpc === 'zerox_settle_v2');
+  assert.equal(settles.length, 4, 'each failed settle is retried once');
+  assert.deepEqual(settles.slice(0, 2).map(([, args]) => [args.p_reservation_id, args.p_status]), [['res-lease', 'ok'], ['res-lease', 'ok']]);
+  assert.deepEqual(leaseLogs.map(([level, message]) => `${level}: ${message}`), [
+    'warn: Neuron reservation renewal unavailable',
+    'error: Neuron settlement failed',
+  ], 'one warning for the missing RPC; a settle is reported only when its retry failed too');
+  assert.ok(!JSON.stringify(leaseLogs).includes('sb_secret_test'), 'no key in the logs');
   globalThis.fetch = async () => { throw new Error('database down'); };
   assert.equal((await app.request('https://zero-x.live/auth/session', { method: 'DELETE', headers: { Authorization: 'Bearer ses_account' } }, accountEnv)).status, 200);
   assert.equal(store.has('ses_account'), false);

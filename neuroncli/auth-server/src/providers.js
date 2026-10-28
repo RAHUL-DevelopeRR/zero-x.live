@@ -1050,6 +1050,13 @@ export function createCompletionStream({ reader, first, model, controller, clien
       console.error('Neuron stream settlement failed', { name: error?.name });
     }
   };
+  // Releases the upstream connection. A cancel that rejects (the connection is already gone)
+  // must never skip settlement: onFinish settles the reservation and frees its slot.
+  const cancelUpstream = async () => {
+    try {
+      await reader.cancel();
+    } catch { /* already closed or reset */ }
+  };
   const handle = data => {
     const event = parseEvent(data);
     if (event.done) {
@@ -1078,7 +1085,7 @@ export function createCompletionStream({ reader, first, model, controller, clien
   const complete = async () => {
     queue.push(...await finalize());
     done = true;
-    void reader.cancel();
+    void cancelUpstream();
   };
   queue = handle(first);
 
@@ -1106,7 +1113,7 @@ export function createCompletionStream({ reader, first, model, controller, clien
         const client = Boolean(clientSignal?.aborted);
         const timeout = error instanceof UpstreamTimeoutError;
         controller.abort(error);
-        await reader.cancel();
+        await cancelUpstream();
         await finish({ status: 'error', kind: client ? FailureKind.ABORTED : error.kind || FailureKind.SERVER,
           phase: timeout ? error.phase : null, retryAfterSeconds: error.retryAfterSeconds ?? null,
           errorCode: client ? 'client_disconnected' : timeout ? 'upstream_timeout' : 'upstream_error',
@@ -1126,7 +1133,7 @@ export function createCompletionStream({ reader, first, model, controller, clien
     async cancel() {
       cancelled = true;
       controller.abort(new DOMException('Client closed the stream', 'AbortError'));
-      await reader.cancel();
+      await cancelUpstream();
       await finish({ status: 'error', kind: FailureKind.ABORTED, errorCode: 'client_disconnected' });
     },
   });

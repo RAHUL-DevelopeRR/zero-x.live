@@ -29,7 +29,9 @@ environment/secret reference and the launch checklist are in [GATEWAY_SETUP.md](
   "Request compatibility".
 - **Quota and credits** (`migrations/2026101600*`). Every upstream attempt is reserved with
   `zerox_reserve_v2` (per-user daily caps, rpm, concurrency, credits and the shared pool budget,
-  atomically) and settled with `zerox_settle_v2` (real usage). Provider failures the upstream
+  atomically) and settled with `zerox_settle_v2` (real usage). A concurrency slot is a 90 s lease
+  the attempt renews while it runs, so a request whose isolate is killed frees its slot on its
+  own (docs/PLATFORM_CONTRACT.md section 8.5). Provider failures the upstream
   did not count (429, 5xx, network) are refunded to the caller and the pool; model errors and
   timeouts keep their pool share and are refunded to the caller within a daily allowance.
 - **Billing** (`src/routes/billing.js`, `src/routes/webhooks.js`). Razorpay subscriptions
