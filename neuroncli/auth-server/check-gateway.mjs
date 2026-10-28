@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import app from './src/index.js';
 import { estimatePromptTokens, modelCatalog } from './src/providers.js';
 import { globalHealthTracker } from './src/provider-health.js';
@@ -224,5 +225,104 @@ try {
   assert.ok(!JSON.stringify(exchange).includes('secret-owned-key'));
   assert.deepEqual(exchange.models, ['meta-llama/llama-3.3-70b-instruct:free']);
   assert.equal((await app.request(callbackUrl, {}, env)).status, 400);
+
+  // Production (28 Oct, request #47): each candidate had 45 s to its first byte and the chain
+  // had no overall deadline, so the request ran 91 s, past the CLI's 60 s retry, and its third
+  // attempt started after the client had left. UPSTREAM_FAILOVER_BUDGET_MS bounds everything
+  // before the stream is committed: no candidate starts once it is spent, and the request ends
+  // as a 504 upstream_timeout.
+  globalHealthTracker.reset();
+  store.set('ses_budget', JSON.stringify(session));
+  const budgetMs = 600;
+  const budgetEnv = { ALLOW_ANONYMOUS_SESSIONS: 'true', SESSIONS_KV: env.SESSIONS_KV, ALLOW_UNKNOWN_COUNTRY: 'true',
+    GROQ_API_KEY: 'groq-test', GEMINI_API_KEY: 'gemini-test', NVIDIA_API_KEY: 'nvidia-test', NVIDIA_HOSTED: 'true',
+    ROUTER_MAX_ATTEMPTS: '8', UPSTREAM_TTFB_TIMEOUT_MS: '250', UPSTREAM_FAILOVER_BUDGET_MS: String(budgetMs) };
+  // An upstream that never sends a byte (it only stops when the gateway aborts the attempt).
+  const silent = options => new Promise((_, reject) => {
+    options.signal.addEventListener('abort', () => reject(options.signal.reason), { once: true });
+  });
+  let upstreamStarts = [];
+  globalThis.fetch = async (url, options) => { upstreamStarts.push(Date.now()); return silent(options); };
+  let budgetStart = Date.now();
+  response = await request('/v1/chat/completions', { model: 'auto', messages, stream: true }, 'ses_budget', budgetEnv);
+  let elapsed = Date.now() - budgetStart;
+  assert.equal(response.status, 504);
+  assert.equal((await response.json()).error.code, 'upstream_timeout');
+  assert.ok(elapsed < budgetMs + 300, `the failover chain ended within its budget (${elapsed} ms)`);
+  assert.ok(upstreamStarts.length >= 2 && upstreamStarts.length < 8,
+    `failed over within the budget, then stopped (${upstreamStarts.length} candidates)`);
+  assert.ok(upstreamStarts.every(at => at - budgetStart < budgetMs), 'no candidate started after the budget ran out');
+
+  // SSE comments before the first data event extend a candidate's wait (up to TTFB + idle),
+  // but not past the budget.
+  globalHealthTracker.reset();
+  upstreamStarts = [];
+  globalThis.fetch = async (url, options) => {
+    upstreamStarts.push(Date.now());
+    let timer;
+    const stop = () => clearInterval(timer);
+    options.signal.addEventListener('abort', stop, { once: true });
+    return new Response(new ReadableStream({
+      start(controller) {
+        timer = setInterval(() => {
+          try { controller.enqueue(new TextEncoder().encode(': keep-alive\n\n')); } catch { stop(); }
+        }, 50);
+      },
+      cancel: stop,
+    }), { headers: { 'Content-Type': 'text/event-stream' } });
+  };
+  budgetStart = Date.now();
+  response = await request('/v1/chat/completions', { model: 'auto', messages, stream: true }, 'ses_budget',
+    { ...budgetEnv, UPSTREAM_IDLE_TIMEOUT_MS: '1500' });
+  elapsed = Date.now() - budgetStart;
+  assert.equal(response.status, 504);
+  assert.equal((await response.json()).error.code, 'upstream_timeout');
+  assert.ok(elapsed < budgetMs + 300, `keep-alives do not extend the budget (${elapsed} ms)`);
+  assert.equal(upstreamStarts.length, 1);
+
+  // A client that leaves while the first candidate waits for its first byte ends the request:
+  // no other candidate is tried and the reservation is settled at once as client_disconnected,
+  // so the abandoned request does not hold the user's concurrency slot. Workers only fire
+  // request.signal on a disconnect with the enable_request_signal compatibility flag.
+  for (const config of ['wrangler.toml', 'wrangler.api.toml']) {
+    assert.match(readFileSync(new URL(config, import.meta.url), 'utf8'),
+      /^compatibility_flags\s*=\s*\[[^\]]*"enable_request_signal"/m, `${config} fires request.signal on disconnect`);
+  }
+  globalHealthTracker.reset();
+  upstreamStarts = [];
+  const leaverRpc = [];
+  store.set('ses_leaver', JSON.stringify({ ...session, user_id: accountId, account_backed: true }));
+  globalThis.fetch = async (url, options) => {
+    if (url.includes('/rest/v1/rpc/')) {
+      const rpc = url.split('/').at(-1); leaverRpc.push([rpc, JSON.parse(options.body)]);
+      if (rpc === 'zerox_get_account') return Response.json([{ clerk_id: accountId, plan: 'free', daily_requests: 3, daily_tokens_used: 5000, last_usage_reset: day }]);
+      if (rpc === 'zerox_plan_policies_v2') return Response.json(B1_POLICY_ROWS);
+      if (rpc === 'zerox_reserve_v2') return Response.json([{ status: 'ok', reservation_id: `res-leaver-${leaverRpc.length}`, plan: 'free', remaining_requests: 96, remaining_tokens: 470000 }]);
+      if (rpc === 'zerox_settle_v2') return Response.json([{ status: 'settled' }]);
+      return Response.json(null);
+    }
+    upstreamStarts.push(Date.now());
+    return silent(options);
+  };
+  const leaver = new AbortController();
+  setTimeout(() => leaver.abort(), 100);
+  budgetStart = Date.now();
+  response = await app.request('https://zero-x.live/v1/chat/completions', { method: 'POST', signal: leaver.signal,
+    headers: { Authorization: 'Bearer ses_leaver', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: 'auto', messages, stream: true }) },
+  { ...budgetEnv, SUPABASE_URL: 'https://test.supabase.co', SUPABASE_SECRET_KEY: 'sb_secret_test',
+    UPSTREAM_TTFB_TIMEOUT_MS: '2000', UPSTREAM_FAILOVER_BUDGET_MS: '10000' });
+  elapsed = Date.now() - budgetStart;
+  assert.ok(elapsed < 1000, `the request ended when the client left (${elapsed} ms)`);
+  assert.equal(upstreamStarts.length, 1, 'no candidate is tried after the client left');
+  const leaverReserves = leaverRpc.filter(([rpc]) => rpc === 'zerox_reserve_v2');
+  const leaverSettles = leaverRpc.filter(([rpc]) => rpc === 'zerox_settle_v2').map(([, args]) => args);
+  assert.equal(leaverReserves.length, 1);
+  assert.equal(leaverSettles.length, 1);
+  assert.equal(leaverSettles[0].p_reservation_id, `res-leaver-${leaverRpc.indexOf(leaverReserves[0]) + 1}`);
+  assert.equal(leaverSettles[0].p_status, 'error');
+  assert.equal(leaverSettles[0].p_error_code, 'client_disconnected');
+  assert.equal(globalHealthTracker.records.size, 0, 'a client abort says nothing about the pool');
+  globalHealthTracker.reset();
 } finally { globalThis.fetch = originalFetch; }
-console.log('PASS: verified catalogs, explicit provider routing, owned keys, tool round trips, split SSE, streamed quota, daily reset, rate-limit errors, ledger reservations');
+console.log('PASS: verified catalogs, explicit provider routing, owned keys, tool round trips, split SSE, streamed quota, daily reset, rate-limit errors, ledger reservations, failover budget, client aborts');

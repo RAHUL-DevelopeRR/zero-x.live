@@ -71,6 +71,7 @@ them in `zerox_plan_policy.razorpay_plan_id_inr/usd`.
 | `TRUST_CF_IPCOUNTRY` | var (Node) | unset | `true` only when the Node origin is reachable exclusively through Cloudflare. Workers use `request.cf.country`. |
 | `ALLOW_UNKNOWN_COUNTRY` | var | unset | Local development only: serve free Gemini when the caller's country is unknown (fails closed otherwise). |
 | `UPSTREAM_TTFB_TIMEOUT_MS` / `UPSTREAM_IDLE_TIMEOUT_MS` | var | `45000` / `90000` | First byte / gap between bytes (SSE keep-alives count). The first data event is due within their sum. |
+| `UPSTREAM_FAILOVER_BUDGET_MS` | var | `50000` | Failover time of one request before its stream is committed: a stream's first byte and first data event are due within what is left of it, no attempt starts with under a tenth of it (5 s) left, and a spent budget answers `upstream_timeout`. Keep it under the CLI's 60 s retry. |
 | `ROUTER_MAX_ATTEMPTS` | var | `3` | Upstream attempts per request; plans with paid capacity keep the last one for a paid pool. |
 | `OMNIROUTE_*`, `BEDROCK_*`, `AZURE_*` | var + **secret** | unset | Optional adapters for operator health probes; not part of the hosted catalog (see PROVIDERS.md). |
 

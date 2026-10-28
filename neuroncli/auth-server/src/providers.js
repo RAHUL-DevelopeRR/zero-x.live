@@ -887,11 +887,13 @@ function parseEvent(data) {
  * data event arrives, so a dead or erroring upstream can still be failed over. Stream
  * deadlines: the first body byte within ttfbMs; after that, bytes (SSE comments and
  * keep-alives count) at most idleMs apart, with the first data event due within
- * ttfbMs + idleMs. Non-streaming calls get ttfbMs + idleMs in total.
+ * ttfbMs + idleMs, and never after commitBy (the request's failover budget, an absolute time).
+ * Non-streaming calls get ttfbMs + idleMs in total.
  * Resolves { ok:false, status, headers, bodyText } for HTTP errors and
  * { ok:true, json | stream } on success; throws timeout/abort/protocol errors.
  */
-export async function startCompletion(env, session, entry, pool, payload, { clientSignal, timeouts = streamTimeouts(env), request = {} } = {}) {
+export async function startCompletion(env, session, entry, pool, payload,
+  { clientSignal, timeouts = streamTimeouts(env), request = {}, commitBy = Infinity } = {}) {
   const controller = new AbortController();
   const signal = clientSignal ? AbortSignal.any([clientSignal, controller.signal]) : controller.signal;
   const started = Date.now();
@@ -900,7 +902,7 @@ export async function startCompletion(env, session, entry, pool, payload, { clie
   const deadline = () => {
     if (!payload.stream) return total;
     const last = reader?.lastByteAt;
-    return last ? Math.min(last + timeouts.idleMs, total) : started + timeouts.ttfbMs;
+    return Math.min(last ? Math.min(last + timeouts.idleMs, total) : started + timeouts.ttfbMs, commitBy);
   };
   const phase = payload.stream ? 'first_byte' : 'response';
   const guard = promise => guarded(promise, { deadline, phase, signal, controller });

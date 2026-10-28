@@ -15,6 +15,7 @@ import { errorBody, errorResponse } from './src/errors.js';
 import { RESERVED_OUTPUT_TOKENS, reservationArgs, reservedTokens, reserveError, settlementArgs } from './src/capacity.js';
 import { exhaustedBudget, poolBudgetState, resetPoolBudgets } from './src/pool-budget.js';
 import { buildUpstreamPayload, classifyUpstreamFailure, listModelsForSession, retryAfterSeconds } from './src/providers.js';
+import { resetHubClientCache } from './src/health-hub-client.js';
 import { planPolicyRows } from './contract-rows.mjs';
 
 // Plan policy rows exactly as WP-B1's zerox_plan_policies_v2 returns them (in-memory PGlite
@@ -655,6 +656,48 @@ try {
     const explicit = await gw.call({ ...KEYS, SESSIONS_KV }, { model: 'gemini/gemini-3.5-flash', messages, tools }, { country: 'US' });
     assert.equal(explicit.status, 200);
     assert.deepEqual(upstreamCalls().map(call => call.target), ['gemini']);
+  });
+
+  // Production (28 Oct): nvidia gpt-oss-20b timed out on its first byte for the same user at
+  // 16:56, 16:58 and 17:10. One caller's timeout marks a pool degraded without opening its
+  // circuit, so it kept its rank and the user waited through the 45 s TTFB again each time.
+  await test('auto tries degraded pools after healthy ones of their tier and before parked ones', async () => {
+    const order = () => upstreamCalls().map(call => `${call.target}:${call.body.model}`);
+    const failing = { gemini: () => new Response('down', { status: 500 }), groq: () => new Response('down', { status: 500 }) };
+    const healthy = ['gemini:gemini-3.5-flash', 'groq:openai/gpt-oss-120b', 'groq:qwen/qwen3.8-27b', 'groq:openai/gpt-oss-20b'];
+    // The HealthHub snapshot: A (gemini-2.5-flash, best auto_rank) degraded, B available, C blurred.
+    const pools = { 'gemini:gemini-2.5-flash:free': { status: 'degraded', until: 0, at: Date.now() },
+      'gemini:gemini-3.5-flash:free': { status: 'available', until: 0, at: Date.now() },
+      'gemini:gemini-3.6-flash:free': { status: 'blurred', until: Date.now() + 3_600_000, at: Date.now() } };
+    const HEALTH_HUB = { idFromName: name => name, get: () => ({
+      fetch: async url => String(url).endsWith('/snapshot') ? Response.json({ pools }) : new Response('ok') }) };
+    resetHubClientCache();
+    try {
+      const hub = gateway();
+      hub.addSession('ses_anon', {});
+      reset(failing);
+      await hub.call({ ...KEYS, HEALTH_HUB, ROUTER_MAX_ATTEMPTS: '10' }, { model: 'auto', messages, tools }, { country: 'US' });
+      assert.deepEqual(order(), [...healthy, 'gemini:gemini-2.5-flash', 'gemini:gemini-3.6-flash'],
+        'B and the other healthy pools first, then degraded A, then blurred C (still tried)');
+    } finally { resetHubClientCache(); }
+
+    // Without a hub row, this isolate's own first-byte timeout on A demotes it the same way...
+    const local = gateway();
+    local.addSession('ses_anon', {});
+    local.tracker.recordFailure('gemini:gemini-2.5-flash:free', { kind: FailureKind.TIMEOUT, phase: 'first_byte', caller: 'user-1' });
+    assert.equal(local.tracker.getRecord('gemini:gemini-2.5-flash:free').status, HealthState.DEGRADED);
+    reset(failing);
+    await local.call({ ...KEYS, ROUTER_MAX_ATTEMPTS: '10' }, { model: 'auto', messages, tools }, { country: 'US' });
+    assert.deepEqual(order(), [healthy[0], 'gemini:gemini-3.6-flash', ...healthy.slice(1), 'gemini:gemini-2.5-flash']);
+
+    // ...while one 5xx (also DEGRADED, circuit closed) keeps the pool's rank.
+    const flaky = gateway();
+    flaky.addSession('ses_anon', {});
+    flaky.tracker.recordFailure('gemini:gemini-2.5-flash:free', { kind: FailureKind.SERVER });
+    assert.equal(flaky.tracker.getRecord('gemini:gemini-2.5-flash:free').status, HealthState.DEGRADED);
+    reset(failing);
+    await flaky.call({ ...KEYS, ROUTER_MAX_ATTEMPTS: '10' }, { model: 'auto', messages, tools }, { country: 'US' });
+    assert.equal(order()[0], 'gemini:gemini-2.5-flash');
   });
 
   await test('413 skips a pool for this request only and never opens its circuit', async () => {

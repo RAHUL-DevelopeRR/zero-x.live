@@ -5,7 +5,7 @@ import {
 } from './providers.js';
 import { globalSignatureCache } from './provider-request.js';
 import { globalRouter } from './router.js';
-import { FailureKind, globalHealthTracker } from './provider-health.js';
+import { FailureKind, HealthState, globalHealthTracker } from './provider-health.js';
 import { hubHealthRows, publishHealth } from './health-hub-client.js';
 import { readShared } from './health-share.js';
 import { callerCountry, loadCatalogDbModels, loadPlanPolicies, planPolicy, resolveModelId } from './catalog.js';
@@ -101,9 +101,13 @@ function minimum(values) {
 // KV on the Node server) and pools whose shared budget this isolate saw spent go after the
 // other pools of their tier (free pools still come before paid ones). The router's circuit
 // state only knows this isolate's own attempts, so without this a fresh isolate sends `auto`
-// straight to a provider whose daily quota is gone. Parked pools stay in the list: when every
-// candidate is parked, the request still tries them in order.
-async function orderBySharedHealth(env, candidates, now = Date.now()) {
+// straight to a provider whose daily quota is gone. Degraded pools (degraded in the shared
+// view, or this isolate's last attempt on them timed out) go after the healthy pools of their
+// tier and before the parked ones: one caller's timeout does not open a circuit, and without
+// this the same user waits through the same pool's first-byte timeout again. Parked and
+// degraded pools stay in the list: when every candidate is parked, the request still tries
+// them in order.
+async function orderBySharedHealth(env, candidates, tracker, now = Date.now()) {
   if (candidates.length < 2) return candidates;
   const keys = [...new Set(candidates.map(candidate => candidate.key))];
   let rows = null;
@@ -117,7 +121,13 @@ async function orderBySharedHealth(env, candidates, now = Date.now()) {
     if (row && (row.status === 'busy' || row.status === 'blurred') && (row.until || 0) > now) return true;
     return (poolBudgetState(key, now)?.until || 0) > now;
   };
-  const rank = candidate => (candidate.pool.tier === 'paid' ? 2 : 0) + (parked(candidate.key) ? 1 : 0);
+  const degraded = key => {
+    if (rows?.get(key)?.status === 'degraded') return true;
+    const record = tracker?.records?.get(key);
+    return record?.status === HealthState.DEGRADED && record.last_failure_kind === FailureKind.TIMEOUT;
+  };
+  const rank = candidate => (candidate.pool.tier === 'paid' ? 2 : 0) + (parked(candidate.key) ? 1 : 0)
+    + (degraded(candidate.key) ? 0.5 : 0);
   return candidates.map((candidate, index) => ({ candidate, index, rank: rank(candidate) }))
     .sort((left, right) => left.rank - right.rank || left.index - right.index)
     .map(item => item.candidate);
@@ -301,7 +311,9 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
       if (upstream) console.warn('Neuron upstream error detail', { ...log, kind, upstream });
     };
 
-    const attempt = async (candidate, reservation) => {
+    // commitBy ends the request's failover budget: a stream's first byte and first data event
+    // are due by then at the latest, however much of their own timeouts is left.
+    const attempt = async (candidate, reservation, commitBy) => {
       const { entry, pool, key } = candidate;
       const payload = buildUpstreamPayload(entry, body, candidate.maxTokens);
       const startedAt = Date.now();
@@ -310,7 +322,7 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
       const secrets = [pool.key_var ? env[pool.key_var] : null, session.openrouter_key];
       let started;
       try {
-        started = await startCompletion(env, session, entry, pool, payload, { clientSignal, timeouts, request });
+        started = await startCompletion(env, session, entry, pool, payload, { clientSignal, timeouts, request, commitBy });
       } catch (error) {
         const kind = clientSignal?.aborted ? FailureKind.ABORTED : error?.kind || FailureKind.SERVER;
         const latencyMs = Date.now() - startedAt;
@@ -369,7 +381,13 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
     // so `auto` still reaches a provider with capacity when the first ones are out of quota.
     const maxAttempts = positiveInt(env.ROUTER_MAX_ATTEMPTS, 3);
     const maxRateLimited = positiveInt(env.ROUTER_MAX_RATE_LIMITED, 6);
-    const candidates = await orderBySharedHealth(env, route.candidates);
+    // UPSTREAM_FAILOVER_BUDGET_MS (50 s, under the CLI's 60 s retry) bounds all attempts before
+    // a stream is committed: each attempt gets at most what is left of it for its first byte,
+    // and no attempt starts with less than a tenth of it (5 s) left. Without it, three 45 s
+    // first-byte timeouts outlived the client, whose retry then ran beside the abandoned request.
+    const failoverBudgetMs = positiveInt(env.UPSTREAM_FAILOVER_BUDGET_MS, 50000);
+    const minAttemptMs = Math.min(5000, failoverBudgetMs / 10);
+    const candidates = await orderBySharedHealth(env, route.candidates, healthTracker);
     const paidCandidates = candidates.some(candidate => candidate.pool.tier === 'paid');
     const freeAttemptLimit = paidCandidates && maxAttempts > 1 ? maxAttempts - 1 : maxAttempts;
     const failures = [];
@@ -382,6 +400,7 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
     let attempts = 0;
     let freeAttempts = 0;
     let rateLimited = 0;
+    let outOfTime = false;
     // Without an explicit status a failed attempt is settled by how it failed (see GENERATED_KINDS):
     // the user gets the request back either way (within the daily refund allowance for
     // failed_upstream), while the pool keeps attempts the upstream counted.
@@ -395,11 +414,17 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
       await settleDb(reservation, candidate, { status: settled, latencyMs, errorCode, usage, ...outcome }, false);
     };
 
+    const failoverStart = Date.now();
+    const commitBy = failoverStart + failoverBudgetMs;
     try {
       for (const candidate of candidates) {
         if (attempts >= maxAttempts || clientSignal?.aborted) break;
         if (skipModels.has(candidate.entry.id) || (paidDenied && candidate.pool.tier === 'paid')) continue;
         if (candidate.pool.tier !== 'paid' && !paidDenied && freeAttempts >= freeAttemptLimit) continue;
+        if (commitBy - Date.now() < minAttemptMs) {
+          outOfTime = true;
+          break;
+        }
         let reservation = null;
         if (ledger) {
           // A failed attempt is settled before failing over, so it never holds the caller's
@@ -438,7 +463,7 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
         }
         attempts++;
         if (candidate.pool.tier !== 'paid') freeAttempts++;
-        const result = await attempt(candidate, reservation);
+        const result = await attempt(candidate, reservation, commitBy);
         current = null;
         if (result.ok) return result.response;
         failures.push(result);
@@ -460,8 +485,14 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
       return fail('upstream_error');
     }
 
-    const final = finalError({ failures, exhausted, paidDenied });
     const aborted = failures.some(failure => failure.kind === FailureKind.ABORTED);
+    // A spent failover budget went to upstreams that did not answer in time.
+    const final = outOfTime ? { code: 'upstream_timeout' } : finalError({ failures, exhausted, paidDenied });
+    if (aborted || outOfTime) {
+      console.warn(aborted ? 'Neuron client disconnected before the first byte' : 'Neuron failover budget spent',
+        { kind: aborted ? FailureKind.ABORTED : FailureKind.TIMEOUT, attempts: failures.length,
+          elapsed_ms: Date.now() - failoverStart, request_id: requestId });
+    }
     // Requests the upstream rejected as invalid count against the caller; provider-side
     // failures are refunded (contract §3.3: upstream_error refunds the request, §6: within the
     // daily allowance when the model ran).
