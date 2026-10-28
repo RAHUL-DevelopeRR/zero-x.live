@@ -350,10 +350,10 @@ async function mountDashboard({profile = PROFILE, hash = '', state = {}, routes 
   // Copy quick-start command.
   doc.querySelector('[data-copy-target="qs-install"]').click();
   await settle();
-  assert.equal(win.copied, 'curl -fsSL https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.1/install.sh | sh -s -- --version 7.0.0-alpha.1');
+  assert.equal(win.copied, 'curl -fsSL https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.2/install.sh | sh -s -- --version 7.0.0-alpha.2');
   doc.querySelector('[data-copy-target="qs-install-win"]').click();
   await settle();
-  assert.equal(win.copied, '& ([scriptblock]::Create((irm https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.1/install.ps1))) -Version 7.0.0-alpha.1');
+  assert.equal(win.copied, '& ([scriptblock]::Create((irm https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.2/install.ps1))) -Version 7.0.0-alpha.2');
 
   // Hash routing to Usage.
   win.location.hash = '#usage';

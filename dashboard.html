@@ -98,9 +98,9 @@
 
         <section class="zx-card zx-card--flat zx-mt" aria-labelledby="qs-title">
           <h3 id="qs-title">Quick start</h3>
-          <p class="zx-muted">Install Neuron 7.0.0-alpha.1 (a GitHub pre-release), sign in once with <code>neuron login</code> and approve the short code it shows, then run <code>neuron</code> in any project.</p>
-          <div class="zx-code zx-code--copy"><span class="zx-code__label">Install on macOS or Linux</span><pre><code id="qs-install">curl -fsSL https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.1/install.sh | sh -s -- --version 7.0.0-alpha.1</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="qs-install" data-copy-label="macOS and Linux install command">Copy</button></div>
-          <div class="zx-code zx-code--copy"><span class="zx-code__label">Install on Windows (PowerShell)</span><pre><code id="qs-install-win">&amp; ([scriptblock]::Create((irm https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.1/install.ps1))) -Version 7.0.0-alpha.1</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="qs-install-win" data-copy-label="Windows install command">Copy</button></div>
+          <p class="zx-muted">Install Neuron 7.0.0-alpha.2 (a GitHub pre-release), sign in once with <code>neuron login</code> and approve the short code it shows, then run <code>neuron</code> in any project.</p>
+          <div class="zx-code zx-code--copy"><span class="zx-code__label">Install on macOS or Linux</span><pre><code id="qs-install">curl -fsSL https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.2/install.sh | sh -s -- --version 7.0.0-alpha.2</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="qs-install" data-copy-label="macOS and Linux install command">Copy</button></div>
+          <div class="zx-code zx-code--copy"><span class="zx-code__label">Install on Windows (PowerShell)</span><pre><code id="qs-install-win">&amp; ([scriptblock]::Create((irm https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.2/install.ps1))) -Version 7.0.0-alpha.2</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="qs-install-win" data-copy-label="Windows install command">Copy</button></div>
           <div class="zx-code zx-code--copy"><span class="zx-code__label">Sign in</span><pre><code id="qs-login">neuron login</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="qs-login" data-copy-label="Login command">Copy</button></div>
           <div class="zx-code zx-code--copy"><span class="zx-code__label">OpenAI-compatible base URL</span><pre><code id="qs-base">https://zero-x.live/v1</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="qs-base" data-copy-label="Base URL">Copy</button></div>
           <p class="zx-help">Need more? Read the <a href="https://zero-x.live/docs" data-site-path="/docs">documentation</a>.</p>
@@ -198,6 +198,7 @@
         </div>
         <div class="zx-code zx-mt"><span class="zx-code__label">Headless example</span><pre><code>export NEURON_TOKEN=nzx_your_key
 neuron -p "Run the tests and summarise failures"</code></pre></div>
+        <p class="zx-help">Without a terminal nobody can approve commands, so test and build commands are denied and <code>neuron</code> exits with code 2 unless <code>~/.neuron/settings.json</code> allows them. See <a href="https://zero-x.live/neuron-cli#first-run" data-site-path="/neuron-cli#first-run">headless runs</a>.</p>
       </section>
 
       <section class="zx-tabpanel" role="tabpanel" id="panel-billing" aria-labelledby="tab-billing" tabindex="0" hidden>

@@ -84,9 +84,31 @@ for (const file of PUBLIC_PAGES) assert.ok(seoPages.some(page => page.file === f
 assert.match(read('neuroncli/index.html'), /<meta http-equiv="refresh" content="0; url=\/neuron-cli">/, 'Old /neuroncli/ page points to /neuron-cli');
 assert.match(read('neuroncli/index.html'), /<link rel="canonical" href="https:\/\/zero-x.live\/neuron-cli">/);
 
-// Neuron 7.0.0-alpha.1 is a GitHub pre-release, so the installers must name its version (as written in HTML).
-const INSTALL_SH = 'curl -fsSL https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.1/install.sh | sh -s -- --version 7.0.0-alpha.1';
-const INSTALL_PS1 = '&amp; ([scriptblock]::Create((irm https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.1/install.ps1))) -Version 7.0.0-alpha.1';
+// Neuron 7.0.0-alpha.2 is a GitHub pre-release, so the installers must name its version (as written in HTML).
+const NEURON_VERSION = '7.0.0-alpha.2';
+const RELEASE_TAG_URL = 'https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/tag/v' + NEURON_VERSION;
+const INSTALL_SH = `curl -fsSL https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v${NEURON_VERSION}/install.sh | sh -s -- --version ${NEURON_VERSION}`;
+const INSTALL_PS1 = `&amp; ([scriptblock]::Create((irm https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v${NEURON_VERSION}/install.ps1))) -Version ${NEURON_VERSION}`;
+// The superseded alpha's installer still resolves, so a page that keeps naming it silently installs the old build.
+for (const file of new Set([...seoPages.map(page => page.file), ...PUBLIC_PAGES, ...PRIVATE_PAGES, 'llms.txt', 'neuroncli/login/index.html', 'neuroncli/callback/index.html', 'neuroncli/device/index.html'])) {
+  assert.doesNotMatch(read(file), /7\.0\.0-alpha\.1\b/, file + ': names the superseded 7.0.0-alpha.1');
+}
+for (const file of ['neuron-cli.html', 'docs.html', 'ai-coding-agent.html']) {
+  assert.ok(read(file).includes(INSTALL_SH) && read(file).includes(INSTALL_PS1), file + ' uses the pinned release installers');
+}
+{
+  const html = read('neuron-cli.html');
+  const software = JSON.parse(html.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/)[1])['@graph'].find(n => n['@type'] === 'SoftwareApplication');
+  assert.deepEqual([software.softwareVersion, software.downloadUrl], [NEURON_VERSION, RELEASE_TAG_URL], 'neuron-cli.html JSON-LD names the current release');
+  assert.ok(html.includes(`Neuron ${NEURON_VERSION} is the second alpha, published on 26 October 2026 as a <a href="${RELEASE_TAG_URL}">GitHub pre-release</a>`), 'neuron-cli.html names the release and its date');
+  // Without a terminal nobody approves, so a headless test run needs an allow rule or it is denied and exits 2.
+  const headless = html.match(/<h3>Run it headless<\/h3>([\s\S]*?)<\/li>/)[1];
+  assert.ok(headless.includes('neuron -p "Run the test suite and summarise the failures"'), 'headless example');
+  assert.ok(headless.includes('{"permissions": {"allow": ["bash(npm:*)", "PowerShell(npm:*)"]}}'), 'headless example allows the test runner in settings');
+  assert.match(headless, /exits with code 2/, 'headless example explains the denied run');
+  assert.match(headless, /before <code>-p<\/code>/, 'headless example says flags go before -p');
+  assert.match(headless, /danger-full-access<\/code>[^<]*disposable environments only/, 'full access is for disposable environments only');
+}
 
 /* Dashboard specifics: tabs, alerts, no hardcoded limits */
 {
@@ -105,6 +127,7 @@ const INSTALL_PS1 = '&amp; ([scriptblock]::Create((irm https://github.com/RAHUL-
   assert.match(html, /role="progressbar"[^>]*aria-valuemin="0" aria-valuemax="100"/);
   assert.doesNotMatch(html, /256,000|500K|10M|50M|2,000|10,000|44K/, 'Dashboard must not hardcode plan limits');
   assert.ok(html.includes(INSTALL_SH) && html.includes(INSTALL_PS1), 'Dashboard quick start uses the pinned release installers');
+  assert.match(html, /neuron -p[\s\S]*?exits with code 2 unless <code>~\/\.neuron\/settings\.json<\/code> allows them/, 'Dashboard headless example explains the denied run');
   assert.match(html, /<code id="qs-login">neuron login<\/code>/);
   assert.match(html, /https:\/\/zero-x\.live\/v1/);
   assert.doesNotMatch(read('dashboard.js'), /alert\(|confirm\(/, 'No alert()/confirm() dialogs');
@@ -579,13 +602,18 @@ assert.equal(checkout.normalizeCurrency('EUR'), 'USD');
 /* Homepage: install commands, plan slots, live model list and its helpers */
 {
   const html = read('index.html');
-  for (const command of [INSTALL_SH, INSTALL_PS1, 'npm install --global @zero-x.live/neuron@next', 'neuron login', 'curl https://zero-x.live/v1/models']) {
+  for (const command of [INSTALL_SH, INSTALL_PS1, 'neuron login', 'curl https://zero-x.live/v1/models']) {
     assert.ok(html.includes(command), 'index.html shows ' + command);
   }
-  // npm without @next installs the unsupported 6.2.0 and PyPI has only the unsupported 6.2.4.
+  // npm serves only the unsupported 6.2.0 (no alpha under any tag) and PyPI only the unsupported 6.2.4.
+  for (const file of ['index.html', 'neuron-cli.html']) {
+    const page = read(file);
+    assert.ok(page.includes('Not yet: npm still serves the old, unsupported 6.2.0 build. Use the install script above.'), file + ': npm tab');
+    assert.ok(page.includes('Not yet: PyPI still serves the old, unsupported <code>neuroncli</code> 6.2.4. Use the install script above.'), file + ': pip tab');
+  }
   for (const file of ['index.html', 'neuron-cli.html', 'docs.html', 'dashboard.html', 'pricing.html']) {
     const page = read(file);
-    assert.doesNotMatch(page, /@zero-x\.live\/neuron(?!@next)/, file + ': npm package named without @next');
+    assert.doesNotMatch(page, /@zero-x\.live\/neuron/, file + ': npm package offered before the alpha is on npm');
     assert.doesNotMatch(page, /pip install neuroncli/, file + ': pip install of the old PyPI package');
     assert.doesNotMatch(page, /install script is not published|installer is not published/, file + ': stale installer notice');
   }
