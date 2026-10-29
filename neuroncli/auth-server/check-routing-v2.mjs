@@ -1323,12 +1323,18 @@ try {
       'rpc:zerox_reserve_v2': call => Response.json([okReserve({ reservation_id: `res-${call.body.p_tier}-${tried.length}` })]),
       'rpc:zerox_settle_v2': call => { settled.push(call.body); return Response.json([{ status: 'settled' }]); },
       gemini: call => {
-        tried.push({ key: call.headers.Authorization, at: Date.now() });
+        tried.push({ key: call.headers.Authorization, model: call.body.model, at: Date.now() });
         return call.headers.Authorization === 'Bearer gemini-paid-key'
           ? sse([chunk({ content: 'paid' }, 'stop'), '[DONE]']) : untilAborted(call);
       } });
+    const reports = [];
+    const HEALTH_HUB = { idFromName: name => name, get: () => ({ fetch: async (url, init) => {
+      if (String(url).endsWith('/report')) reports.push(...JSON.parse(init.body).outcomes);
+      return String(url).endsWith('/snapshot') ? Response.json({ pools: {} }) : Response.json({ ok: true });
+    } }) };
+    resetHubClientCache();
     // Scaled down from 50 s / 45 s: the free pool would need 900 ms to its first byte.
-    const env = accountEnv({ UPSTREAM_FAILOVER_BUDGET_MS: '1000', UPSTREAM_TTFB_TIMEOUT_MS: '900' });
+    const env = accountEnv({ HEALTH_HUB, UPSTREAM_FAILOVER_BUDGET_MS: '1000', UPSTREAM_TTFB_TIMEOUT_MS: '900' });
     const started = Date.now();
     const response = await gw.call(env, { model: 'auto', messages, tools, stream: true }, { token: 'ses_pro', country: 'US' });
     assert.equal(response.status, 200);
@@ -1341,7 +1347,22 @@ try {
     assert.deepEqual(settled.map(row => [row.p_status, row.p_error_code]), [['failed_upstream', 'upstream_timeout'], ['ok', null]],
       'the cut attempt reached the upstream, so the pool keeps it');
     const free = gw.tracker.records.get('gemini:gemini-2.5-flash:free');
-    assert.ok(!free || (free.failed_attempts === 0 && !free.slow_until), 'the budget cut is not blamed on the free pool');
+    assert.deepEqual([free.failed_attempts, free.status, free.circuit_open_until], [0, HealthState.HEALTHY, 0],
+      'the budget cut is not counted as a failure of the free pool');
+    // Re-review: the free attempts of a plan with paid capacity always end at 70 % of the budget,
+    // before their own 45 s, so a dead free pool was never marked slow by that traffic and every
+    // such request waited out the same pool. The pool had the whole free share and sent nothing:
+    // that marks it slow (nothing else), and the next request tries another free pool first.
+    assert.ok(free.slow_until > Date.now(), 'a stream that sent nothing in its whole share marks its pool slow');
+    await new Promise(resolve => setTimeout(resolve, 20));
+    assert.deepEqual(reports.filter(outcome => outcome.key === 'gemini:gemini-2.5-flash:free').map(outcome => [outcome.kind, outcome.phase]),
+      [[FailureKind.TIMEOUT, 'budget']], 'and so does every other isolate, through the HealthHub');
+    tried.length = 0;
+    const next = await gw.call(env, { model: 'auto', messages, tools, stream: true }, { token: 'ses_pro', country: 'US' });
+    assert.equal(next.status, 200);
+    await next.text();
+    assert.deepEqual(tried.map(item => `${item.key.slice(7)}:${item.model}`),
+      ['gemini-free-key:gemini-3.5-flash', 'gemini-paid-key:gemini-2.5-flash'], 'the slow free pool is not waited out again');
 
     // Free plans have no paid attempt to keep time for: their free attempts get the whole budget.
     const freeOnly = gateway();
@@ -1352,6 +1373,108 @@ try {
       504, 'upstream_timeout');
     assert.ok(Date.now() - freeStart >= 900, 'the first free attempt got its full 900 ms');
     assert.ok(freeOnly.tracker.records.get('gemini:gemini-2.5-flash:free').slow_until > Date.now(), 'its own timeout counts');
+    resetHubClientCache();
+  });
+
+  // Re-review of the failover budget: the paid share was kept whenever the route had a paid pool,
+  // although whether the paid attempt can be reserved is only learned after every free attempt.
+  // A Pro user without credits got 35 s for free pools (a Free user 50 s) and lost the next free
+  // attempt, then the paid reservation was refused: a free pool answering at 35-45 s, or failing
+  // at 30-45 s, answered the Free user and gave that Pro user a 504. Every reservation row
+  // carries the account's plan and credit balance, so the share is kept only while they allow it.
+  await test('plans with paid capacity but nothing to pay it with give free pools the whole failover budget', async () => {
+    const env = accountEnv({ UPSTREAM_FAILOVER_BUDGET_MS: '1000', UPSTREAM_TTFB_TIMEOUT_MS: '900' });
+    // A free pool whose first event comes 800 ms after it starts, inside its own 900 ms.
+    const lateFirstEvent = () => new Response(new ReadableStream({ async start(controller) {
+      await new Promise(resolve => setTimeout(resolve, 800));
+      try {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk({ content: 'late free' }, 'stop'))}\n\ndata: [DONE]\n\n`));
+        controller.close();
+      } catch { /* cancelled */ }
+    } }), { headers: { 'Content-Type': 'text/event-stream' } });
+    // No credits left, or an account whose plan has no paid pools any more (a session from before a downgrade).
+    for (const [account, refusal] of [[{ credit_balance_microusd: 0 }, 'insufficient_credits'], [{ plan: 'free' }, 'upgrade_required']]) {
+      const gw = accountGateway();
+      const reserveRpc = call => Response.json([call.body.p_tier === 'paid' ? { status: refusal } : okReserve(account)]);
+      reset({ 'rpc:zerox_plan_policies_v2': policiesRpc, 'rpc:zerox_reserve_v2': reserveRpc,
+        'rpc:zerox_settle_v2': () => Response.json([{ status: 'settled' }]), gemini: lateFirstEvent });
+      let response = await gw.call(env, { model: 'auto', messages, tools, stream: true }, { token: 'ses_pro', country: 'US' });
+      assert.equal(response.status, 200, `${refusal}: the free pool's first event at 800 ms is waited for`);
+      assert.ok((await response.text()).includes('late free'));
+      assert.deepEqual(rpcCalls('zerox_reserve_v2').map(call => call.body.p_tier), ['free']);
+
+      // A free pool failing at 750 ms (past 70 % of the budget) still leaves the next free pool its turn.
+      reset({ 'rpc:zerox_plan_policies_v2': policiesRpc, 'rpc:zerox_reserve_v2': reserveRpc,
+        'rpc:zerox_settle_v2': () => Response.json([{ status: 'settled' }]),
+        gemini: call => call.body.model === 'gemini-2.5-flash'
+          ? new Promise(resolve => setTimeout(() => resolve(new Response('overloaded', { status: 503 })), 750))
+          : sse([chunk({ content: 'second free' }, 'stop'), '[DONE]']) });
+      response = await gw.call(env, { model: 'auto', messages, tools, stream: true }, { token: 'ses_pro', country: 'US' });
+      assert.equal(response.status, 200, `${refusal}: the second free attempt runs`);
+      assert.ok((await response.text()).includes('second free'));
+      assert.deepEqual(upstreamCalls().map(call => `${call.headers.Authorization.slice(7)}:${call.body.model}`),
+        ['gemini-free-key:gemini-2.5-flash', 'gemini-free-key:gemini-3.5-flash']);
+    }
+
+    // Credits held by the account's other paid requests are not in the balance, so a paid
+    // reservation can still be refused after all: the free pools skipped for its share get it back.
+    const gw = accountGateway();
+    reset({ 'rpc:zerox_plan_policies_v2': policiesRpc,
+      'rpc:zerox_reserve_v2': call => Response.json([call.body.p_tier === 'paid' ? { status: 'insufficient_credits' } : okReserve()]),
+      'rpc:zerox_settle_v2': () => Response.json([{ status: 'settled' }]),
+      gemini: call => call.body.model === 'gemini-2.5-flash'
+        ? new Promise(resolve => setTimeout(() => resolve(new Response('overloaded', { status: 503 })), 750))
+        : sse([chunk({ content: 'second free' }, 'stop'), '[DONE]']) });
+    const response = await gw.call(env, { model: 'auto', messages, tools, stream: true }, { token: 'ses_pro', country: 'US' });
+    assert.equal(response.status, 200, 'the free pools left for the refused paid attempt are tried after all');
+    assert.ok((await response.text()).includes('second free'));
+    assert.deepEqual(rpcCalls('zerox_reserve_v2').map(call => call.body.p_tier), ['free', 'paid', 'free']);
+    assert.deepEqual(upstreamCalls().map(call => `${call.headers.Authorization.slice(7)}:${call.body.model}`),
+      ['gemini-free-key:gemini-2.5-flash', 'gemini-free-key:gemini-3.5-flash']);
+  });
+
+  // Re-review: a non-streaming attempt is due by its share's end plus the idle timeout (its
+  // generation may outlast the budget), but the paid attempt still had to start within the budget
+  // itself, so a free pool that never answered used up the paid fallback of non-streaming requests.
+  await test('non-streaming requests of plans with paid capacity still reach the paid attempt', async () => {
+    const gw = accountGateway();
+    const tried = [];
+    reset({ 'rpc:zerox_plan_policies_v2': policiesRpc, 'rpc:zerox_reserve_v2': () => Response.json([okReserve()]),
+      'rpc:zerox_settle_v2': () => Response.json([{ status: 'settled' }]),
+      gemini: call => {
+        tried.push({ key: call.headers.Authorization, at: Date.now() });
+        return call.headers.Authorization === 'Bearer gemini-paid-key' ? completion({ content: 'paid' }) : untilAborted(call);
+      } });
+    const env = accountEnv({ UPSTREAM_FAILOVER_BUDGET_MS: '1000', UPSTREAM_TTFB_TIMEOUT_MS: '900', UPSTREAM_IDLE_TIMEOUT_MS: '900' });
+    const started = Date.now();
+    const response = await gw.call(env, { model: 'auto', messages, tools }, { token: 'ses_pro', country: 'US' });
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).choices[0].message.content, 'paid');
+    assert.deepEqual(tried.map(item => item.key), ['Bearer gemini-free-key', 'Bearer gemini-paid-key']);
+    const cutAt = tried[1].at - tried[0].at;
+    assert.ok(cutAt >= 1550 && cutAt < 1800, `the free attempt was due by 70 % of the budget plus the idle timeout (${cutAt} ms)`);
+    assert.ok(Date.now() - started < 1900, 'answered within the budget plus the idle timeout');
+    const free = gw.tracker.records.get('gemini:gemini-2.5-flash:free');
+    assert.ok(!free || (!free.failed_attempts && !free.slow_until), 'a cut generation says nothing about the pool');
+  });
+
+  // Re-review: free pools skipped so that the paid attempt keeps its share set the "budget spent"
+  // flag, so a paid attempt that then failed with a 5xx answered 504 upstream_timeout and logged
+  // 'Neuron failover budget spent' although the budget was not spent.
+  await test('free pools skipped for the paid share do not count as a spent budget', async () => {
+    const gw = accountGateway();
+    reset({ 'rpc:zerox_plan_policies_v2': policiesRpc, 'rpc:zerox_reserve_v2': () => Response.json([okReserve()]),
+      'rpc:zerox_settle_v2': () => Response.json([{ status: 'settled' }]),
+      gemini: call => call.headers.Authorization === 'Bearer gemini-paid-key' ? new Response('overloaded', { status: 503 })
+        : new Promise(resolve => setTimeout(() => resolve(new Response('overloaded', { status: 503 })), 650)) });
+    const env = accountEnv({ UPSTREAM_FAILOVER_BUDGET_MS: '1000', UPSTREAM_TTFB_TIMEOUT_MS: '900' });
+    const { result, logs } = await captureLogs(() =>
+      gw.call(env, { model: 'auto', messages, tools, stream: true }, { token: 'ses_pro', country: 'US' }));
+    await expectError(result, 502, 'upstream_error');
+    const keys = upstreamCalls().map(call => call.headers.Authorization);
+    assert.deepEqual(keys.slice(0, 2), ['Bearer gemini-free-key', 'Bearer gemini-paid-key']);
+    assert.equal(keys.filter(key => key === 'Bearer gemini-free-key').length, 1, 'the other free pools were left for the paid share');
+    assert.ok(!logs.warn.some(([message]) => message === 'Neuron failover budget spent'));
   });
 
   // Review of the failover budget: when the budget, not the pool's own first-byte timeout, ended

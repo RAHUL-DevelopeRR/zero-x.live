@@ -892,7 +892,7 @@ function parseEvent(data) {
  * commitBy (an absolute time) ends the request's failover budget: a stream is due by then, a
  * non-streaming response (whose generation may outlast the budget) by commitBy + idleMs. When
  * that, not the attempt's own deadline, ends it, the timeout's phase is 'budget': the pool did
- * not get its full time, so the cut says nothing about its health.
+ * not get its full time, so the cut is not a failure of the pool (chat-handler.js).
  * Resolves { ok:false, status, headers, bodyText } for HTTP errors and
  * { ok:true, json | stream } on success; throws timeout/abort/protocol errors.
  */

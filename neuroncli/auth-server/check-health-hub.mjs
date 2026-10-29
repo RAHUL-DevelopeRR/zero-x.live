@@ -110,9 +110,19 @@ try {
     assert.ok(slowHub.snapshot().pools[GEMINI_25].slow_until > clock(), 'an idle timeout too');
     slowHub.report([{ key: GEMINI_25, success: true }]);
     assert.equal(slowHub.snapshot().pools[GEMINI_25].slow_until, undefined, 'a success clears it');
+    // A stream the failover budget cut after its whole share (chat-handler.js, phase 'budget'):
+    // slow, but not failed, so it is neither degraded nor parked, even from two callers.
+    const failed = slowHub.tracker.records.get(GEMINI_25).failed_attempts;
+    for (const caller of ['one-user', 'other-user']) {
+      slowHub.report([{ key: GEMINI_25, success: false, kind: FailureKind.TIMEOUT, phase: 'budget', caller }]);
+    }
+    pools = slowHub.snapshot().pools;
+    assert.deepEqual([pools[GEMINI_25].status, pools[GEMINI_25].until, pools[GEMINI_25].slow_until],
+      ['available', 0, clock() + 300_000], 'a budget cut only marks the pool slow');
+    assert.equal(slowHub.tracker.records.get(GEMINI_25).failed_attempts, failed, 'and is not counted as failed');
     offset = before;
   }
-  console.log('ok - slow pools: first-byte and idle timeouts only, five minutes or until a success, kept after a cooldown');
+  console.log('ok - slow pools: first-byte and idle timeouts and whole-share budget cuts only, five minutes or until a success, kept after a cooldown');
 
   // 2. Alarm: free checks. Lists and status pages, two per alarm, staggered.
   upstream = lists;

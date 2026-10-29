@@ -70,7 +70,9 @@ const REQUEST_SCOPED = new Set([FailureKind.CONTEXT, FailureKind.INVALID, Failur
  * success clears the mark. A slow pool stays available; `auto` only tries it after the healthy
  * pools of its tier (chat-handler.js), so the next caller does not wait through the same
  * timeout while another pool can answer. Other failures (a 5xx, a slow non-streaming response)
- * never mark it.
+ * never mark it. A stream the failover budget cut after its whole share of it (phase 'budget',
+ * chat-handler.js) marks the pool slow and changes nothing else: it sent nothing for as long as
+ * the request could wait, but it did not get its own timeout, so it is not counted as failed.
  */
 export class ProviderHealthTracker {
   constructor({ failureThreshold = 3, cooldownMs = 30000, modelUnavailableMs = 600000,
@@ -166,6 +168,10 @@ export class ProviderHealthTracker {
     rec.total_attempts++;
     rec.last_attempt_at = now;
     rec.last_latency_ms = latencyMs;
+    if (kind === FailureKind.TIMEOUT && phase === 'budget') {
+      rec.slow_until = now + this.slowWindowMs;
+      return rec;
+    }
     if (REQUEST_SCOPED.has(kind)) return rec;
     rec.failed_attempts++;
     rec.last_failure_at = now;

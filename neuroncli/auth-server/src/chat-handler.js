@@ -9,7 +9,7 @@ import { FailureKind, globalHealthTracker } from './provider-health.js';
 import { hubHealthRows, publishHealth } from './health-hub-client.js';
 import { readShared } from './health-share.js';
 import { callerCountry, loadCatalogDbModels, loadPlanPolicies, planPolicy, resolveModelId } from './catalog.js';
-import { billableUsage, estimateOutputTokens, estimatePromptTokens, utf8Bytes } from './pricing.js';
+import { billableUsage, costMicrousd, estimateOutputTokens, estimatePromptTokens, utf8Bytes } from './pricing.js';
 import { exhaustedBudget, notePoolExhausted, notePoolReserved, poolBudgetState } from './pool-budget.js';
 import {
   PAID_DENIED_STATUSES, RESERVE_ERRORS, TERMINAL_RESERVE_STATUSES, reservationArgs, reserveCapacity, reserveError,
@@ -187,7 +187,8 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
 
     const ledger = usesLedger(env, session);
     if (session.account_backed && !ledger) return fail('service_unavailable');
-    const policy = planPolicy(env, session.plan, ledger ? await loadPlanPolicies(env) : undefined);
+    const policies = ledger ? await loadPlanPolicies(env) : undefined;
+    const policy = planPolicy(env, session.plan, policies);
     await loadCatalogDbModels(env);
     headers['x-neuron-plan'] = policy.id;
     const promptTokens = estimatePromptTokens(body.messages, body.tools);
@@ -310,7 +311,8 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
 
     // commitBy ends this attempt's share of the failover budget: a stream's first byte and first
     // data event are due by then at the latest, however much of their own timeouts is left.
-    const attempt = async (candidate, reservation, commitBy) => {
+    // wholeShare: no earlier attempt took more than min(5 s, a tenth of the budget) of that share.
+    const attempt = async (candidate, reservation, commitBy, wholeShare) => {
       const { entry, pool, key } = candidate;
       const payload = buildUpstreamPayload(entry, body, candidate.maxTokens);
       const startedAt = Date.now();
@@ -324,9 +326,14 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
         const kind = clientSignal?.aborted ? FailureKind.ABORTED : error?.kind || FailureKind.SERVER;
         const latencyMs = Date.now() - startedAt;
         // The failover budget, not the pool's own timeout, ended the attempt: the pool did not
-        // get its full time, so its health is left alone (nothing is recorded or published). The
-        // upstream still received the request, so it settles like a timeout (failed_upstream).
+        // get its full time, so it is not counted as failed. A stream that had its whole share and
+        // sent nothing is slow, though, and phase 'budget' marks only that (provider-health.js):
+        // the free attempts of a plan with paid capacity end at 70 % of the budget at the latest,
+        // before their own first-byte timeout, so without it each such request waits out the same
+        // dead pool. A generation cut by the budget says nothing about its pool. The upstream still
+        // received the request, so it settles like a timeout (failed_upstream).
         if (kind === FailureKind.TIMEOUT && error?.phase === 'budget') {
+          if (payload.stream && wholeShare) recordFailure(key, kind, null, latencyMs, 'budget');
           console.warn('Neuron failover budget ended an attempt', { ...log, latency_ms: latencyMs });
           return { ok: false, kind, budgetCut: true, retryAfterSeconds: null, latencyMs, errorCode: ERROR_CODES_BY_KIND[kind] };
         }
@@ -392,12 +399,26 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
     // abandoned request. Plans with paid capacity keep the last 30 % of the budget (15 s) for
     // their paid attempt, as they keep their last attempt for it: their free attempts are due by
     // paidCommitBy, so a free pool's 45 s first-byte timeout cannot use up the paid fallback's time.
+    // A non-streaming attempt is due by its share's end plus the idle timeout (providers.js), so
+    // the paid attempt of a non-streaming request starts while its share of that is left.
     const failoverBudgetMs = positiveInt(env.UPSTREAM_FAILOVER_BUDGET_MS, 50000);
     const minAttemptMs = Math.min(5000, failoverBudgetMs / 10);
     const paidReserveMs = Math.round(failoverBudgetMs * 0.3);
     const candidates = await orderBySharedHealth(env, route.candidates, healthTracker);
-    const paidCandidates = candidates.some(candidate => candidate.pool.tier === 'paid');
-    const freeAttemptLimit = paidCandidates && maxAttempts > 1 ? maxAttempts - 1 : maxAttempts;
+    const paidCandidates = candidates.filter(candidate => candidate.pool.tier === 'paid');
+    const freeAttemptLimit = paidCandidates.length && maxAttempts > 1 ? maxAttempts - 1 : maxAttempts;
+    // The paid share is kept only while the paid attempt can be reserved. Whether it can is
+    // otherwise learned only after every free attempt, so a Pro user without credits got less time
+    // for free pools than a Free user and then a refusal. Every reservation row carries the
+    // account's plan and credit balance: a plan without paid pools, or a balance below the credits
+    // the cheapest paid attempt holds (zerox_reserve_v2 refuses it then), rules the paid attempt out.
+    const paidHoldFloor = Math.min(...paidCandidates.map(candidate =>
+      Math.max(1, costMicrousd(candidate.pool.price, promptTokens, candidate.maxTokens))));
+    let paidUsable = paidCandidates.length > 0;
+    const noteAccount = row => {
+      if (row.plan && !planPolicy(env, row.plan, policies).tiers.includes('paid')) paidUsable = false;
+      if (isSet(row.credit_balance_microusd) && Number(row.credit_balance_microusd) < paidHoldFloor) paidUsable = false;
+    };
     const failures = [];
     const exhausted = [];
     const skipModels = new Set();
@@ -425,17 +446,27 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
     const failoverStart = Date.now();
     const commitBy = failoverStart + failoverBudgetMs;
     const paidCommitBy = commitBy - paidReserveMs;
+    // A free attempt of a plan with usable paid capacity leaves the paid attempt its share.
+    const keepsPaidShare = candidate => paidUsable && !paidDenied && maxAttempts > 1 && candidate.pool.tier !== 'paid';
+    const shareEnd = candidate => (keepsPaidShare(candidate) ? paidCommitBy : commitBy);
+    const startBy = candidate => shareEnd(candidate) + (!body.stream && candidate.pool.tier === 'paid' ? timeouts.idleMs : 0);
+    // Free pools skipped to keep the paid share; they get it back if the paid reservation is refused
+    // anyway (credits held by the account's other paid requests are not in the balance).
+    const keptForPaid = [];
+    const queue = [...candidates];
     try {
-      for (const candidate of candidates) {
+      for (const candidate of queue) {
         if (attempts >= maxAttempts || clientSignal?.aborted) break;
         if (skipModels.has(candidate.entry.id) || (paidDenied && candidate.pool.tier === 'paid')) continue;
         if (candidate.pool.tier !== 'paid' && !paidDenied && freeAttempts >= freeAttemptLimit) continue;
-        // A free attempt of a plan with paid capacity leaves the paid attempt its share.
-        const keepsPaidShare = paidCandidates && !paidDenied && maxAttempts > 1 && candidate.pool.tier !== 'paid';
-        const attemptCommitBy = keepsPaidShare ? paidCommitBy : commitBy;
-        if (attemptCommitBy - Date.now() < minAttemptMs) {
+        if (startBy(candidate) - Date.now() < minAttemptMs) {
+          // Free pools are skipped, not the paid one, once only the paid share is left; that
+          // is not a spent budget (a 5xx from the paid attempt still answers upstream_error).
+          if (keepsPaidShare(candidate)) {
+            keptForPaid.push(candidate);
+            continue;
+          }
           outOfTime = true;
-          if (keepsPaidShare) continue;
           break;
         }
         let reservation = null;
@@ -451,13 +482,16 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
             console.error('Neuron capacity reservation unavailable', { name: error?.name, request_id: requestId });
             return fail('service_unavailable');
           }
+          noteAccount(row);
           if (row.status !== 'ok') {
             if (TERMINAL_RESERVE_STATUSES.has(row.status) || !RESERVE_ERRORS[row.status]) {
               const error = reserveError(row);
               return fail(error.code, error);
             }
-            if (PAID_DENIED_STATUSES.has(row.status)) paidDenied = row;
-            else {
+            if (PAID_DENIED_STATUSES.has(row.status)) {
+              paidDenied = row;
+              queue.push(...keptForPaid.splice(0));
+            } else {
               // pool_exhausted: the shared budget of this pool is spent for every user.
               exhausted.push(row);
               const budget = exhaustedBudget(candidate.pool.limits, row.retry_after_seconds);
@@ -476,7 +510,7 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
         }
         attempts++;
         if (candidate.pool.tier !== 'paid') freeAttempts++;
-        const result = await attempt(candidate, reservation, attemptCommitBy);
+        const result = await attempt(candidate, reservation, shareEnd(candidate), Date.now() - failoverStart < minAttemptMs);
         current = null;
         if (result.ok) return result.response;
         failures.push(result);
