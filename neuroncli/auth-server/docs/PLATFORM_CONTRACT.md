@@ -192,6 +192,7 @@ All called through `rpc(env, name, args)` / `rpcRows(env, name, args)` in
 |-----|------|---------------|
 | `zerox_reserve_v2` | `p_user_id uuid, p_request_id text, p_model text, p_tier text, p_tokens bigint, p_cost_microusd bigint, p_pool jsonb` (`{rpm,rpd,tpm,tpd}` or null) | `{status, reservation_id, plan, remaining_requests, remaining_tokens, credit_balance_microusd, resets_at, retry_after_seconds}`; status ∈ `ok, no_account, suspended, upgrade_required, user_daily_requests, user_daily_tokens, user_rpm, user_concurrency, insufficient_credits, pool_exhausted` |
 | `zerox_settle_v2` | `p_reservation_id uuid, p_prompt_tokens bigint, p_completion_tokens bigint, p_cost_microusd bigint, p_status text ('ok','error','refunded','failed_upstream'), p_latency_ms int, p_provider text, p_upstream_model text, p_error_code text` | `{status:'settled'|'already_settled'|'not_found', credit_balance_microusd}` |
+| `zerox_renew_reservation` | `p_reservation_id uuid, p_lease_seconds int` (1-3600) | `boolean`: the lease now runs at least `p_lease_seconds` from now; `false` once the reservation is settled or released (section 8.5) |
 | `zerox_release_stale_reservations` | — | `{released}` |
 | `zerox_plan_policies_v2` | — | one row per plan: `plan, name, price_usd, price_usd_cents, price_inr_paise, daily_requests, daily_tokens, rpm_limit, concurrency_limit, allowed_tiers text[], monthly_credit_microusd, features, sort, public, highlighted, razorpay_plan_id_inr, razorpay_plan_id_usd` |
 | `zerox_account_overview` | `p_user_id` | account + policy + credits + subscription + today usage (jsonb columns) |
@@ -443,3 +444,23 @@ by itself, and signing up to a provider stays manual. Code: `src/discovery/`, re
   the adapter, key, hosting flag and shared budget. They are free pools only, never chosen by
   `auto`, never replace a code-defined id, and `*_MODELS` still narrows them. A demoted, rejected or
   failed candidate stops being offered within the 60 s cache.
+
+### 8.5 Concurrency leases and requests per minute (2026-10-28)
+
+E2E finding (2026-10-27): when Cloudflare killed a Worker isolate mid-stream (`exceededCpu`),
+nothing settled the attempt's reservation, so it held one of the user's concurrency slots for
+10 minutes while every refusal said `retry_after_seconds: 5`. Migration
+`20261028000000_reservation_leases.sql`:
+
+- **Leases.** An active reservation holds a slot until `lease_expires_at`, 90 s after
+  `zerox_reserve_v2`. The gateway renews it with `zerox_renew_reservation` every
+  `RESERVATION_RENEW_MS` (30 s) for `RESERVATION_LEASE_SECONDS` (90 s) while the attempt runs,
+  and stops before settling. A lease that lapsed (its isolate died) is released by the user's next
+  `zerox_reserve_v2`, or by `zerox_release_stale_reservations` 5 minutes after it lapsed (rows
+  without a lease: 10 minutes after they were created). A released reservation keeps what it was
+  charged, holds no credits any more, and a late settle still reconciles it.
+- **`user_concurrency`** answers `retry_after_seconds` = the time until the first lease lapses
+  (1-90 s); a settle can free a slot sooner.
+- **`user_rpm`** counts client requests in the last 60 s, not reservations: failover attempts
+  reserve as `<request_id>.<n>`, count as their request, and are never refused for the rate of
+  a request that is already counted.

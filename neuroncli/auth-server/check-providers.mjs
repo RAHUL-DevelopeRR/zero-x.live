@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import app from './src/index.js';
-import { ADAPTERS, classifyUpstreamFailure, modelCatalog, providerConfiguration, providerHealth, requestCompletion,
-  resolveModelCatalog, startCompletion } from './src/providers.js';
+import { ADAPTERS, classifyUpstreamFailure, createCompletionStream, modelCatalog, providerConfiguration, providerHealth,
+  requestCompletion, resolveModelCatalog, startCompletion } from './src/providers.js';
 import { CATALOG } from './src/catalog.js';
 
 const originalFetch = globalThis.fetch;
@@ -190,5 +190,44 @@ try {
   assert.equal((await probe('/v1/models/health', 'llama-3.3-70b')).status, 502);
   sessions.set('ses_probe', JSON.stringify({ ...JSON.parse(sessions.get('ses_probe')), tokens_used: 256000 }));
   assert.equal((await probe('/v1/models/health', 'llama-3.3-70b')).status, 429);
+  // onFinish settles the attempt's reservation (and frees its concurrency slot), so a committed
+  // stream calls it exactly once even when releasing the upstream reader fails: on an upstream
+  // error, on a client cancel, when the stream's idle watchdog fires and after [DONE].
+  for (const scenario of ['upstream_error', 'client_cancel', 'idle_timeout', 'done']) {
+    const finishes = [];
+    const unhandled = [];
+    const onUnhandled = reason => unhandled.push(reason);
+    process.on('unhandledRejection', onUnhandled);
+    const pending = [JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] }), '[DONE]'];
+    // Like a ReadableStream reader, a cancel ends the read in flight even when it rejects.
+    let endRead = () => {};
+    const reader = {
+      lastByteAt: Date.now(),
+      next: scenario === 'upstream_error' ? async () => { throw new Error('connection reset'); }
+        : scenario === 'done' ? async () => pending.shift() ?? new Promise(() => {})
+          : () => new Promise(resolve => { endRead = () => resolve(null); }),
+      cancel: async () => {
+        endRead();
+        throw new Error('cancel failed');
+      },
+    };
+    const stream = createCompletionStream({ reader, first: JSON.stringify({ choices: [{ index: 0, delta: { content: 'hi' } }] }),
+      model: 'groq/chat-model', controller: new AbortController(), clientSignal: null,
+      timeouts: { idleMs: scenario === 'idle_timeout' ? 30 : 60000 },
+      onFinish: async outcome => { finishes.push(outcome); }, requestId: 'req_cancel', env: {} });
+    const client = stream.getReader();
+    let text = new TextDecoder().decode((await client.read()).value);
+    if (scenario === 'client_cancel') await client.cancel();
+    else for (let read = await client.read(); !read.done; read = await client.read()) text += new TextDecoder().decode(read.value);
+    await new Promise(resolve => setTimeout(resolve, 20));
+    process.off('unhandledRejection', onUnhandled);
+    assert.equal(finishes.length, 1, `${scenario}: onFinish runs exactly once`);
+    assert.equal(finishes[0].status, scenario === 'done' ? 'ok' : 'error', scenario);
+    const errorCode = { upstream_error: 'upstream_error', client_cancel: 'client_disconnected', idle_timeout: 'upstream_timeout' }[scenario];
+    if (scenario !== 'done') assert.equal(finishes[0].errorCode, errorCode);
+    if (scenario === 'upstream_error' || scenario === 'idle_timeout') assert.match(text, new RegExp(errorCode), 'the client still gets the error event');
+    if (scenario === 'done') assert.match(text, /\[DONE\]/);
+    assert.deepEqual(unhandled, [], `${scenario}: a failed cancel is not an unhandled rejection`);
+  }
   console.log('Provider discovery health, verified catalog, per-pool credentials, credential isolation and quota-backed inference probes passed');
 } finally { globalThis.fetch = originalFetch; }
