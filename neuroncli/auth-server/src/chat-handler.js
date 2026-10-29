@@ -265,8 +265,10 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
     // (CPU limit, eviction), nothing settles the reservation and waitUntil dies with it; the
     // timer dies too, so the lease lapses and the slot frees within 90 s. Renewals go to
     // Postgres, not KV (the Free plan allows 1,000 KV writes a day).
-    const renewMs = positiveInt(env.RESERVATION_RENEW_MS, RESERVATION_RENEW_MS);
+    // At least three renewals per lease, so one late or failed renewal never lets a running
+    // attempt's lease lapse (the user's next reservation would release it under the stream).
     const leaseSeconds = Math.min(3600, positiveInt(env.RESERVATION_LEASE_SECONDS, RESERVATION_LEASE_SECONDS));
+    const renewMs = Math.min(positiveInt(env.RESERVATION_RENEW_MS, RESERVATION_RENEW_MS), Math.floor(leaseSeconds * 1000 / 3));
     const leases = new Map(); // reservation id -> renewal timer
     const stopLease = id => {
       if (!leases.has(id)) return;

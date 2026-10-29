@@ -1,4 +1,7 @@
 BEGIN;
+-- The ALTER, DROP INDEX and CREATE INDEX below lock zerox_reservations until COMMIT. Give up
+-- (and re-run) rather than wait behind a long transaction with every reserve and settle queued.
+SET LOCAL lock_timeout = '5s';
 
 -- Concurrency leases (E2E finding 2026-10-27). A reservation held its user's concurrency slot
 -- until it was settled, or for 10 minutes when nothing settled it. Only the gateway settles, so a
@@ -10,16 +13,22 @@ BEGIN;
 --   (zerox_renew_reservation). The user's next reservation releases its lapsed leases; the cron
 --   releases the rest 5 minutes after they lapsed. A released reservation is not refunded: it
 --   keeps what it was charged, and a late settle still reconciles it.
--- * user_concurrency reports the real wait, until the first lease lapses (at most 90 s).
+-- * user_concurrency reports the real wait, until the first lease lapses (at most 90 s). This
+--   changes Retry-After for healthy streams too: renewals keep a running attempt's lease 60-90 s
+--   ahead, so while running streams hold every slot the refusal says 60-90 s, where it said 5 s,
+--   although a settle can free a slot at any moment. A client that sleeps the whole Retry-After
+--   (the Neuron CLI waits up to 90 s) waits that long (docs/PLATFORM_CONTRACT.md section 8.5).
 -- * user_rpm counts client requests: failover attempts reserve as <request_id>.<n> and no longer
 --   use up the caller's requests per minute.
 -- Additive: one nullable column, one replaced index, one new function; zerox_reserve_v2 and
 -- zerox_release_stale_reservations keep their signatures and results. Apply it before deploying
 -- the gateway that renews leases (a gateway that finds zerox_renew_reservation missing warns and
 -- skips renewals). Until that gateway is live, an attempt that streams for more than 90 s loses
--- its slot early; its settle still reconciles it. To roll back, recreate both functions and the
--- index from 20261016000100_business_quota.sql and 20261016000000_business_schema.sql, then drop
--- zerox_renew_reservation and the column.
+-- its slot early; its settle still reconciles it. To roll back, run
+-- migrations/down/20261028000000_reservation_leases.sql with psql -f (a gateway that still renews
+-- then warns and skips renewals): it restores both functions (CREATE OR REPLACE) and the
+-- (user_id, created_at) index, drops zerox_renew_reservation and the column, and removes this
+-- migration's history row so the migration runner can apply it again.
 
 ALTER TABLE public.zerox_reservations ADD COLUMN lease_expires_at timestamptz;
 -- Rows in flight keep the 10 minute horizon they were reserved under; finished rows need none.

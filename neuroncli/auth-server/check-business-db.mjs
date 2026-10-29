@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -759,6 +759,26 @@ try {
       const afterEnded = renewals;
       await sleep(200);
       assert.equal(renewals, afterEnded, 'no renewals after a cancel or an interrupted stream');
+
+      // (d) A renew interval as long as the lease or longer (RESERVATION_RENEW_MS=90000 with the
+      // default 90 s lease, scaled down here) is clamped to a third of the lease, so running
+      // generations renew before their leases lapse and are never released under them.
+      await freshPool();
+      const clampedUser = await newUser('free');
+      const clampedChat = leaseChat(clampedUser, { RESERVATION_RENEW_MS: '600000', RESERVATION_LEASE_SECONDS: '1' });
+      upstreamMode = 'hang';
+      const clamped = [await open(clampedChat), await open(clampedChat)];
+      const clampedUpstreams = upstreams.splice(-2);
+      await sql("UPDATE public.zerox_reservations SET lease_expires_at = now() + interval '1 second' WHERE user_id = $1", [clampedUser]);
+      renewals = 0;
+      await sleep(1500);
+      assert.ok(renewals >= 4, `renewals at most a third of the lease apart (${renewals} renewals)`);
+      const clampedBusy = await clampedChat();
+      assert.equal(clampedBusy.status, 429, 'a renew interval longer than the lease does not cost running generations their slots');
+      await clampedBusy.json();
+      for (const controller of clampedUpstreams) completeUpstream(controller);
+      for (const reader of clamped) assert.match(await drain(reader), /\[DONE\]/);
+      assert.deepEqual(await reservationsOf(clampedUser), ['settled/ok', 'settled/ok']);
     } finally {
       for (const reader of abandoned) await reader.cancel().catch(() => {});
       for (const controller of upstreams) try { controller.close(); } catch { /* already cancelled */ }
@@ -769,7 +789,7 @@ try {
         INSERT INTO public.zerox_pool_usage SELECT * FROM lease_pool_saved; DROP TABLE lease_pool_saved;`);
     }
   }
-  ok('concurrency leases: a killed stream frees its slot once its lease lapses, without the cron (Retry-After is the real wait); running streams renew their leases and stop once settled; cancel and cut streams settle at once');
+  ok('concurrency leases: a killed stream frees its slot once its lease lapses, without the cron (Retry-After is the real wait); running streams renew their leases (at least three times per lease) and stop once settled; cancel and cut streams settle at once');
 
   // ---------------------------------------------------------------- stale release and housekeeping
   const staleUser = await newUser('free');
@@ -1470,7 +1490,54 @@ try {
     assert.equal((await psqlStandIn.query("SELECT count(*)::int AS n FROM supabase_migrations.schema_migrations WHERE version = '20990101000100'")).rows[0].n, 0,
       'a failed migration is never recorded');
     assert.equal((await psqlStandIn.query("SELECT to_regclass('public.half_applied') AS t")).rows[0].t, null);
+    // Migrations that lock busy tables give up instead of queueing reserves and settles behind a
+    // long transaction, and the timeout ends with their transaction.
+    assert.match(await readFile(join(root, 'migrations/20261028000000_reservation_leases.sql'), 'utf8'),
+      /^BEGIN;\s+(?:--.*\s+)*SET LOCAL lock_timeout = '\d+s';/);
+    assert.equal((await psqlStandIn.query('SHOW lock_timeout')).rows[0].lock_timeout, '0');
   } finally { await psqlStandIn.close(); }
+  // migrations/down/<file> undoes one migration by hand (psql -f; the runner reads
+  // migrations/*.sql only). It restores what the migration replaced exactly as the migrations
+  // before it left it and drops its history row, so the runner can apply it again.
+  // Function bodies are compared without CRs: a checkout may give the files either line ending.
+  const schemaOf = async database => (await database.query(`
+    SELECT 'function' AS kind, p.oid::regprocedure::text AS name,
+        replace(pg_get_functiondef(p.oid), chr(13), '') || coalesce(p.proacl::text, '') AS def
+      FROM pg_proc AS p WHERE p.pronamespace = 'public'::regnamespace AND p.prokind = 'f'
+    UNION ALL SELECT 'column', c.table_name || '.' || c.column_name, concat_ws(' ', c.data_type, c.is_nullable, c.column_default)
+      FROM information_schema.columns AS c WHERE c.table_schema = 'public'
+    UNION ALL SELECT 'index', i.indexname, i.indexdef FROM pg_indexes AS i WHERE i.schemaname = 'public'
+    UNION ALL SELECT 'history', h.version, h.name FROM supabase_migrations.schema_migrations AS h
+    ORDER BY 1, 2`)).rows;
+  const downFiles = (await readdir(join(root, 'migrations/down'))).sort();
+  assert.deepEqual(downFiles, ['20261028000000_reservation_leases.sql']);
+  for (const file of downFiles) {
+    const migration = migrations.find(candidate => candidate.file === file);
+    assert.ok(migration, `${file} undoes a migration of the same name`);
+    const down = await readFile(join(root, 'migrations/down', file), 'utf8');
+    assert.ok(!/^CREATE\s+FUNCTION\b/im.test(down), `${file}: functions are restored with CREATE OR REPLACE`);
+    assert.match(down, /^BEGIN;\s+(?:--.*\s+)*SET LOCAL lock_timeout = '\d+s';[\s\S]*\bCOMMIT;\s*$/,
+      `${file}: one transaction with a lock timeout`);
+    // Applies the migrations in order up to (and without) the one at index `end`.
+    const upTo = async (database, end) => {
+      await database.exec(DEV_BOOTSTRAP_SQL);
+      for (const earlier of migrations.slice(0, end)) await database.exec(migrationScript(await readMigration(earlier)));
+    };
+    const before = await PGlite.create();
+    const rolled = await PGlite.create();
+    try {
+      await upTo(before, migrations.indexOf(migration));
+      await upTo(rolled, migrations.indexOf(migration) + 1);
+      const applied = await schemaOf(rolled);
+      await rolled.exec(down);
+      assert.deepEqual(await schemaOf(rolled), await schemaOf(before), `${file} restores the schema the migrations before it left`);
+      await rolled.exec(migrationScript(await readMigration(migration)));
+      assert.deepEqual(await schemaOf(rolled), applied, `${file}: the migration applies again after its rollback`);
+    } finally {
+      await before.close();
+      await rolled.close();
+    }
+  }
   assert.deepEqual(connectionEnv('postgresql://postgres.ref:p%40ss@db.example.invalid:6543/postgres'), {
     PGHOST: 'db.example.invalid', PGPORT: '6543', PGUSER: 'postgres.ref', PGPASSWORD: 'p@ss', PGDATABASE: 'postgres',
     PGSSLMODE: 'require', PGCONNECT_TIMEOUT: '15', PGAPPNAME: 'zerox-apply-migrations' });
@@ -1526,7 +1593,7 @@ try {
     assert.equal(dirname(resolve(dataDir)), resolve(tmpdir()));
     await rm(dataDir, { recursive: true, force: true });
   }
-  ok('operator scripts and migration runner: dry run, DATABASE_URL only (argv refused), history row inside each migration transaction, failed-migration rollback, dev-db create, seed, reseed and on-disk persistence');
+  ok('operator scripts and migration runner: dry run, DATABASE_URL only (argv refused), history row inside each migration transaction, failed-migration rollback, lock timeouts, down files that restore the prior schema and let the migration re-apply, dev-db create, seed, reseed and on-disk persistence');
 
   console.log(`PASS: business data model (${passed.length} groups): every contract RPC, quota/credit/pool atomicity, billing idempotency, access control and the PGlite driver`);
 } finally {

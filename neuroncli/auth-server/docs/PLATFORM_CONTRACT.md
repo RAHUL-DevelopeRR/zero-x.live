@@ -454,13 +454,25 @@ nothing settled the attempt's reservation, so it held one of the user's concurre
 
 - **Leases.** An active reservation holds a slot until `lease_expires_at`, 90 s after
   `zerox_reserve_v2`. The gateway renews it with `zerox_renew_reservation` every
-  `RESERVATION_RENEW_MS` (30 s) for `RESERVATION_LEASE_SECONDS` (90 s) while the attempt runs,
-  and stops before settling. A lease that lapsed (its isolate died) is released by the user's next
+  `RESERVATION_RENEW_MS` (30 s, clamped to at most a third of the lease) for
+  `RESERVATION_LEASE_SECONDS` (90 s) while the attempt runs, and stops before settling. A lease that lapsed (its isolate died) is released by the user's next
   `zerox_reserve_v2`, or by `zerox_release_stale_reservations` 5 minutes after it lapsed (rows
   without a lease: 10 minutes after they were created). A released reservation keeps what it was
   charged, holds no credits any more, and a late settle still reconciles it.
 - **`user_concurrency`** answers `retry_after_seconds` = the time until the first lease lapses
   (1-90 s); a settle can free a slot sooner.
+- **Retry-After change (clients).** This refusal always said 5 s before. Renewals keep a running
+  attempt's lease 60-90 s ahead, so while running streams hold every slot of the user it now says
+  60-90 s, also when one of them finishes a second later; only slots held by killed requests give
+  shorter waits. A client that sleeps the whole `Retry-After` (the Neuron CLI waits up to 90 s and
+  retries at most twice) can wait up to 90 s for a slot that freed sooner, for example when an
+  agent and its subagents share the Free plan's 2 slots. Open owner decision: report a short
+  retry while the leases are being renewed, or have clients poll.
 - **`user_rpm`** counts client requests in the last 60 s, not reservations: failover attempts
   reserve as `<request_id>.<n>`, count as their request, and are never refused for the rate of
   a request that is already counted.
+- **Rollback.** `migrations/down/20261028000000_reservation_leases.sql`, run by hand with
+  `psql -X -v ON_ERROR_STOP=1 -f` (the migration runner never reads `migrations/down/`), restores
+  both functions with `CREATE OR REPLACE` and the `(user_id, created_at)` index, drops
+  `zerox_renew_reservation` and the column, and removes the history row. Both files set
+  `lock_timeout` (5 s) for their transaction.
