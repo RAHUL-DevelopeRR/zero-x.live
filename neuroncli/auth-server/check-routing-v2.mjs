@@ -1467,6 +1467,21 @@ try {
     assert.ok(Date.now() - started < 1900, 'answered within the budget plus the idle timeout');
     const free = gw.tracker.records.get('gemini:gemini-2.5-flash:free');
     assert.ok(!free || (!free.failed_attempts && !free.slow_until), 'a cut generation says nothing about the pool');
+
+    // Re-review: when the first paid pool failed, the free pools held back for it went next, with
+    // no budget left to start, and the first of them ended the loop: the next paid pool lost the
+    // idle allowance its attempt still had (a 504 where it would have answered).
+    reset({ 'rpc:zerox_plan_policies_v2': policiesRpc, 'rpc:zerox_reserve_v2': () => Response.json([okReserve()]),
+      'rpc:zerox_settle_v2': () => Response.json([{ status: 'settled' }]),
+      gemini: call => call.headers.Authorization !== 'Bearer gemini-paid-key' ? untilAborted(call)
+        : call.body.model === 'gemini-2.5-flash' ? new Response('overloaded', { status: 503 }) : completion({ content: 'next paid' }),
+      groq: untilAborted });
+    const next = await accountGateway().call(env, { model: 'auto', messages, tools }, { token: 'ses_pro', country: 'US' });
+    assert.equal(next.status, 200, 'every paid pool keeps its start window');
+    assert.equal((await next.json()).choices[0].message.content, 'next paid');
+    assert.deepEqual(upstreamCalls().map(call => `${call.headers.Authorization.slice(7)}:${call.body.model}`),
+      ['gemini-free-key:gemini-2.5-flash', 'gemini-paid-key:gemini-2.5-flash', 'gemini-paid-key:gemini-3.6-flash'],
+      'the held free pools had no time left and were passed over');
   });
 
   // Re-review: free pools skipped so that the paid attempt keeps its share set the "budget spent"
@@ -1495,27 +1510,31 @@ try {
   // paid pool's shared budget was spent, or the request ruled the paid models out (a 400 from
   // their free pool), the request ended with up to 30 % of the budget left (15 s) and healthy free
   // pools never tried, where production answered from the next free pool. Once the paid attempt
-  // is made or ruled out, the free pools held back for it go next, before any other paid pool.
+  // is made or ruled out, the free pools held back for it go next, before any other paid pool
+  // (a 429 does not make it while another paid pool is left, see the next test).
   await test('free pools held back for the paid attempt get their turn once it is made or ruled out', async () => {
     const env = accountEnv({ UPSTREAM_FAILOVER_BUDGET_MS: '1000', UPSTREAM_TTFB_TIMEOUT_MS: '900' });
     const freeAnswer = () => sse([chunk({ content: 'next free' }, 'stop'), '[DONE]']);
     const route = () => upstreamCalls().map(call => `${call.headers.Authorization.slice(7)}:${call.body.model}`);
     // The first free pool sends nothing until the free share ends (700 ms); every other free pool would answer.
-    for (const [label, paidFailure] of [['5xx', () => new Response('overloaded', { status: 503 })],
-      ['429', () => new Response('busy', { status: 429 })]]) {
+    for (const [label, paidFailure, paidTried] of [
+      ['5xx', () => new Response('overloaded', { status: 503 }), ['gemini-paid-key:gemini-2.5-flash']],
+      ['429 from every paid pool', () => new Response('busy', { status: 429 }),
+        ['gemini-paid-key:gemini-2.5-flash', 'gemini-paid-key:gemini-3.6-flash', 'groq-paid-key:openai/gpt-oss-120b']]]) {
       const gw = accountGateway();
       reset({ 'rpc:zerox_plan_policies_v2': policiesRpc, 'rpc:zerox_reserve_v2': () => Response.json([okReserve()]),
         'rpc:zerox_settle_v2': () => Response.json([{ status: 'settled' }]),
         gemini: call => call.headers.Authorization === 'Bearer gemini-paid-key' ? paidFailure()
           : call.body.model === 'gemini-2.5-flash' ? untilAborted(call) : freeAnswer(),
-        groq: freeAnswer });
+        groq: call => call.headers.Authorization === 'Bearer groq-paid-key' ? paidFailure() : freeAnswer() });
       const started = Date.now();
       const response = await gw.call(env, { model: 'auto', messages, tools, stream: true }, { token: 'ses_pro', country: 'US' });
       assert.equal(response.status, 200, `paid ${label}: a free pool held back for the paid attempt answers`);
       assert.ok((await response.text()).includes('next free'));
       assert.ok(Date.now() - started < 1000, `paid ${label}: within the budget`);
-      assert.deepEqual(route(), ['gemini-free-key:gemini-2.5-flash', 'gemini-paid-key:gemini-2.5-flash',
-        'gemini-free-key:gemini-3.5-flash'], `paid ${label}: the held free pools go before the other paid pools`);
+      // After a paid 5xx the held free pools go before the other paid pools (GATEWAY_SETUP.md).
+      assert.deepEqual(route(), ['gemini-free-key:gemini-2.5-flash', ...paidTried, 'gemini-free-key:gemini-3.5-flash'],
+        `paid ${label}: then the held free pools`);
     }
 
     // Every paid pool's shared budget is spent: no paid attempt can be made.
@@ -1546,6 +1565,40 @@ try {
     assert.equal(response.status, 200, 'paid model ruled out: a held free pool answers');
     assert.ok((await response.text()).includes('next free'));
     assert.deepEqual(route(), ['gemini-free-key:gemini-2.5-flash', 'groq-free-key:openai/gpt-oss-120b', 'groq-free-key:openai/gpt-oss-20b']);
+  });
+
+  // Re-review: a 429 is refused before any generation and does not count against
+  // ROUTER_MAX_ATTEMPTS, yet a paid 429 released the free pools held back for the paid attempt
+  // ahead of the next paid pool. A failing free pool then took the attempt kept for paid capacity
+  // (or a hung one its share of the budget), and a paid pool that would answer was never tried:
+  // 502 or 504 where production answered from it.
+  await test('a paid 429 leaves the attempt kept for paid capacity to the next paid pool', async () => {
+    const route = () => upstreamCalls().map(call => `${call.headers.Authorization.slice(7)}:${call.body.model}`);
+    const paidOr = otherwise => call => call.headers.Authorization !== 'Bearer gemini-paid-key' ? otherwise(call)
+      : call.body.model === 'gemini-2.5-flash' ? new Response('busy', { status: 429 })
+        : sse([chunk({ content: 'next paid' }, 'stop'), '[DONE]']);
+    // Every free pool fails at once: two free attempts, the 429, then the attempt kept for paid capacity.
+    const overloaded = () => new Response('overloaded', { status: 503 });
+    reset({ 'rpc:zerox_plan_policies_v2': policiesRpc, 'rpc:zerox_reserve_v2': () => Response.json([okReserve()]),
+      'rpc:zerox_settle_v2': () => Response.json([{ status: 'settled' }]), gemini: paidOr(overloaded), groq: overloaded });
+    let response = await accountGateway().call(accountEnv(), { model: 'auto', messages, tools, stream: true },
+      { token: 'ses_pro', country: 'US' });
+    assert.equal(response.status, 200, 'the paid pool after the 429 gets the attempt kept for paid capacity');
+    assert.ok((await response.text()).includes('next paid'));
+    assert.deepEqual(route(), ['gemini-free-key:gemini-2.5-flash', 'gemini-free-key:gemini-3.5-flash',
+      'gemini-paid-key:gemini-2.5-flash', 'gemini-paid-key:gemini-3.6-flash']);
+
+    // Free pools that send nothing: the paid pool after the 429 gets the paid share of the budget.
+    reset({ 'rpc:zerox_plan_policies_v2': policiesRpc, 'rpc:zerox_reserve_v2': () => Response.json([okReserve()]),
+      'rpc:zerox_settle_v2': () => Response.json([{ status: 'settled' }]), gemini: paidOr(untilAborted), groq: untilAborted });
+    const started = Date.now();
+    response = await accountGateway().call(accountEnv({ UPSTREAM_FAILOVER_BUDGET_MS: '1000', UPSTREAM_TTFB_TIMEOUT_MS: '900' }),
+      { model: 'auto', messages, tools, stream: true }, { token: 'ses_pro', country: 'US' });
+    assert.equal(response.status, 200, 'the paid pool after the 429 gets the paid share of the budget');
+    assert.ok((await response.text()).includes('next paid'));
+    assert.ok(Date.now() - started < 1000, 'within the budget');
+    assert.deepEqual(route(), ['gemini-free-key:gemini-2.5-flash', 'gemini-paid-key:gemini-2.5-flash',
+      'gemini-paid-key:gemini-3.6-flash']);
   });
 
   // Review of the failover budget: when the budget, not the pool's own first-byte timeout, ended

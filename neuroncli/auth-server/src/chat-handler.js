@@ -402,19 +402,20 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
     // their paid attempt, as they keep their last attempt for it: their free attempts are due by
     // paidCommitBy, so a free pool's 45 s first-byte timeout cannot use up the paid fallback's time.
     // A non-streaming attempt is due by its share's end plus the idle timeout (providers.js), so
-    // the paid attempt of a non-streaming request starts while its share of that is left.
+    // each paid attempt of a non-streaming request starts while its share of that is left.
     const failoverBudgetMs = positiveInt(env.UPSTREAM_FAILOVER_BUDGET_MS, 50000);
     const minAttemptMs = Math.min(5000, failoverBudgetMs / 10);
     const paidReserveMs = Math.round(failoverBudgetMs * 0.3);
     const candidates = await orderBySharedHealth(env, route.candidates, healthTracker);
     const paidCandidates = candidates.filter(candidate => candidate.pool.tier === 'paid');
-    // The paid attempt is owed its last attempt and share of the budget only until it is made,
-    // refused or ruled out: then nothing is kept for it and the free pools held back for it go
-    // next. Whether it can be reserved is otherwise learned only after every free attempt, so a
-    // Pro user without credits got fewer attempts and less time for free pools than a Free user,
-    // and then a refusal. Every reservation row carries the account's plan and credit balance: a
-    // plan without paid pools, or a balance below the credits the cheapest paid attempt holds
-    // (zerox_reserve_v2 refuses it then), rules the paid attempt out.
+    // The paid attempt is owed its last attempt and share of the budget only until it is made (a
+    // 429 does not make it while another paid pool is left), refused or ruled out: then nothing is
+    // kept for it and the free pools held back for it go next. Whether it can be reserved is
+    // otherwise learned only after every free attempt, so a Pro user without credits got fewer
+    // attempts and less time for free pools than a Free user, and then a refusal. Every
+    // reservation row carries the account's plan and credit balance: a plan without paid pools, or
+    // a balance below the credits the cheapest paid attempt holds (zerox_reserve_v2 refuses it
+    // then), rules the paid attempt out.
     const paidHoldFloor = Math.min(...paidCandidates.map(candidate =>
       Math.max(1, costMicrousd(candidate.pool.price, promptTokens, candidate.maxTokens))));
     const accountCanPay = row => !(row.plan && !planPolicy(env, row.plan, policies).tiers.includes('paid'))
@@ -452,9 +453,11 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
     const shareEnd = candidate => (keepsPaidShare(candidate) ? paidCommitBy : commitBy);
     const startBy = candidate => shareEnd(candidate) + (!body.stream && candidate.pool.tier === 'paid' ? timeouts.idleMs : 0);
     // Free pools held back for the paid attempt (its last attempt or its share of the budget).
-    // Once it is made (whatever its outcome), refused (credits held by the account's other paid
-    // requests are not in the balance) or ruled out (every paid pool's budget spent, or its model
-    // rejected the request), they are tried next, before any further paid pool.
+    // Once it is made (any outcome but a 429 while another paid pool is left), refused (credits
+    // held by the account's other paid requests are not in the balance) or ruled out (every paid
+    // pool's budget spent, or its model rejected the request), they are tried next, before any
+    // further paid pool: after a paid 5xx, a free pool that hangs or fails can take the rest of the
+    // budget or the last attempt before the next paid pool gets one (GATEWAY_SETUP.md).
     const heldForPaid = [];
     const queue = [...candidates];
     const releaseHeld = index => {
@@ -475,9 +478,12 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
           heldForPaid.push(candidate);
           continue;
         }
+        // Passed over, not the end of the loop: a later paid pool of a non-streaming request may
+        // still have its start window (its share plus the idle timeout), after free pools that
+        // were held back for the paid attempt and have none left.
         if (startBy(candidate) - Date.now() < minAttemptMs) {
           outOfTime = true;
-          break;
+          continue;
         }
         let reservation = null;
         if (ledger) {
@@ -534,7 +540,10 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
         }
         // The same upstream model would reject the request again from another pool.
         if (result.kind === FailureKind.INVALID) skipModels.add(candidate.entry.id);
-        if (candidate.pool.tier === 'paid' || !paidLeft(index)) releaseHeld(index);
+        // A paid 429 was refused before any generation and gave back its attempt: the paid
+        // attempt is still owed to the next paid pool, so the held free pools wait for it.
+        const paidMade = candidate.pool.tier === 'paid' && result.kind !== FailureKind.RATE_LIMITED;
+        if (paidMade || !paidLeft(index)) releaseHeld(index);
       }
     } catch (error) {
       console.error('Neuron completion failed unexpectedly', { name: error?.name, request_id: requestId });
