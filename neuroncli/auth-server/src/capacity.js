@@ -114,6 +114,16 @@ export async function settleCapacity(env, args) {
   return rpc(env, 'zerox_settle_v2', args);
 }
 
+// A reservation holds its user's concurrency slot for a lease (90 s from zerox_reserve_v2) that
+// the attempt renews while it runs, so a request whose isolate dies frees its slot on its own.
+export const RESERVATION_RENEW_MS = 30000;
+export const RESERVATION_LEASE_SECONDS = 90;
+
+// Extends the lease of an in-flight reservation; false once it is settled or released.
+export async function renewCapacity(env, reservationId, leaseSeconds) {
+  return rpc(env, 'zerox_renew_reservation', { p_reservation_id: reservationId, p_lease_seconds: leaseSeconds });
+}
+
 // Runs background work through the Worker execution context when there is one.
 export function runInBackground(c, promise) {
   try {

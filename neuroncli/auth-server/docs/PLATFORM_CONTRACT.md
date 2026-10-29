@@ -50,7 +50,7 @@ Each public model has one or more pools:
   supports_tools: true, supports_streaming: true,
   geo_block_free: ['EEA','GB','CH'],       // free pool unavailable for these caller countries
   pools: [
-    { tier: 'free', key_var: 'GEMINI_API_KEY', limits: { rpm: 5, rpd: 250, tpm: 120000, tpd: 5000000 } },
+    { tier: 'free', key_var: 'GEMINI_API_KEY', limits: { rpm: 5, rpd: 20, tpm: 120000, tpd: 5000000 } },
     { tier: 'paid', key_var: 'GEMINI_PAID_API_KEY',
       price: { input_microusd_per_mtok: 375000, output_microusd_per_mtok: 3125000 } },
   ],
@@ -192,6 +192,7 @@ All called through `rpc(env, name, args)` / `rpcRows(env, name, args)` in
 |-----|------|---------------|
 | `zerox_reserve_v2` | `p_user_id uuid, p_request_id text, p_model text, p_tier text, p_tokens bigint, p_cost_microusd bigint, p_pool jsonb` (`{rpm,rpd,tpm,tpd}` or null) | `{status, reservation_id, plan, remaining_requests, remaining_tokens, credit_balance_microusd, resets_at, retry_after_seconds}`; status ∈ `ok, no_account, suspended, upgrade_required, user_daily_requests, user_daily_tokens, user_rpm, user_concurrency, insufficient_credits, pool_exhausted` |
 | `zerox_settle_v2` | `p_reservation_id uuid, p_prompt_tokens bigint, p_completion_tokens bigint, p_cost_microusd bigint, p_status text ('ok','error','refunded','failed_upstream'), p_latency_ms int, p_provider text, p_upstream_model text, p_error_code text` | `{status:'settled'|'already_settled'|'not_found', credit_balance_microusd}` |
+| `zerox_renew_reservation` | `p_reservation_id uuid, p_lease_seconds int` (1-3600) | `boolean`: the lease now runs at least `p_lease_seconds` from now; `false` once the reservation is settled or released (section 8.5) |
 | `zerox_release_stale_reservations` | — | `{released}` |
 | `zerox_plan_policies_v2` | — | one row per plan: `plan, name, price_usd, price_usd_cents, price_inr_paise, daily_requests, daily_tokens, rpm_limit, concurrency_limit, allowed_tiers text[], monthly_credit_microusd, features, sort, public, highlighted, razorpay_plan_id_inr, razorpay_plan_id_usd` |
 | `zerox_account_overview` | `p_user_id` | account + policy + credits + subscription + today usage (jsonb columns) |
@@ -307,7 +308,12 @@ Sync the copy in `neuron-v2`; nothing here changes what the CLI sends or must ha
   errors. Rejections the upstream did not count (429, 5xx, network and auth failures) stay full
   refunds of user and pool. Sessions without an account ledger are unchanged.
 - **Circuit (§2).** A first-byte or idle timeout parks a shared pool only once two distinct callers
-  timed out on it within 60 s; one caller's slow prompts cannot park a pool for everyone.
+  timed out on it within 60 s; one caller's slow prompts cannot park a pool for everyone. Each such
+  timeout marks the pool slow for five minutes (until a success clears it): `auto` still offers it,
+  after the healthy pools of its tier. Before a stream is committed, failover is bounded by
+  `UPSTREAM_FAILOVER_BUDGET_MS` (50 s); an attempt that budget cut is not counted against its pool
+  (a stream that got its whole share of it and sent no data event, SSE keep-alives at most, only
+  marks the pool slow).
 - **Dev identity (§3.1).** `dev_` credentials are refused under `NODE_ENV=production` and on
   requests whose `Origin` is not a loopback origin (`http://127.0.0.1`, `localhost`, `[::1]`).
 - **Sessions (§3.4, §3.7).** `POST /api/sessions/revoke-all` accepts `{api_keys: true}` to also
@@ -344,9 +350,9 @@ Sync the copy in `neuron-v2`; nothing here changes what the CLI sends or must ha
     `available` is false or `status` is `blurred`.
   - Pool health comes from the HealthHub Durable Object (src/health-hub.js): real outcomes from
     every isolate, plus a 30 s alarm that reads provider model lists and status pages and sends a
-    one-line test request only to idle pools whose cooldown ended (daily caps: Groq 24, Gemini 6,
-    Workers AI 48 per model; NVIDIA and OpenRouter none). A recovered model returns to
-    `available`. Isolates cache the snapshot for 5 s. Without the binding (the Node server) health
+    one-line test request only to idle pools whose cooldown ended (daily caps: Groq 24, Workers AI
+    48 per model; Gemini, NVIDIA and OpenRouter none). Failed checks and every test request log one
+    line (check or pool, outcome or status, time). A recovered model returns to `available`. Isolates cache the snapshot for 5 s. Without the binding (the Node server) health
     is shared through KV instead, up to about a minute old.
   - A pool whose shared budget refused a reservation (`pool_exhausted`) is `busy` until the next
     minute (rpm/tpm) or `blurred` until UTC midnight (rpd/tpd), with that time as
@@ -438,3 +444,35 @@ by itself, and signing up to a provider stays manual. Code: `src/discovery/`, re
   the adapter, key, hosting flag and shared budget. They are free pools only, never chosen by
   `auto`, never replace a code-defined id, and `*_MODELS` still narrows them. A demoted, rejected or
   failed candidate stops being offered within the 60 s cache.
+
+### 8.5 Concurrency leases and requests per minute (2026-10-28)
+
+E2E finding (2026-10-27): when Cloudflare killed a Worker isolate mid-stream (`exceededCpu`),
+nothing settled the attempt's reservation, so it held one of the user's concurrency slots for
+10 minutes while every refusal said `retry_after_seconds: 5`. Migration
+`20261028000000_reservation_leases.sql`:
+
+- **Leases.** An active reservation holds a slot until `lease_expires_at`, 90 s after
+  `zerox_reserve_v2`. The gateway renews it with `zerox_renew_reservation` every
+  `RESERVATION_RENEW_MS` (30 s, clamped to at most a third of the lease) for
+  `RESERVATION_LEASE_SECONDS` (90 s) while the attempt runs, and stops before settling. A lease that lapsed (its isolate died) is released by the user's next
+  `zerox_reserve_v2`, or by `zerox_release_stale_reservations` 5 minutes after it lapsed (rows
+  without a lease: 10 minutes after they were created). A released reservation keeps what it was
+  charged, holds no credits any more, and a late settle still reconciles it.
+- **`user_concurrency`** answers `retry_after_seconds` = the time until the first lease lapses
+  (1-90 s); a settle can free a slot sooner.
+- **Retry-After change (clients).** This refusal always said 5 s before. Renewals keep a running
+  attempt's lease 60-90 s ahead, so while running streams hold every slot of the user it now says
+  60-90 s, also when one of them finishes a second later; only slots held by killed requests give
+  shorter waits. A client that sleeps the whole `Retry-After` (the Neuron CLI waits up to 90 s and
+  retries at most twice) can wait up to 90 s for a slot that freed sooner, for example when an
+  agent and its subagents share the Free plan's 2 slots. Open owner decision: report a short
+  retry while the leases are being renewed, or have clients poll.
+- **`user_rpm`** counts client requests in the last 60 s, not reservations: failover attempts
+  reserve as `<request_id>.<n>`, count as their request, and are never refused for the rate of
+  a request that is already counted.
+- **Rollback.** `migrations/down/20261028000000_reservation_leases.sql`, run by hand with
+  `psql -X -v ON_ERROR_STOP=1 -f` (the migration runner never reads `migrations/down/`), restores
+  both functions with `CREATE OR REPLACE` and the `(user_id, created_at)` index, drops
+  `zerox_renew_reservation` and the column, and removes the history row. Both files set
+  `lock_timeout` (5 s) for their transaction.

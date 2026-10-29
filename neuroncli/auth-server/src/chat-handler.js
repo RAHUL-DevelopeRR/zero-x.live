@@ -9,11 +9,12 @@ import { FailureKind, globalHealthTracker } from './provider-health.js';
 import { hubHealthRows, publishHealth } from './health-hub-client.js';
 import { readShared } from './health-share.js';
 import { callerCountry, loadCatalogDbModels, loadPlanPolicies, planPolicy, resolveModelId } from './catalog.js';
-import { billableUsage, estimateOutputTokens, estimatePromptTokens, utf8Bytes } from './pricing.js';
+import { billableUsage, costMicrousd, estimateOutputTokens, estimatePromptTokens, utf8Bytes } from './pricing.js';
 import { exhaustedBudget, notePoolExhausted, notePoolReserved, poolBudgetState } from './pool-budget.js';
 import {
-  PAID_DENIED_STATUSES, RESERVE_ERRORS, TERMINAL_RESERVE_STATUSES, reservationArgs, reserveCapacity, reserveError,
-  reserveSessionQuota, runInBackground, sessionTiers, settleCapacity, settleSessionQuota, settlementArgs, usesLedger,
+  PAID_DENIED_STATUSES, RESERVATION_LEASE_SECONDS, RESERVATION_RENEW_MS, RESERVE_ERRORS, TERMINAL_RESERVE_STATUSES,
+  renewCapacity, reservationArgs, reserveCapacity, reserveError, reserveSessionQuota, runInBackground, sessionTiers,
+  settleCapacity, settleSessionQuota, settlementArgs, usesLedger,
 } from './capacity.js';
 
 const ROLES = new Set(['system', 'developer', 'user', 'assistant', 'tool']);
@@ -74,6 +75,11 @@ function positiveInt(value, fallback) {
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+// zerox_renew_reservation does not exist until migrations/20261028000000_reservation_leases.sql
+// is applied (PostgREST reports PGRST202, Postgres 42883). Renewal is then skipped for a while.
+const MISSING_FUNCTION_CODES = new Set(['PGRST202', '42883']);
+const RENEWAL_RECHECK_MS = 600000;
+
 const ERROR_CODES_BY_KIND = {
   [FailureKind.CONTEXT]: 'context_length_exceeded',
   [FailureKind.INVALID]: 'invalid_request',
@@ -101,9 +107,14 @@ function minimum(values) {
 // KV on the Node server) and pools whose shared budget this isolate saw spent go after the
 // other pools of their tier (free pools still come before paid ones). The router's circuit
 // state only knows this isolate's own attempts, so without this a fresh isolate sends `auto`
-// straight to a provider whose daily quota is gone. Parked pools stay in the list: when every
-// candidate is parked, the request still tries them in order.
-async function orderBySharedHealth(env, candidates, now = Date.now()) {
+// straight to a provider whose daily quota is gone. Slow pools (a first-byte or idle timeout
+// within the last five minutes and no success since: slow_until in the shared view or in this
+// isolate's record, provider-health.js) go after the healthy pools of their tier and before
+// the parked ones: one caller's timeout does not open a circuit, and without this the next
+// request waits through the same pool's first-byte timeout again. A 5xx or a slow
+// non-streaming response does not make a pool slow. Parked and slow pools stay in the list:
+// when every candidate is parked, the request still tries them in order.
+async function orderBySharedHealth(env, candidates, tracker, now = Date.now()) {
   if (candidates.length < 2) return candidates;
   const keys = [...new Set(candidates.map(candidate => candidate.key))];
   let rows = null;
@@ -117,7 +128,9 @@ async function orderBySharedHealth(env, candidates, now = Date.now()) {
     if (row && (row.status === 'busy' || row.status === 'blurred') && (row.until || 0) > now) return true;
     return (poolBudgetState(key, now)?.until || 0) > now;
   };
-  const rank = candidate => (candidate.pool.tier === 'paid' ? 2 : 0) + (parked(candidate.key) ? 1 : 0);
+  const slow = key => (rows?.get(key)?.slow_until || 0) > now || (tracker?.records?.get(key)?.slow_until || 0) > now;
+  const rank = candidate => (candidate.pool.tier === 'paid' ? 2 : 0) + (parked(candidate.key) ? 1 : 0)
+    + (slow(candidate.key) ? 0.5 : 0);
   return candidates.map((candidate, index) => ({ candidate, index, rank: rank(candidate) }))
     .sort((left, right) => left.rank - right.rank || left.index - right.index)
     .map(item => item.candidate);
@@ -155,6 +168,8 @@ function finalError({ failures, exhausted, paidDenied }) {
 
 export function createChatHandler({ validateSession, setSession, getSession, planLimits, router = globalRouter,
   healthTracker = globalHealthTracker, signatureCache = globalSignatureCache }) {
+  // Until when this isolate skips lease renewals because zerox_renew_reservation is missing.
+  let renewalUnavailableUntil = 0;
   return async c => {
     const requestId = newRequestId();
     const env = c.env || {};
@@ -180,7 +195,8 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
 
     const ledger = usesLedger(env, session);
     if (session.account_backed && !ledger) return fail('service_unavailable');
-    const policy = planPolicy(env, session.plan, ledger ? await loadPlanPolicies(env) : undefined);
+    const policies = ledger ? await loadPlanPolicies(env) : undefined;
+    const policy = planPolicy(env, session.plan, policies);
     await loadCatalogDbModels(env);
     headers['x-neuron-plan'] = policy.id;
     const promptTokens = estimatePromptTokens(body.messages, body.tools);
@@ -244,10 +260,53 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
     // Settlement I/O after the response has been handed over (stream end, client cancel)
     // runs through waitUntil on Workers so it is not dropped after a disconnect.
     const background = promise => runInBackground(c, promise) ? Promise.resolve() : promise;
+    // A reservation holds the user's concurrency slot for a lease (90 s) that is renewed every
+    // RESERVATION_RENEW_MS while its attempt runs. When Cloudflare kills the isolate mid-stream
+    // (CPU limit, eviction), nothing settles the reservation and waitUntil dies with it; the
+    // timer dies too, so the lease lapses and the slot frees within 90 s. Renewals go to
+    // Postgres, not KV (the Free plan allows 1,000 KV writes a day).
+    // At least three renewals per lease, so one late or failed renewal never lets a running
+    // attempt's lease lapse (the user's next reservation would release it under the stream).
+    const leaseSeconds = Math.min(3600, positiveInt(env.RESERVATION_LEASE_SECONDS, RESERVATION_LEASE_SECONDS));
+    const renewMs = Math.min(positiveInt(env.RESERVATION_RENEW_MS, RESERVATION_RENEW_MS), Math.floor(leaseSeconds * 1000 / 3));
+    const leases = new Map(); // reservation id -> renewal timer
+    const stopLease = id => {
+      if (!leases.has(id)) return;
+      clearInterval(leases.get(id));
+      leases.delete(id);
+    };
+    const stopLeases = () => {
+      for (const id of [...leases.keys()]) stopLease(id);
+    };
+    const holdLease = reservation => {
+      const id = reservation?.reservation_id;
+      if (!id || leases.has(id) || Date.now() < renewalUnavailableUntil) return;
+      const timer = setInterval(() => {
+        if (Date.now() < renewalUnavailableUntil) return stopLease(id);
+        renewCapacity(env, id, leaseSeconds).then(renewed => {
+          // Settled, or released after its lease lapsed: there is nothing left to hold.
+          if (renewed === false) stopLease(id);
+        }, error => {
+          if (!MISSING_FUNCTION_CODES.has(error?.code)) {
+            console.warn('Neuron reservation renewal failed', { name: error?.name, code: error?.code ?? null, request_id: requestId });
+            return;
+          }
+          stopLease(id);
+          if (Date.now() < renewalUnavailableUntil) return;
+          renewalUnavailableUntil = Date.now() + RENEWAL_RECHECK_MS;
+          console.warn('Neuron reservation renewal unavailable', { code: error.code, request_id: requestId });
+        });
+      }, renewMs);
+      timer?.unref?.();
+      leases.set(id, timer);
+    };
     const settleDb = (reservation, candidate, outcome, inBackground) => {
+      stopLease(reservation.reservation_id);
       const args = settlementArgs({ reservationId: reservation.reservation_id, entry: candidate.entry, pool: candidate.pool,
         promptEstimate: promptTokens, ...outcome });
-      const promise = settleCapacity(env, args).catch(error => {
+      // Settling is idempotent, so a failed call is retried once. A reservation left unsettled
+      // keeps its slot only until its lease lapses.
+      const promise = settleCapacity(env, args).catch(() => settleCapacity(env, args)).catch(error => {
         console.error('Neuron settlement failed', { name: error?.name, request_id: requestId });
       });
       return inBackground ? background(promise) : promise;
@@ -301,7 +360,10 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
       if (upstream) console.warn('Neuron upstream error detail', { ...log, kind, upstream });
     };
 
-    const attempt = async (candidate, reservation) => {
+    // commitBy ends this attempt's share of the failover budget: a stream's first byte and first
+    // data event are due by then at the latest, however much of their own timeouts is left.
+    // wholeShare: no earlier attempt took more than min(5 s, a tenth of the budget) of that share.
+    const attempt = async (candidate, reservation, commitBy, wholeShare) => {
       const { entry, pool, key } = candidate;
       const payload = buildUpstreamPayload(entry, body, candidate.maxTokens);
       const startedAt = Date.now();
@@ -310,10 +372,23 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
       const secrets = [pool.key_var ? env[pool.key_var] : null, session.openrouter_key];
       let started;
       try {
-        started = await startCompletion(env, session, entry, pool, payload, { clientSignal, timeouts, request });
+        started = await startCompletion(env, session, entry, pool, payload, { clientSignal, timeouts, request, commitBy });
       } catch (error) {
         const kind = clientSignal?.aborted ? FailureKind.ABORTED : error?.kind || FailureKind.SERVER;
         const latencyMs = Date.now() - startedAt;
+        // The failover budget, not the pool's own timeout, ended the attempt: the pool did not
+        // get its full time, so it is not counted as failed. A stream that had its whole share and
+        // sent no data event (SSE keep-alives at most) is slow, though, on any plan, and phase
+        // 'budget' marks only that (provider-health.js): the free attempts of a plan with paid
+        // capacity end at 70 % of the budget at the latest, before their own first-byte timeout,
+        // so without it each such request waits out the same dead pool. A generation cut by the
+        // budget says nothing about its pool. The upstream still received the request, so it
+        // settles like a timeout (failed_upstream).
+        if (kind === FailureKind.TIMEOUT && error?.phase === 'budget') {
+          if (payload.stream && wholeShare) recordFailure(key, kind, null, latencyMs, 'budget');
+          console.warn('Neuron failover budget ended an attempt', { ...log, latency_ms: latencyMs });
+          return { ok: false, kind, budgetCut: true, retryAfterSeconds: null, latencyMs, errorCode: ERROR_CODES_BY_KIND[kind] };
+        }
         recordFailure(key, kind, error?.retryAfterSeconds, latencyMs, error?.phase ?? null);
         if (kind !== FailureKind.ABORTED) {
           console.error('Neuron upstream request failed', { ...log, kind });
@@ -363,15 +438,40 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
     };
 
     // ROUTER_MAX_ATTEMPTS caps upstream attempts per request. When the plan includes paid
-    // capacity, the last attempt is kept for a paid pool so failing free pools (tried first)
-    // cannot use up every attempt of a paying user. A 429 is refused before any generation, so
-    // it does not count against that cap; ROUTER_MAX_RATE_LIMITED caps those refusals instead,
-    // so `auto` still reaches a provider with capacity when the first ones are out of quota.
+    // capacity, the last attempt is kept for a paid pool (while it is owed, see paidOwed) so
+    // failing free pools (tried first) cannot use up every attempt of a paying user. A 429 is
+    // refused before any generation, so it does not count against that cap;
+    // ROUTER_MAX_RATE_LIMITED caps those refusals instead, so `auto` still reaches a provider
+    // with capacity when the first ones are out of quota.
     const maxAttempts = positiveInt(env.ROUTER_MAX_ATTEMPTS, 3);
     const maxRateLimited = positiveInt(env.ROUTER_MAX_RATE_LIMITED, 6);
-    const candidates = await orderBySharedHealth(env, route.candidates);
-    const paidCandidates = candidates.some(candidate => candidate.pool.tier === 'paid');
-    const freeAttemptLimit = paidCandidates && maxAttempts > 1 ? maxAttempts - 1 : maxAttempts;
+    // UPSTREAM_FAILOVER_BUDGET_MS (50 s, under the CLI's 60 s retry) bounds all attempts before
+    // a stream is committed: each attempt gets at most what is left of it for its first byte,
+    // and no attempt starts with less than min(5 s, a tenth of the budget) left. Without it,
+    // three 45 s first-byte timeouts outlived the client, whose retry then ran beside the
+    // abandoned request. Plans with paid capacity keep the last 30 % of the budget (15 s) for
+    // their paid attempt, as they keep their last attempt for it: their free attempts are due by
+    // paidCommitBy, so a free pool's 45 s first-byte timeout cannot use up the paid fallback's time.
+    // A non-streaming attempt is due by its share's end plus the idle timeout (providers.js), so
+    // each paid attempt of a non-streaming request starts while its share of that is left.
+    const failoverBudgetMs = positiveInt(env.UPSTREAM_FAILOVER_BUDGET_MS, 50000);
+    const minAttemptMs = Math.min(5000, failoverBudgetMs / 10);
+    const paidReserveMs = Math.round(failoverBudgetMs * 0.3);
+    const candidates = await orderBySharedHealth(env, route.candidates, healthTracker);
+    const paidCandidates = candidates.filter(candidate => candidate.pool.tier === 'paid');
+    // The paid attempt is owed its last attempt and share of the budget only until it is made (a
+    // 429 does not make it while another paid pool is left), refused or ruled out: then nothing is
+    // kept for it and the free pools held back for it go next. Whether it can be reserved is
+    // otherwise learned only after every free attempt, so a Pro user without credits got fewer
+    // attempts and less time for free pools than a Free user, and then a refusal. Every
+    // reservation row carries the account's plan and credit balance: a plan without paid pools, or
+    // a balance below the credits the cheapest paid attempt holds (zerox_reserve_v2 refuses it
+    // then), rules the paid attempt out.
+    const paidHoldFloor = Math.min(...paidCandidates.map(candidate =>
+      Math.max(1, costMicrousd(candidate.pool.price, promptTokens, candidate.maxTokens))));
+    const accountCanPay = row => !(row.plan && !planPolicy(env, row.plan, policies).tiers.includes('paid'))
+      && !(isSet(row.credit_balance_microusd) && Number(row.credit_balance_microusd) < paidHoldFloor);
+    let paidOwed = paidCandidates.length > 0 && maxAttempts > 1;
     const failures = [];
     const exhausted = [];
     const skipModels = new Set();
@@ -382,24 +482,60 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
     let attempts = 0;
     let freeAttempts = 0;
     let rateLimited = 0;
+    let outOfTime = false;
     // Without an explicit status a failed attempt is settled by how it failed (see GENERATED_KINDS):
     // the user gets the request back either way (within the daily refund allowance for
     // failed_upstream), while the pool keeps attempts the upstream counted.
-    const releasePending = async (status = null, outcome = {}) => {
+    const releasePending = async (status = null, outcome = {}, inBackground = false) => {
       if (!pending) return;
       const { reservation, candidate, latencyMs = 0, errorCode = null, kind = null } = pending;
       pending = null;
       const generated = !status && GENERATED_KINDS.has(kind);
       const settled = status || (generated ? 'failed_upstream' : 'refunded');
       const usage = generated ? { prompt_tokens: promptTokens, completion_tokens: 0 } : undefined;
-      await settleDb(reservation, candidate, { status: settled, latencyMs, errorCode, usage, ...outcome }, false);
+      await settleDb(reservation, candidate, { status: settled, latencyMs, errorCode, usage, ...outcome }, inBackground);
     };
 
+    const failoverStart = Date.now();
+    const commitBy = failoverStart + failoverBudgetMs;
+    const paidCommitBy = commitBy - paidReserveMs;
+    // A free attempt leaves the paid attempt its share while that is owed.
+    const keepsPaidShare = candidate => paidOwed && candidate.pool.tier !== 'paid';
+    const shareEnd = candidate => (keepsPaidShare(candidate) ? paidCommitBy : commitBy);
+    const startBy = candidate => shareEnd(candidate) + (!body.stream && candidate.pool.tier === 'paid' ? timeouts.idleMs : 0);
+    // Free pools held back for the paid attempt (its last attempt or its share of the budget).
+    // Once it is made (any outcome but a 429 while another paid pool is left), refused (credits
+    // held by the account's other paid requests are not in the balance) or ruled out (every paid
+    // pool's budget spent, or its model rejected the request), they are tried next, before any
+    // further paid pool: after a paid 5xx, a free pool that hangs or fails can take the rest of the
+    // budget or the last attempt before the next paid pool gets one (GATEWAY_SETUP.md).
+    const heldForPaid = [];
+    const queue = [...candidates];
+    const releaseHeld = index => {
+      if (!paidOwed) return;
+      paidOwed = false;
+      queue.splice(index + 1, 0, ...heldForPaid.splice(0));
+    };
+    const paidLeft = index => queue.slice(index + 1).some(next => next.pool.tier === 'paid' && !skipModels.has(next.entry.id));
     try {
-      for (const candidate of candidates) {
+      for (let index = 0; index < queue.length; index++) {
+        const candidate = queue[index];
         if (attempts >= maxAttempts || clientSignal?.aborted) break;
         if (skipModels.has(candidate.entry.id) || (paidDenied && candidate.pool.tier === 'paid')) continue;
-        if (candidate.pool.tier !== 'paid' && !paidDenied && freeAttempts >= freeAttemptLimit) continue;
+        // Free pools are held back, not the paid one, once only the paid attempt's share of the
+        // attempts or of the budget is left; that is not a spent budget (a 5xx from the paid
+        // attempt and from the free pools tried after it still answers upstream_error).
+        if (keepsPaidShare(candidate) && (freeAttempts >= maxAttempts - 1 || startBy(candidate) - Date.now() < minAttemptMs)) {
+          heldForPaid.push(candidate);
+          continue;
+        }
+        // Passed over, not the end of the loop: a later paid pool of a non-streaming request may
+        // still have its start window (its share plus the idle timeout), after free pools that
+        // were held back for the paid attempt and have none left.
+        if (startBy(candidate) - Date.now() < minAttemptMs) {
+          outOfTime = true;
+          continue;
+        }
         let reservation = null;
         if (ledger) {
           // A failed attempt is settled before failing over, so it never holds the caller's
@@ -411,34 +547,41 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
               requestId: reservations ? `${requestId}.${reservations}` : requestId, promptTokens, maxTokens: candidate.maxTokens }));
           } catch (error) {
             console.error('Neuron capacity reservation unavailable', { name: error?.name, request_id: requestId });
+            stopLeases();
             return fail('service_unavailable');
           }
+          if (!accountCanPay(row)) releaseHeld(index);
           if (row.status !== 'ok') {
             if (TERMINAL_RESERVE_STATUSES.has(row.status) || !RESERVE_ERRORS[row.status]) {
+              stopLeases();
               const error = reserveError(row);
               return fail(error.code, error);
             }
-            if (PAID_DENIED_STATUSES.has(row.status)) paidDenied = row;
-            else {
+            if (PAID_DENIED_STATUSES.has(row.status)) {
+              paidDenied = row;
+              releaseHeld(index);
+            } else {
               // pool_exhausted: the shared budget of this pool is spent for every user.
               exhausted.push(row);
               const budget = exhaustedBudget(candidate.pool.limits, row.retry_after_seconds);
               notePoolExhausted(candidate.key, { budget, retryAfterSeconds: row.retry_after_seconds });
               console.warn('Neuron pool budget exhausted', { pool: candidate.key, model: candidate.entry.id,
                 budget, retry_after_seconds: row.retry_after_seconds ?? null, request_id: requestId });
+              if (!paidLeft(index)) releaseHeld(index);
             }
             continue;
           }
           notePoolReserved(candidate.key);
           reservations++;
           reservation = row;
+          holdLease(row);
           current = { reservation, candidate };
           if (row.plan) headers['x-neuron-plan'] = String(row.plan);
           setQuotaHeaders(row.remaining_requests, row.remaining_tokens);
         }
         attempts++;
         if (candidate.pool.tier !== 'paid') freeAttempts++;
-        const result = await attempt(candidate, reservation);
+        const result = await attempt(candidate, reservation, shareEnd(candidate), Date.now() - failoverStart < minAttemptMs);
         current = null;
         if (result.ok) return result.response;
         failures.push(result);
@@ -451,25 +594,47 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
         }
         // The same upstream model would reject the request again from another pool.
         if (result.kind === FailureKind.INVALID) skipModels.add(candidate.entry.id);
+        // A paid 429 was refused before any generation and gave back its attempt: the paid
+        // attempt is still owed to the next paid pool, so the held free pools wait for it.
+        const paidMade = candidate.pool.tier === 'paid' && result.kind !== FailureKind.RATE_LIMITED;
+        if (paidMade || !paidLeft(index)) releaseHeld(index);
       }
     } catch (error) {
       console.error('Neuron completion failed unexpectedly', { name: error?.name, request_id: requestId });
       if (current) pending = { ...current, errorCode: 'internal_error' };
       await releasePending('refunded');
+      stopLeases();
       await settleKv({ actualTokens: 0, refundRequest: true });
       return fail('upstream_error');
     }
 
-    const final = finalError({ failures, exhausted, paidDenied });
     const aborted = failures.some(failure => failure.kind === FailureKind.ABORTED);
+    // A request that ran out of failover budget answers upstream_timeout instead of a generic
+    // upstream_error; a client error (a slow 400 or 413), a cancellation or a capacity refusal
+    // (with its Retry-After) still answers as such.
+    const budgetSpent = outOfTime || failures.some(failure => failure.budgetCut);
+    let final = finalError({ failures, exhausted, paidDenied });
+    if (budgetSpent && !aborted && final.code === 'upstream_error') final = { code: 'upstream_timeout' };
+    if (aborted || outOfTime) {
+      console.warn(aborted ? 'Neuron client disconnected before the first byte' : 'Neuron failover budget spent',
+        { kind: aborted ? FailureKind.ABORTED : FailureKind.TIMEOUT, attempts: failures.length,
+          elapsed_ms: Date.now() - failoverStart, request_id: requestId });
+    }
     // Requests the upstream rejected as invalid count against the caller; provider-side
     // failures are refunded (contract §3.3: upstream_error refunds the request, §6: within the
     // daily allowance when the model ran).
     const clientSide = final.code === 'context_length_exceeded' || final.code === 'invalid_request';
-    if (aborted) await releasePending('error', { usage: { prompt_tokens: promptTokens, completion_tokens: 0 } });
-    else if (clientSide) await releasePending('error', { usage: { prompt_tokens: 0, completion_tokens: 0 } });
-    else await releasePending();
-    await settleKv({ actualTokens: aborted ? promptTokens : 0, refundRequest: !aborted && !clientSide });
+    // After a disconnect nobody waits for the answer, and work outside waitUntil may be cancelled
+    // with the invocation, so the settlement goes through waitUntil (as after a mid-stream
+    // cancel). Otherwise it completes before the answer, so a retry finds the slot released.
+    const disconnected = aborted || Boolean(clientSignal?.aborted);
+    if (aborted) await releasePending('error', { usage: { prompt_tokens: promptTokens, completion_tokens: 0 } }, true);
+    else if (clientSide) await releasePending('error', { usage: { prompt_tokens: 0, completion_tokens: 0 } }, disconnected);
+    else await releasePending(null, {}, disconnected);
+    // No attempt runs any more (a successful one returned its response above).
+    stopLeases();
+    const kvSettled = settleKv({ actualTokens: aborted ? promptTokens : 0, refundRequest: !aborted && !clientSide });
+    await (disconnected ? background(kvSettled) : kvSettled);
     return fail(final.code, final);
   };
 }
