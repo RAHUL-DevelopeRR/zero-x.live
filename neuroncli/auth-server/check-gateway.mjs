@@ -346,6 +346,11 @@ try {
   assert.equal((await response.json()).error.code, 'upstream_timeout');
   assert.ok(elapsed < budgetMs + 300, `keep-alives do not extend the budget (${elapsed} ms)`);
   assert.equal(upstreamStarts.length, 1);
+  // Keep-alives are not a data event: the pool had the whole budget and sent none, so it is
+  // marked slow (on any plan), and nothing else, since it did not get its own timeout.
+  const keptAlive = [...globalHealthTracker.records.values()];
+  assert.deepEqual(keptAlive.map(rec => [rec.failed_attempts, rec.status, rec.slow_until > Date.now()]), [[0, 'HEALTHY', true]],
+    'a pool that sent only keep-alives for the whole budget is slow, not failed');
 
   // A client that leaves while the first candidate waits for its first byte ends the request:
   // no other candidate is tried and the reservation is settled as client_disconnected, so the

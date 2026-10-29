@@ -71,8 +71,9 @@ const REQUEST_SCOPED = new Set([FailureKind.CONTEXT, FailureKind.INVALID, Failur
  * pools of its tier (chat-handler.js), so the next caller does not wait through the same
  * timeout while another pool can answer. Other failures (a 5xx, a slow non-streaming response)
  * never mark it. A stream the failover budget cut after its whole share of it (phase 'budget',
- * chat-handler.js) marks the pool slow and changes nothing else: it sent nothing for as long as
- * the request could wait, but it did not get its own timeout, so it is not counted as failed.
+ * chat-handler.js; on any plan) marks the pool slow and changes nothing else: it sent no data
+ * event (SSE keep-alives at most) for as long as the request could wait, but it did not get its
+ * own timeout, so it is not counted as failed.
  */
 export class ProviderHealthTracker {
   constructor({ failureThreshold = 3, cooldownMs = 30000, modelUnavailableMs = 600000,
