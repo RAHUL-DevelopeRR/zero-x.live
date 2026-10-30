@@ -91,6 +91,16 @@ CSP_ENFORCE = "false"
 # PROVIDER_KEYS_KEK.
 # CF_ACCESS_TEAM_DOMAIN = "<team>.cloudflareaccess.com"
 # CF_ACCESS_AUD = "<application audience tag>"
+# EC2 proxy switch (src/ec2-proxy.js), the first thing in the Worker's fetch: a request whose
+# host + path starts with an entry of the Worker secret EC2_PROXY_PREFIXES (comma list, e.g.
+# "zero-x.live/v1/,dashboard.zero-x.live/") goes to the Node server at EC2_PROXY_ORIGIN, and its
+# answer comes back untouched. EC2_PROXY_PREFIXES is set only with `wrangler secret put` (seconds,
+# no commit; deploy.yml never overwrites it), so emptying it is the rollback. The Worker secret
+# EC2_PROXY_SECRET (deploy.yml binds it from the GitHub secret the Node server gets too) goes
+# with every forward; without it nothing is forwarded. EC2_PROXY_ORIGIN is https only:
+# EC2_PROXY_ORIGIN = "https://aws.zero-x.live"
+# GIT_COMMIT, the commit /health reports, comes from deploy.yml's --var, not from here.
+# EXTRA_WEB_HOSTS (test hosts allowed like the production ones) is EC2 only: never set it here.
 
 # Neuron release manifests (docs/RELEASE_MANIFESTS.md). Off until the bucket exists: create it
 # with `wrangler r2 bucket create neuron-releases`, then uncomment. Without it the Worker serves

@@ -63,6 +63,22 @@ provider off.
 | `CSP_ENFORCE` | var | `false` | `true` sends `Content-Security-Policy` instead of `-Report-Only`. |
 | `PRICING_URL` | var | `https://zero-x.live/pricing` | `upgrade_url` in errors (https only). |
 
+### Moving to the Node server on EC2
+
+The Worker keeps every Custom Domain and forwards chosen paths to the Node server (`server.js`)
+on EC2, which runs the same app behind Cloudflare Tunnel. The switch is the first thing in the
+Worker's `fetch`, before Hono and any middleware (`src/ec2-proxy.js`); a forward returns EC2's
+answer untouched (streams, redirects and WebSocket upgrades included), so it costs the Worker
+almost no CPU.
+
+| Variable | Kind | Default | Purpose |
+|---|---|---|---|
+| `EC2_PROXY_PREFIXES` | **Worker secret** | unset | Comma list of host + path prefixes to forward, e.g. `zero-x.live/v1/,dashboard.zero-x.live/` (an entry without a path covers its host; `zero-x.live/v1/` covers `/v1/models` but not `/v1`). Empty or unset: nothing is forwarded. Set it only with `wrangler secret put EC2_PROXY_PREFIXES`: it takes effect in seconds without a commit, and `deploy.yml` never lists it, so a deploy never overwrites it. Emptying it is the rollback. |
+| `EC2_PROXY_SECRET` | **secret** (Worker and EC2) | unset | Sent as `x-zerox-proxy-secret` with every forward; the Node server trusts the forwarded `x-zerox-*` headers (host, scheme, client IP, country, city, ASN) only when it matches its own value. Without it the Worker forwards nothing (logged once). Bound by the deploy from one GitHub secret, so both runtimes hold the same value. |
+| `EC2_PROXY_ORIGIN` | var (Worker) | `https://aws.zero-x.live` | Where forwards go (https only; a host the Worker itself serves is refused). |
+| `EXTRA_WEB_HOSTS` | var (EC2 only) | unset | Comma list of test hosts, e.g. `aws.zero-x.live`, whose https pages may call the identity APIs (CORS) and approve device sign-ins like the production hosts; a device sign-in started there is approved there. Never set it on the Worker, and remove it on EC2 when the test window closes. |
+| `GIT_COMMIT` | set by the deploy | unset | The short commit SHA `/health` reports as `commit` (null when unset): `deploy.yml` passes it to the Worker with `--var`; on EC2 `server.js` reads the release's `REVISION` file. |
+
 ### Billing (Razorpay)
 
 | Variable | Kind | Purpose |
