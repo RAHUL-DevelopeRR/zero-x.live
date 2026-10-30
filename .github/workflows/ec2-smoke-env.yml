@@ -1,0 +1,125 @@
+# One-off for the EC2 smoke test: writes the gateway's environment file on the EC2 VM from this
+# repository's secrets, so the values never pass through a laptop or a chat. It runs only on a
+# push to ops/ec2-smoke, in the protected "production" environment (required reviewer), and reaches
+# the VM through its EC2 Instance Connect Endpoint with the GitHub OIDC role zerox-github-deploy
+# (deploy/aws/ci-role.yaml on feat/aws-production): no AWS keys and no SSH key are stored here.
+# The ec2 job of deploy.yml on feat/aws-production replaces this workflow.
+name: EC2 smoke-test environment
+
+on:
+  push:
+    branches: [ops/ec2-smoke]
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: ec2-smoke-env
+  cancel-in-progress: false
+
+jobs:
+  env-file:
+    runs-on: ubuntu-24.04
+    environment: production
+    timeout-minutes: 10
+    env:
+      AWS_REGION: ap-south-1
+      EC2_INSTANCE_ID: ${{ vars.EC2_INSTANCE_ID }}
+      # The VM's ED25519 host key line ("<instance id> ssh-ed25519 ..."), also on its serial console.
+      EC2_HOST_KEY: ${{ vars.EC2_HOST_KEY }}
+    steps:
+      # [vars] of the exact commit the VM runs (66f29a1, the commit the Worker runs), not a moving main.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: 66f29a14c53e1b6fce888ab60cbd5c997db83839
+          persist-credentials: false
+
+      # The role ARN is an environment secret and the account id is masked: this repository's run
+      # logs are public.
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ap-south-1
+          role-session-name: ec2-smoke-env
+          mask-aws-account-id: true
+
+      # [vars] plus the secrets the Worker gets (billing excluded: the smoke-test VM takes no
+      # payments), in systemd EnvironmentFile syntax. Only variable names are printed.
+      - name: Build the environment file
+        env:
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          GROQ_PAID_API_KEY: ${{ secrets.GROQ_PAID_API_KEY }}
+          GEMINI_PAID_API_KEY: ${{ secrets.GEMINI_PAID_API_KEY }}
+          SESSION_ENCRYPTION_KEY: ${{ secrets.SESSION_ENCRYPTION_KEY }}
+          DEVICE_APPROVAL_SECRET: ${{ secrets.DEVICE_APPROVAL_SECRET }}
+        run: |
+          umask 077
+          node - <<'EOF'
+          const fs = require('node:fs');
+          // Same parsing and quoting as deploy/oracle/gateway-env.mjs (feat/aws-production).
+          const vars = {};
+          let inVars = false;
+          for (const raw of fs.readFileSync('neuroncli/auth-server/wrangler.toml', 'utf8').split(/\r?\n/)) {
+            const line = raw.trim();
+            if (line.startsWith('[')) { inVars = line === '[vars]'; continue; }
+            if (!inVars || !line || line.startsWith('#')) continue;
+            const match = /^([A-Z][A-Z0-9_]*)\s*=\s*"((?:[^"\\]|\\["\\])*)"\s*(?:#.*)?$/.exec(line);
+            if (!match) throw new Error(`wrangler.toml [vars]: unsupported entry ${JSON.stringify(line.split('=')[0].trim())}`);
+            vars[match[1]] = match[2].replace(/\\(["\\])/g, '$1');
+          }
+          // The approval page stays on the Worker (neuron.zero-x.live); device grants live in Postgres.
+          vars.DEVICE_VERIFICATION_URL = 'https://neuron.zero-x.live/device';
+          const secrets = ['SUPABASE_SECRET_KEY', 'GROQ_API_KEY', 'OPENROUTER_API_KEY', 'GEMINI_API_KEY', 'NVIDIA_API_KEY',
+            'GROQ_PAID_API_KEY', 'GEMINI_PAID_API_KEY', 'SESSION_ENCRYPTION_KEY', 'DEVICE_APPROVAL_SECRET'];
+          if (!process.env.SUPABASE_SECRET_KEY) throw new Error('SUPABASE_SECRET_KEY is not set');
+          // The unit's own settings and development-only switches never come from the file (an
+          // EnvironmentFile value would override the unit's Environment=), and no name is both.
+          const refused = /^(NODE_ENV|NODE_OPTIONS|LD_PRELOAD|AUTH_HOST|AUTH_PORT|NEURON_API_ONLY|TRUST_[A-Z_]+|DEV_AUTH_ENABLED|ALLOW_ANONYMOUS_SESSIONS|ALLOW_UNKNOWN_COUNTRY|DATABASE_DRIVER|E2E_[A-Z_]*)$/;
+          for (const name of [...Object.keys(vars), ...secrets]) if (refused.test(name)) throw new Error(`${name} must not be set from the environment file`);
+          for (const name of secrets) if (name in vars) throw new Error(`${name} is both a [vars] entry and a secret`);
+          const values = { ...vars };
+          for (const name of secrets) {
+            const value = process.env[name];
+            if (!value) continue;
+            // Printable ASCII only: systemd refuses some Unicode in an EnvironmentFile and then logs
+            // the value to the journal.
+            if (!/^[\x21-\x7e]+$/.test(value)) throw new Error(`${name} has characters other than printable ASCII`);
+            values[name] = value;
+          }
+          const line = (name, value) => {
+            if (/[\r\n\0]/.test(value)) throw new Error(`${name} contains a line break`);
+            return `${name}="${value.replace(/[\\"`$]/g, char => `\\${char}`)}"`;
+          };
+          const out = `${process.env.RUNNER_TEMP}/gateway.env`;
+          fs.writeFileSync(out, Object.entries(values).map(([name, value]) => line(name, value)).join('\n') + '\n', { mode: 0o600 });
+          console.log(`variables: ${Object.keys(values).sort().join(' ')}`);
+          console.log(`secrets set: ${secrets.filter(name => process.env[name]).join(' ')}`);
+          EOF
+
+      # A one-time key for the deploy user (valid 60 s), the pinned host key, and the file written
+      # atomically as deploy (owner of /etc/zerox; systemd reads it as root). Then the gateway restarts.
+      - name: Write it on the VM
+        run: |
+          set -euo pipefail
+          [[ $EC2_INSTANCE_ID =~ ^i-[0-9a-f]{8,17}$ ]] || { echo 'EC2_INSTANCE_ID is not an instance id' >&2; exit 1; }
+          key="$RUNNER_TEMP/eic"
+          ssh-keygen -q -t ed25519 -N '' -f "$key"
+          printf '%s\n' "$EC2_HOST_KEY" > "$RUNNER_TEMP/known_hosts"
+          aws ec2-instance-connect send-ssh-public-key --instance-id "$EC2_INSTANCE_ID" --instance-os-user deploy \
+            --ssh-public-key "file://$key.pub" --query Success --output text
+          ssh -i "$key" -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=30 \
+            -o UserKnownHostsFile="$RUNNER_TEMP/known_hosts" -o StrictHostKeyChecking=yes \
+            -o ProxyCommand="aws ec2-instance-connect open-tunnel --instance-id %h" "deploy@$EC2_INSTANCE_ID" \
+            'install -m 0600 /dev/stdin /etc/zerox/gateway.env.new && mv /etc/zerox/gateway.env.new /etc/zerox/gateway.env &&
+             sudo /usr/bin/systemctl restart zerox-gateway.service &&
+             for i in $(seq 1 20); do curl -fsS -m 3 -o /dev/null -w "health %{http_code}\n" http://127.0.0.1:8787/health && exit 0; sleep 1; done; exit 1' \
+            < "$RUNNER_TEMP/gateway.env"
+
+      - name: Remove the local copies
+        if: always()
+        run: rm -f "$RUNNER_TEMP/gateway.env" "$RUNNER_TEMP/eic" "$RUNNER_TEMP/eic.pub"
