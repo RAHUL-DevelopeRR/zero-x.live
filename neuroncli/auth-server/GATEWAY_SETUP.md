@@ -157,6 +157,7 @@ and apply, in order (the ten catalog and app migrations were renumbered from 202
 8. `20261029000700_catalog_seed.sql` (the 16 code models active at revision 1, the `anthropic.paid` offer, earlier promoted discovery models as drafts)
 9. `20261029000800_paid_billing_caps.sql` (per-pool daily spend caps `p_pool.cpd`, cache-aware settlement, abandoned paid reservations keep their credit hold for 60 minutes)
 10. `20261029000900_plan_features_claude.sql` (plan feature strings; tiers, limits and credits unchanged)
+11. `20261029001000_pool_concurrency.sql` (`p_pool.concurrency`: requests of a pool key running at once, for Z.ai's one-at-a-time free models)
 
 `DATABASE_URL=… node scripts/apply-migrations.mjs --status`, then `--apply`; or run each file in the
 Supabase SQL editor followed by

@@ -116,7 +116,8 @@ try {
     '20261019000000_device_auth.sql', '20261019120000_provider_discovery.sql', '20261021000000_device_pending_retry.sql',
     '20261028000000_reservation_leases.sql', '20261029000000_session_devices.sql', '20261029000100_push_tokens.sql',
     '20261029000200_provider_keys.sql', '20261029000300_provider_key_budgets.sql', '20261029000400_oiop_offers.sql',
-    '20261029000500_credit_programs.sql', '20261029000800_paid_billing_caps.sql', '20261029000900_plan_features_claude.sql'];
+    '20261029000500_credit_programs.sql', '20261029000800_paid_billing_caps.sql', '20261029000900_plan_features_claude.sql',
+    '20261029001000_pool_concurrency.sql'];
   assert.deepEqual(migrations.map(migration => migration.file).filter(file => businessMigrations.includes(file)), businessMigrations);
   assert.equal((await sql('SELECT count(*)::int AS n FROM supabase_migrations.schema_migrations'))[0].n, migrations.length);
   await assert.rejects(rpc(env, 'zerox_does_not_exist', {}), error =>
@@ -875,6 +876,43 @@ try {
   assert.equal((await rpc(env, 'zerox_admin_overview', {})).overview.pools.filter(row => row.model === vaultModel && row.tier === 'free').length, 1);
   ok('per-key pool budgets: p_pool_key buckets (rpm/tpm/rpd) are independent of each other and of the default bucket, stored on the reservation and settled/refunded there; users see models only; admin overview sums keys and lists each');
 
+  // ---------------------------------------------------------------- per-pool concurrency (contract section 8.6)
+  // Z.ai's free GLM Flash models serve one request at a time per account and model: p_pool.concurrency
+  // counts the pool key's running reservations (active, lease running) across every user.
+  await clockHeadroom();
+  {
+    const model = 'zai/glm-test-flash';
+    const single = { rpm: null, rpd: null, tpm: null, tpd: null, concurrency: 1 };
+    const users = [await newUser('free'), await newUser('free'), await newUser('free')];
+    const running = await reserve(users[0], { p_model: model, p_pool: single });
+    assert.equal(running.status, 'ok');
+    const busy = await reserve(users[1], { p_model: model, p_pool: single });
+    assert.equal(busy.status, 'pool_exhausted', 'a second request while the first runs, from another user');
+    assert.ok(busy.retry_after_seconds >= 1 && busy.retry_after_seconds <= 60, `retry within the minute (${busy.retry_after_seconds} s)`);
+    assert.equal((await poolRow(model, 'free', 'minute')).requests, 1, 'a refused request is not counted in the pool');
+    assert.equal((await reserve(users[1], { p_model: model, p_pool: { ...single, concurrency: 2 } })).status, 'ok', 'two slots');
+    const vaultKey = `zai:glm-test-flash:free#${randomUUID()}`;
+    const keyed = await reserve(users[2], { p_model: model, p_pool: single, p_pool_key: vaultKey });
+    assert.equal(keyed.status, 'ok', "another key of the model has its own slot");
+    assert.equal((await reserve(users[2], { p_model: 'zai/glm-other-flash', p_pool: single })).status, 'ok', 'and so has another model');
+    await sql("UPDATE public.zerox_reservations SET status = 'settled' WHERE model = $1 AND pool_key = '' AND id <> $2", [model, running.reservation_id]);
+    assert.equal((await reserve(users[1], { p_model: model, p_pool: single })).status, 'pool_exhausted');
+    await settle(running.reservation_id);
+    const next = await reserve(users[1], { p_model: model, p_pool: single });
+    assert.equal(next.status, 'ok', 'a settle frees the slot at once');
+    // A request whose isolate died stops holding the slot when its lease lapses.
+    await sql("UPDATE public.zerox_reservations SET lease_expires_at = now() - interval '1 second' WHERE id = $1", [next.reservation_id]);
+    assert.equal((await reserve(users[0], { p_model: model, p_pool: single })).status, 'ok', 'a lapsed lease frees the slot');
+    const spare = await newUser('free');
+    assert.equal((await reserve(spare, { p_model: 'zai/glm-none-flash', p_pool: { ...single, concurrency: 0 } })).status,
+      'pool_exhausted', 'concurrency 0 serves nothing');
+    assert.equal((await reserve(spare, { p_model: 'zai/glm-free-flash', p_pool: { concurrency: null } })).status, 'ok', 'null is unlimited');
+    for (const concurrency of [-1, '1', true]) {
+      await assert.rejects(reserve(users[2], { p_model: model, p_pool: { concurrency } }), /invalid_pool_budget: concurrency/);
+    }
+  }
+  ok('per-pool concurrency: p_pool.concurrency counts the pool key\'s running reservations across users (refused: pool_exhausted within the minute, nothing counted); settles and lapsed leases free slots; keys and models are separate');
+
   // ---------------------------------------------------------------- stale release and housekeeping
   const staleUser = await newUser('free');
   const abandoned = await reserve(staleUser);
@@ -1620,7 +1658,7 @@ try {
   // <version>_<name>.down.sql files are checked with their own migrations (check-billing-caps.mjs,
   // check-catalog-db.mjs).
   const downFiles = (await readdir(join(root, 'migrations/down'))).filter(file => !file.endsWith('.down.sql')).sort();
-  assert.deepEqual(downFiles, ['20261028000000_reservation_leases.sql']);
+  assert.deepEqual(downFiles, ['20261028000000_reservation_leases.sql', '20261029001000_pool_concurrency.sql']);
   for (const file of downFiles) {
     const migration = migrations.find(candidate => candidate.file === file);
     assert.ok(migration, `${file} undoes a migration of the same name`);

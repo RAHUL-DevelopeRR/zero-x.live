@@ -75,6 +75,7 @@ const ORG_MODEL = /^[a-z0-9][a-z0-9._-]{0,40}\/[a-z0-9][a-z0-9._-]{0,80}$/;
 const type = fields => ({
   hosted_flag: null, requires_flag: {}, free_geo_block: [], paid_pricing: 'listed_only', requires_cache_prices: false,
   max_daily_spend_usd: 0, paid_daily_cap_usd: null, base_url_env: null, discovery_defaults: null, models_dev: null, info: null,
+  free_concurrency: null,
   ...fields,
 });
 
@@ -88,7 +89,9 @@ const type = fields => ({
  * the highest daily spend cap a paid pool of this type may have (0 = no paid pools).
  * paid_daily_cap_usd: the cap code-catalog paid pools get when their entry names none.
  * models_dev and info: the models.dev provider id and the display name and homepage that
- * /v1/models shows for the provider (src/oiop/models-dev.js).
+ * /v1/models shows for the provider (src/oiop/models-dev.js). free_concurrency: requests that
+ * each free pool (one model on one key) may run at once, enforced in Postgres as
+ * p_pool.concurrency (src/capacity.js reservationArgs); null = no such limit. Rows cannot set it.
  */
 export const PROVIDER_TYPES = deepFreeze({
   gemini: type({

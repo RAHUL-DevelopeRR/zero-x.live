@@ -206,7 +206,7 @@ All called through `rpc(env, name, args)` / `rpcRows(env, name, args)` in
 
 | RPC | args | returns (row) |
 |-----|------|---------------|
-| `zerox_reserve_v2` | `p_user_id uuid, p_request_id text, p_model text, p_tier text, p_tokens bigint, p_cost_microusd bigint, p_pool jsonb` (`{rpm,rpd,tpm,tpd,cpd}` or null; `cpd` = a paid pool's daily spend cap in billed micro-USD per UTC day, section 13.4), `p_pool_key text = null` (a provider key vault pool's key, 1-300 characters: `p_pool` is then that key's budget, counted in its own buckets; null = the model's default bucket, §11.1) | `{status, reservation_id, plan, remaining_requests, remaining_tokens, credit_balance_microusd, resets_at, retry_after_seconds}`; status ∈ `ok, no_account, suspended, upgrade_required, user_daily_requests, user_daily_tokens, user_rpm, user_concurrency, insufficient_credits, pool_exhausted` |
+| `zerox_reserve_v2` | `p_user_id uuid, p_request_id text, p_model text, p_tier text, p_tokens bigint, p_cost_microusd bigint, p_pool jsonb` (`{rpm,rpd,tpm,tpd,cpd,concurrency}` or null; `cpd` = a paid pool's daily spend cap in billed micro-USD per UTC day, section 13.4; `concurrency` = requests of the pool key running at once, section 8.6), `p_pool_key text = null` (a provider key vault pool's key, 1-300 characters: `p_pool` is then that key's budget, counted in its own buckets; null = the model's default bucket, §11.1) | `{status, reservation_id, plan, remaining_requests, remaining_tokens, credit_balance_microusd, resets_at, retry_after_seconds}`; status ∈ `ok, no_account, suspended, upgrade_required, user_daily_requests, user_daily_tokens, user_rpm, user_concurrency, insufficient_credits, pool_exhausted` |
 | `zerox_settle_v2` | `p_reservation_id uuid, p_prompt_tokens bigint, p_completion_tokens bigint, p_cost_microusd bigint, p_status text ('ok','error','refunded','failed_upstream'), p_latency_ms int, p_provider text, p_upstream_model text, p_error_code text, p_cache_read_tokens bigint = 0, p_cache_write_tokens bigint = 0` (cache tokens are part of `p_prompt_tokens`, section 13.4) | `{status:'settled'|'already_settled'|'not_found', credit_balance_microusd}`; reconciles the pool bucket stored on the reservation (model, tier, pool key) |
 | `zerox_renew_reservation` | `p_reservation_id uuid, p_lease_seconds int` (1-3600) | `boolean`: the lease now runs at least `p_lease_seconds` from now; `false` once the reservation is settled or released (section 8.5) |
 | `zerox_release_stale_reservations` | — | `{released}` |
@@ -503,6 +503,26 @@ nothing settled the attempt's reservation, so it held one of the user's concurre
   both functions with `CREATE OR REPLACE` and the `(user_id, created_at)` index, drops
   `zerox_renew_reservation` and the column, and removes the history row. Both files set
   `lock_timeout` (5 s) for their transaction.
+
+### 8.6 Per-pool concurrency (2026-10-29)
+
+Some free tiers limit requests in flight instead of (or as well as) requests per minute: Z.ai's
+free GLM Flash models serve one request at a time per account and model, and answer a second one
+with HTTP 429 (code 1302). Migration `20261029001000_pool_concurrency.sql`:
+
+- **`p_pool.concurrency`** (`zerox_reserve_v2`): at most that many reservations of the pool key
+  may be running at once, across every user. Running means active with a running lease (section
+  8.5): a settle frees the slot at once, a request whose isolate died frees it when its lease
+  lapses. The count is taken under the pool key's bucket locks, so two requests cannot both take
+  the last slot. Null is unlimited; 0 serves nothing.
+- **A full pool** answers `pool_exhausted` with `retry_after_seconds` until its first lease lapses
+  (1-60 s). The gateway moves on to its next candidate without calling the upstream, and
+  /v1/models shows the model busy until then (budget name `concurrency`).
+- **Where the limit comes from.** Reviewed code only: a provider type's `free_concurrency`
+  (`src/catalog-types.js`) applies to each free pool of that type, one per model and key. Catalog
+  rows cannot set or lift it.
+- **Rollback.** `migrations/down/20261029001000_pool_concurrency.sql` (`psql -X -v ON_ERROR_STOP=1
+  -f`) restores the `20261029000800` function; such pools then get the upstream's 429s instead.
 
 ## 9. v1.4 amendments (Neuron apps, 2026-10-23)
 

@@ -6,6 +6,7 @@ import { databaseConfigured, rpc } from './account-store.js';
 import { poolKey } from './catalog.js';
 import { billableUsage, costMicrousd, estimateOutputTokens, reserveCostMicrousd } from './pricing.js';
 import { billedDailyCapMicrousd } from './catalog-guardrails.js';
+import { providerType } from './catalog-types.js';
 
 export function usesLedger(env, session) {
   return Boolean(session?.account_backed && session.user_id) && databaseConfigured(env || {});
@@ -70,6 +71,9 @@ export function reservedTokens(promptTokens, maxTokens) {
 // of src/catalog-guardrails.js): Postgres refuses the reservation with pool_exhausted until 00:00
 // UTC once the day's holds and settled cost would pass it. A paid pool without a price or a cap
 // is never offered (catalog.js poolConfigured); reaching here without one is a bug, so it throws.
+// A free pool of a provider type with free_concurrency (src/catalog-types.js) carries it as
+// p_pool.concurrency: Postgres refuses with pool_exhausted while that many requests of the pool
+// key run (contract section 8.6).
 export function reservationArgs({ env = {}, session, requestId, entry, pool, promptTokens, maxTokens }) {
   const { limits } = pool;
   const paid = pool.tier === 'paid';
@@ -80,6 +84,8 @@ export function reservationArgs({ env = {}, session, requestId, entry, pool, pro
     if (!pool.price || cpd === null) throw Object.assign(new Error('paid_pool_unpriced'), { name: 'PaidPoolUnpriced' });
     budget = { ...(budget ?? { rpm: null, rpd: null, tpm: null, tpd: null }), cpd };
   }
+  const concurrency = pool.tier === 'free' ? providerType(entry.provider)?.free_concurrency ?? null : null;
+  if (concurrency !== null) budget = { ...(budget ?? { rpm: null, rpd: null, tpm: null, tpd: null }), concurrency };
   return {
     p_user_id: session.user_id,
     p_request_id: requestId,

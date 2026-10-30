@@ -1342,6 +1342,11 @@ try {
     assert.equal(exhaustedBudget({ rpm: null, rpd: null, tpm: null, tpd: null, cpd: 12500000 }, 30), 'rpm|tpm', 'not a per-minute budget');
     assert.equal(exhaustedBudget(POOL_LIMITS.groq_free, 7200), 'rpd|tpd');
     assert.equal(exhaustedBudget(null, 7200), 'rpd|tpd');
+    // A full pool (p_pool.concurrency) retries within the minute, until its first lease lapses.
+    assert.equal(exhaustedBudget({ rpm: null, rpd: null, tpm: null, tpd: null, concurrency: 1 }, 45, Date.UTC(2026, 9, 21, 12, 0, 0)),
+      'concurrency');
+    assert.equal(exhaustedBudget({ rpm: 30, rpd: null, tpm: null, tpd: null, concurrency: 1 }, 45, Date.UTC(2026, 9, 21, 12, 0, 0)),
+      'rpm|concurrency');
 
     // The next successful reservation on the pool clears it.
     reset({ 'rpc:zerox_plan_policies_v2': policiesRpc, 'rpc:zerox_reserve_v2': () => Response.json([okReserve({ reservation_id: 'res-ok' })]),

@@ -338,8 +338,10 @@ try {
   // Baseline: every migration except the two under test, on a fresh PGlite.
   const scratch = await mkdtemp(join(tmpdir(), 'zerox-billing-caps-'));
   baseline = { scratch, db: null };
+  // Rolled back newest first: what the migrations before CAPS left (20261029001000, which
+  // replaces zerox_reserve_v2 after PLANS, is rolled back first below).
   for (const migration of await listMigrations()) {
-    if (![CAPS, PLANS].includes(migration.file)) await copyFile(migration.path, join(scratch, migration.file));
+    if (migration.file < CAPS) await copyFile(migration.path, join(scratch, migration.file));
   }
   baseline.db = await PGlite.create();
   await migrate(baseline.db, { directory: scratch });
@@ -359,6 +361,7 @@ try {
       has_function_privilege('anon', p.oid, 'EXECUTE') AS anon, has_function_privilege('authenticated', p.oid, 'EXECUTE') AS auth,
       has_function_privilege('service_role', p.oid, 'EXECUTE') AS service
     FROM pg_proc AS p JOIN pg_namespace AS n ON n.oid = p.pronamespace WHERE n.nspname = 'public' AND p.proname = ANY($1) ORDER BY 1, 2`, [names])).rows;
+  await db.exec(await readFile(join(root, 'migrations', 'down', '20261029001000_pool_concurrency.sql'), 'utf8'));
   await db.exec(await downSql(PLANS));
   await db.exec(await downSql(CAPS));
   handle.functions.clear();
