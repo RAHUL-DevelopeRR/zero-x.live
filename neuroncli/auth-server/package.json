@@ -12,7 +12,7 @@
     "deploy": "wrangler deploy",
     "deploy:api": "wrangler deploy --config wrangler.api.toml",
     "start:api": "node server.js",
-    "check:database": "node check-quota-policy.mjs && node check-session-store.mjs && node check-billing-caps.mjs && node check-catalog-db.mjs",
+    "check:database": "node check-quota-policy.mjs && node check-session-store.mjs && node check-session-copy.mjs && node check-billing-caps.mjs && node check-catalog-db.mjs",
     "check:billing-caps": "node check-billing-caps.mjs",
     "check:catalog": "node check-catalog-db.mjs && node check-admin-models-page.mjs",
     "check:claude": "node check-anthropic-adapter.mjs",
