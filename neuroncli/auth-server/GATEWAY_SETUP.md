@@ -73,11 +73,17 @@ almost no CPU.
 
 | Variable | Kind | Default | Purpose |
 |---|---|---|---|
-| `EC2_PROXY_PREFIXES` | **Worker secret** | unset | Comma list of host + path prefixes to forward, e.g. `zero-x.live/v1/,dashboard.zero-x.live/` (an entry without a path covers its host; `zero-x.live/v1/` covers `/v1/models` but not `/v1`). Empty or unset: nothing is forwarded. Set it only with `wrangler secret put EC2_PROXY_PREFIXES`: it takes effect in seconds without a commit, and `deploy.yml` never lists it, so a deploy never overwrites it. Emptying it is the rollback. |
-| `EC2_PROXY_SECRET` | **secret** (Worker and EC2) | unset | Sent as `x-zerox-proxy-secret` with every forward; the Node server trusts the forwarded `x-zerox-*` headers (host, scheme, client IP, country, city, ASN) only when it matches its own value. Without it the Worker forwards nothing (logged once). Bound by the deploy from one GitHub secret, so both runtimes hold the same value. |
+| `EC2_PROXY_PREFIXES` | **Worker secret** | unset | Comma list of host + path prefixes to forward, e.g. `zero-x.live/v1/,dashboard.zero-x.live/` (an entry without a path covers its host; `zero-x.live/v1/` covers `/v1/models` but not `/v1`; an entry written as a URL, `https://zero-x.live/v1/`, means its host + path). Empty or unset: nothing is forwarded. Set it only with `wrangler secret put EC2_PROXY_PREFIXES`: it takes effect in seconds without a commit, and `deploy.yml` never lists it, so a deploy never overwrites it. Emptying it is the rollback. |
+| `EC2_PROXY_SECRET` | **secret** (Worker and EC2) | unset | Sent as `x-zerox-proxy-secret` with every forward; the Node server trusts the forwarded `x-zerox-*` headers (host, scheme, client IP, country, city, region, ASN, network name) only when it matches its own value. Visible ASCII only, with no surrounding whitespace or newline: the Worker forwards nothing (logged once, never the value) without it or when a header cannot carry it exactly. Bound by the deploy from one GitHub secret, so both runtimes hold the same value. |
 | `EC2_PROXY_ORIGIN` | var (Worker) | `https://aws.zero-x.live` | Where forwards go (https only; a host the Worker itself serves is refused). |
-| `EXTRA_WEB_HOSTS` | var (EC2 only) | unset | Comma list of test hosts, e.g. `aws.zero-x.live`, whose https pages may call the identity APIs (CORS) and approve device sign-ins like the production hosts; a device sign-in started there is approved there. Never set it on the Worker, and remove it on EC2 when the test window closes. |
-| `GIT_COMMIT` | set by the deploy | unset | The short commit SHA `/health` reports as `commit` (null when unset): `deploy.yml` passes it to the Worker with `--var`; on EC2 `server.js` reads the release's `REVISION` file. |
+| `EXTRA_WEB_HOSTS` | var (EC2 only) | unset | Comma list of test hosts, e.g. `aws.zero-x.live`. A test host serves the whole site on its own origin, like the local Node server: site pages and clean URLs, `/dashboard`, `/device` and the operator pages `/admin/keys` and `/admin/models` (behind Cloudflare Access when `CF_ACCESS_*` are set, so the Access application must then cover `<test host>/admin` too), with relative redirects, `noindex` on its pages and a `Disallow: /` robots.txt, but never the dev identity. Its https pages may call the identity APIs (CORS) and approve device sign-ins like the production hosts; a device sign-in started there is approved there. Never set it on the Worker, and remove it on EC2 when the test window closes. |
+| `GIT_COMMIT` | set by the deploy | unset | The short commit SHA `/health` reports as `commit` (null when unset): `deploy.yml` passes it to the Worker with `--var`; on EC2 `server.js` reads the release's `REVISION` file. Once a prefix covers a host, that host's `/health` is EC2's: compare the Worker's commit through a URL no prefix covers. |
+
+Every forward fetches `EC2_PROXY_ORIGIN` + path, so in Cloudflare's cache all visitor hosts and
+schemes share one key per path. The app keeps static files the same on every host and marks what
+depends on the host or scheme `Cache-Control: private` (robots.txt, every redirect). Never put a
+cache-everything rule on the `EC2_PROXY_ORIGIN` host: it would store pages and answers of one host
+for all of them.
 
 ### Billing (Razorpay)
 
