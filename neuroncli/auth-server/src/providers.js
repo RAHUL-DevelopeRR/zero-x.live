@@ -948,21 +948,22 @@ function parseEvent(data, finishErrors = null) {
  * keep-alives count) at most idleMs apart, with the first data event due within
  * ttfbMs + idleMs. Non-streaming calls get ttfbMs + idleMs in total.
  * commitBy (an absolute time) ends the request's failover budget: a stream is due by then, a
- * non-streaming response (whose generation may outlast the budget) by commitBy + idleMs. When
- * that, not the attempt's own deadline, ends it, the timeout's phase is 'budget': the pool did
- * not get its full time, so the cut is not a failure of the pool (chat-handler.js).
+ * non-streaming response (whose generation may outlast the budget) by commitBy + idleMs, and in
+ * any case by responseBy (the request's own deadline for a non-streaming answer, chat-handler.js).
+ * When one of those, not the attempt's own deadline, ends it, the timeout's phase is 'budget': the
+ * pool did not get its full time, so the cut is not a failure of the pool (chat-handler.js).
  * Resolves { ok:false, status, headers, bodyText, usage } for HTTP errors and
  * { ok:true, json | stream } on success; throws timeout/abort/protocol errors. `usage` (and
  * partialUsageOf(error) on a throw) is what the upstream reported before it failed (Claude's
  * message_start counts), or null.
  */
 export async function startCompletion(env, session, entry, pool, payload,
-  { clientSignal, timeouts = streamTimeouts(env), request = {}, commitBy = Infinity } = {}) {
+  { clientSignal, timeouts = streamTimeouts(env), request = {}, commitBy = Infinity, responseBy = Infinity } = {}) {
   const controller = new AbortController();
   const signal = clientSignal ? AbortSignal.any([clientSignal, controller.signal]) : controller.signal;
   const started = Date.now();
   const total = started + timeouts.ttfbMs + timeouts.idleMs;
-  const cutoff = payload.stream ? commitBy : commitBy + timeouts.idleMs;
+  const cutoff = payload.stream ? commitBy : Math.min(commitBy + timeouts.idleMs, responseBy);
   let reader = null;
   const own = () => {
     if (!payload.stream) return total;

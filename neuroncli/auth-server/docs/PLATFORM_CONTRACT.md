@@ -127,7 +127,7 @@ credential (never an `nzx_` key). Session tokens are stored hashed (SHA-256) in 
 | 429 | `rate_limited` | rate_limit_error | per-user rpm/concurrency (`retry_after_seconds`) — clients may retry after the delay |
 | 503 | `capacity_exhausted` | server_error | shared free pool exhausted (`retry_after_seconds`, `upgrade_url`) |
 | 502 | `upstream_error` | server_error | upstream failure after failover; request count refunded |
-| 504 | `upstream_timeout` | server_error | no first byte within 45 s or idle > 90 s |
+| 504 | `upstream_timeout` | server_error | no first byte within 45 s or idle > 90 s; a non-streaming completion not ready 90 s after the request |
 
 `upgrade_url` = `https://zero-x.live/pricing` (env `PRICING_URL`).
 
