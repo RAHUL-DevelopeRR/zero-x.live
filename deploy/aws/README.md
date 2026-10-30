@@ -373,6 +373,24 @@ systemctl is-enabled zerox-cron.timer                  # disabled until then
 
 journald keeps at most 1 GB and 14 days. The gateway logs no prompts, keys or request bodies.
 
+## Load test on the VM
+
+`loadtest.mjs` runs its own gateway process on a random loopback port against a fake upstream, so
+nothing leaves the VM; it needs the gateway's development files, which a release does not carry.
+It shares the CPU with the live instance: run it before go-live or at a quiet hour, at low
+concurrency. From the laptop, the commit's gateway and this kit through the endpoint (README,
+"Copying files"), then on the VM:
+
+```bash
+git archive --format=tar.gz -o loadtest.tar.gz HEAD neuroncli/auth-server deploy/aws        # laptop
+mkdir -p ~/loadtest && tar -xzf /tmp/loadtest.tar.gz -C ~/loadtest                           # VM
+cd ~/loadtest/neuroncli/auth-server && npm ci --ignore-scripts --no-audit --no-fund
+node ../../deploy/aws/loadtest.mjs --streams 10,25,50 --tokens 300 --rate 50
+```
+
+A step passes when every stream ends with `[DONE]`, the event loop is busy under 80 % of the time
+and its p99 delay stays under 100 ms.
+
 ## Timeouts, upgrades and restarts
 
 - Cloudflare closes a proxied request when the origin sends nothing for 125 s. Streams send an SSE
