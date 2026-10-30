@@ -209,7 +209,8 @@ jobs:
         env:
           EC2_KNOWN_HOSTS: ${{ vars.EC2_KNOWN_HOSTS }}
         run: |
-          if ! printf '%s\n' "$EC2_KNOWN_HOSTS" | grep -q '^zerox-gateway ssh-'; then
+          # "zerox-gateway ssh-ed25519 AAAA...", or the same line as ssh hashes it (|1|...).
+          if ! printf '%s\n' "$EC2_KNOWN_HOSTS" | grep -qE '^(zerox-gateway|[|]1[|][^ ]+) (ssh-|ecdsa-)'; then
             echo '::error::Repository variable EC2_KNOWN_HOSTS must hold the VM host key as "zerox-gateway ssh-ed25519 ..." (deploy/aws/README.md, "Host key")'
             exit 1
           fi

@@ -241,6 +241,35 @@ assert.ok(!/(enable|start|restart|reenable)\b[^\n]*zerox-cron\.timer/.test(code_
 assert.match(setup, /visudo -cqf /, 'the sudoers file is checked before it is installed');
 assert.ok(!/cloudflared[^\n]*--token(?!-file)/.test(code_(setup)), 'no tunnel token on a command line');
 
+// ── Runbooks: the CLI's base URL includes /v1 (it appends /chat/completions and /models to it),
+// every script they name exists, the cutover keeps its switch and rollbacks, no account id ──
+for (const name of readdirSync(join(repo, 'deploy/aws'))) {
+  for (const [, base] of read(`deploy/aws/${name}`).matchAll(/NEURON_API_BASE=([^\s`'")]+)/g)) {
+    assert.match(base, /\/v1$/, `deploy/aws/${name}: NEURON_API_BASE=${base} must end in /v1`);
+  }
+}
+const cutover = read('deploy/aws/CUTOVER.md');
+for (const doc of ['deploy/aws/README.md', 'deploy/aws/CUTOVER.md', 'deploy/aws/SESSIONS.md']) {
+  for (const [, script] of read(doc).matchAll(/\b([a-z-]+\.(?:sh|mjs))\b/g)) {
+    assert.ok(existsSync(join(repo, 'deploy/aws', script)) || existsSync(join(here, script)) || existsSync(join(here, 'scripts', script)),
+      `${doc} names ${script}, which exists`);
+  }
+}
+for (const text of ['EC2_PROXY_PREFIXES', 'rollback/kv-rebind', 'rollback/cron-trigger', 'secret delete EC2_PROXY_PREFIXES',
+  'sudo systemctl enable --now zerox-cron.timer', 'sudo systemctl disable --now zerox-cron.timer', 'gh variable delete EXTRA_WEB_HOSTS']) {
+  assert.ok(cutover.includes(text), `CUTOVER.md: ${text}`);
+}
+assert.ok(cutover.indexOf('enable --now zerox-cron.timer') > cutover.indexOf('### 5. Cron switch'), 'the cron timer is enabled at step 5 only');
+const prefixValues = [...cutover.matchAll(/printf '%s' '([^']+)' \| npx wrangler@[\d.]+ secret put EC2_PROXY_PREFIXES/g)].map(match => match[1]);
+assert.ok(prefixValues.includes('zero-x.live/v1/') && prefixValues.includes('zero-x.live/'), 'steps 2 and 3');
+for (const value of [...prefixValues, ...[...cutover.matchAll(/^\s+\d\. `([^`]+)`:/gm)].map(match => match[1])]) {
+  assert.match(value, /^(?:[a-z]+\.)?zero-x\.live\/[a-z0-9/-]*(?:,(?:[a-z]+\.)?zero-x\.live\/[a-z0-9/-]*)*$/,
+    `EC2_PROXY_PREFIXES value ${value}: host + path prefixes, comma separated, no scheme or spaces`);
+}
+for (const doc of ['deploy/aws/CUTOVER.md', 'deploy/aws/README.md', 'deploy/aws/ci-role.yaml', '.github/workflows/deploy.yml']) {
+  assert.ok(!/\b\d{12}\b/.test(read(doc)), `${doc} names no account id`);
+}
+
 // ── activate-release.sh and host-setup.sh, run: temporary /opt/zerox, /etc/zerox and system
 // root, stub sudo, systemctl, curl, visudo and friends. A bash with POSIX symlinks is needed (on
 // Windows, Git's with native symlinks). ──
