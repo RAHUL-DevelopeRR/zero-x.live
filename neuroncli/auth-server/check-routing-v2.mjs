@@ -3,6 +3,7 @@
 // database call goes through the fake fetch below.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { Hono } from 'hono';
 import { createChatHandler, MAX_OUTPUT_TOKENS } from './src/chat-handler.js';
 import { RoutingEngine, fitMaxTokens } from './src/router.js';
@@ -450,6 +451,42 @@ try {
     assert.equal(auto.context_window, Math.min(...windows));
     assert.equal(auto.context_window, 131072);
     assert.equal(auto.context_length, 131072);
+  });
+
+  // Owner lineup (2026-10-29): Gemini and Workers AI are switched off by configuration only
+  // (wrangler.toml [vars] GEMINI_MODELS and CLOUDFLARE_MODELS empty), with every key still set.
+  await test('the 2026-10-29 lineup: Gemini and Workers AI off by configuration, auto and the catalog follow', async () => {
+    const config = readFileSync(new URL('./wrangler.toml', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+    const start = config.indexOf('\n[vars]\n');
+    const section = config.slice(start, config.indexOf('\n[', start + 1));
+    const vars = Object.fromEntries([...section.matchAll(/^([A-Z0-9_]+) = "([^"]*)"$/gm)].map(match => [match[1], match[2]]));
+    assert.deepEqual([vars.GEMINI_MODELS, vars.CLOUDFLARE_MODELS, vars.NVIDIA_HOSTED, vars.OPENROUTER_HOSTED], ['', '', 'true', 'true']);
+    const lineup = Object.fromEntries(['GEMINI_MODELS', 'CLOUDFLARE_MODELS', 'NVIDIA_HOSTED', 'OPENROUTER_HOSTED', 'OPENROUTER_MODELS',
+      'ANTHROPIC_MODELS'].map(name => [name, vars[name]]));
+    const env = { ...KEYS, AI: {}, NVIDIA_API_KEY: 'n', OPENROUTER_API_KEY: 'o', ANTHROPIC_API_KEY: 'a', ...lineup };
+    const list = listModelsForCaller(env, { country: 'US' }).data;
+    assert.ok(!list.some(model => model.id.startsWith('gemini/') || model.id.startsWith('@cf/')), 'no Gemini or Workers AI model is listed');
+    assert.ok(list.some(model => model.id === 'groq/openai/gpt-oss-120b' && model.available));
+    assert.ok(list.some(model => model.id === 'nvidia/openai/gpt-oss-20b' && model.available));
+    assert.ok(list.some(model => model.id === 'cohere/north-mini-code:free' && model.available));
+    assert.deepEqual(catalogWarnings(env), [], 'an empty list names no unknown model');
+    const auto = list.find(model => model.id === 'auto');
+    assert.deepEqual([auto.available, auto.context_window], [true, 131072]);
+    const router = new RoutingEngine(new ProviderHealthTracker());
+    const base = { env, requestedModel: 'auto', needsTools: true, promptTokens: 500, maxTokens: 2000, tiers: ['free', 'paid'], country: 'US' };
+    const route = ids(router.route(base));
+    assert.deepEqual(route.slice(0, 3), ['groq/openai/gpt-oss-120b#free', 'groq/qwen/qwen3.8-27b#free', 'groq/openai/gpt-oss-20b#free']);
+    assert.ok(!route.some(id => id.startsWith('gemini/') || id.startsWith('@cf/')), 'auto never reaches them');
+    for (const model of ['gemini/gemini-2.5-flash', 'gemini-3.5-flash', '@cf/meta/llama-3.3-70b-instruct-fp8-fast', 'llama-3.3-70b']) {
+      assert.equal(router.route({ ...base, requestedModel: model }).error, 'model_not_found', model);
+    }
+    const gw = gateway();
+    gw.addSession('ses_anon', {});
+    reset({ groq: () => completion({ content: 'from groq' }) });
+    const response = await gw.call(env, { model: 'auto', messages, tools }, { country: 'US' });
+    assert.equal(response.status, 200);
+    assert.deepEqual(upstreamCalls().map(call => call.target), ['groq']);
+    await expectError(await gw.call(env, { model: 'gemini/gemini-2.5-flash', messages }, { country: 'US' }), 404, 'model_not_found');
   });
 
   await test('auto selects by fit: Groq TPM, context windows and max_tokens clamping', () => {

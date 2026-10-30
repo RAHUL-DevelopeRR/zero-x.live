@@ -156,6 +156,18 @@ try {
   assert.equal(hub.snapshot().pools['groq:openai/gpt-oss-20b:free'].status, 'available', 'status page operational -> bright again');
   console.log('ok - recovery: the status page clearing an outage brightens the model');
 
+  // Owner lineup (2026-10-29): GEMINI_MODELS and CLOUDFLARE_MODELS = "" (wrangler.toml) leave
+  // Gemini and Workers AI without pools here, so nothing checks or tests them.
+  {
+    const lineupHub = new HealthHub(fakeState(), { ...ENV, GEMINI_MODELS: '', CLOUDFLARE_MODELS: '' }, { now: clock });
+    await lineupHub.ready;
+    const units = lineupHub.checkUnits(lineupHub.pools()).map(unit => unit.id);
+    assert.ok(units.includes('list:groq:env') && units.includes('status:groq'));
+    assert.ok(!units.some(id => /gemini|cloudflare/.test(id)), `no Gemini or Workers AI check (${units.join(', ')})`);
+    assert.ok(![...lineupHub.pools().keys()].some(provider => provider === 'gemini' || provider === 'cloudflare'));
+  }
+  console.log('ok - lineup: with Gemini and Workers AI switched off by configuration, no check or test request goes to them');
+
   // 3. Test requests: only half-open, idle, capped pools; never NVIDIA or OpenRouter.
   upstream = {
     ...lists,

@@ -49,7 +49,10 @@ RAZORPAY_WEBHOOK_SECRET=            # SECRET: webhook signing secret from the Ra
 # ── Upstream providers (free pools) ──
 # The verified catalog (src/catalog.js) decides which models are hosted. GROQ_MODELS,
 # GEMINI_MODELS, CLOUDFLARE_MODELS and NVIDIA_MODELS may only narrow it (comma-separated catalog
-# ids); leave them unset. *_TOOL_MODELS are no longer read.
+# ids). *_TOOL_MODELS are no longer read. Owner lineup (2026-10-29): Gemini and Workers AI are
+# switched off with empty lists, as in wrangler.toml [vars]; delete those two lines to serve them.
+GEMINI_MODELS=
+CLOUDFLARE_MODELS=
 GROQ_API_KEY=                       # SECRET
 GEMINI_API_KEY=                     # SECRET (free tier is geo-blocked for EEA/GB/CH callers)
 CLOUDFLARE_ACCOUNT_ID=              # Node only; the Worker uses its AI binding

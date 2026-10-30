@@ -59,6 +59,12 @@ PRICING_URL = "https://zero-x.live/pricing"
 # also serve users' free models. Their terms are summarised in docs/PROVIDER_TERMS.md.
 NVIDIA_HOSTED = "true"
 OPENROUTER_HOSTED = "true"
+# Owner lineup (2026-10-29): Gemini and Workers AI are not hosted for now. They are switched off
+# here, by configuration only: an empty list offers none of the provider's models, neither by name
+# nor in auto, and the HealthHub stops checking them, while their keys and the AI binding stay in
+# place. Delete a line (or list model ids) to serve them again; no code change is needed.
+GEMINI_MODELS = ""
+CLOUDFLARE_MODELS = ""
 # Claude Sonnet 5.5 and Claude Opus 5.5 (paid pools, Pro and Max, billed from credits) use the
 # Worker secret ANTHROPIC_API_KEY, which deploy.yml pushes from the GitHub secret; without it they
 # list as not_configured. The same key enables the weekly discovery research and credits jobs;

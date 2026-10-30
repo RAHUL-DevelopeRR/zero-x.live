@@ -415,6 +415,15 @@ try {
       [[['paid'], 200000, 32000, true], [['paid'], 200000, 32000, true]]);
     const auto = modules.catalog.listModelsForCaller(keys, { plan: 'max', tiers: ['free', 'paid'], country: 'US' }).data[0];
     assert.equal(auto.id, 'auto');
+    // Owner lineup (2026-10-29): the empty GEMINI_MODELS and CLOUDFLARE_MODELS of wrangler.toml
+    // narrow the database rows like the code catalog.
+    const lineup = { ...clone(fixture.cases.find(item => item.name.startsWith('keys/')).env), DATABASE_DRIVER: 'pglite',
+      GEMINI_MODELS: '', CLOUDFLARE_MODELS: '' };
+    assert.equal((await loadCatalog(lineup, { wait: Infinity })).source, 'database');
+    const lineupIds = modules.catalog.listModelsForCaller(lineup, { plan: 'max', tiers: ['free', 'paid'], country: 'US' }).data
+      .map(item => item.id);
+    assert.ok(lineupIds.includes('groq/openai/gpt-oss-120b'));
+    assert.ok(!lineupIds.some(id => id.startsWith('gemini/') || id.startsWith('@cf/')), 'no Gemini or Workers AI row is offered');
     ok(`/v1/models from the seeded rows equals CATALOG_SOURCE=code and fixtures/v1-models-baseline.json (minus the two Claude rows) on all ${compared} cases${modules.integrated ? '' : ' (catalog view; src/catalog.js not wired yet)'}`);
   }
 
