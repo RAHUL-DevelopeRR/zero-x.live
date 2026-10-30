@@ -1,6 +1,7 @@
 # One run of the gateway's 10-minute cron (scripts/cron.mjs: stale reservation release,
 # subscription expiry, device grant purge, provider discovery), started by zerox-cron.timer.
-# Same user, environment and sandbox as zerox-gateway.service. deploy/aws/README.md.
+# Same user, environment and sandbox as zerox-gateway@.service, on the current release (a run
+# that starts during a deploy finishes on the release it started with). deploy/aws/README.md.
 [Unit]
 Description=Zero-X gateway cron (scheduled maintenance and discovery)
 Documentation=https://github.com/RAHUL-DevelopeRR/zero-x.live/tree/main/deploy/aws
@@ -11,10 +12,10 @@ After=network-online.target
 Type=oneshot
 User=zerox
 Group=zerox
-WorkingDirectory=/opt/zerox/gateway
+WorkingDirectory=/opt/zerox/current/neuroncli/auth-server
 EnvironmentFile=/etc/zerox/gateway.env
-Environment=NODE_ENV=production AUTH_HOST=127.0.0.1 NEURON_API_ONLY=true
-ExecStart=/usr/bin/node /opt/zerox/gateway/scripts/cron.mjs
+Environment=NODE_ENV=production AUTH_HOST=127.0.0.1
+ExecStart=/usr/bin/node /opt/zerox/current/neuroncli/auth-server/scripts/cron.mjs
 # A weekly research job can take minutes; a run never overlaps the next tick.
 TimeoutStartSec=540
 

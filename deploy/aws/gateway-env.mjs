@@ -42,15 +42,20 @@ export function envLine(name, value) {
 const names = list => String(list || '').split(/\s+/).filter(Boolean);
 
 // systemd lets EnvironmentFile= override the unit's Environment=, so a [vars] entry or secret
-// with one of these names would silently replace the VM's runtime settings (zerox-gateway.service)
-// or switch on a development path. They are refused instead.
-const UNIT_SETTINGS = new Set(['NODE_ENV', 'AUTH_HOST', 'AUTH_PORT', 'NEURON_API_ONLY', 'TRUST_CLOUDFLARE',
-  'TRUST_CF_IPCOUNTRY', 'SHUTDOWN_GRACE_MS']);
+// with one of these names would silently replace the VM's runtime settings (zerox-gateway@.service,
+// NEURON_API_ONLY included: the VM serves the website) or switch on a development path. GIT_COMMIT
+// comes from the release's REVISION file on the VM, so an environment file kept across a rollback
+// can never report the wrong commit. EC2_PROXY_PREFIXES and EC2_PROXY_ORIGIN steer the Worker's
+// forward to the VM; on the VM they could only make it forward to itself. They are refused instead.
+const UNIT_SETTINGS = new Set(['NODE_ENV', 'AUTH_HOST', 'AUTH_PORT', 'AUTH_REUSE_PORT', 'READY_PORT', 'ASSETS_DIR',
+  'NEURON_API_ONLY', 'TRUST_CLOUDFLARE', 'TRUST_CF_IPCOUNTRY', 'SHUTDOWN_GRACE_MS', 'GIT_COMMIT']);
+const WORKER_ONLY = new Set(['EC2_PROXY_PREFIXES', 'EC2_PROXY_ORIGIN']);
 const DEVELOPMENT_ONLY = new Set(['DEV_AUTH_ENABLED', 'ALLOW_ANONYMOUS_SESSIONS', 'ALLOW_UNKNOWN_COUNTRY',
   'DATABASE_DRIVER', 'PGLITE_DATA_DIR', 'ALLOW_LOCAL_DATABASE', 'RAZORPAY_API_BASE', 'NEURON_RUNTIME']);
 function allowed(name) {
-  if (UNIT_SETTINGS.has(name) || DEVELOPMENT_ONLY.has(name) || name.startsWith('E2E_')) {
-    throw new Error(`${name} is not allowed in the VM environment (zerox-gateway.service sets it, or it is development-only)`);
+  if (UNIT_SETTINGS.has(name) || WORKER_ONLY.has(name) || DEVELOPMENT_ONLY.has(name) || name.startsWith('E2E_')) {
+    throw new Error(`${name} is not allowed in the VM environment (zerox-gateway@.service or the release sets it, ` +
+      'or it is Worker-only or development-only)');
   }
   return name;
 }

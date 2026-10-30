@@ -1,26 +1,38 @@
-# Zero-X gateway API (neuroncli/auth-server/server.js) on the Oracle VM, reached only through
-# Cloudflare Tunnel (cloudflared dials out; this listens on loopback). deploy/aws/README.md.
-#   sudo install -m 0644 zerox-gateway.service /etc/systemd/system/
-#   sudo systemctl daemon-reload && sudo systemctl enable --now zerox-gateway
+# Zero-X gateway (neuroncli/auth-server/server.js) on the EC2 VM: website, sign-in, accounts,
+# /v1 streams, billing and admin. Users reach it only through Cloudflare Tunnel (cloudflared dials
+# out; this listens on loopback). deploy/aws/README.md.
+#
+# Two instances, zerox-gateway@0 and zerox-gateway@1, so a deploy never refuses a connection:
+# both listen on 127.0.0.1:8787 with reusePort, and each also answers GET /ready and GET /health
+# on its own loopback READY_PORT (8790 for @0, 8791 for @1), so the deploy can check the one it
+# just started. activate-release.sh starts the idle instance on the new release, waits for its
+# /ready, then stops the old one, which drains its streams while the new one takes every new
+# connection. host-setup.sh installs this file and enables @0 for boot.
 [Unit]
-Description=Zero-X gateway API (Node)
+Description=Zero-X gateway (Node), instance %i
 Documentation=https://github.com/RAHUL-DevelopeRR/zero-x.live/tree/main/deploy/aws
 Wants=network-online.target
 # Ordering only: on reboot or shutdown systemd stops units in reverse order, so the gateway
 # drains its streams while cloudflared, which carries them, is still up.
 After=network-online.target cloudflared.service
+# Nothing to start before the first release (host-setup.sh enables @0 for boot ahead of it).
+ConditionPathExists=/opt/zerox/current/neuroncli/auth-server/server.js
 
 [Service]
 Type=simple
 User=zerox
 Group=zerox
-# /opt/zerox/gateway is a symlink to the current release (deploy-oracle.yml swaps it).
-WorkingDirectory=/opt/zerox/gateway
+# /opt/zerox/current is a symlink to the release root (/opt/zerox/releases/<commit>), which
+# activate-release.sh flips. Both paths below are resolved when the process starts, so a running
+# instance keeps its release after the flip and the next instance starts on the new one.
+WorkingDirectory=/opt/zerox/current/neuroncli/auth-server
 # Read by systemd as root before the service starts; secrets never reach argv or the unit.
 EnvironmentFile=/etc/zerox/gateway.env
-Environment=NODE_ENV=production AUTH_HOST=127.0.0.1 AUTH_PORT=8787 NEURON_API_ONLY=true
+Environment=NODE_ENV=production AUTH_HOST=127.0.0.1 AUTH_PORT=8787 AUTH_REUSE_PORT=true READY_PORT=879%i
+# The VM serves the website from the release (server.js serves only what .assetsignore allows).
+Environment=ASSETS_DIR=/opt/zerox/current
 Environment=TRUST_CLOUDFLARE=true TRUST_CF_IPCOUNTRY=true
-ExecStart=/usr/bin/node /opt/zerox/gateway/server.js
+ExecStart=/usr/bin/node /opt/zerox/current/neuroncli/auth-server/server.js
 Restart=always
 RestartSec=2
 # SIGTERM drains: no new connections, in-flight streams get SHUTDOWN_GRACE_MS (110 s) to finish
@@ -33,6 +45,8 @@ LimitNOFILE=65536
 
 # Sandboxing. Node needs none of these privileges. Not set: MemoryDenyWriteExecute (V8's JIT
 # needs writable executable memory) and ProcSubset=pid (os.cpus() and os.totalmem() read /proc).
+# RemoveIPC acts only when the last unit running as zerox stops, so one instance stopping leaves
+# the other alone.
 NoNewPrivileges=true
 CapabilityBoundingSet=
 AmbientCapabilities=
