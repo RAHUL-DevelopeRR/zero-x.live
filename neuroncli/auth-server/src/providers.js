@@ -8,7 +8,7 @@ import {
   AUTO_MODEL_ID, catalogEntries, catalogEntry, catalogWarnings, entryPools, isHosted, isEnabled, listModelsForCaller,
   loadCatalog, offeredEntries, poolConfigured, planPolicy,
 } from './catalog.js';
-import { PROVIDER_TYPES, baseUrlFor } from './catalog-types.js';
+import { PROVIDER_TYPES, baseUrlFor, providerType } from './catalog-types.js';
 import { vaultKeys } from './provider-keys.js';
 import { errorEvent } from './errors.js';
 import { sessionTiers } from './capacity.js';
@@ -317,9 +317,18 @@ export function buildUpstreamPayload(entry, body, maxTokens) {
     delete payload.tool_choice;
     delete payload.parallel_tool_calls;
   }
-  // Z.ai accepts tool_choice "auto" only (docs.z.ai): any other value is left out, so the model
-  // decides as it does by default, instead of the request failing.
-  if (entry.provider === 'zai' && payload.tool_choice !== undefined && payload.tool_choice !== 'auto') delete payload.tool_choice;
+  // Z.ai accepts tool_choice "auto" only (docs.z.ai; catalog-types.js tool_choice_auto_only).
+  // "none" sends no tools at all, so the model cannot call one the client forbade. "required" or a
+  // named function is left out instead of failing the request: the model then decides as by
+  // default, so a request to such a model by name no longer forces the call (auto never sends it
+  // one, router.js).
+  if (providerType(entry.provider)?.tool_choice_auto_only && payload.tool_choice !== undefined && payload.tool_choice !== 'auto') {
+    if (payload.tool_choice === 'none') {
+      delete payload.tools;
+      delete payload.parallel_tool_calls;
+    }
+    delete payload.tool_choice;
+  }
   return payload;
 }
 
@@ -729,7 +738,8 @@ export function classifyUpstreamFailure(status, body = '', headers = null, fallb
     else if (CONTEXT_PATTERN.test(info.message.toLowerCase())) kind = FailureKind.CONTEXT;
   }
   // Parks the pool for the auth cooldown, like a 402, instead of retrying it after a rate limit.
-  if (ACCOUNT_CODES.has(info.code)) kind = FailureKind.AUTH;
+  // Z.ai documents its codes as strings; a numeric code (parseUpstreamError numericCode) counts too.
+  if (ACCOUNT_CODES.has(info.code) || ACCOUNT_CODES.has(String(info.numericCode))) kind = FailureKind.AUTH;
   return {
     kind,
     status: effective,

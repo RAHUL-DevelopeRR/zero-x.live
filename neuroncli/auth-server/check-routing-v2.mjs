@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { Hono } from 'hono';
-import { createChatHandler, MAX_OUTPUT_TOKENS } from './src/chat-handler.js';
+import { conversationKey, createChatHandler, MAX_OUTPUT_TOKENS, requestNeeds } from './src/chat-handler.js';
 import { RoutingEngine, fitMaxTokens } from './src/router.js';
 import { FailureKind, HealthState, ProviderHealthTracker } from './src/provider-health.js';
 import {
@@ -104,7 +104,7 @@ const ACCOUNT = '12345678-1234-4234-8234-123456789abc';
 const DEV_PLANS = { free: { name: 'Free', daily_tokens: 256000, daily_requests: 2000, price_usd: 0 } };
 const today = () => new Date().toISOString().slice(0, 10);
 
-function gateway({ tracker = new ProviderHealthTracker() } = {}) {
+function gateway({ tracker = new ProviderHealthTracker(), router = new RoutingEngine(tracker) } = {}) {
   const store = new Map();
   const writes = [];
   const app = new Hono();
@@ -117,7 +117,7 @@ function gateway({ tracker = new ProviderHealthTracker() } = {}) {
     setSession: async (c, token, value) => { writes.push(token); store.set(token, JSON.stringify(value)); },
     getSession: async (c, token) => JSON.parse(store.get(token) || 'null'),
     planLimits: async () => DEV_PLANS,
-    router: new RoutingEngine(tracker),
+    router,
     healthTracker: tracker,
   }));
   const addSession = (token, session) => store.set(token, JSON.stringify({ created: Date.now(), plan: 'free',
@@ -131,7 +131,7 @@ function gateway({ tracker = new ProviderHealthTracker() } = {}) {
     if (country) Object.defineProperty(request, 'cf', { value: { country } });
     return app.fetch(request, env, ctx);
   };
-  return { app, tracker, store, writes, addSession, session, call };
+  return { app, tracker, router, store, writes, addSession, session, call };
 }
 
 const messages = [{ role: 'user', content: 'Read a.js and b.js' }];
@@ -455,15 +455,23 @@ try {
 
   // Owner lineup (2026-10-29): Gemini and Workers AI are switched off by configuration only
   // (wrangler.toml [vars] GEMINI_MODELS and CLOUDFLARE_MODELS empty), with every key still set.
-  await test('the 2026-10-29 lineup: Gemini and Workers AI off by configuration, auto and the catalog follow', async () => {
-    const config = readFileSync(new URL('./wrangler.toml', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  const LINEUP_VARS = ['GEMINI_MODELS', 'CLOUDFLARE_MODELS', 'NVIDIA_HOSTED', 'OPENROUTER_HOSTED', 'OPENROUTER_MODELS', 'ANTHROPIC_MODELS'];
+  const wranglerVars = file => {
+    const config = readFileSync(new URL(file, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
     const start = config.indexOf('\n[vars]\n');
     const section = config.slice(start, config.indexOf('\n[', start + 1));
-    const vars = Object.fromEntries([...section.matchAll(/^([A-Z0-9_]+) = "([^"]*)"$/gm)].map(match => [match[1], match[2]]));
+    return Object.fromEntries([...section.matchAll(/^([A-Z0-9_]+) = "([^"]*)"$/gm)].map(match => [match[1], match[2]]));
+  };
+  // Every hosted provider's key set, with the lineup's [vars] from wrangler.toml.
+  const lineupEnv = () => {
+    const vars = wranglerVars('./wrangler.toml');
+    return { ...KEYS, AI: {}, NVIDIA_API_KEY: 'n', OPENROUTER_API_KEY: 'o', ANTHROPIC_API_KEY: 'a', GLM_API_KEY: 'z',
+      ...Object.fromEntries(LINEUP_VARS.map(name => [name, vars[name]])) };
+  };
+  await test('the 2026-10-29 lineup: Gemini and Workers AI off by configuration, auto and the catalog follow', async () => {
+    const vars = wranglerVars('./wrangler.toml');
     assert.deepEqual([vars.GEMINI_MODELS, vars.CLOUDFLARE_MODELS, vars.NVIDIA_HOSTED, vars.OPENROUTER_HOSTED], ['', '', 'true', 'true']);
-    const lineup = Object.fromEntries(['GEMINI_MODELS', 'CLOUDFLARE_MODELS', 'NVIDIA_HOSTED', 'OPENROUTER_HOSTED', 'OPENROUTER_MODELS',
-      'ANTHROPIC_MODELS'].map(name => [name, vars[name]]));
-    const env = { ...KEYS, AI: {}, NVIDIA_API_KEY: 'n', OPENROUTER_API_KEY: 'o', ANTHROPIC_API_KEY: 'a', GLM_API_KEY: 'z', ...lineup };
+    const env = lineupEnv();
     const list = listModelsForCaller(env, { country: 'US' }).data;
     assert.ok(!list.some(model => model.id.startsWith('gemini/') || model.id.startsWith('@cf/')), 'no Gemini or Workers AI model is listed');
     assert.ok(list.some(model => model.id === 'groq/openai/gpt-oss-120b' && model.available));
@@ -494,6 +502,72 @@ try {
     assert.equal(response.status, 200);
     assert.deepEqual(upstreamCalls().map(call => call.target), ['groq']);
     await expectError(await gw.call(env, { model: 'gemini/gemini-2.5-flash', messages }, { country: 'US' }), 404, 'model_not_found');
+  });
+
+  // Z.ai's free pools run one request at a time and take tool_choice "auto" only, so auto keeps
+  // them as its last fallback: never for a request that forces a tool call, and a conversation
+  // they served once is not pinned to them for the next turns (StickyChoices).
+  await test('the 2026-10-29 lineup: Z.ai stays auto\'s last fallback (forced tool calls, sticky conversations)', async () => {
+    const env = lineupEnv();
+    const router = new RoutingEngine(new ProviderHealthTracker());
+    const base = { env, requestedModel: 'auto', needsTools: true, promptTokens: 500, maxTokens: 2000, tiers: ['free', 'paid'], country: 'US' };
+    const route = ids(router.route(base));
+    assert.ok(route.includes('zai/glm-4.7-flash#free'));
+    const named = { type: 'function', function: { name: 'read_file' } };
+    for (const toolChoice of ['required', named]) {
+      const needs = requestNeeds({ messages, tools, tool_choice: toolChoice });
+      assert.equal(needs.forcedTool, true);
+      assert.deepEqual(ids(router.route({ ...base, needs })), route.filter(id => !id.startsWith('zai/')), JSON.stringify(toolChoice));
+    }
+    for (const toolChoice of ['auto', 'none', undefined]) {
+      assert.deepEqual(ids(router.route({ ...base, needs: requestNeeds({ messages, tools, tool_choice: toolChoice }) })), route, String(toolChoice));
+    }
+    assert.equal(requestNeeds({ messages, tool_choice: 'required' }).forcedTool, false, 'no tools, nothing to force');
+    // Asked for by name, Z.ai still serves a forced request (the choice is dropped, see the Z.ai test).
+    assert.deepEqual(ids(router.route({ ...base, requestedModel: 'zai/glm-4.7-flash', needs: requestNeeds({ messages, tools, tool_choice: named }) })),
+      ['zai/glm-4.7-flash#free']);
+
+    // Sticky routing: a remembered Z.ai model is not preferred; any other model still is.
+    const conversation = { ...base, affinity: 'user-7', conversation: 'c:task-7' };
+    const sticky = router.route(conversation).sticky;
+    router.remember(sticky, 'zai/glm-4.7-flash');
+    assert.deepEqual(ids(router.route(conversation)), route, 'one fallback to Z.ai does not pin the conversation to it');
+    router.remember(sticky, 'nvidia/openai/gpt-oss-20b');
+    assert.equal(ids(router.route(conversation))[0], 'nvidia/openai/gpt-oss-20b#free', 'other models stick as before');
+    // Pools that are degraded, failing or whose budget this isolate saw spent go after the healthy
+    // ones, and still before Z.ai's.
+    const spent = ids(router.route({ ...base, budgetState: key => (key.startsWith('groq:') ? { until: Date.now() + 60_000 } : null) }));
+    assert.deepEqual(spent.filter(id => id.endsWith('#free')).map(id => id.split('/')[0]),
+      ['nvidia', 'nvidia', 'cohere', 'minimax', 'groq', 'groq', 'groq', 'zai', 'zai']);
+
+    // Through the chat handler: turn 1 is served by Groq and sticks; turn 2 finds every other free
+    // pool rate limited and falls back to Z.ai, which serves without replacing the remembered model;
+    // a turn that forces a tool call never reaches Z.ai. (ROUTER_MAX_RATE_LIMITED: the default of 6
+    // refusals ends a request before the lineup's seventh and later free pools.)
+    const gw = gateway();
+    gw.addSession('ses_anon', {});
+    const handlerEnv = { ...env, ROUTER_MAX_RATE_LIMITED: '10' };
+    const key = `ses_anon|${conversationKey(undefined, messages)}`;
+    reset({ groq: () => completion({ content: 'from groq' }) });
+    assert.equal((await gw.call(handlerEnv, { model: 'auto', messages, tools }, { country: 'US' })).status, 200);
+    assert.equal(gw.router.sticky.get(key), 'groq/openai/gpt-oss-120b');
+    const limited = () => Response.json({ error: { message: 'slow down', code: 'rate_limit_exceeded' } }, { status: 429, headers: { 'Retry-After': '30' } });
+    const quiet = await captureLogs(async () => {
+      reset({ groq: limited, nvidia: limited, openrouter: limited, zai: () => completion({ content: 'from zai' }) });
+      const fallback = await gw.call(handlerEnv, { model: 'auto', messages, tools }, { country: 'US' });
+      const fallbackTargets = upstreamCalls().map(call => call.target);
+      reset({ zai: () => completion({ content: 'from zai' }) });
+      const forced = await gw.call(handlerEnv, { model: 'auto', messages, tools, tool_choice: 'required' }, { country: 'US' });
+      return { fallback, fallbackTargets, forced, forcedTargets: upstreamCalls().map(call => call.target) };
+    });
+    const { fallback, fallbackTargets, forced, forcedTargets } = quiet.result;
+    assert.equal(fallback.status, 200);
+    assert.equal(fallback.headers.get('x-neuron-model'), 'zai/glm-4.7-flash');
+    assert.equal(fallbackTargets.at(-1), 'zai');
+    assert.ok(!fallbackTargets.slice(0, -1).includes('zai'), 'Z.ai is tried after every other free pool');
+    assert.equal(gw.router.sticky.get(key), 'groq/openai/gpt-oss-120b', 'the Z.ai fallback is not remembered');
+    assert.notEqual(forced.status, 200);
+    assert.ok(!forcedTargets.includes('zai'), 'a forced tool call is never sent to Z.ai');
   });
 
   await test('auto selects by fit: Groq TPM, context windows and max_tokens clamping', () => {
@@ -1260,7 +1334,7 @@ try {
 
   // Z.ai ends a generation that failed after the stream started with an error finish_reason
   // (network_error; sensitive for a refused prompt) instead of an error event: a failed attempt.
-  await test('Z.ai: error finish_reasons fail the attempt, tool_choice other than auto is dropped, 1113 is an account error', async () => {
+  await test('Z.ai: error finish_reasons fail the attempt, tool_choice "none" sends no tools, other choices are dropped', async () => {
     const ZAI = { GLM_API_KEY: 'zai-free-key' };
     const zai = 'zai/glm-4.7-flash';
     const gw = gateway();
@@ -1293,15 +1367,22 @@ try {
     // Non-streaming answers carry the same finish_reasons.
     reset({ zai: () => Response.json({ id: 'z', choices: [{ index: 0, message: { role: 'assistant', content: '' }, finish_reason: 'network_error' }] }) });
     await expectError(await gw.call(ZAI, { model: zai, messages }), 502, 'upstream_error');
-    // tool_choice: Z.ai accepts only "auto"; other values are dropped, never sent. No thinking,
+    // tool_choice: Z.ai accepts only "auto". "none" sends no tools at all, so the model cannot call
+    // one the client forbade; "required" and a named function are dropped, so a request to Z.ai by
+    // name no longer forces the call (auto never gives Z.ai such a request). No thinking,
     // tool_stream or do_sample unless needed: reasoning_effort "none" turns thinking off.
     const bodies = [];
     reset({ zai: call => { bodies.push(call.body); return completion({ content: 'ok' }); } });
     for (const toolChoice of ['auto', 'required', 'none', { type: 'function', function: { name: 'read_file' } }]) {
-      assert.equal((await gw.call(ZAI, { model: zai, messages, tools, tool_choice: toolChoice })).status, 200);
+      assert.equal((await gw.call(ZAI, { model: zai, messages, tools, tool_choice: toolChoice, parallel_tool_calls: false })).status, 200);
     }
     assert.deepEqual(bodies.map(body => body.tool_choice), ['auto', undefined, undefined, undefined]);
-    assert.ok(bodies.every(body => body.tools?.length === 1));
+    assert.deepEqual(bodies.map(body => body.tools?.length ?? 0), [1, 1, 0, 1], 'tool_choice "none" leaves the tools out');
+    assert.ok(bodies.every(body => !('parallel_tool_calls' in body)));
+    const none = buildUpstreamPayload(catalogEntry(zai), { messages, tools, tool_choice: 'none', parallel_tool_calls: true }, 1024);
+    assert.deepEqual(['tools', 'tool_choice', 'parallel_tool_calls'].filter(name => name in none), []);
+    assert.deepEqual(buildUpstreamPayload(catalogEntry('groq/openai/gpt-oss-120b'), { messages, tools, tool_choice: 'none' }, 1024)
+      .tool_choice, 'none', 'other upstreams keep tool_choice "none" as sent');
     assert.equal((await gw.call(ZAI, { model: zai, messages, reasoning_effort: 'none', temperature: 0.2, seed: 7, user: 'u' })).status, 200);
     assert.equal((await gw.call(ZAI, { model: 'zai/glm-4.5-flash', messages, reasoning_effort: 'high' })).status, 200);
     assert.deepEqual(bodies.at(-2).thinking, { type: 'disabled' });
@@ -1317,6 +1398,10 @@ try {
     assert.equal(classifyUpstreamFailure(429, body('1305')).kind, FailureKind.RATE_LIMITED);
     assert.equal(classifyUpstreamFailure(429, body('1113')).kind, FailureKind.AUTH);
     assert.equal(classifyUpstreamFailure(429, body('rate_limit_exceeded')).kind, FailureKind.RATE_LIMITED);
+    // The documented codes are strings; the same codes sent as numbers classify the same way.
+    assert.equal(classifyUpstreamFailure(429, body(1113)).kind, FailureKind.AUTH);
+    assert.equal(classifyUpstreamFailure(429, body(1302)).kind, FailureKind.RATE_LIMITED);
+    assert.equal(classifyUpstreamFailure(429, body(1305)).kind, FailureKind.RATE_LIMITED);
   });
 
   await test('free pool exhaustion fails over to paid capacity; no credits gives 402', async () => {

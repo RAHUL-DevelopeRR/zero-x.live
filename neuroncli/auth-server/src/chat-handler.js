@@ -6,7 +6,7 @@ import {
 import { globalSignatureCache } from './provider-request.js';
 import { claudeTurnHooks, globalClaudeTurnCache } from './anthropic-turns.js';
 import { partialUsageOf, usageNow } from './provider-adapter.js';
-import { globalRouter } from './router.js';
+import { globalRouter, lastResort } from './router.js';
 import { FailureKind, globalHealthTracker } from './provider-health.js';
 import { hubHealthForRouting, hubHealthRows, publishHealth } from './health-hub-client.js';
 import { readShared } from './health-share.js';
@@ -81,15 +81,19 @@ export function validateCompletionBody(body) {
   return null;
 }
 
-// What the request needs from a model (router.js lacks()).
+// What the request needs from a model (router.js lacks()). forcedTool: tool_choice "required" or
+// a named function (anything but "auto" and "none") forces a tool call, which auto gives only to
+// models that can be told so (router.js).
 const IMAGE_PARTS = new Set(['image_url', 'input_image', 'image']);
 export function requestNeeds(body) {
+  const tools = Array.isArray(body.tools) && body.tools.length > 0;
   return {
-    tools: Array.isArray(body.tools) && body.tools.length > 0,
+    tools,
     vision: body.messages.some(message => Array.isArray(message.content) &&
       message.content.some(part => IMAGE_PARTS.has(part?.type))),
     stream: body.stream === true,
     json: ['json_object', 'json_schema'].includes(body.response_format?.type),
+    forcedTool: tools && isSet(body.tool_choice) && body.tool_choice !== 'auto' && body.tool_choice !== 'none',
   };
 }
 
@@ -698,7 +702,8 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
         const result = await attempt(candidate, reservation, shareEnd(candidate), Date.now() - failoverStart < minAttemptMs);
         current = null;
         if (result.ok) {
-          if (route.sticky) router.remember(route.sticky, candidate.entry.id);
+          // A last-resort pool (router.js lastResort) leaves the conversation's earlier model remembered.
+          if (route.sticky && !lastResort(candidate)) router.remember(route.sticky, candidate.entry.id);
           return result.response;
         }
         if (candidate === first) firstMiss = result.kind;

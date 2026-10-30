@@ -125,8 +125,11 @@ Per request, in order: **capability** (tools, image input, streaming, JSON `resp
 **offer** (lifecycle + redistribution) → **caller policy** (trust tier, training) → **plan and
 region** → **size** (context, per-minute token budget) → **health** (this isolate's circuit breaker
 and HealthHub's shared busy/blurred pools) → **order**: free before paid; within a tier the
-conversation's previous model (sticky, `auto` only), then fewer penalties (degraded here or in the
-hub, ≥ 20 % recent errors, budget seen spent), then catalog quality order. Failover walks the same
+single-slot pools (a provider type's `free_concurrency`, Z.ai's free models) after every other
+pool, the conversation's previous model (sticky, `auto` only; a single-slot pool never becomes it)
+first, then fewer penalties (degraded here or in the hub, ≥ 20 % recent errors, budget seen
+spent), then catalog quality order. `auto` gives a request that forces a tool call (`tool_choice`
+`required` or a named function) only to models whose upstream can force one. Failover walks the same
 list, so a fallback never leaves the capability class. Quota is reserved atomically in Postgres
 before each attempt (`zerox_reserve_v2`, row locks; `check-quota-race.mjs` proves it on a real
 Postgres) and settled with the provider's usage.

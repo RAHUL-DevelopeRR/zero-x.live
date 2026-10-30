@@ -2,6 +2,7 @@ import { globalHealthTracker, HealthState } from './provider-health.js';
 import {
   AUTO_MODEL_ID, loadPlanPolicies, offeredEntries, planPolicy, poolKey, poolVerdicts, resolveModelId,
 } from './catalog.js';
+import { providerType } from './catalog-types.js';
 import { BYOK_OFFERS, offerById, servesOwnKeys } from './oiop/offers.js';
 import { DEFAULT_POLICY, describePolicy, policyBlock } from './oiop/policy.js';
 
@@ -45,6 +46,24 @@ const LACKS_MESSAGE = {
   streaming: 'This model does not support streaming.',
   json_mode: 'This model does not support response_format JSON output.',
 };
+
+// A request that forces a tool call (requestNeeds forcedTool) is never given by auto to a provider
+// type that takes tool_choice "auto" only (catalog-types.js tool_choice_auto_only: Z.ai), which
+// could answer without the call. Asked for by name, such a model serves it unforced (providers.js
+// buildUpstreamPayload).
+function cannotForce(entry, needs) {
+  return Boolean(needs.forcedTool) && Boolean(providerType(entry.provider)?.tool_choice_auto_only);
+}
+
+// A free pool of a provider type that runs a fixed number of requests at once (catalog-types.js
+// free_concurrency: Z.ai's free GLM models, one per account) is the last resort of its tier: it
+// goes after every other pool, degraded or spent ones included, and a conversation it served is
+// not pinned to it (StickyChoices; chat-handler.js remembers only other models). Pinned, one
+// fallback to it (say while Groq was busy) would put the conversation's next turns on a single
+// slot ahead of every other pool, each turn reserving it first.
+export function lastResort({ entry, pool }) {
+  return pool.tier === 'free' && (providerType(entry.provider)?.free_concurrency ?? null) !== null;
+}
 
 // Shared health from the HealthHub snapshot ({status, until} per pool key): busy and blurred
 // pools are skipped until their cooldown ends, so one isolate learns what another saw.
@@ -144,7 +163,7 @@ export class RoutingEngine {
     const offered = offeredEntries(env);
     let entries;
     if (auto) {
-      entries = offered.filter(entry => entry.auto_rank != null && !lacks(entry, required))
+      entries = offered.filter(entry => entry.auto_rank != null && !lacks(entry, required) && !cannotForce(entry, required))
         .sort((left, right) => left.auto_rank - right.auto_rank);
     } else {
       const entry = offered.find(item => item.id === resolved);
@@ -174,9 +193,10 @@ export class RoutingEngine {
     const usable = evaluated
       .filter(item => item.configured && !item.blocked && item.inPlan && item.region && item.fits && item.healthy)
       .map((item, index) => ({ item, index, penalty: this.penalty(item, sharedHealth, budgetState, now) }))
-      // Free pools first, then paid; within a tier the conversation's previous model, then the
-      // healthier pools, then quality/pool order.
+      // Free pools first, then paid; within a tier last-resort pools after the others, the
+      // conversation's previous model first, then the healthier pools, then quality/pool order.
       .sort((left, right) => TIER_RANK[left.item.pool.tier] - TIER_RANK[right.item.pool.tier]
+        || Number(lastResort(left.item)) - Number(lastResort(right.item))
         || Number(right.item.entry.id === stickyModel) - Number(left.item.entry.id === stickyModel)
         || left.penalty - right.penalty || left.index - right.index)
       .map(({ item }) => item);

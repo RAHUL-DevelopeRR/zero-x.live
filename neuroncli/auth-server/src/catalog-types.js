@@ -77,7 +77,7 @@ const ORG_MODEL = /^[a-z0-9][a-z0-9._-]{0,40}\/[a-z0-9][a-z0-9._-]{0,80}$/;
 const type = fields => ({
   hosted_flag: null, requires_flag: {}, free_geo_block: [], paid_pricing: 'listed_only', requires_cache_prices: false,
   max_daily_spend_usd: 0, paid_daily_cap_usd: null, base_url_env: null, discovery_defaults: null, models_dev: null, info: null,
-  free_concurrency: null,
+  free_concurrency: null, tool_choice_auto_only: false,
   ...fields,
 });
 
@@ -94,6 +94,12 @@ const type = fields => ({
  * /v1/models shows for the provider (src/oiop/models-dev.js). free_concurrency: requests that
  * each free pool (one model on one key) may run at once, enforced in Postgres as
  * p_pool.concurrency (src/capacity.js reservationArgs); null = no such limit. Rows cannot set it.
+ * A type's free pools with free_concurrency are the last resort of the free tier: after every
+ * other free pool, never a conversation's sticky model (src/router.js lastResort).
+ * tool_choice_auto_only: the upstream takes
+ * tool_choice "auto" only, so src/providers.js buildUpstreamPayload sends no tools for "none" and
+ * drops any other choice, and auto never gives the type a request that forces a tool call
+ * (src/router.js, chat-handler.js requestNeeds forcedTool).
  */
 export const PROVIDER_TYPES = deepFreeze({
   gemini: type({
@@ -142,11 +148,12 @@ export const PROVIDER_TYPES = deepFreeze({
   }),
   // Z.ai's free GLM Flash models (docs.z.ai). One request at a time per account and model (the
   // owner's console, 2026-10-29), so each free pool runs at most one request; no per-minute or
-  // daily limit is published. No paid pools: GLM-5.3-Flash ($0.15 / $0.50) is not offered.
+  // daily limit is published. tool_choice accepts "auto" only. No paid pools: GLM-5.3-Flash
+  // ($0.15 / $0.50) is not offered.
   zai: type({
     adapter: 'openai-compatible', base_url: 'https://api.z.ai/api/paas/v4', id_prefix: 'zai/',
     upstream: /^glm-[a-z0-9][a-z0-9.-]{0,60}$/, slots: { free: ['zai.free'], paid: [] }, models_var: 'ZAI_MODELS',
-    free_concurrency: 1, discovery_defaults: { limits: FREE_LIMITS.zai },
+    free_concurrency: 1, tool_choice_auto_only: true, discovery_defaults: { limits: FREE_LIMITS.zai },
     models_dev: 'zai', info: { name: 'Z.ai', homepage: 'https://z.ai' },
   }),
 });

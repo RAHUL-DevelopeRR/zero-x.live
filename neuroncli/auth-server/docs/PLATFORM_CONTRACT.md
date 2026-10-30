@@ -521,6 +521,9 @@ with HTTP 429 (code 1302). Migration `20261029001000_pool_concurrency.sql`:
 - **Where the limit comes from.** Reviewed code only: a provider type's `free_concurrency`
   (`src/catalog-types.js`) applies to each free pool of that type, one per model and key. Catalog
   rows cannot set or lift it.
+- **Routing.** Such pools are the free tier's last resort (`src/router.js` `lastResort`): `auto`
+  tries them after every other free pool, also degraded or spent ones, and never remembers them
+  as a conversation's model, so one fallback does not put the next turns on a single slot.
 - **Rollback.** `migrations/down/20261029001000_pool_concurrency.sql` (`psql -X -v ON_ERROR_STOP=1
   -f`) restores the `20261029000800` function; such pools then get the upstream's 429s instead.
 
