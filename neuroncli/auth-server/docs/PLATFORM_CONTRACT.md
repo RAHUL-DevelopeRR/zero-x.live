@@ -731,7 +731,8 @@ migration `20261029000400_oiop_offers.sql`; checks `check-oiop.mjs`, `check-quot
   `facts:null|{models_dev_id, name, family, canonical_model_id, release_date, knowledge, open_weights,
   reasoning, structured_output, modalities:{input, output}, list_price_per_million:{input, output}}`
   (`auto`: provider `zero-x`, empty offers, null ids and facts). Facts come from models.dev via the
-  cron (at most daily; KV key `oiop:models-dev:v1`).
+  cron (at most daily; record `oiop:models-dev:v1` in the Postgres record store
+  `gateway_session_store`, or in KV without a database; KV is read only while Postgres has none).
 - `GET /v1/models/stream` (same auth as `/v1/models`): `text/event-stream`; `retry: 5000`, then
   `event: catalog.updated` with `id: <status ETag>` and the `/v1/models/status` body at start and
   on every change, `: keepalive` comments every 15 s, closed after 10 minutes; `Last-Event-ID`

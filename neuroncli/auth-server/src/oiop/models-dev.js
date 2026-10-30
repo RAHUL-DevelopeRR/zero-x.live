@@ -1,12 +1,18 @@
 // Model facts and logos from models.dev (docs/OIOP.md "Catalog"). The catalog keeps its own
 // verified flags (tools, streaming, vision, context) for routing; models.dev adds what clients
 // show: family, release date, knowledge cutoff, open weights, structured output, list prices.
-// The cron refreshes a compact copy for catalog models once a day into KV
-// (refreshModelsDevFacts); /v1/models reads it (modelsDevFacts, 10 min per isolate) and never
-// fetches models.dev itself. Logos are models.dev/logos/<provider>.svg, falling back to the
-// provider's favicon.
+// The cron refreshes a compact copy for catalog models once a day (refreshModelsDevFacts);
+// /v1/models reads it (modelsDevFacts, 10 min per isolate) and never fetches models.dev itself.
+// Logos are models.dev/logos/<provider>.svg, falling back to the provider's favicon.
+//
+// The copy lives in the Postgres record store (gateway_session_store, src/session-store.js)
+// whenever the database is configured, so the Node server and a Worker whose SESSIONS_KV is
+// unbound share it; in KV only without a database. While a Worker has both (the move off KV), it
+// writes Postgres and reads KV only as long as Postgres holds no facts: the first refresh after the
+// deploy fills Postgres at once, however fresh KV's copy is, and a failed one carries KV's facts over.
 import { MODELS_DEV_URL } from '../discovery/sources.js';
 import { PROVIDER_TYPES } from '../catalog-types.js';
+import { databaseRecordStore } from '../session-store.js';
 
 // Gateway provider -> models.dev provider id (the catalog's upstream ids match models.dev's) and
 // the provider's display name and homepage, both from the provider-type registry
@@ -17,10 +23,13 @@ export const MODELS_DEV_PROVIDERS = Object.freeze(Object.fromEntries(Object.entr
 export const PROVIDER_INFO = Object.freeze(Object.fromEntries(Object.entries(PROVIDER_TYPES)
   .filter(([, registry]) => registry.info).map(([id, registry]) => [id, registry.info])));
 
+// The record's key in either store (the Postgres store hashes it, like every key it holds).
 export const FACTS_KV_KEY = 'oiop:models-dev:v1';
 const REFRESH_MS = 24 * 3600_000;
 const RETRY_MS = 3600_000;
 const READ_TTL_MS = 10 * 60_000;
+// The Postgres store's longest TTL; every daily refresh (or hourly retry) writes it again.
+const FACTS_TTL_SECONDS = 7 * 24 * 3600;
 const SLUG = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
 export function modelsDevId(entry) {
@@ -72,25 +81,50 @@ export function factsForEntries(document, entries) {
   return facts;
 }
 
+// Where the facts are kept (`primary`, written and read first) and where older facts may still be
+// (`fallback`: KV while a Worker still has it beside the database).
+function factStores(env) {
+  const database = databaseRecordStore(env ?? {});
+  const kv = env?.SESSIONS_KV || null;
+  return { primary: database || kv, fallback: database ? kv : null };
+}
+
+// A store's record, or null when it has none or cannot be read.
+async function readStored(store) {
+  if (!store) return null;
+  try {
+    const text = await store.get(FACTS_KV_KEY);
+    const stored = text ? JSON.parse(text) : null;
+    return stored && typeof stored === 'object' ? stored : null;
+  } catch {
+    return null;
+  }
+}
+
+const hasFacts = stored => Boolean(stored?.facts && typeof stored.facts === 'object' && Object.keys(stored.facts).length);
+
 /**
  * Cron: refreshes the stored facts when they are older than a day (an hour after a failure).
- * Returns { refreshed, models } or { skipped }. Without KV there is nowhere to keep them.
+ * Returns { refreshed, models } or { skipped }. Without a database or KV there is nowhere to keep them.
  */
 export async function refreshModelsDevFacts(env, entries, { now = Date.now(), fetchImpl = (...args) => fetch(...args) } = {}) {
-  const kv = env?.SESSIONS_KV;
-  if (!kv) return { skipped: 'no_kv' };
-  const stored = await kv.get(FACTS_KV_KEY, 'json').catch(() => null);
+  const { primary, fallback } = factStores(env);
+  if (!primary) return { skipped: 'no_store' };
+  const stored = await readStored(primary);
   const due = stored?.failed_at ? Date.parse(stored.failed_at) + RETRY_MS : Date.parse(stored?.fetched_at || 0) + REFRESH_MS;
   if (stored && Number.isFinite(due) && due > now) return { skipped: 'fresh' };
+  const write = record => primary.put(FACTS_KV_KEY, JSON.stringify(record), { expirationTtl: FACTS_TTL_SECONDS });
   try {
     const response = await fetchImpl(MODELS_DEV_URL, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(20_000) });
     if (!response.ok) throw new Error(`models.dev answered ${response.status}`);
     const facts = factsForEntries(await response.json(), entries);
-    await kv.put(FACTS_KV_KEY, JSON.stringify({ fetched_at: new Date(now).toISOString(), facts }));
+    await write({ fetched_at: new Date(now).toISOString(), facts });
     cache = null;
     return { refreshed: true, models: Object.keys(facts).length };
   } catch (error) {
-    await kv.put(FACTS_KV_KEY, JSON.stringify({ ...(stored || { facts: {} }), failed_at: new Date(now).toISOString() })).catch(() => {});
+    // The last facts stay (KV's, while Postgres has none yet) and the refresh is retried in an hour.
+    const kept = stored || await readStored(fallback) || { facts: {} };
+    await write({ ...kept, failed_at: new Date(now).toISOString() }).catch(() => {});
     console.warn('models.dev facts refresh failed', { message: String(error?.message).slice(0, 200) });
     return { refreshed: false };
   }
@@ -100,10 +134,11 @@ let cache = null; // { at, facts }
 
 // The stored facts by public model id ({} until the cron has stored them).
 export async function modelsDevFacts(env, now = Date.now()) {
-  const kv = env?.SESSIONS_KV;
-  if (!kv) return {};
+  const { primary, fallback } = factStores(env);
+  if (!primary) return {};
   if (cache && now - cache.at < READ_TTL_MS) return cache.facts;
-  const stored = await kv.get(FACTS_KV_KEY, 'json').catch(() => null);
+  let stored = await readStored(primary);
+  if (!hasFacts(stored)) stored = (await readStored(fallback)) || stored;
   cache = { at: now, facts: stored?.facts && typeof stored.facts === 'object' ? stored.facts : {} };
   return cache.facts;
 }

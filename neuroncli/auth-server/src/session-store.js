@@ -12,6 +12,13 @@ const storageKey = sha256Hex;
 // Raw key/value store: Cloudflare KV, or the Postgres store (which hashes keys itself).
 export function persistentSessionStore(env) {
   if (env.SESSIONS_KV) return env.SESSIONS_KV;
+  return databaseRecordStore(env);
+}
+
+// The Postgres store alone (gateway_session_store, TTLs of at most seven days), whether or not
+// SESSIONS_KV is bound, for records both runtimes must share (src/oiop/models-dev.js). Null
+// without a database.
+export function databaseRecordStore(env) {
   if (!databaseConfigured(env)) return null;
   if (!stores.has(env)) stores.set(env, {
     get: async key => (await accountRpc(env, 'zerox_session_get', { p_key: await storageKey(key) }))?.value ?? null,
