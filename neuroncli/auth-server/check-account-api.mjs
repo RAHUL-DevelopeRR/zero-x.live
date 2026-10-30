@@ -725,10 +725,19 @@ try {
 
   // ── 9. /health trimming, admin overview, scheduled maintenance ──
   const operatorEnv = { ...env, GATEWAY_ADMIN_TOKEN: OPERATOR };
-  assert.deepEqual((await json(await request('/health', { bindings: operatorEnv }))).body, { status: 'ok', service: 'neuroncli-gateway-worker', version: '2.0.0' });
+  assert.deepEqual((await json(await request('/health', { bindings: operatorEnv }))).body,
+    { status: 'ok', service: 'neuroncli-gateway-worker', version: '2.0.0', commit: null });
   assert.deepEqual(Object.keys((await json(await request('/health', { bindings: operatorEnv, token: 'wrong-operator-token-value' }))).body).sort(),
-    ['service', 'status', 'version']);
+    ['commit', 'service', 'status', 'version']);
+  // The deployed commit (C9: deploy.yml's --var GIT_COMMIT on the Worker, the release's REVISION on
+  // EC2), so a deploy can tell both runtimes run the same code.
+  assert.deepEqual((await json(await request('/health', { bindings: { ...operatorEnv, GIT_COMMIT: '1d4c444' } }))).body,
+    { status: 'ok', service: 'neuroncli-gateway-worker', version: '2.0.0', commit: '1d4c444' });
+  assert.equal((await json(await request('/health', { bindings: { ...operatorEnv, GIT_COMMIT: '' } }))).body.commit, null);
   const fullHealth = await json(await request('/health', { bindings: operatorEnv, token: OPERATOR }));
+  assert.equal(fullHealth.body.commit, null);
+  assert.equal((await json(await request('/health', { bindings: { ...operatorEnv, GIT_COMMIT: '1d4c444' }, token: OPERATOR }))).body.commit,
+    '1d4c444', 'the operator view reports it too');
   assert.equal(fullHealth.body.database_configured, true);
   assert.equal(fullHealth.body.billing_configured, false);
   assert.equal(fullHealth.body.session_encryption, false);

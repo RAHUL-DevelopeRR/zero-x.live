@@ -492,9 +492,11 @@ function takePkceStart(address) {
 
 // ── Routes ──
 
-// 1. Health check: anonymous callers learn only that the service is up.
+// 1. Health check: anonymous callers learn only that the service is up, and which commit runs
+// (GIT_COMMIT: deploy.yml's --var on the Worker, the release's REVISION file on EC2), so a deploy
+// can confirm the Worker and the Node server serve the same code. The repository is public.
 api.get('/health', async (c) => {
-  const status = { status: "ok", service: SERVICE, version: VERSION };
+  const status = { status: "ok", service: SERVICE, version: VERSION, commit: c.env?.GIT_COMMIT || null };
   if (!await isOperator(c)) return c.json(status);
   const { supabaseUrl, supabaseKey } = readIdentityConfig(c.env);
   c.header('Cache-Control', 'no-store');

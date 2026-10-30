@@ -93,6 +93,7 @@ const read_ = new Set([
 const NOT_CONFIGURATION = new Set([
   'AI', 'ASSETS', 'SESSIONS_KV', 'HEALTH_HUB', 'RELAY', 'RELEASES', // Worker bindings
   'NEURON_RUNTIME', // set by server.js itself
+  'GIT_COMMIT', // the release's REVISION file on the VM (server.js), deploy.yml's --var on the Worker
   'HEALTH_CANARIES', // read by the HealthHub Durable Object, which only runs on the Worker
   'EC2_PROXY_PREFIXES', 'EC2_PROXY_ORIGIN', // the Worker's EC2 proxy switch (src/ec2-proxy.js), which never runs on Node
   'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_CUSTOM_HEADERS', // Anthropic SDK variables the gateway pins
