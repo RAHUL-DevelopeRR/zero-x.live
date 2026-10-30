@@ -306,8 +306,13 @@ Resources:
                     mv /etc/ssh/sshd_config.d/60-zerox.conf /root/60-zerox.conf.rejected
                     echo 'sshd rejected 60-zerox.conf (moved to /root)' >&2; exit 1
                   fi
-                  /usr/sbin/sshd -T -C user=deploy,host=eice,addr=172.31.0.10 | grep -qx 'authorizedkeysfile none'
-                  /usr/sbin/sshd -T -C user=ubuntu,host=eice,addr=172.31.0.10 | grep -q '^authorizedkeysfile .ssh/authorized_keys'
+                  # Captured first: piping sshd -T into grep -q under pipefail fails (grep exits at the
+                  # first match, sshd then dies of SIGPIPE). The key command EC2 Instance Connect uses is
+                  # passed on ssh.service's command line, so sshd -T here shows it as none.
+                  deploy_cfg="$(/usr/sbin/sshd -T -C user=deploy,host=eice,addr=172.31.0.10)"
+                  grep -qx 'authorizedkeysfile none' <<<"$deploy_cfg"
+                  ubuntu_cfg="$(/usr/sbin/sshd -T -C user=ubuntu,host=eice,addr=172.31.0.10)"
+                  grep -q '^authorizedkeysfile .ssh/authorized_keys' <<<"$ubuntu_cfg"
                   systemctl try-reload-or-restart ssh
 
                   # Host firewall: inbound denied except SSH from this VPC (the endpoint connects from its
