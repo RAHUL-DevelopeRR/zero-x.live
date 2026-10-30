@@ -1,10 +1,10 @@
 # Zero-X gateway API (neuroncli/auth-server/server.js) on the Oracle VM, reached only through
-# Cloudflare Tunnel (cloudflared dials out; this listens on loopback). deploy/oracle/README.md.
+# Cloudflare Tunnel (cloudflared dials out; this listens on loopback). deploy/aws/README.md.
 #   sudo install -m 0644 zerox-gateway.service /etc/systemd/system/
 #   sudo systemctl daemon-reload && sudo systemctl enable --now zerox-gateway
 [Unit]
 Description=Zero-X gateway API (Node)
-Documentation=https://github.com/RAHUL-DevelopeRR/zero-x.live/tree/main/deploy/oracle
+Documentation=https://github.com/RAHUL-DevelopeRR/zero-x.live/tree/main/deploy/aws
 Wants=network-online.target
 # Ordering only: on reboot or shutdown systemd stops units in reverse order, so the gateway
 # drains its streams while cloudflared, which carries them, is still up.

@@ -5,7 +5,7 @@
 // this process's environment under the names in REQUIRED_SECRETS and OPTIONAL_SECRETS. Values
 // are never printed; the names of optional secrets that are not set are.
 //
-//   node deploy/oracle/gateway-env.mjs --wrangler neuroncli/auth-server/wrangler.toml --out "$RUNNER_TEMP/gateway.env"
+//   node deploy/aws/gateway-env.mjs --wrangler neuroncli/auth-server/wrangler.toml --out "$RUNNER_TEMP/gateway.env"
 //
 // The file is in systemd's EnvironmentFile syntax: KEY="value" with \ " ` $ escaped, one per
 // line. Settings that describe the VM itself (NODE_ENV, AUTH_HOST, TRUST_CLOUDFLARE, ...) are

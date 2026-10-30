@@ -1,4 +1,4 @@
-// scripts/cron.mjs (the Node server's 10-minute cron, deploy/oracle/zerox-cron.timer) runs the
+// scripts/cron.mjs (the Node server's 10-minute cron, deploy/aws/zerox-cron.timer) runs the
 // Worker's scheduled work against the database: stale reservations released, subscription
 // expiry, device grant purge and the discovery claim. Exit 0 when maintenance ran (or there is
 // no database), 1 when it failed. The database is a fake PostgREST on loopback.

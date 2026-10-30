@@ -1,7 +1,7 @@
 name: Deploy gateway to Oracle VM
 
 # Manual only: Actions > "Deploy gateway to Oracle VM" > Run workflow, on the branch to ship.
-# Ships neuroncli/auth-server to the VM as a new release (deploy/oracle/README.md), writes the
+# Ships neuroncli/auth-server to the VM as a new release (deploy/aws/README.md), writes the
 # gateway's environment from wrangler.toml [vars] and the same secrets deploy.yml gives the
 # Worker, restarts zerox-gateway (in-flight streams drain first) and checks /ready on the VM
 # over loopback (plan limits, session store and catalog load from the database). A failed check
@@ -56,7 +56,7 @@ jobs:
 
       # deploy.yml's secret set (REQUIRED_SECRETS, OPTIONAL_SECRETS and one env entry per name),
       # except that the secrets the VM must share with the Worker to behave like it are required
-      # here (check-oracle-deploy.mjs keeps the lists in step). Built before anything reaches the
+      # here (check-aws-deploy.mjs keeps the lists in step). Built before anything reaches the
       # VM, so a missing secret changes nothing there. CLOUDFLARE_API_TOKEN, the Worker deploy
       # token, is deliberately not passed to the VM.
       - name: Build the gateway environment
@@ -81,7 +81,7 @@ jobs:
         run: |
           set +x
           umask 077
-          node deploy/oracle/gateway-env.mjs --wrangler neuroncli/auth-server/wrangler.toml --out "$RUNNER_TEMP/gateway.env"
+          node deploy/aws/gateway-env.mjs --wrangler neuroncli/auth-server/wrangler.toml --out "$RUNNER_TEMP/gateway.env"
 
       - name: Configure SSH
         env:
@@ -120,7 +120,7 @@ jobs:
           rm -f "$RUNNER_TEMP/gateway.env"
 
       - name: Activate and check /ready
-        run: ssh zerox bash -s -- "$RELEASE" < deploy/oracle/activate-release.sh
+        run: ssh zerox bash -s -- "$RELEASE" < deploy/aws/activate-release.sh
 
       - name: Remove the SSH key and the environment file
         if: always()

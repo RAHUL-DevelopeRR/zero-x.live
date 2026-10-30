@@ -1,6 +1,6 @@
 # Zero-X gateway on AWS (EC2, ap-south-1)
 
-One Ubuntu 24.04 arm64 VM (t4g.small) runs the same Node gateway as `deploy/oracle` (`server.js`,
+One Ubuntu 24.04 arm64 VM (t4g.small) runs the Node gateway (`server.js`,
 the systemd units, `activate-release.sh`). Users reach it only through Cloudflare Tunnel, which
 dials out from the VM. Admin and CI SSH reach it only through an EC2 Instance Connect Endpoint, so
 no port faces the internet.
@@ -209,5 +209,5 @@ sudo -u deploy install -m 0600 /dev/stdin /etc/zerox/gateway.env
 
 ## Units
 
-- Install `zerox-gateway.service` from `deploy/oracle` and check it with `sudo systemd-analyze verify`.
+- Install the gateway unit from `deploy/aws` and check it with `sudo systemd-analyze verify`.
 - Do **not** install or enable `zerox-cron.timer` until the cutover runbook's cron step. Until then the Worker's cron owns that schedule.

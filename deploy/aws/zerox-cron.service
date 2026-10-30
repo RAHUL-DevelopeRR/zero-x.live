@@ -1,9 +1,9 @@
 # One run of the gateway's 10-minute cron (scripts/cron.mjs: stale reservation release,
 # subscription expiry, device grant purge, provider discovery), started by zerox-cron.timer.
-# Same user, environment and sandbox as zerox-gateway.service. deploy/oracle/README.md.
+# Same user, environment and sandbox as zerox-gateway.service. deploy/aws/README.md.
 [Unit]
 Description=Zero-X gateway cron (scheduled maintenance and discovery)
-Documentation=https://github.com/RAHUL-DevelopeRR/zero-x.live/tree/main/deploy/oracle
+Documentation=https://github.com/RAHUL-DevelopeRR/zero-x.live/tree/main/deploy/aws
 Wants=network-online.target
 After=network-online.target
 

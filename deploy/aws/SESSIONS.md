@@ -1,7 +1,8 @@
-# Sessions in the hybrid (Worker + Oracle VM)
+# Sessions in the hybrid (Worker + EC2 VM)
 
-In phase 2 a CLI signs in through the Worker (`zero-x.live/auth/*`) and then sends every
-completion to the VM (`zero-x.live/v1/*`). Both must find the same session for the same token.
+From cutover step 2 on ([CUTOVER.md](CUTOVER.md)) a CLI signs in through the Worker
+(`zero-x.live/auth/*`) and then sends every completion to the VM (`zero-x.live/v1/*`, which the
+Worker forwards). Both must find the same session for the same token.
 Today they would not.
 
 ## How the store is chosen (code)
@@ -46,8 +47,8 @@ the Worker:
 - KV's free-plan write limit (1,000 a day) stops applying to sessions.
 - The two KV-only caches stop: the cross-isolate health share (`health-share.js`; the HealthHub
   Durable Object still shares pool health on the Worker) and the models.dev facts in
-  `/v1/models` (`oiop/models-dev.js`), which the VM never had either. `/v1/models` keeps working
-  without those extra facts. Moving the facts to Postgres is a separate change if they matter.
+  `/v1/models` (`oiop/models-dev.js`). `/v1/models` keeps working without those extra facts;
+  storing them in Postgres (so both runtimes have them) is a separate change.
 
 Not chosen: a code switch that makes `session-store.js` ignore KV for records while the caches
 keep it (smaller blast radius, but a code change in four places of the store); and a forced
@@ -83,7 +84,7 @@ and wrangler logged in (`npx wrangler login`) or `CLOUDFLARE_API_TOKEN` with Wor
    `node scripts/kv-sessions-to-postgres.mjs --apply --namespace-id <id> --wrangler "npx wrangler@4.147.0"`
    Sessions minted on the Worker since step 2 are already in Postgres and stay as they are.
 4. **Check**: an existing login still works against the Worker (`neuron auth status`) and, with
-   `NEURON_API_BASE=https://gw.zero-x.live/v1`, against the VM; full `/health` on the Worker shows
+   `NEURON_API_BASE=https://aws.zero-x.live/v1`, against the VM; full `/health` on the Worker shows
    `kv_bound: false`. Run the same `--apply` again if `failed` was not 0 (it only adds what is
    missing).
 
@@ -95,8 +96,9 @@ only declines to extend a session that is no longer indexed), so it would work u
 
 ## Rollback
 
-Keep Postgres: rolling the VM back (phase 2 rollback in README.md) does not need KV, since the
-Worker serves sessions from Postgres as well. Only if Postgres sessions themselves are the
-problem: restore the `[[kv_namespaces]]` block and redeploy. Records written to KV before the
+Keep Postgres: taking traffic off the VM (`EC2_PROXY_PREFIXES`, [CUTOVER.md](CUTOVER.md)) does not
+need KV, since the Worker serves sessions from Postgres as well. Only if Postgres sessions
+themselves are the problem: push the pre-staged `rollback/kv-rebind` branch, which restores the
+`[[kv_namespaces]]` block (CUTOVER.md, "Pre-staged rollback branches"). Records written to KV before the
 switch are still there until their TTL; sessions created after it exist only in Postgres, and
 those users sign in again.

@@ -4,7 +4,7 @@
 // CPU per request and per token, and the most streams it carried within the limits below.
 //
 //   cd neuroncli/auth-server && npm ci        # a checkout of the release, not /opt/zerox/gateway
-//   node ../../deploy/oracle/loadtest.mjs --streams 25,50,100,200 --tokens 300 --body-kb 100 --rate 50
+//   node ../../deploy/aws/loadtest.mjs --streams 25,50,100,200 --tokens 300 --body-kb 100 --rate 50
 //
 // --body-kb pads each request with earlier turns (code and tool output, JSON-escaped like a
 // coding agent's history) to about that size; the per-request cost (parsing, routing, the

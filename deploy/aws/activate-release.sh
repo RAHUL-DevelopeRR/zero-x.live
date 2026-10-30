@@ -1,6 +1,6 @@
 #!/bin/bash
 # Runs on the VM as the deploy user (.github/workflows/deploy-oracle.yml pipes it over SSH):
-#   ssh zerox bash -s -- <release id> < deploy/oracle/activate-release.sh
+#   ssh zerox bash -s -- <release id> < deploy/aws/activate-release.sh
 # Makes /opt/zerox/releases/<release id> current with /etc/zerox/gateway.env.next (when there is
 # one) as its environment, restarts zerox-gateway (in-flight streams drain first, up to 110 s)
 # and checks /ready on loopback: plan limits, the session store and the catalog load from the
@@ -8,7 +8,7 @@
 # (anonymous /health answers a static ok). A failed check puts the previous release and
 # environment back and exits 1. Keeps the current release and the three newest others; older
 # ones are deleted. ZEROX_ROOT and ZEROX_ETC stand in for /opt/zerox and /etc/zerox in
-# check-oracle-deploy.mjs, which runs this script against a temporary tree.
+# check-aws-deploy.mjs, which runs this script against a temporary tree.
 set -euo pipefail
 release="${1:-}"
 [[ "$release" =~ ^[0-9]{14}-[0-9a-f]{12}$ ]] || { echo "invalid release id"; exit 2; }

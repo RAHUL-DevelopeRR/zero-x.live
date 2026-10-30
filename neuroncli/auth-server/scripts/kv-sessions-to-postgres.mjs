@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Operator tool, run once when the Worker stops using Workers KV for sessions (deploy/oracle
+// Operator tool, run once when the Worker stops using Workers KV for sessions (deploy/aws
 // SESSIONS.md): copies the session records in SESSIONS_KV into the Postgres session store
 // (gateway_session_store, zerox_session_put), so sign-ins made on the Worker keep working on
 // both the Worker and the Node server on the VM. Dry run by default (counts only).
