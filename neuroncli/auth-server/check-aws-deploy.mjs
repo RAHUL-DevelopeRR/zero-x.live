@@ -1,10 +1,12 @@
-// The EC2 VM kit (deploy/aws, .github/workflows/deploy-oracle.yml until the EC2 job replaces it)
-// stays in step with the gateway: the environment file builder (wrangler.toml [vars] plus
-// secrets, systemd quoting, the VM's own settings refused), the workflow's secret set (deploy.yml's,
-// the parity secrets required), actions pinned by commit, every variable the gateway reads listed
-// in gateway.env.example, the units and activation script agreeing on paths, port and the
-// shutdown grace, and activate-release.sh run against a temporary tree. Values from wrangler.toml
-// are never printed.
+// The EC2 VM kit (deploy/aws, job ec2 of .github/workflows/deploy.yml, the zerox-ci stack) stays in
+// step with the gateway: the environment file builder (wrangler.toml [vars], VM-only values and
+// secrets, systemd quoting, the VM's own settings refused), job ec2 (gated, after the Worker,
+// OIDC, the Worker's secret set with the parity secrets required, pinned actions, the commit
+// check), the CI role's least privilege, every variable the gateway reads listed in
+// gateway.env.example, the two-instance units and the exact deploy sudoers; then runs, against
+// temporary trees with stub commands: activate-release.sh (swap, rollback, prune), host-setup.sh,
+// package-release.sh on a fixture repository and on HEAD, and push-release.sh with the VM side
+// run locally. Values from wrangler.toml are never printed.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync, statSync, writeFileSync } from 'node:fs';
@@ -40,7 +42,16 @@ const built = buildEnvFile({ vars: { PLAIN: 'v' }, env: { SECRET_A: 's$1', SECRE
 assert.deepEqual(built.text.trim().split('\n').slice(1), ['PLAIN="v"', 'SECRET_A="s\\$1"']);
 assert.deepEqual(built.skipped, ['SECRET_B', 'SECRET_C']);
 assert.throws(() => buildEnvFile({ vars: {}, env: {}, required: ['SECRET_A'], optional: [] }), /Required secret SECRET_A/);
-assert.throws(() => buildEnvFile({ vars: { X: '1' }, env: { X: '2' }, required: [], optional: ['X'] }), /both a wrangler var/);
+assert.throws(() => buildEnvFile({ vars: { X: '1' }, env: { X: '2' }, required: [], optional: ['X'] }), /both a plain value and a secret/);
+// VM-only plain values (EXTRA_WEB_HOSTS from a repository variable): written when set, after [vars].
+const withHosts = buildEnvFile({ vars: { PLAIN: 'v' }, env: { EXTRA_WEB_HOSTS: 'aws.zero-x.live', SECRET_A: 's' },
+  required: ['SECRET_A'], optional: [], vmVars: ['EXTRA_WEB_HOSTS'] });
+assert.deepEqual(withHosts.text.trim().split('\n').slice(1), ['PLAIN="v"', 'EXTRA_WEB_HOSTS="aws.zero-x.live"', 'SECRET_A="s"']);
+assert.ok(!/EXTRA_WEB_HOSTS/.test(buildEnvFile({ vars: {}, env: { EXTRA_WEB_HOSTS: '' }, required: [], optional: [], vmVars: ['EXTRA_WEB_HOSTS'] }).text),
+  'unset (production): not written');
+assert.throws(() => buildEnvFile({ vars: { X: '1' }, env: {}, required: [], optional: [], vmVars: ['X'] }), /both a wrangler var and a VM variable/);
+assert.throws(() => buildEnvFile({ vars: {}, env: {}, required: [], optional: ['X'], vmVars: ['X'] }), /both a plain value and a secret/);
+assert.throws(() => buildEnvFile({ vars: {}, env: {}, required: [], optional: [], vmVars: ['AUTH_PORT'] }), /not allowed in the VM environment/);
 // systemd lets EnvironmentFile= override the unit's Environment=, so the file may never carry
 // the VM's runtime settings, the release's commit, the Worker's proxy switch or a development
 // switch, from [vars] or from a secret.
@@ -53,29 +64,83 @@ for (const name of ['NODE_ENV', 'AUTH_HOST', 'AUTH_PORT', 'AUTH_REUSE_PORT', 'RE
 }
 assert.ok(buildEnvFile({ vars, env: {}, required: [], optional: [] }).text, 'the real [vars] hold none of them');
 
-// ── Workflow: deploy.yml's secrets and nothing else, actions pinned ──
-// The secrets the VM must share with the Worker to behave like it (users' sealed OpenRouter
-// keys, the provider key vault, device approvals) are required here: a value the Worker got
-// outside GitHub would otherwise leave the VM without it, silently.
-const PARITY_SECRETS = ['SESSION_ENCRYPTION_KEY', 'PROVIDER_KEYS_KEK', 'DEVICE_APPROVAL_SECRET'];
+// ── deploy.yml: the Worker job, then job ec2 for the same commit ──
 const deploy = read('.github/workflows/deploy.yml');
-const oracle = read('.github/workflows/deploy-oracle.yml');
+assert.ok(!existsSync(join(repo, '.github/workflows/deploy-oracle.yml')), 'the manual Oracle workflow is retired');
+for (const [, action] of deploy.matchAll(/uses:\s*(\S+)/g)) assert.match(action, /@[0-9a-f]{40}$/, `${action} is pinned by commit`);
+assert.match(deploy, /^permissions:\n {2}contents: read$/m, 'the workflow token reads only');
+const jobs = deploy.split(/^jobs:\n/m)[1];
+const [workerJob, ec2Job] = jobs.split(/^ {2}ec2:\n/m);
+assert.ok(ec2Job, 'job ec2');
+assert.ok(!/id-token/.test(workerJob), 'only job ec2 may request an OIDC token');
+assert.match(ec2Job, /^ {4}needs: deploy$/m, 'after the Worker deploy of the same run (the same commit)');
+assert.match(ec2Job, /^ {4}if: vars\.EC2_DEPLOY == 'true'$/m, 'off until the repository variable says so');
+assert.match(ec2Job, /^ {4}environment: production$/m, 'approved in the production environment');
+assert.match(ec2Job, /^ {4}permissions:\n {6}contents: read\n {6}id-token: write$/m);
+assert.match(ec2Job, /^ {6}cancel-in-progress: false$/m, 'a deploy is never cancelled half way');
+assert.match(ec2Job, /uses: aws-actions\/configure-aws-credentials@[0-9a-f]{40} # v\d/);
+assert.match(ec2Job, /^ {10}role-to-assume: \$\{\{ vars\.AWS_DEPLOY_ROLE_ARN \}\}$/m);
+assert.match(ec2Job, /^ {10}aws-region: ap-south-1$/m);
+assert.ok(!/aws-access-key-id|aws-secret-access-key|secrets\.AWS_/.test(deploy), 'no stored AWS keys');
+// The Worker reports its commit in /health.
+assert.match(workerJob, /run: echo "short=\$\{GITHUB_SHA::7\}" >> "\$GITHUB_OUTPUT"/);
+assert.match(workerJob, /^ {10}command: deploy --var GIT_COMMIT:\$\{\{ steps\.commit\.outputs\.short \}\}$/m);
+// Job ec2: the Worker's secret set, except that the secrets the VM must share with the Worker
+// to behave like it (users' sealed OpenRouter keys, the provider key vault, device approvals,
+// the proxy secret the Worker sends) are required, and the VM's database key is its own secret.
+// A value the Worker got outside GitHub would otherwise leave the VM without it, silently.
+const PARITY_SECRETS = ['SESSION_ENCRYPTION_KEY', 'PROVIDER_KEYS_KEK', 'DEVICE_APPROVAL_SECRET', 'EC2_PROXY_SECRET'];
 const list = (text, name) => new RegExp(`^\\s*${name}:\\s*(.+)$`, 'm').exec(text)?.[1].trim().split(/\s+/);
-assert.deepEqual(list(oracle, 'REQUIRED_SECRETS'), [...list(deploy, 'REQUIRED_SECRETS'), ...PARITY_SECRETS]);
-assert.deepEqual(list(oracle, 'OPTIONAL_SECRETS'), list(deploy, 'OPTIONAL_SECRETS').filter(name => !PARITY_SECRETS.includes(name)));
-assert.ok(PARITY_SECRETS.every(name => list(deploy, 'OPTIONAL_SECRETS').includes(name)), 'deploy.yml gives the Worker the parity secrets');
-for (const name of [...list(oracle, 'REQUIRED_SECRETS'), ...list(oracle, 'OPTIONAL_SECRETS')]) {
-  assert.match(oracle, new RegExp(`^\\s*${name}: \\$\\{\\{ secrets\\.${name} \\}\\}$`, 'm'), `${name} is passed`);
+for (const name of [...list(workerJob, 'REQUIRED_SECRETS'), ...list(workerJob, 'OPTIONAL_SECRETS')]) {
+  const passed = [...workerJob.matchAll(new RegExp(`^\\s*${name}: \\$\\{\\{ secrets\\.${name} \\}\\}$`, 'gm'))].length;
+  assert.equal(passed, 2, `${name} is in both env blocks of the Worker job`);
 }
-const secretsUsed = new Set([...oracle.matchAll(/secrets\.([A-Z0-9_]+)/g)].map(match => match[1]));
-for (const name of secretsUsed) {
-  assert.ok(name.startsWith('ORACLE_') || list(oracle, 'OPTIONAL_SECRETS').includes(name) || list(oracle, 'REQUIRED_SECRETS').includes(name),
+assert.ok(PARITY_SECRETS.every(name => list(workerJob, 'OPTIONAL_SECRETS').includes(name)), 'the Worker gets the parity secrets');
+assert.deepEqual(list(ec2Job, 'REQUIRED_SECRETS'), [...list(workerJob, 'REQUIRED_SECRETS'), ...PARITY_SECRETS]);
+assert.deepEqual(list(ec2Job, 'OPTIONAL_SECRETS'), list(workerJob, 'OPTIONAL_SECRETS').filter(name => !PARITY_SECRETS.includes(name)));
+assert.deepEqual(list(ec2Job, 'VM_VARS'), ['EXTRA_WEB_HOSTS']);
+assert.match(ec2Job, /^ {10}EXTRA_WEB_HOSTS: \$\{\{ vars\.EXTRA_WEB_HOSTS \}\}$/m);
+const vmSecretSource = { SUPABASE_SECRET_KEY: 'SUPABASE_SECRET_KEY_EC2' };
+for (const name of [...list(ec2Job, 'REQUIRED_SECRETS'), ...list(ec2Job, 'OPTIONAL_SECRETS')]) {
+  assert.match(ec2Job, new RegExp(`^\\s*${name}: \\$\\{\\{ secrets\\.${vmSecretSource[name] || name} \\}\\}$`, 'm'), `${name} is passed`);
+}
+const ec2Secrets = new Set([...ec2Job.matchAll(/secrets\.([A-Z0-9_]+)/g)].map(match => match[1]));
+for (const name of ec2Secrets) {
+  assert.ok([...list(ec2Job, 'REQUIRED_SECRETS'), ...list(ec2Job, 'OPTIONAL_SECRETS'), ...Object.values(vmSecretSource)].includes(name),
     `${name} is not one of the gateway secrets`);
 }
-assert.ok(!secretsUsed.has('CLOUDFLARE_API_TOKEN'), 'the Worker deploy token never reaches the VM');
-assert.match(oracle, /^on:\s*\n\s+workflow_dispatch:\s*$/m, 'manual trigger only');
-for (const [, action] of oracle.matchAll(/uses:\s*(\S+)/g)) assert.match(action, /@[0-9a-f]{40}$/, `${action} is pinned by commit`);
-assert.ok(oracle.indexOf('gateway-env.mjs') < oracle.indexOf('rsync '), 'a missing secret fails before the VM is touched');
+assert.ok(!ec2Secrets.has('CLOUDFLARE_API_TOKEN') && !ec2Secrets.has('SUPABASE_SECRET_KEY'), 'no Worker deploy token or Worker database key on the VM');
+const step = text => ec2Job.indexOf(text);
+assert.ok(step('gateway-env.mjs') > 0 && step('gateway-env.mjs') < step('configure-aws-credentials') &&
+  step('configure-aws-credentials') < step('push-release.sh'), 'a missing secret fails before AWS or the VM is touched');
+assert.match(ec2Job, /deploy\/aws\/push-release\.sh --os-user deploy --lookup tags \\\n\s+--env-file "\$RUNNER_TEMP\/gateway\.env" --known-hosts "\$RUNNER_TEMP\/known_hosts"/);
+assert.match(ec2Job, /^ {10}EC2_KNOWN_HOSTS: \$\{\{ vars\.EC2_KNOWN_HOSTS \}\}$/m, 'the host key is checked, never trusted on first use');
+assert.ok(step('push-release.sh') < step('want="${GITHUB_SHA::7}"') && /https:\/\/\$1\/health/.test(ec2Job) && /hosts="zero-x\.live"/.test(ec2Job),
+  'then zero-x.live (and the test host) must report this commit');
+assert.match(ec2Job, /if: always\(\)\n\s+run: rm -f "\$RUNNER_TEMP\/gateway\.env"/, 'the environment file is removed');
+
+// ── ci-role.yaml (stack zerox-ci): trust only production of this repository; three permissions ──
+const ciRole = read('deploy/aws/ci-role.yaml');
+const ciCode = ciRole.replace(/^\s*#.*$/gm, '');
+assert.match(ciCode, /Url: https:\/\/token\.actions\.githubusercontent\.com\n\s+ClientIdList: \[sts\.amazonaws\.com\]/);
+assert.ok(!/ThumbprintList/.test(ciCode), 'IAM verifies the GitHub certificate chain itself; no pinned thumbprint');
+assert.match(ciCode, /RoleName: zerox-github-deploy\n/);
+assert.match(ciCode, /MaxSessionDuration: 3600\n/);
+assert.match(ciCode, /Action: sts:AssumeRoleWithWebIdentity\n\s+Condition:\n\s+StringEquals:\n\s+'token\.actions\.githubusercontent\.com:aud': sts\.amazonaws\.com\n\s+'token\.actions\.githubusercontent\.com:sub': 'repo:RAHUL-DevelopeRR\/zero-x\.live:environment:production'\n/,
+  'exact audience and subject: only jobs in the production environment of this repository');
+const actions = [...ciCode.matchAll(/^\s*Action: (.+)$/gm)].flatMap(([, value]) => value.replace(/^\[|\]$/g, '').split(',').map(item => item.trim()));
+assert.deepEqual(actions.sort(), ['ec2-instance-connect:OpenTunnel', 'ec2-instance-connect:SendSSHPublicKey', 'ec2:DescribeInstanceConnectEndpoints',
+  'ec2:DescribeInstances', 'sts:AssumeRoleWithWebIdentity'].sort(), 'nothing but the trust, the tunnel, the one-time key and the two lookups');
+assert.ok(!/ManagedPolicyArns|NotAction|NotResource|Action: .*\*/.test(ciCode), 'no AWS managed policy, no negation, no wildcard action');
+const statements = ciCode.split(/^\s*- Sid: /m).slice(1);
+const statement = sid => statements.find(text => text.startsWith(sid)) || '';
+assert.equal(statements.length, 4, 'one trust statement and three permission statements');
+assert.match(statement('TunnelToSshOnly'), /Resource: !Sub 'arn:\$\{AWS::Partition\}:ec2:\$\{AWS::Region\}:\$\{AWS::AccountId\}:instance-connect-endpoint\/\$\{InstanceConnectEndpointId\}'\n\s+Condition:\n\s+NumericEquals:\n\s+'ec2-instance-connect:remotePort': '22'\n/);
+assert.match(statement('OneTimeKeyForDeployOnly'), /Resource: !Sub 'arn:\$\{AWS::Partition\}:ec2:\$\{AWS::Region\}:\$\{AWS::AccountId\}:instance\/\$\{InstanceId\}'\n\s+Condition:\n\s+StringEquals:\n\s+'ec2:osuser': deploy\n/);
+assert.match(statement('FindInstanceAndEndpoint'), /Action: \[ec2:DescribeInstances, ec2:DescribeInstanceConnectEndpoints\]\n\s+Resource: '\*'/);
+assert.equal([...ciCode.matchAll(/Resource: '\*'/g)].length, 1, 'a wildcard resource only for the Describe actions');
+assert.match(ciCode, /Roles: \[!Ref DeployRole\]/, 'the policy is attached to this role only');
+assert.ok(!/\b\d{12}\b/.test(ciCode), 'no account id in the template');
 
 // ── gateway.env.example names every variable the gateway reads ──
 function sources(dir) {
@@ -626,4 +691,4 @@ if (ran && headHasKit) {
   }
 }
 
-console.log(`PASS: EC2 kit: env file from [vars] and the deploy.yml secrets (systemd quoting, VM settings refused), parity secrets required, pinned workflow, complete env template, two gateway instances on one port with their own readiness ports, cron in the same sandbox and never enabled by setup, exact deploy sudoers, /v1 base URLs${ran ? ', activation run (new instance ready before the old one stops, rollback without a gap, commit check, prune), host setup run (sudoers checked, cloud-init rule removed, idempotent)' : ''}${packaged ? ', release tarball (.assetsignore as wrangler reads it, gateway without tests, kit, REVISION, tracked secrets and working files refused), push and install through stub endpoint and ssh (CI with its env file, the same commit again, the laptop without secrets, host key required)' : ''}${packagedHead ? ', HEAD packaged' : ''}`);
+console.log(`PASS: EC2 kit: env file from [vars], VM-only values and the Worker's secrets (systemd quoting, VM settings refused), job ec2 gated after the Worker with OIDC, pinned actions, parity secrets required and the commit checked, CI role limited to the tunnel, the deploy key and two lookups, complete env template, two gateway instances on one port with their own readiness ports, cron in the same sandbox and never enabled by setup, exact deploy sudoers, /v1 base URLs${ran ? ', activation run (new instance ready before the old one stops, rollback without a gap, commit check, prune), host setup run (sudoers checked, cloud-init rule removed, idempotent)' : ''}${packaged ? ', release tarball (.assetsignore as wrangler reads it, gateway without tests, kit, REVISION, tracked secrets and working files refused), push and install through stub endpoint and ssh (CI with its env file, the same commit again, the laptop without secrets, host key required)' : ''}${packagedHead ? ', HEAD packaged' : ''}`);

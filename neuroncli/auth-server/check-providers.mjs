@@ -337,8 +337,10 @@ try {
   assert.equal(zaiCalls.length, 1, 'operator health makes no Z.ai call');
 
   // deploy.yml pushes every provider key the hosted catalog reads: a secret missing from
-  // OPTIONAL_SECRETS or from either env block never reaches the Worker.
-  const workflow = readFileSync(new URL('../../.github/workflows/deploy.yml', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  // OPTIONAL_SECRETS or from either env block never reaches the Worker. Only the Worker's job is
+  // read here; job ec2 (the VM) is kept in step with it by check-aws-deploy.mjs.
+  const workflow = readFileSync(new URL('../../.github/workflows/deploy.yml', import.meta.url), 'utf8').replace(/\r\n/g, '\n')
+    .split(/^ {2}ec2:\n/m)[0];
   const optional = workflow.match(/OPTIONAL_SECRETS: ([^\n]+)/)[1].trim().split(/\s+/);
   const catalogKeys = [...new Set(CATALOG.flatMap(entry => entry.pools.map(pool => pool.key_var)).filter(Boolean))].sort();
   assert.deepEqual(catalogKeys, ['ANTHROPIC_API_KEY', 'GEMINI_API_KEY', 'GEMINI_PAID_API_KEY', 'GLM_API_KEY', 'GROQ_API_KEY',
