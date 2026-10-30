@@ -36,6 +36,9 @@ provider off.
 | `AUTH_HOST` / `AUTH_PORT` | var (Node) | `127.0.0.1` / `8787` | Bind address and port (`0` = any free port, logged at start). |
 | `NEURON_API_ONLY` | var (Node) | unset | `true` = API only, no website assets. |
 | `NEURON_RUNTIME` | set by server.js | — | Marks the Node runtime; never set it on the Worker. |
+| `TRUST_CLOUDFLARE` | var (Node) | unset | `true` behind Cloudflare Tunnel: the per-IP limits use `CF-Connecting-IP`, honoured only from a loopback peer (cloudflared) and only when it is one valid address. Unset: the socket address, so every tunnel visitor would share one bucket. |
+| `SHUTDOWN_GRACE_MS` | var (Node) | `110000` | On SIGTERM the listener closes and requests in flight get this long to finish (and settle) before they are cut. Keep systemd's `TimeoutStopSec` above it. |
+| `SSE_HEARTBEAT_MS` | var (Node) | `30000` | An event stream with no output for this long gets an SSE comment, so Cloudflare's 125 s origin read timeout never ends a quiet stream. |
 | `DEV_AUTH_ENABLED` | var (Node) | unset | Local dev identity (`dev_<base64url(email)>`). Ignored unless the Node server is bound to loopback; never in wrangler files. |
 | `ALLOW_ANONYMOUS_SESSIONS` | var | unset | Development only: account-less sessions with an in-memory store. |
 | `NODE_ENV` | var (Node) | — | `production` refuses the PGlite driver. |
