@@ -83,7 +83,7 @@ and wrangler logged in (`npx wrangler login`) or `CLOUDFLARE_API_TOKEN` with Wor
    `node scripts/kv-sessions-to-postgres.mjs --apply --namespace-id <id> --wrangler "npx wrangler@4.147.0"`
    Sessions minted on the Worker since step 2 are already in Postgres and stay as they are.
 4. **Check**: an existing login still works against the Worker (`neuron auth status`) and, with
-   `NEURON_API_BASE=https://gw.zero-x.live`, against the VM; full `/health` on the Worker shows
+   `NEURON_API_BASE=https://gw.zero-x.live/v1`, against the VM; full `/health` on the Worker shows
    `kv_bound: false`. Run the same `--apply` again if `failed` was not 0 (it only adds what is
    missing).
 

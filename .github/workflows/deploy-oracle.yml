@@ -3,8 +3,12 @@ name: Deploy gateway to Oracle VM
 # Manual only: Actions > "Deploy gateway to Oracle VM" > Run workflow, on the branch to ship.
 # Ships neuroncli/auth-server to the VM as a new release (deploy/oracle/README.md), writes the
 # gateway's environment from wrangler.toml [vars] and the same secrets deploy.yml gives the
-# Worker, restarts zerox-gateway (in-flight streams drain first) and checks /health on the VM
-# over loopback. A failed check puts the previous release and environment back and fails here.
+# Worker, restarts zerox-gateway (in-flight streams drain first) and checks /ready on the VM
+# over loopback (plan limits, session store and catalog load from the database). A failed check
+# puts the previous release and environment back and fails here.
+#
+# Before running it: production's database has this commit's migrations, and the VM and the
+# Worker run the same commit (README, "5. Deploy"). The run warns when the ref is not main.
 #
 # Secrets: ORACLE_SSH_KEY (private key of the VM's deploy user), ORACLE_HOST (its public IP or
 # DNS name), ORACLE_KNOWN_HOSTS (`ssh-keyscan -t ed25519 <host>`, checked against the VM's
@@ -43,6 +47,42 @@ jobs:
           npm ci
           npm run check:server
 
+      # The Worker deploys main and shares the database with the VM.
+      - name: Preconditions
+        run: |
+          if [ "$GITHUB_REF" != refs/heads/main ]; then
+            echo "::warning::Deploying $GITHUB_REF, not main, while the Worker runs main on the same database: production must already have this commit's migrations (node scripts/apply-migrations.mjs --status)."
+          fi
+
+      # deploy.yml's secret set (REQUIRED_SECRETS, OPTIONAL_SECRETS and one env entry per name),
+      # except that the secrets the VM must share with the Worker to behave like it are required
+      # here (check-oracle-deploy.mjs keeps the lists in step). Built before anything reaches the
+      # VM, so a missing secret changes nothing there. CLOUDFLARE_API_TOKEN, the Worker deploy
+      # token, is deliberately not passed to the VM.
+      - name: Build the gateway environment
+        env:
+          REQUIRED_SECRETS: SUPABASE_SECRET_KEY SESSION_ENCRYPTION_KEY PROVIDER_KEYS_KEK DEVICE_APPROVAL_SECRET
+          OPTIONAL_SECRETS: GROQ_API_KEY OPENROUTER_API_KEY GEMINI_API_KEY NVIDIA_API_KEY RAZORPAY_KEY_SECRET RAZORPAY_WEBHOOK_SECRET GATEWAY_ADMIN_TOKEN GROQ_PAID_API_KEY GEMINI_PAID_API_KEY ANTHROPIC_API_KEY GLM_API_KEY
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          RAZORPAY_KEY_SECRET: ${{ secrets.RAZORPAY_KEY_SECRET }}
+          RAZORPAY_WEBHOOK_SECRET: ${{ secrets.RAZORPAY_WEBHOOK_SECRET }}
+          GATEWAY_ADMIN_TOKEN: ${{ secrets.GATEWAY_ADMIN_TOKEN }}
+          GROQ_PAID_API_KEY: ${{ secrets.GROQ_PAID_API_KEY }}
+          GEMINI_PAID_API_KEY: ${{ secrets.GEMINI_PAID_API_KEY }}
+          SESSION_ENCRYPTION_KEY: ${{ secrets.SESSION_ENCRYPTION_KEY }}
+          DEVICE_APPROVAL_SECRET: ${{ secrets.DEVICE_APPROVAL_SECRET }}
+          PROVIDER_KEYS_KEK: ${{ secrets.PROVIDER_KEYS_KEK }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
+        run: |
+          set +x
+          umask 077
+          node deploy/oracle/gateway-env.mjs --wrangler neuroncli/auth-server/wrangler.toml --out "$RUNNER_TEMP/gateway.env"
+
       - name: Configure SSH
         env:
           ORACLE_SSH_KEY: ${{ secrets.ORACLE_SSH_KEY }}
@@ -74,39 +114,14 @@ jobs:
             neuroncli/auth-server/ "zerox:/opt/zerox/releases/$RELEASE/"
           ssh zerox "cd /opt/zerox/releases/$RELEASE && npm ci --omit=dev --no-audit --no-fund"
 
-      # The same secret set as deploy.yml (REQUIRED_SECRETS, OPTIONAL_SECRETS and one env entry per
-      # name); check-oracle-deploy.mjs keeps the two lists equal. CLOUDFLARE_API_TOKEN, the
-      # Worker deploy token, is deliberately not passed to the VM.
-      - name: Write the gateway environment
-        env:
-          REQUIRED_SECRETS: SUPABASE_SECRET_KEY
-          OPTIONAL_SECRETS: GROQ_API_KEY OPENROUTER_API_KEY GEMINI_API_KEY NVIDIA_API_KEY RAZORPAY_KEY_SECRET RAZORPAY_WEBHOOK_SECRET GATEWAY_ADMIN_TOKEN GROQ_PAID_API_KEY GEMINI_PAID_API_KEY SESSION_ENCRYPTION_KEY DEVICE_APPROVAL_SECRET PROVIDER_KEYS_KEK ANTHROPIC_API_KEY GLM_API_KEY
-          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
-          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-          RAZORPAY_KEY_SECRET: ${{ secrets.RAZORPAY_KEY_SECRET }}
-          RAZORPAY_WEBHOOK_SECRET: ${{ secrets.RAZORPAY_WEBHOOK_SECRET }}
-          GATEWAY_ADMIN_TOKEN: ${{ secrets.GATEWAY_ADMIN_TOKEN }}
-          GROQ_PAID_API_KEY: ${{ secrets.GROQ_PAID_API_KEY }}
-          GEMINI_PAID_API_KEY: ${{ secrets.GEMINI_PAID_API_KEY }}
-          SESSION_ENCRYPTION_KEY: ${{ secrets.SESSION_ENCRYPTION_KEY }}
-          DEVICE_APPROVAL_SECRET: ${{ secrets.DEVICE_APPROVAL_SECRET }}
-          PROVIDER_KEYS_KEK: ${{ secrets.PROVIDER_KEYS_KEK }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
+      - name: Send the gateway environment
         run: |
-          set +x
-          umask 077
-          env_file="$RUNNER_TEMP/gateway.env"
-          trap 'rm -f "$env_file"' EXIT
-          node deploy/oracle/gateway-env.mjs --wrangler neuroncli/auth-server/wrangler.toml --out "$env_file"
-          ssh zerox 'umask 077 && cat > /etc/zerox/gateway.env.next' < "$env_file"
+          ssh zerox 'umask 077 && cat > /etc/zerox/gateway.env.next' < "$RUNNER_TEMP/gateway.env"
+          rm -f "$RUNNER_TEMP/gateway.env"
 
-      - name: Activate and check /health
+      - name: Activate and check /ready
         run: ssh zerox bash -s -- "$RELEASE" < deploy/oracle/activate-release.sh
 
-      - name: Remove the SSH key
+      - name: Remove the SSH key and the environment file
         if: always()
-        run: rm -f ~/.ssh/zerox_deploy ~/.ssh/config
+        run: rm -f ~/.ssh/zerox_deploy ~/.ssh/config "$RUNNER_TEMP/gateway.env"

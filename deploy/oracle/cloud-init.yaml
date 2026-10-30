@@ -8,6 +8,13 @@
 # Users: ubuntu (the image default, the operator's key from --ssh-authorized-keys-file, full
 # sudo), deploy (GitHub Actions: owns the releases and the environment file, may only restart
 # the gateway), zerox (runs the gateway and the cron; no shell, no SSH, read-only code).
+#
+# Firewall: the image's own iptables rules (/etc/iptables/rules.v4: replies, ICMP, loopback and
+# SSH in, everything else rejected) behind the subnet's SSH-only security list. Nothing here
+# installs, enables or configures UFW: Oracle's Ubuntu image documentation says not to, since
+# UFW can remove the preinstalled rules that reach the boot volume and the instance may then not
+# boot. A rule the gateway needs goes in /etc/iptables/rules.v4 (cloudflared only dials out, so
+# none is needed today).
 package_update: true
 package_upgrade: true
 packages:
@@ -15,7 +22,6 @@ packages:
   - curl
   - gnupg
   - rsync
-  - ufw
   - unattended-upgrades
 
 users:
@@ -44,7 +50,10 @@ write_files:
       PermitRootLogin no
       AllowUsers ubuntu deploy
   # Security updates daily, plus Node.js (NodeSource) and cloudflared from their signed
-  # repositories. A kernel update reboots at 21:30 UTC (03:00 IST); the gateway drains on SIGTERM.
+  # repositories, installed in the night window only (apt-daily-upgrade.timer below, 20:45 to
+  # 20:55 UTC, 02:15 IST). needrestart then restarts the services whose binaries or libraries
+  # changed (zerox-gateway drains on SIGTERM for up to 110 s; cloudflared cuts open streams after
+  # its 30 s grace), and a kernel update reboots at 21:30 UTC (03:00 IST).
   - path: /etc/apt/apt.conf.d/20auto-upgrades
     permissions: '0644'
     content: |
@@ -60,6 +69,22 @@ write_files:
       };
       Unattended-Upgrade::Automatic-Reboot "true";
       Unattended-Upgrade::Automatic-Reboot-Time "21:30";
+  # Ubuntu installs upgrades at 06:00 UTC plus up to 60 minutes (11:30 to 12:30 IST, midday
+  # traffic). Moved to the night, finishing before the reboot time above. apt-daily.timer still
+  # refreshes the lists and downloads at any hour; it installs nothing.
+  - path: /etc/systemd/system/apt-daily-upgrade.timer.d/zerox.conf
+    permissions: '0644'
+    content: |
+      [Timer]
+      OnCalendar=
+      OnCalendar=*-*-* 20:45
+      RandomizedDelaySec=10m
+  # needrestart's choice made explicit: restart affected services without asking (they are only
+  # replaced in the window above). Check with: sudo needrestart -b
+  - path: /etc/needrestart/conf.d/zerox.conf
+    permissions: '0644'
+    content: |
+      $nrconf{restart} = 'a';
   # Node.js comes from NodeSource only (Ubuntu's own nodejs is an older major).
   - path: /etc/apt/preferences.d/nodejs
     permissions: '0644'
@@ -82,7 +107,7 @@ write_files:
     permissions: '0700'
     content: |
       #!/bin/bash
-      # Repositories, Node.js 22, cloudflared, directories and firewall. Safe to run again.
+      # Repositories, Node.js 22, cloudflared and directories. Safe to run again.
       set -euo pipefail
       export DEBIAN_FRONTEND=noninteractive
 
@@ -96,10 +121,10 @@ write_files:
       Components: main
       Signed-By: /etc/apt/keyrings/nodesource.gpg
       EOF
-      # cloudflared from Cloudflare's signed apt repository.
+      # cloudflared from Cloudflare's signed apt repository (the "any" suite Cloudflare recommends).
       install -d -m 0755 /usr/share/keyrings
       curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg -o /usr/share/keyrings/cloudflare-main.gpg
-      echo 'deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared noble main' \
+      echo 'deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared any main' \
         > /etc/apt/sources.list.d/cloudflared.list
       apt-get update
       apt-get install -y nodejs cloudflared
@@ -115,13 +140,12 @@ write_files:
       [ -e /etc/zerox/gateway.env ] || install -o deploy -g deploy -m 0600 /dev/null /etc/zerox/gateway.env
       install -d -o root -g root -m 0755 /etc/cloudflared
 
-      # Firewall: SSH in, nothing else (cloudflared only dials out).
-      ufw default deny incoming
-      ufw default allow outgoing
-      ufw allow OpenSSH
-      ufw --force enable
+      # The firewall in force (the image's rules, header of this file), for the first-boot check.
+      iptables -S INPUT >> /var/log/zerox-bootstrap.txt 2>&1 || true
 
 runcmd:
   - [/usr/local/sbin/zerox-bootstrap]
   - [systemctl, restart, systemd-journald]
   - [systemctl, try-reload-or-restart, ssh]
+  - [systemctl, daemon-reload]
+  - [systemctl, restart, apt-daily-upgrade.timer]

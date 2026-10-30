@@ -9,7 +9,7 @@
 //
 // The file is in systemd's EnvironmentFile syntax: KEY="value" with \ " ` $ escaped, one per
 // line. Settings that describe the VM itself (NODE_ENV, AUTH_HOST, TRUST_CLOUDFLARE, ...) are
-// in zerox-gateway.service, not here.
+// in zerox-gateway.service and refused here, like the development switches.
 import { readFileSync, writeFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
@@ -41,13 +41,27 @@ export function envLine(name, value) {
 
 const names = list => String(list || '').split(/\s+/).filter(Boolean);
 
+// systemd lets EnvironmentFile= override the unit's Environment=, so a [vars] entry or secret
+// with one of these names would silently replace the VM's runtime settings (zerox-gateway.service)
+// or switch on a development path. They are refused instead.
+const UNIT_SETTINGS = new Set(['NODE_ENV', 'AUTH_HOST', 'AUTH_PORT', 'NEURON_API_ONLY', 'TRUST_CLOUDFLARE',
+  'TRUST_CF_IPCOUNTRY', 'SHUTDOWN_GRACE_MS']);
+const DEVELOPMENT_ONLY = new Set(['DEV_AUTH_ENABLED', 'ALLOW_ANONYMOUS_SESSIONS', 'ALLOW_UNKNOWN_COUNTRY',
+  'DATABASE_DRIVER', 'PGLITE_DATA_DIR', 'ALLOW_LOCAL_DATABASE', 'RAZORPAY_API_BASE', 'NEURON_RUNTIME']);
+function allowed(name) {
+  if (UNIT_SETTINGS.has(name) || DEVELOPMENT_ONLY.has(name) || name.startsWith('E2E_')) {
+    throw new Error(`${name} is not allowed in the VM environment (zerox-gateway.service sets it, or it is development-only)`);
+  }
+  return name;
+}
+
 // { text, skipped }: vars first, then the secrets that are set. A required secret that is not
-// set, or a secret that would replace a var, fails.
+// set, a secret that would replace a var, or a refused name (above) fails.
 export function buildEnvFile({ vars, env, required, optional }) {
   const lines = ['# Written by .github/workflows/deploy-oracle.yml; local edits are replaced on the next deploy.'];
-  for (const [name, value] of Object.entries(vars)) lines.push(envLine(name, value));
+  for (const [name, value] of Object.entries(vars)) lines.push(envLine(allowed(name), value));
   const skipped = [];
-  for (const name of [...required, ...optional]) {
+  for (const name of [...required, ...optional].map(allowed)) {
     if (Object.hasOwn(vars, name)) throw new Error(`${name} is both a wrangler var and a secret`);
     const value = env[name];
     if (typeof value === 'string' && value !== '') lines.push(envLine(name, value));

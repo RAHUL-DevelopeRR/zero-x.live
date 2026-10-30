@@ -6,7 +6,9 @@
 Description=Zero-X gateway API (Node)
 Documentation=https://github.com/RAHUL-DevelopeRR/zero-x.live/tree/main/deploy/oracle
 Wants=network-online.target
-After=network-online.target
+# Ordering only: on reboot or shutdown systemd stops units in reverse order, so the gateway
+# drains its streams while cloudflared, which carries them, is still up.
+After=network-online.target cloudflared.service
 
 [Service]
 Type=simple
@@ -22,7 +24,8 @@ ExecStart=/usr/bin/node /opt/zerox/gateway/server.js
 Restart=always
 RestartSec=2
 # SIGTERM drains: no new connections, in-flight streams get SHUTDOWN_GRACE_MS (110 s) to finish
-# and settle, then exit. TimeoutStopSec must stay above that grace plus the 1 s tail.
+# and settle, then exit; streams still running are cut and get 5 s to settle. TimeoutStopSec
+# must stay above the grace plus that tail.
 KillSignal=SIGTERM
 TimeoutStopSec=120
 TimeoutStartSec=30
