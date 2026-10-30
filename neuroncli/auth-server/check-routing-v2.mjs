@@ -570,6 +570,42 @@ try {
     assert.ok(!forcedTargets.includes('zai'), 'a forced tool call is never sent to Z.ai');
   });
 
+  // The same lineup wherever the gateway is configured: wrangler.api.toml (the API-only
+  // neuron-gateway Worker, deployed by hand), .dev.vars.example (wrangler dev) and .env.example
+  // (the Node server, e.g. the planned /v1 host). Templates name variables only, never values of
+  // secrets.
+  await test('the 2026-10-29 lineup: wrangler.api.toml and the env templates match wrangler.toml', () => {
+    const production = wranglerVars('./wrangler.toml');
+    const api = wranglerVars('./wrangler.api.toml');
+    assert.deepEqual(Object.fromEntries(LINEUP_VARS.map(name => [name, api[name]])),
+      Object.fromEntries(LINEUP_VARS.map(name => [name, production[name]])), 'wrangler.api.toml');
+    // Secret-shaped names; SUPABASE_STORAGE_KEY is the browser storage key's name, not a secret.
+    const SECRET = /^(?!SUPABASE_STORAGE_KEY$).*(_KEY|_SECRET|_TOKEN|_KEK)$/;
+    for (const file of ['./.dev.vars.example', './.env.example']) {
+      const lines = readFileSync(new URL(file, import.meta.url), 'utf8').replace(/\r\n/g, '\n').split('\n');
+      // KEY=value, without an inline comment (dotenv drops " # ..." after an unquoted value).
+      const entries = lines.map(line => /^([A-Z0-9_]+)=(.*)$/.exec(line)).filter(Boolean)
+        .map(([, name, value]) => [name, value.replace(/\s+#.*$/, '').trim()]);
+      const vars = Object.fromEntries(entries);
+      assert.equal(entries.length, Object.keys(vars).length, `${file}: every variable once`);
+      for (const name of ['GEMINI_MODELS', 'CLOUDFLARE_MODELS']) assert.equal(vars[name], '', `${file}: ${name} switched off`);
+      for (const name of ['NVIDIA_HOSTED', 'OPENROUTER_HOSTED']) assert.equal(vars[name], 'true', `${file}: ${name}`);
+      for (const name of ['OPENROUTER_MODELS', 'ANTHROPIC_MODELS']) assert.equal(vars[name], production[name], `${file}: ${name}`);
+      // An empty model list switches its provider off: Groq, NVIDIA, Claude and Z.ai keep theirs unset.
+      for (const name of ['GROQ_MODELS', 'NVIDIA_MODELS', 'ZAI_MODELS']) assert.ok(!(name in vars) || vars[name] !== '', `${file}: ${name} is not empty`);
+      for (const name of ['GROQ_API_KEY', 'NVIDIA_API_KEY', 'OPENROUTER_API_KEY', 'ANTHROPIC_API_KEY', 'GLM_API_KEY']) {
+        assert.ok(name in vars, `${file} names ${name}`);
+      }
+      assert.deepEqual(entries.filter(([name, value]) => SECRET.test(name) && value !== ''), [], `${file}: no secret values`);
+      // With every key filled in, the template serves the lineup.
+      const env = { ...vars, ...Object.fromEntries(entries.filter(([name]) => SECRET.test(name)).map(([name]) => [name, 'k'])), AI: {} };
+      const providers = new Set(listModelsForCaller(env, { country: 'US' }).data.filter(model => model.available && model.id !== 'auto')
+        .map(model => catalogEntry(model.id)?.provider));
+      for (const provider of ['groq', 'nvidia', 'openrouter', 'zai']) assert.ok(providers.has(provider), `${file}: ${provider} is served`);
+      assert.ok(!providers.has('gemini') && !providers.has('cloudflare'), `${file}: no Gemini or Workers AI`);
+    }
+  });
+
   await test('auto selects by fit: Groq TPM, context windows and max_tokens clamping', () => {
     const groq = catalogEntry('groq/openai/gpt-oss-120b');
     assert.equal(fitMaxTokens(groq, groq.pools[0], 3000, 8192), 5000, 'clamped to the 8K TPM budget');

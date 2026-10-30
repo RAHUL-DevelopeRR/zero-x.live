@@ -11,6 +11,13 @@ Plain values go in `wrangler.toml` `[vars]` (or `.env` for Node). **Secrets** go
 secrets (bound by `.github/workflows/deploy.yml` from GitHub Actions secrets) or the container's
 secret store, never in a committed file. `.dev.vars.example` lists them with comments.
 
+**Hosted lineup (owner decision, 2026-10-29):** Groq, Claude, OpenRouter, NVIDIA and Z.ai; Gemini
+and Workers AI off by configuration (`GEMINI_MODELS` and `CLOUDFLARE_MODELS` empty). The lineup
+files carry it alike: `wrangler.toml` and `wrangler.api.toml` `[vars]`, `.dev.vars.example` and
+`.env.example` (the Node server, e.g. the planned `/v1` host). `check-routing-v2.mjs` keeps them
+equal. Leave `GROQ_MODELS`, `NVIDIA_MODELS` and `ZAI_MODELS` unset: an empty list switches its
+provider off.
+
 ### Runtime, identity and database
 
 | Variable | Kind | Default | Purpose |
@@ -75,9 +82,9 @@ them in `zerox_plan_policy.razorpay_plan_id_inr/usd`.
 | `PAID_DAILY_SPEND_CAP_USD` | var | unset | A number above 0 lowers every paid pool's daily spend cap (upstream USD per UTC day) to at most this value; it can never raise one (contract §13.4). |
 | `CATALOG_SOURCE` | var | unset | Unset: the approved catalog rows when the database is configured, over the code catalog. `code`: kill switch, `src/catalog.js` only (contract §13.1). |
 | `CLOUDFLARE_PAID` | var | unset | `true` adds paid Workers AI pools (Workers Paid accounts only). |
-| `NVIDIA_HOSTED` + `NVIDIA_API_KEY` | var + **secret** | `false` | NVIDIA trial keys are evaluation-only: keep `false` in production. |
-| `OPENROUTER_HOSTED` + `OPENROUTER_API_KEY` | var + **secret** | `false` | The operator key is not resold: keep `false`. Users' own keys (BYOK) work regardless. |
-| `OPENROUTER_MODELS` | var | `cohere/north-mini-code:free` | Allowlist for users' own OpenRouter keys. |
+| `NVIDIA_HOSTED` + `NVIDIA_API_KEY` | var + **secret** | unset = `false` (`"true"` in the lineup files) | `true`: the NVIDIA trial key serves users' free models, the owner's decision (2026-10-19, kept in the 2026-10-29 lineup; trial terms in [docs/PROVIDER_TERMS.md](docs/PROVIDER_TERMS.md)). `false`: NVIDIA is not offered. |
+| `OPENROUTER_HOSTED` + `OPENROUTER_API_KEY` | var + **secret** | unset = `false` (`"true"` in the lineup files) | `true`: the operator key serves the OpenRouter free models in `OPENROUTER_MODELS`, the owner's decision. `false`: users' own keys (BYOK) only, which work regardless. |
+| `OPENROUTER_MODELS` | var | `cohere/north-mini-code:free` (the lineup files add `minimax/minimax-m3.1-flash:free`) | Narrows the OpenRouter models offered, hosted and BYOK alike. |
 | `OPENROUTER_FREE_ONLY`, `OPENROUTER_CALLBACK_URL` | var | —, `https://zero-x.live/neuroncli/callback/` | BYOK discovery filter and PKCE callback. |
 | `GROQ_MODELS`, `GEMINI_MODELS`, `CLOUDFLARE_MODELS`, `NVIDIA_MODELS`, `ANTHROPIC_MODELS` | var | unset (`ANTHROPIC_MODELS`: Sonnet 5.5 and Opus 5.5 in `wrangler.toml`; `GEMINI_MODELS` and `CLOUDFLARE_MODELS`: `""` there) | Can only **narrow** the verified catalog (the approved rows over `src/catalog.js`); unknown ids are ignored and reported. An empty list offers none of the provider's models: the owner lineup of 2026-10-29 switches Gemini and Workers AI off this way, keys and binding unchanged (delete the line to serve them again). `CLOUDFLARE_MODELS` can opt in `@cf/openai/gpt-oss-120b`. `ANTHROPIC_MODELS` keeps the `anthropic.paid` key on the two Claude models even if a catalog row names another. |
 | `TRUST_CF_IPCOUNTRY` | var (Node) | unset | `true` only when the Node origin is reachable exclusively through Cloudflare. Workers use `request.cf.country`. |

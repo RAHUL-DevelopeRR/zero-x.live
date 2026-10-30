@@ -49,12 +49,13 @@ RAZORPAY_WEBHOOK_SECRET=            # SECRET: webhook signing secret from the Ra
 # ── Upstream providers (free pools) ──
 # The verified catalog (src/catalog.js) decides which models are hosted. GROQ_MODELS,
 # GEMINI_MODELS, CLOUDFLARE_MODELS and NVIDIA_MODELS may only narrow it (comma-separated catalog
-# ids). *_TOOL_MODELS are no longer read. Owner lineup (2026-10-29): Gemini and Workers AI are
-# switched off with empty lists, as in wrangler.toml [vars]; delete those two lines to serve them.
+# ids); an empty list switches its provider off. *_TOOL_MODELS are no longer read.
+# Owner lineup (2026-10-29), as in wrangler.toml [vars]: Groq, Claude, OpenRouter, NVIDIA and Z.ai.
+# Gemini and Workers AI are switched off with empty lists; delete those two lines to serve them.
 GEMINI_MODELS=
 CLOUDFLARE_MODELS=
 # Z.ai free GLM-4.7-Flash and GLM-4.5-Flash (key slot zai.free).
-GLM_API_KEY=
+GLM_API_KEY=                        # SECRET
 GROQ_API_KEY=                       # SECRET
 GEMINI_API_KEY=                     # SECRET (free tier is geo-blocked for EEA/GB/CH callers)
 CLOUDFLARE_ACCOUNT_ID=              # Node only; the Worker uses its AI binding
@@ -73,13 +74,18 @@ CLOUDFLARE_API_TOKEN=               # SECRET, Node only
 # ── Upstream providers (paid pools, used by paid plans) ──
 GROQ_PAID_API_KEY=                  # SECRET: Groq Developer plan key
 GEMINI_PAID_API_KEY=                # SECRET: billing-linked Gemini project key
+ANTHROPIC_API_KEY=                  # SECRET: Claude Sonnet 5.5 and Opus 5.5 (Pro and Max, billed from credits)
+ANTHROPIC_MODELS=claude-sonnet-5-5,claude-opus-5-5
 
-# ── Not hosted by default (docs/PROVIDER_TERMS.md) ──
-NVIDIA_HOSTED=false                 # true only for internal evaluation (trial terms)
+# ── Hosted behind a flag (docs/PROVIDER_TERMS.md) ──
+# Owner decision (2026-10-19, kept in the 2026-10-29 lineup): the NVIDIA trial key and the
+# OpenRouter operator key also serve users' free models, as in wrangler.toml [vars]. false
+# offers NVIDIA not at all and OpenRouter only with the caller's own key (BYOK).
+NVIDIA_HOSTED=true
 NVIDIA_API_KEY=                     # SECRET
-OPENROUTER_HOSTED=false             # true re-enables the operator key (otherwise BYOK only)
+OPENROUTER_HOSTED=true
 OPENROUTER_API_KEY=                 # SECRET
-OPENROUTER_MODELS=cohere/north-mini-code:free
+OPENROUTER_MODELS=cohere/north-mini-code:free,minimax/minimax-m3.1-flash:free
 OPENROUTER_FREE_ONLY=
 OPENROUTER_CALLBACK_URL=https://zero-x.live/neuroncli/callback/
 
