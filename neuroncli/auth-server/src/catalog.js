@@ -229,6 +229,24 @@ const MODELS = [
   // rows): 200,000 context (what MAX_BODY_BYTES can carry), 32,000 output, 16,000 default
   // max_tokens, effort medium by default, list prices with cache rates, caps $10 and $6 a day.
   ...CLAUDE_MODEL_SPECS.map(spec => entryFromSpec(publicIdFor(spec.provider_type, spec.upstream_model), spec, { source: 'code' })),
+  // Z.ai's free GLM Flash models (owner lineup, 2026-10-29), key slot zai.free (GLM_API_KEY).
+  // docs.z.ai: GLM-4.7-Flash 200K context and 128K output, completely free; the GLM-4.5 series
+  // 128K and 96K. Output is listed at what max_tokens validation accepts (chat-handler.js
+  // MAX_OUTPUT_TOKENS). Both call tools, stream, and think by default (reasoning_content), which
+  // reasoning_effort "none" turns off. Z.ai publishes no request or token budget for them, so the
+  // pools have none; they serve one request at a time per account and model
+  // (src/catalog-types.js PROVIDER_TYPES.zai.free_concurrency), so auto tries them only after
+  // every other free pool.
+  ...[
+    ['glm-4.7-flash', 'GLM-4.7-Flash (Z.ai, free)', 14, 200000, 65536],
+    ['glm-4.5-flash', 'GLM-4.5-Flash (Z.ai, free)', 15, 131072, 65536],
+  ].map(([upstream, name, rank, context, maxOutput]) => ({
+    id: `zai/${upstream}`, display_name: name, provider: 'zai', upstream_model: upstream,
+    context_window: context, max_output_tokens: maxOutput, supports_tools: true, supports_streaming: true,
+    auto_rank: rank, aliases: [upstream], reasoning_efforts: ['none', 'default'],
+    reasoning_effort_map: { minimal: 'default', low: 'default', medium: 'default', high: 'default' },
+    pools: [pool('free', slot('zai.free'))],
+  })),
 ];
 
 function freezeEntry(entry) {

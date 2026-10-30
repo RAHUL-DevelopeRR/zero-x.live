@@ -43,8 +43,9 @@ const STATUS_HOLD_MS = 90_000;    // an outage on a status page holds until the 
 const FETCH_TIMEOUT_MS = 8_000;
 // Test requests per pool (model and key) per UTC day: about 2.4% of Groq's 1,000 requests, under
 // 4% of the Workers AI daily neurons. 0 = never: Gemini's free tier allows 20 requests per model
-// per day (catalog.js POOL_LIMITS), so its free model list is its only check.
-export const PROBE_DAILY_CAPS = Object.freeze({ groq: 24, gemini: 0, cloudflare: 48, nvidia: 0, openrouter: 0 });
+// per day (catalog.js POOL_LIMITS), so its free model list is its only check; Z.ai's free models
+// serve one request at a time per account, so a test request would take a user's slot.
+export const PROBE_DAILY_CAPS = Object.freeze({ groq: 24, gemini: 0, cloudflare: 48, nvidia: 0, openrouter: 0, zai: 0 });
 const CANARY_IDLE_MS = 15 * 60_000; // real traffic within this already proves the pool
 const CANARIES_PER_ALARM = 1;
 const WINDOW = 50;                  // outcomes and latencies kept per pool

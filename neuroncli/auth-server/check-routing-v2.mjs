@@ -47,7 +47,7 @@ function targetOf(url) {
   if (url.includes('/rest/v1/rpc/')) return `rpc:${url.split('/').at(-1)}`;
   for (const [name, prefix] of [['groq', 'https://api.groq.com/'], ['gemini', 'https://generativelanguage.googleapis.com/'],
     ['openrouter', 'https://openrouter.ai/'], ['nvidia', 'https://integrate.api.nvidia.com/'], ['cloudflare', 'https://api.cloudflare.com/'],
-    ['anthropic', 'https://api.anthropic.com/']]) {
+    ['anthropic', 'https://api.anthropic.com/'], ['zai', 'https://api.z.ai/']]) {
     if (url.startsWith(prefix)) return name;
   }
   return 'unknown';
@@ -463,12 +463,14 @@ try {
     assert.deepEqual([vars.GEMINI_MODELS, vars.CLOUDFLARE_MODELS, vars.NVIDIA_HOSTED, vars.OPENROUTER_HOSTED], ['', '', 'true', 'true']);
     const lineup = Object.fromEntries(['GEMINI_MODELS', 'CLOUDFLARE_MODELS', 'NVIDIA_HOSTED', 'OPENROUTER_HOSTED', 'OPENROUTER_MODELS',
       'ANTHROPIC_MODELS'].map(name => [name, vars[name]]));
-    const env = { ...KEYS, AI: {}, NVIDIA_API_KEY: 'n', OPENROUTER_API_KEY: 'o', ANTHROPIC_API_KEY: 'a', ...lineup };
+    const env = { ...KEYS, AI: {}, NVIDIA_API_KEY: 'n', OPENROUTER_API_KEY: 'o', ANTHROPIC_API_KEY: 'a', GLM_API_KEY: 'z', ...lineup };
     const list = listModelsForCaller(env, { country: 'US' }).data;
     assert.ok(!list.some(model => model.id.startsWith('gemini/') || model.id.startsWith('@cf/')), 'no Gemini or Workers AI model is listed');
     assert.ok(list.some(model => model.id === 'groq/openai/gpt-oss-120b' && model.available));
     assert.ok(list.some(model => model.id === 'nvidia/openai/gpt-oss-20b' && model.available));
     assert.ok(list.some(model => model.id === 'cohere/north-mini-code:free' && model.available));
+    assert.ok(list.some(model => model.id === 'zai/glm-4.7-flash' && model.available));
+    assert.ok(list.some(model => model.id === 'zai/glm-4.5-flash' && model.available));
     assert.deepEqual(catalogWarnings(env), [], 'an empty list names no unknown model');
     const auto = list.find(model => model.id === 'auto');
     assert.deepEqual([auto.available, auto.context_window], [true, 131072]);
@@ -477,6 +479,11 @@ try {
     const route = ids(router.route(base));
     assert.deepEqual(route.slice(0, 3), ['groq/openai/gpt-oss-120b#free', 'groq/qwen/qwen3.8-27b#free', 'groq/openai/gpt-oss-20b#free']);
     assert.ok(!route.some(id => id.startsWith('gemini/') || id.startsWith('@cf/')), 'auto never reaches them');
+    // Z.ai is the low-priority fallback: its two free pools come after every other free pool.
+    const free = route.filter(id => id.endsWith('#free'));
+    assert.deepEqual(free.slice(-2), ['zai/glm-4.7-flash#free', 'zai/glm-4.5-flash#free']);
+    assert.deepEqual(free.slice(0, -2).map(id => id.split('/')[0]),
+      ['groq', 'groq', 'groq', 'nvidia', 'nvidia', 'cohere', 'minimax']);
     for (const model of ['gemini/gemini-2.5-flash', 'gemini-3.5-flash', '@cf/meta/llama-3.3-70b-instruct-fp8-fast', 'llama-3.3-70b']) {
       assert.equal(router.route({ ...base, requestedModel: model }).error, 'model_not_found', model);
     }
@@ -1235,6 +1242,81 @@ try {
     }
     assert.equal(reserveError({ status: 'user_rpm' }).retryAfterSeconds, 60);
     assert.equal(reserveError({ status: 'pool_exhausted' }).retryAfterSeconds, 60);
+  });
+
+  // Z.ai's free GLM Flash models run one request at a time per account and model: their free
+  // pools carry the provider type's free_concurrency (catalog-types.js) as p_pool.concurrency.
+  await test('Z.ai free pools reserve with p_pool.concurrency 1; other pools carry none', () => {
+    const session = { user_id: ACCOUNT };
+    const args = model => reservationArgs({ session, requestId: 'req_zai', entry: catalogEntry(model), pool: catalogEntry(model).pools[0],
+      promptTokens: 1000, maxTokens: 2000 });
+    for (const model of ['zai/glm-4.7-flash', 'zai/glm-4.5-flash']) {
+      assert.deepEqual(args(model).p_pool, { rpm: null, rpd: null, tpm: null, tpd: null, concurrency: 1 }, model);
+      assert.equal(args(model).p_cost_microusd, 0);
+    }
+    assert.deepEqual(args('groq/openai/gpt-oss-120b').p_pool, { rpm: 30, rpd: 1000, tpm: 8000, tpd: 200000 });
+    assert.ok(!('concurrency' in (args('nvidia/openai/gpt-oss-20b').p_pool || {})));
+  });
+
+  // Z.ai ends a generation that failed after the stream started with an error finish_reason
+  // (network_error; sensitive for a refused prompt) instead of an error event: a failed attempt.
+  await test('Z.ai: error finish_reasons fail the attempt, tool_choice other than auto is dropped, 1113 is an account error', async () => {
+    const ZAI = { GLM_API_KEY: 'zai-free-key' };
+    const zai = 'zai/glm-4.7-flash';
+    const gw = gateway();
+    gw.addSession('ses_anon', {});
+    // Before any content: nothing reached the client, so the attempt fails over (here: no other pool).
+    reset({ zai: call => {
+      assert.equal(call.url, 'https://api.z.ai/api/paas/v4/chat/completions');
+      assert.equal(call.headers.Authorization, 'Bearer zai-free-key');
+      assert.equal(call.body.model, 'glm-4.7-flash');
+      return sse([chunk({}, 'network_error')]);
+    } });
+    await expectError(await gw.call(ZAI, { model: zai, messages, stream: true }), 502, 'upstream_error');
+    assert.equal(gw.tracker.getRecord('zai:glm-4.7-flash:free').last_failure_kind, FailureKind.SERVER);
+    // After content: the client keeps what it got and the stream ends with an error event.
+    reset({ zai: () => sse([chunk({ role: 'assistant', reasoning_content: 'thinking' }), chunk({ content: 'partial' }),
+      chunk({}, 'network_error'), '[DONE]']) });
+    const cut = await gw.call(ZAI, { model: zai, messages, stream: true });
+    assert.equal(cut.status, 200);
+    const events = parseSse(await cut.text());
+    assert.equal(events[0].choices[0].delta.reasoning_content, 'thinking', 'reasoning_content reaches the client');
+    assert.ok(events.some(event => event.choices?.[0]?.delta?.content === 'partial'));
+    assert.equal(events.at(-1).error.code, 'upstream_error');
+    assert.ok(!events.includes('[DONE]'), 'never a completed answer');
+    // A refused prompt (sensitive) says nothing about the pool.
+    gw.tracker.reset();
+    reset({ zai: () => sse([chunk({}, 'sensitive')]) });
+    const refused = await gw.call(ZAI, { model: zai, messages, stream: true });
+    assert.notEqual(refused.status, 200);
+    assert.equal(gw.tracker.getRecord('zai:glm-4.7-flash:free')?.failed_attempts ?? 0, 0, 'a refused prompt does not fail the pool');
+    // Non-streaming answers carry the same finish_reasons.
+    reset({ zai: () => Response.json({ id: 'z', choices: [{ index: 0, message: { role: 'assistant', content: '' }, finish_reason: 'network_error' }] }) });
+    await expectError(await gw.call(ZAI, { model: zai, messages }), 502, 'upstream_error');
+    // tool_choice: Z.ai accepts only "auto"; other values are dropped, never sent. No thinking,
+    // tool_stream or do_sample unless needed: reasoning_effort "none" turns thinking off.
+    const bodies = [];
+    reset({ zai: call => { bodies.push(call.body); return completion({ content: 'ok' }); } });
+    for (const toolChoice of ['auto', 'required', 'none', { type: 'function', function: { name: 'read_file' } }]) {
+      assert.equal((await gw.call(ZAI, { model: zai, messages, tools, tool_choice: toolChoice })).status, 200);
+    }
+    assert.deepEqual(bodies.map(body => body.tool_choice), ['auto', undefined, undefined, undefined]);
+    assert.ok(bodies.every(body => body.tools?.length === 1));
+    assert.equal((await gw.call(ZAI, { model: zai, messages, reasoning_effort: 'none', temperature: 0.2, seed: 7, user: 'u' })).status, 200);
+    assert.equal((await gw.call(ZAI, { model: 'zai/glm-4.5-flash', messages, reasoning_effort: 'high' })).status, 200);
+    assert.deepEqual(bodies.at(-2).thinking, { type: 'disabled' });
+    assert.equal(bodies.at(-2).temperature, 0.2);
+    assert.ok(!('seed' in bodies.at(-2)) && !('user' in bodies.at(-2)), 'parameters Z.ai does not document are dropped');
+    assert.ok(!('thinking' in bodies.at(-1)), 'the model default (thinking on) otherwise');
+    assert.ok(bodies.every(body => !('do_sample' in body) && !('tool_stream' in body) && !('reasoning_effort' in body)));
+  });
+
+  await test('Z.ai 429 codes: 1302 and 1305 are rate limits, 1113 (no balance) parks the pool like an account error', () => {
+    const body = code => JSON.stringify({ error: { code, message: 'Z.ai says no' } });
+    assert.equal(classifyUpstreamFailure(429, body('1302')).kind, FailureKind.RATE_LIMITED);
+    assert.equal(classifyUpstreamFailure(429, body('1305')).kind, FailureKind.RATE_LIMITED);
+    assert.equal(classifyUpstreamFailure(429, body('1113')).kind, FailureKind.AUTH);
+    assert.equal(classifyUpstreamFailure(429, body('rate_limit_exceeded')).kind, FailureKind.RATE_LIMITED);
   });
 
   await test('free pool exhaustion fails over to paid capacity; no credits gives 402', async () => {

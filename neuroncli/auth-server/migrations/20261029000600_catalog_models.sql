@@ -26,7 +26,7 @@ BEGIN;
 CREATE FUNCTION public.zerox_catalog_provider_types()
 RETURNS text[]
 LANGUAGE sql IMMUTABLE SET search_path = '' AS $$
-  SELECT ARRAY['gemini', 'groq', 'nvidia', 'openrouter', 'omniroute', 'cloudflare', 'anthropic']::text[];
+  SELECT ARRAY['gemini', 'groq', 'nvidia', 'openrouter', 'omniroute', 'cloudflare', 'anthropic', 'zai']::text[];
 $$;
 
 -- The public model id of an upstream id (PROVIDER_TYPES[type].id_prefix + upstream).
@@ -39,6 +39,7 @@ LANGUAGE sql IMMUTABLE SET search_path = '' AS $$
     WHEN 'nvidia' THEN 'nvidia/' || p_upstream
     WHEN 'omniroute' THEN 'omniroute/' || p_upstream
     WHEN 'anthropic' THEN 'anthropic/' || p_upstream
+    WHEN 'zai' THEN 'zai/' || p_upstream
     WHEN 'cloudflare' THEN p_upstream
     WHEN 'openrouter' THEN p_upstream
   END;
@@ -56,6 +57,7 @@ LANGUAGE sql IMMUTABLE SET search_path = '' AS $$
     WHEN 'omniroute' THEN p_upstream ~ '^[a-z0-9][a-z0-9._:/-]{0,120}$'
     WHEN 'cloudflare' THEN p_upstream ~ '^@cf/[a-z0-9][a-z0-9_-]{0,40}/[a-z0-9][a-z0-9._-]{0,80}$'
     WHEN 'anthropic' THEN p_upstream ~ '^claude-[a-z0-9][a-z0-9-]{0,60}$'
+    WHEN 'zai' THEN p_upstream ~ '^glm-[a-z0-9][a-z0-9.-]{0,60}$'
     ELSE false
   END, false);
 $$;
@@ -71,7 +73,8 @@ LANGUAGE sql IMMUTABLE SET search_path = '' AS $$
     ('openrouter', 'free', 'openrouter.free'),
     ('omniroute', 'free', 'omniroute.free'),
     ('cloudflare', 'free', 'cloudflare.binding'), ('cloudflare', 'paid', 'cloudflare.binding'),
-    ('anthropic', 'paid', 'anthropic.paid')
+    ('anthropic', 'paid', 'anthropic.paid'),
+    ('zai', 'free', 'zai.free')
   ), false);
 $$;
 

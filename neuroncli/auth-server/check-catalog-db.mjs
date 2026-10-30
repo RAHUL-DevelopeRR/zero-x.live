@@ -106,7 +106,8 @@ try {
       'claude-3-5-sonnet-20241022', 'nvidia/nemotron-3-ultra-550b-a55b', 'stepfun-ai/step-5-preview', 'model:latest',
       'a..b', '', ' ', 'x'.repeat(201), 'a'.repeat(81), `org/${'m'.repeat(81)}`, 'https://evil.example/v1', '//evil',
       '../etc/passwd', 'ok-model', 'openai/gpt-oss-120b\n', 'café', 'gemini-2.5-flash#x', 'groq/openai/gpt-oss-120b',
-      'omniroute/x', 'a/b:free', '-x', '_x', 'x_', 'm', 'nvidia/x', 'org/model?x', 'org\\model'];
+      'omniroute/x', 'a/b:free', '-x', '_x', 'x_', 'm', 'nvidia/x', 'org/model?x', 'org\\model', 'glm-4.7-flash', 'glm-4.5-flash',
+      'glm-', 'GLM-4.7-flash', 'glm-4.7-flash/../x', 'zai/glm-4.7-flash', 'glm-4.7-flash:free'];
     const rows = await sql(`SELECT t, u, public.zerox_catalog_upstream_ok(t, u) AS ok, public.zerox_catalog_public_id(t, u) AS id
       FROM unnest($1::text[]) AS t CROSS JOIN unnest($2::text[]) AS u`, [[...PROVIDER_TYPE_IDS, 'evil'], corpus]);
     assert.equal(rows.length, (PROVIDER_TYPE_IDS.length + 1) * corpus.length);
@@ -135,7 +136,7 @@ try {
     assert.equal(typeMaxCapMicrousd('anthropic'), 50_000_000, 'anthropic pools: at most $50 a day');
     assert.equal(typeMaxCapMicrousd('gemini'), MAX_DAILY_SPEND_CAP_USD * 1e6, 'other paid pools: at most the $100 code maximum');
     assert.equal(MAX_DAILY_SPEND_CAP_USD, 100);
-    for (const type of ['nvidia', 'openrouter', 'omniroute']) assert.equal(typeMaxCapMicrousd(type), 0, `${type} has no paid pools`);
+    for (const type of ['nvidia', 'openrouter', 'omniroute', 'zai']) assert.equal(typeMaxCapMicrousd(type), 0, `${type} has no paid pools`);
     ok(`SQL mirrors equal the code registry: upstream grammar and public ids on ${rows.length} pairs, key slots on ${slotRows.length}, type caps, provider types, lifecycle actions`);
 
     for (const [id, slot] of Object.entries(KEY_SLOTS)) {
@@ -223,7 +224,8 @@ try {
   {
     const { items } = codeCatalog();
     assert.equal(items.length, CATALOG.length, 'code catalog = src/catalog.js CATALOG');
-    assert.deepEqual(CATALOG.slice(-2).map(entry => entry.id), [SONNET_ID, OPUS_ID], 'src/catalog.js lists the two Claude rows from src/catalog-claude.js');
+    assert.deepEqual(CATALOG.filter(entry => entry.provider === 'anthropic').map(entry => entry.id), [SONNET_ID, OPUS_ID],
+      'src/catalog.js lists the two Claude rows from src/catalog-claude.js');
     for (const item of items) {
       const validation = validateSpec(item.id, item.spec);
       assert.ok(specValid(validation), `${item.id}: ${JSON.stringify(validation)}`);
@@ -387,7 +389,8 @@ try {
   // ── 6. /v1/models from the rows equals the code catalog and the captured baseline ──
   const modules = await catalogModules();
   {
-    const withoutClaude = list => list.filter(item => !item.id.startsWith('anthropic/'));
+    // The Claude and Z.ai rows came after the baseline was captured; they are checked on their own.
+    const withoutClaude = list => list.filter(item => !item.id.startsWith('anthropic/') && !item.id.startsWith('zai/'));
     const items = fixture.items;
     const dbEnvs = new Map();
     const codeEnvs = new Map();
@@ -406,6 +409,7 @@ try {
       assert.deepEqual(fromRows, fromCode, `${testCase.name}: rows and CATALOG_SOURCE=code agree`);
       assert.deepEqual(withoutClaude(fromRows), testCase.data.map(index => items[index]), `${testCase.name}: equals the baseline`);
       assert.deepEqual(fromRows.filter(item => item.id.startsWith('anthropic/')).map(item => item.id), [SONNET_ID, OPUS_ID]);
+      assert.deepEqual(fromRows.filter(item => item.id.startsWith('zai/')).map(item => item.id), ['zai/glm-4.7-flash', 'zai/glm-4.5-flash']);
       compared++;
     }
     const keys = dbEnvs.get(JSON.stringify(fixture.cases.find(item => item.name.startsWith('keys/')).env));

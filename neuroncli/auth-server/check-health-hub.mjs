@@ -168,6 +168,23 @@ try {
   }
   console.log('ok - lineup: with Gemini and Workers AI switched off by configuration, no check or test request goes to them');
 
+  // Z.ai's free models serve one request at a time per account: a test request or canary would
+  // take a user's slot, so they get none, and there is no free list or status page to check.
+  {
+    assert.equal(PROBE_DAILY_CAPS.zai, 0);
+    const zaiCalls = [];
+    const zaiHub = new HealthHub(fakeState(), { ...ENV, HEALTH_CANARIES: 'true', GLM_API_KEY: 'zai-test' }, { now: clock,
+      fetchImpl: async url => { if (String(url).includes('api.z.ai')) zaiCalls.push(url); return json({ data: [] }); } });
+    await zaiHub.ready;
+    assert.ok(zaiHub.pools().has('zai'));
+    assert.ok(!zaiHub.checkUnits(zaiHub.pools()).some(unit => unit.provider === 'zai'));
+    const before = offset;
+    for (let i = 0; i < 3; i++) { offset += 20 * 60_000; await zaiHub.alarm(); }
+    offset = before;
+    assert.deepEqual(zaiCalls, [], 'nothing is sent to Z.ai');
+  }
+  console.log('ok - Z.ai: no list, key or status check, test request or canary');
+
   // 3. Test requests: only half-open, idle, capped pools; never NVIDIA or OpenRouter.
   upstream = {
     ...lists,

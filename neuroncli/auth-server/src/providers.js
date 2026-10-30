@@ -1,6 +1,7 @@
 import { CloudflareWorkersAIAdapter } from './cloudflare-adapter.js';
 import { OpenAICompatibleAdapter, partialUsageOf, setPartialUsage, usageNow } from './provider-adapter.js';
 import { AnthropicAdapter } from './anthropic-adapter.js';
+import { ZaiAdapter } from './zai-adapter.js';
 import { toolCallSignature } from './provider-request.js';
 import { FailureKind, failureKindForStatus } from './provider-health.js';
 import {
@@ -65,6 +66,8 @@ export const ADAPTERS = {
   // Claude Sonnet 5.5 and Opus 5.5 (Messages API through @anthropic-ai/sdk): api.anthropic.com
   // only, never a followed redirect, key from the anthropic.paid slot (ANTHROPIC_API_KEY).
   anthropic: new AnthropicAdapter(),
+  // GLM-4.7-Flash and GLM-4.5-Flash (free): api.z.ai only, key from the zai.free slot (GLM_API_KEY).
+  zai: new ZaiAdapter(),
   omniroute: new OpenAICompatibleAdapter({
     id: 'omniroute',
     keyVar: 'OMNIROUTE_API_KEY',
@@ -89,7 +92,7 @@ export const ADAPTERS = {
   }),
 };
 
-const HTTP_PROVIDER_KEYS = ['openrouter', 'groq', 'gemini', 'nvidia', 'anthropic', 'omniroute', 'bedrock', 'azure'];
+const HTTP_PROVIDER_KEYS = ['openrouter', 'groq', 'gemini', 'nvidia', 'anthropic', 'zai', 'omniroute', 'bedrock', 'azure'];
 const HOSTED_FLAGS = { nvidia: 'NVIDIA_HOSTED', openrouter: 'OPENROUTER_HOSTED' };
 
 export function providerConfiguration(env, session = {}) {
@@ -276,6 +279,8 @@ export const PROVIDER_PARAMS = Object.freeze({
   // Claude 5.5 rejects sampling parameters (temperature, top_p, top_k) and the adapter builds its
   // body from a whitelist anyway (src/anthropic-request.js); this list is the first filter.
   anthropic: ['tools', 'tool_choice', 'stop', 'response_format', 'parallel_tool_calls', 'reasoning_effort'],
+  // Z.ai documents no seed, user or penalties; reasoning_effort becomes its `thinking` switch.
+  zai: ['tools', 'tool_choice', 'stop', 'temperature', 'top_p', 'response_format', 'reasoning_effort'],
 });
 const STANDARD_EFFORTS = new Set(['low', 'medium', 'high']);
 
@@ -302,13 +307,19 @@ export function buildUpstreamPayload(entry, body, maxTokens) {
     const effort = mappedEffort(entry, payload.reasoning_effort);
     delete payload.reasoning_effort;
     if (effort && entry.provider === 'openrouter') payload.reasoning = { effort };
-    else if (effort) payload.reasoning_effort = effort;
+    // GLM thinks unless `thinking` says otherwise (docs.z.ai); only "none" needs sending.
+    else if (entry.provider === 'zai') {
+      if (effort === 'none') payload.thinking = { type: 'disabled' };
+    } else if (effort) payload.reasoning_effort = effort;
   }
   if (!Array.isArray(payload.tools) || !payload.tools.length) {
     delete payload.tools;
     delete payload.tool_choice;
     delete payload.parallel_tool_calls;
   }
+  // Z.ai accepts tool_choice "auto" only (docs.z.ai): any other value is left out, so the model
+  // decides as it does by default, instead of the request failing.
+  if (entry.provider === 'zai' && payload.tool_choice !== undefined && payload.tool_choice !== 'auto') delete payload.tool_choice;
   return payload;
 }
 
@@ -450,6 +461,10 @@ const MODEL_GONE_CODES = new Set(['model_not_found', 'model_decommissioned', 'mo
 const MODEL_ERROR_CODES = new Set(['tool_use_failed', 'json_validate_failed']);
 const CONTEXT_CODES = new Set(['context_length_exceeded']);
 const RATE_LIMIT_CODES = new Set(['rate_limit_exceeded', 'rate_limited']);
+// Business codes that say the upstream account cannot serve at all until the operator acts,
+// whatever HTTP status carries them: Z.ai answers 1113 (no balance) with HTTP 429, next to 1302
+// (rate limit) and 1305 (overloaded), which stay rate limits (docs.z.ai error codes).
+const ACCOUNT_CODES = new Set(['1113']);
 // Workers AI internal error codes (developers.cloudflare.com/workers-ai/platform/errors).
 export const WORKERS_AI_ERRORS = Object.freeze({
   3003: 400, 5004: 400, 5007: 404, 3042: 404, 3006: 413, 3007: 408, 3023: 403, 3041: 403, 5016: 403, 5018: 403,
@@ -713,6 +728,8 @@ export function classifyUpstreamFailure(status, body = '', headers = null, fallb
     // Request-scoped only: the message may tell a context-length rejection apart.
     else if (CONTEXT_PATTERN.test(info.message.toLowerCase())) kind = FailureKind.CONTEXT;
   }
+  // Parks the pool for the auth cooldown, like a 402, instead of retrying it after a rate limit.
+  if (ACCOUNT_CODES.has(info.code)) kind = FailureKind.AUTH;
   return {
     kind,
     status: effective,
@@ -885,7 +902,21 @@ export class SseEventReader {
   }
 }
 
-function parseEvent(data) {
+// Finish reasons that report a failed generation instead of an error event, per provider, with
+// the kind of failure: Z.ai ends a stream that failed after it started (and a 200 answer) with
+// network_error, and a prompt its moderation refused with sensitive, which says nothing about
+// the pool (docs.z.ai). Either is a failed attempt, never a completed answer.
+const ERROR_FINISH_REASONS = Object.freeze({
+  zai: Object.freeze({ network_error: FailureKind.SERVER, sensitive: FailureKind.MODEL_ERROR }),
+});
+
+function finishReasonError(value, finishErrors) {
+  if (!finishErrors || !Array.isArray(value?.choices)) return null;
+  const reason = value.choices.map(choice => choice?.finish_reason).find(item => typeof item === 'string' && Object.hasOwn(finishErrors, item));
+  return reason ? new UpstreamStreamError({ code: reason, message: `finish_reason ${reason}` }, finishErrors[reason]) : null;
+}
+
+function parseEvent(data, finishErrors = null) {
   if (data === '[DONE]') return { done: true };
   let value;
   try {
@@ -895,6 +926,8 @@ function parseEvent(data) {
   }
   if (!value || typeof value !== 'object') throw new UpstreamProtocolError('Provider sent malformed SSE data');
   if (value.error) throw new UpstreamStreamError(value.error);
+  const failed = finishReasonError(value, finishErrors);
+  if (failed) throw failed;
   return { value };
 }
 
@@ -939,6 +972,7 @@ export async function startCompletion(env, session, entry, pool, payload,
   const response = await guard(requestCompletion(env, session, entry, payload, signal, pool, request)).catch(error => {
     throw reported(error);
   });
+  const finishErrors = ERROR_FINISH_REASONS[entry.provider] ?? null;
   try {
     if (!response.ok) {
       const bodyText = await guard(readBounded(response)).catch(() => '');
@@ -949,6 +983,8 @@ export async function startCompletion(env, session, entry, pool, payload,
       const json = await guard(response.json().catch(() => {
         throw new UpstreamProtocolError('Provider returned malformed JSON');
       }));
+      const failed = finishReasonError(json, finishErrors);
+      if (failed) throw failed;
       return { ok: true, json, controller, latencyMs: Date.now() - started };
     }
     if (!response.body || !response.headers.get('content-type')?.includes('text/event-stream')) {
@@ -957,8 +993,9 @@ export async function startCompletion(env, session, entry, pool, payload,
     reader = new SseEventReader(response.body);
     const first = await guard(reader.next());
     if (first === null || first === '[DONE]') throw new UpstreamProtocolError('Provider stream ended before the first event');
-    parseEvent(first);
-    return { ok: true, stream: { reader, first, usageSoFar: partialUsageOf(response) }, controller, latencyMs: Date.now() - started };
+    parseEvent(first, finishErrors);
+    return { ok: true, stream: { reader, first, usageSoFar: partialUsageOf(response), finishErrors }, controller,
+      latencyMs: Date.now() - started };
   } catch (error) {
     controller.abort(error);
     if (reader) await reader.cancel();
@@ -1111,9 +1148,11 @@ function normalizeStreamValue(value, state) {
  * stream ends without a usage chunk (a client abort or a mid-stream error before Claude's
  * message_delta): the input and cache counts the provider already reported, instead of the
  * byte estimate settlement would otherwise bill.
+ * `finishErrors` (startCompletion, ERROR_FINISH_REASONS) are finish reasons that end the stream
+ * as a failure.
  */
 export function createCompletionStream({ reader, first, model, controller, clientSignal, timeouts, onFinish, requestId, env,
-  onToolSignature = null, restorer = null, usageSoFar = null }) {
+  onToolSignature = null, restorer = null, usageSoFar = null, finishErrors = null }) {
   const encoder = new TextEncoder();
   const state = {
     id: `chatcmpl-${crypto.randomUUID()}`, created: Math.floor(Date.now() / 1000), model,
@@ -1156,7 +1195,7 @@ export function createCompletionStream({ reader, first, model, controller, clien
     }
   };
   const handle = data => {
-    const event = parseEvent(data);
+    const event = parseEvent(data, finishErrors);
     if (event.done) {
       state.sawDone = true;
       return [];

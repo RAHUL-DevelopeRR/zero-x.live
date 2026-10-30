@@ -34,6 +34,10 @@ export const LIST_PRICES = Object.freeze({
   'cloudflare:@cf/openai/gpt-oss-120b': row({ input: 0.35, output: 0.75 }),
   // Workers AI: 26,668 / 204,805 neurons per million tokens at $0.011 per 1K neurons.
   'cloudflare:@cf/meta/llama-3.3-70b-instruct-fp8-fast': row({ input: 0.293, output: 2.253 }),
+  // Z.ai's free Flash models cost nothing (docs.z.ai pricing). The type has no paid slot
+  // (catalog-types.js), so these rows can never price a paid pool; they record the upstream price.
+  'zai:glm-4.7-flash': row({ input: 0, output: 0 }),
+  'zai:glm-4.5-flash': row({ input: 0, output: 0 }),
 });
 
 // Announced list-price changes: from the UTC date `from`, the entry replaces LIST_PRICES for

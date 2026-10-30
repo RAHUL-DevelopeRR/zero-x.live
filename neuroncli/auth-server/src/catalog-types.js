@@ -31,6 +31,7 @@ export const KEY_SLOTS = deepFreeze({
   'omniroute.free': { env: 'OMNIROUTE_API_KEY' },
   'cloudflare.binding': { binding: 'cloudflare', billed: true },
   'anthropic.paid': { env: 'ANTHROPIC_API_KEY' },
+  'zai.free': { env: 'GLM_API_KEY' },
 });
 
 // Shared upstream budgets that new free rows of a provider start from (src/catalog.js
@@ -40,6 +41,7 @@ const FREE_LIMITS = deepFreeze({
   groq: { rpm: 30, rpd: 1000, tpm: 8000, tpd: 200000 },
   nvidia: { rpm: 40, rpd: 10000, tpm: null, tpd: null },
   openrouter: { rpm: 20, rpd: 50, tpm: null, tpd: null },
+  zai: { rpm: null, rpd: null, tpm: null, tpd: null },
 });
 
 // Free pools on a billed slot (KEY_SLOTS `billed`), per provider type and upstream model: only
@@ -137,6 +139,15 @@ export const PROVIDER_TYPES = deepFreeze({
     upstream: /^claude-[a-z0-9][a-z0-9-]{0,60}$/, slots: { free: [], paid: ['anthropic.paid'] },
     models_var: 'ANTHROPIC_MODELS', requires_cache_prices: true, max_daily_spend_usd: 50,
     models_dev: 'anthropic', info: { name: 'Anthropic', homepage: 'https://www.anthropic.com' },
+  }),
+  // Z.ai's free GLM Flash models (docs.z.ai). One request at a time per account and model (the
+  // owner's console, 2026-10-29), so each free pool runs at most one request; no per-minute or
+  // daily limit is published. No paid pools: GLM-5.3-Flash ($0.15 / $0.50) is not offered.
+  zai: type({
+    adapter: 'openai-compatible', base_url: 'https://api.z.ai/api/paas/v4', id_prefix: 'zai/',
+    upstream: /^glm-[a-z0-9][a-z0-9.-]{0,60}$/, slots: { free: ['zai.free'], paid: [] }, models_var: 'ZAI_MODELS',
+    free_concurrency: 1, discovery_defaults: { limits: FREE_LIMITS.zai },
+    models_dev: 'zai', info: { name: 'Z.ai', homepage: 'https://z.ai' },
   }),
 });
 

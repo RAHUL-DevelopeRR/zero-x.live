@@ -782,8 +782,10 @@ Code: `src/catalog-types.js`, `src/list-prices.js`, `src/catalog-guardrails.js`,
 - Models are rows (`zerox_catalog_models`: `draft | active | disabled`, never deleted) with
   immutable revisions (`zerox_catalog_revisions`, pools in `zerox_catalog_revision_pools`) and an
   append-only audit log (`zerox_catalog_events`; a change made outside the catalog functions is
-  logged as `direct`). The seed makes the 16 code models active at revision 1, equal to their code
-  specs.
+  logged as `direct`). The seed makes the 18 code models (Z.ai's two since 2026-10-29) active at
+  revision 1, equal to their code specs. Provider type `zai` (2026-10-29): `zai/` ids, base URL
+  `https://api.z.ai/api/paas/v4`, free key slot `zai.free` (`GLM_API_KEY`), no paid slot, one
+  request at a time per free pool (section 8.6).
 - Code bounds every row: provider types (adapter, base URL, public id prefix, upstream id
   grammar, allowed key slots per tier, hosting flag, spend ceiling) in `src/catalog-types.js`; a
   row names a key slot id (`anthropic.paid` → `ANTHROPIC_API_KEY`), never an env var or a URL.

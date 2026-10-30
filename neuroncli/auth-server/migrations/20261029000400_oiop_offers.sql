@@ -352,6 +352,13 @@ VALUES
    'user', 'T1', 'byok_only', 'no', 'allowed', 'https://openrouter.ai/terms',
    '[{"type": "account", "detail": "The caller''s own OpenRouter account, connected with OAuth"}]', '[]',
    '[{"field": "trains_on_inputs", "source": "operator", "note": "The gateway sends provider.data_collection deny on every OpenRouter request (src/provider-adapter.js)"}]',
+   'active', 'operator', now()),
+  ('zai.free', 'zai', 'Z.ai API (free GLM Flash models)', 'https://z.ai',
+   'https://models.dev/logos/zai.svg', 'https://api.z.ai/api/paas/v4', 'openai-chat',
+   'operator', 'T0', 'permitted', 'no', 'allowed', 'https://docs.z.ai/legal-agreement/terms-of-use',
+   '[{"type": "account", "detail": "Z.ai account and an API key"}]', '[]',
+   '[{"field": "redistribution", "source": "operator", "url": "https://docs.z.ai/legal-agreement/terms-of-use", "note": "docs/PROVIDER_TERMS.md: the API terms allow integrating the service into applications for your own end users"},
+     {"field": "trains_on_inputs", "source": "operator", "url": "https://docs.z.ai/legal-agreement/terms-of-use", "note": "docs/PROVIDER_TERMS.md: API content is not used for training by default; processing in Singapore"}]',
    'active', 'operator', now());
 
 INSERT INTO public.zerox_offer_events (offer_id, actor, action, to_state, note)

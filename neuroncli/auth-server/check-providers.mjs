@@ -232,7 +232,7 @@ try {
     assert.deepEqual(unhandled, [], `${scenario}: a failed cancel is not an unhandled rejection`);
   }
   // Upstream hosts come from the provider-type registry (src/catalog-types.js) only.
-  for (const type of ['gemini', 'groq', 'nvidia', 'openrouter']) {
+  for (const type of ['gemini', 'groq', 'nvidia', 'openrouter', 'zai']) {
     assert.equal(ADAPTERS[type].getBaseUrl({}), PROVIDER_TYPES[type].base_url, `${type}: the adapter calls the registry's base URL`);
   }
   const omniEnv = { OMNIROUTE_BASE_URL: 'https://router.example/v1/' };
@@ -312,13 +312,37 @@ try {
     'operator health lists the Claude rows without a paid call');
   assert.equal(claudeCalls.length, 1);
 
+  // Z.ai: key slot zai.free (GLM_API_KEY), api.z.ai only; operator health lists its catalog rows
+  // without a call (one request at a time on the free models).
+  const glm = CATALOG.find(entry => entry.id === 'zai/glm-4.7-flash');
+  assert.equal(ADAPTERS.zai.getBaseUrl({}), 'https://api.z.ai/api/paas/v4');
+  assert.deepEqual(glm.pools.map(pool => [pool.tier, pool.key_slot, pool.key_var]), [['free', 'zai.free', 'GLM_API_KEY']]);
+  assert.deepEqual(PROVIDER_PARAMS.zai, ['tools', 'tool_choice', 'stop', 'temperature', 'top_p', 'response_format',
+    'reasoning_effort']);
+  const zaiEnv = { GLM_API_KEY: 'zai-providers-check' };
+  const zaiCalls = [];
+  globalThis.fetch = async (url, options) => {
+    zaiCalls.push(String(url));
+    assert.equal(options.redirect, 'manual', 'the key never follows a redirect');
+    assert.equal(options.headers.Authorization, 'Bearer zai-providers-check');
+    return Response.json({ choices: [{ message: { content: 'OK' } }] });
+  };
+  assert.equal((await requestCompletion(zaiEnv, {}, glm, { messages: [{ role: 'user', content: 'Hi' }], max_tokens: 8 }, undefined,
+    glm.pools[0])).status, 200);
+  assert.deepEqual(zaiCalls, ['https://api.z.ai/api/paas/v4/chat/completions']);
+  const zaiConfig = providerConfiguration(zaiEnv).find(item => item.provider === 'zai');
+  assert.deepEqual([zaiConfig.configured, zaiConfig.catalog_models], [true, ['zai/glm-4.7-flash', 'zai/glm-4.5-flash']]);
+  const zaiHealth = (await providerHealth(zaiEnv)).find(item => item.provider === 'zai');
+  assert.deepEqual([zaiHealth.status, zaiHealth.model_count, zaiHealth.inference_checked], ['configured', 2, false]);
+  assert.equal(zaiCalls.length, 1, 'operator health makes no Z.ai call');
+
   // deploy.yml pushes every provider key the hosted catalog reads: a secret missing from
   // OPTIONAL_SECRETS or from either env block never reaches the Worker.
   const workflow = readFileSync(new URL('../../.github/workflows/deploy.yml', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
   const optional = workflow.match(/OPTIONAL_SECRETS: ([^\n]+)/)[1].trim().split(/\s+/);
   const catalogKeys = [...new Set(CATALOG.flatMap(entry => entry.pools.map(pool => pool.key_var)).filter(Boolean))].sort();
-  assert.deepEqual(catalogKeys, ['ANTHROPIC_API_KEY', 'GEMINI_API_KEY', 'GEMINI_PAID_API_KEY', 'GROQ_API_KEY', 'GROQ_PAID_API_KEY',
-    'NVIDIA_API_KEY', 'OPENROUTER_API_KEY']);
+  assert.deepEqual(catalogKeys, ['ANTHROPIC_API_KEY', 'GEMINI_API_KEY', 'GEMINI_PAID_API_KEY', 'GLM_API_KEY', 'GROQ_API_KEY',
+    'GROQ_PAID_API_KEY', 'NVIDIA_API_KEY', 'OPENROUTER_API_KEY']);
   for (const name of catalogKeys) {
     assert.ok(Object.values(KEY_SLOTS).some(slot => slot.env === name), `${name} is a key slot`);
     assert.ok(optional.includes(name), `${name} is in deploy.yml OPTIONAL_SECRETS`);

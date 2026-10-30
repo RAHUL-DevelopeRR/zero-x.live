@@ -43,6 +43,7 @@ const GEMINI_TERMS = 'https://ai.google.dev/gemini-api/terms';
 const GROQ_TERMS = 'https://console.groq.com/docs/legal/services-agreement';
 const CLOUDFLARE_TERMS = 'https://www.cloudflare.com/service-specific-terms-developer-platform/';
 const OPENROUTER_TERMS = 'https://openrouter.ai/terms';
+const ZAI_TERMS = 'https://docs.z.ai/legal-agreement/terms-of-use';
 const OPENROUTER_DATA = { field: 'trains_on_inputs', source: 'operator',
   note: 'The gateway sends provider.data_collection deny on every OpenRouter request (src/provider-adapter.js)' };
 
@@ -142,6 +143,19 @@ export const BUILTIN_OFFERS = Object.freeze([
   }),
   // Claude Sonnet 5.5 and Opus 5.5 on Pro and Max, billed from credits (ANTHROPIC_API_KEY).
   offer(ANTHROPIC_PAID_OFFER),
+  // GLM-4.7-Flash and GLM-4.5-Flash, free (owner lineup 2026-10-29, GLM_API_KEY).
+  offer({
+    id: 'zai.free', provider: 'zai', name: 'Z.ai API (free GLM Flash models)', homepage: 'https://z.ai', logo_url: logo('zai'),
+    base_url: 'https://api.z.ai/api/paas/v4', trust_tier: 'T0', redistribution: 'permitted', trains_on_inputs: 'no',
+    commercial_use: 'allowed', terms_url: ZAI_TERMS,
+    prerequisites: [{ type: 'account', detail: 'Z.ai account and an API key' }],
+    evidence: [
+      { field: 'redistribution', source: 'operator', url: ZAI_TERMS,
+        note: 'docs/PROVIDER_TERMS.md: the API terms allow integrating the service into applications for your own end users' },
+      { field: 'trains_on_inputs', source: 'operator', url: ZAI_TERMS,
+        note: 'docs/PROVIDER_TERMS.md: API content is not used for training by default; processing in Singapore' },
+    ],
+  }),
 ].map(entry => Object.freeze({ ...entry, prerequisites: Object.freeze(entry.prerequisites),
   limits: Object.freeze(entry.limits), evidence: Object.freeze(entry.evidence) })));
 

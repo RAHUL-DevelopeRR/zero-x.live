@@ -65,6 +65,8 @@ OPENROUTER_HOSTED = "true"
 # place. Delete a line (or list model ids) to serve them again; no code change is needed.
 GEMINI_MODELS = ""
 CLOUDFLARE_MODELS = ""
+# Z.ai's free GLM-4.7-Flash and GLM-4.5-Flash use the Worker secret GLM_API_KEY (deploy.yml pushes
+# it from the GitHub secret); without it they list as not_configured. ZAI_MODELS would narrow them.
 # Claude Sonnet 5.5 and Claude Opus 5.5 (paid pools, Pro and Max, billed from credits) use the
 # Worker secret ANTHROPIC_API_KEY, which deploy.yml pushes from the GitHub secret; without it they
 # list as not_configured. The same key enables the weekly discovery research and credits jobs;

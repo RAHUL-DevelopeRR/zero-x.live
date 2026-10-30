@@ -53,6 +53,8 @@ RAZORPAY_WEBHOOK_SECRET=            # SECRET: webhook signing secret from the Ra
 # switched off with empty lists, as in wrangler.toml [vars]; delete those two lines to serve them.
 GEMINI_MODELS=
 CLOUDFLARE_MODELS=
+# Z.ai free GLM-4.7-Flash and GLM-4.5-Flash (key slot zai.free).
+GLM_API_KEY=
 GROQ_API_KEY=                       # SECRET
 GEMINI_API_KEY=                     # SECRET (free tier is geo-blocked for EEA/GB/CH callers)
 CLOUDFLARE_ACCOUNT_ID=              # Node only; the Worker uses its AI binding

@@ -69,6 +69,7 @@ them in `zerox_plan_policy.razorpay_plan_id_inr/usd`.
 |---|---|---|---|
 | `GROQ_API_KEY`, `GEMINI_API_KEY` | **secret** | unset | Free pools (Groq free org; Gemini free tier, refused for EEA/GB/CH callers). Optional once the provider key vault holds keys: each vault key is its own pool and these serve last. |
 | `GROQ_PAID_API_KEY`, `GEMINI_PAID_API_KEY` | **secret** | unset | Paid pools for Pro/Max (Groq Developer plan, billing-linked Gemini project). Unset = no paid pool. |
+| `GLM_API_KEY` | **secret** | unset | Z.ai's free GLM-4.7-Flash and GLM-4.5-Flash (key slot `zai.free`; owner lineup 2026-10-29). Already a GitHub secret; deploy pushes it to the Worker. Free models answer one request at a time per account and model: apply `20261029001000_pool_concurrency.sql` so the gateway holds the second request back instead of getting 429s. Unset: both list as `not_configured`. |
 | `ANTHROPIC_API_KEY` | **secret** | unset | Claude Sonnet 5.5 and Claude Opus 5.5 paid pools (Pro and Max, billed from credits; key slot `anthropic.paid`) and the weekly discovery research agent. Set it with `gh secret set ANTHROPIC_API_KEY`; deploy pushes it to the Worker. Unset: both Claude models list as `not_configured`. Also set a monthly spend limit for the key's workspace in the Anthropic console (see "Model catalog and Claude"). |
 | `ANTHROPIC_THINKING_REPLAY` | var | on | `false` stops replaying Claude's signed thinking blocks into the next turn and stops sending the thinking-binding beta (contract §13.3). |
 | `PAID_DAILY_SPEND_CAP_USD` | var | unset | A number above 0 lowers every paid pool's daily spend cap (upstream USD per UTC day) to at most this value; it can never raise one (contract §13.4). |
@@ -154,7 +155,7 @@ and apply, in order (the ten catalog and app migrations were renumbered from 202
 5. `20261029000400_oiop_offers.sql`
 6. `20261029000500_credit_programs.sql`
 7. `20261029000600_catalog_models.sql` (model rows, revisions, audit log, draft → active approval)
-8. `20261029000700_catalog_seed.sql` (the 16 code models active at revision 1, the `anthropic.paid` offer, earlier promoted discovery models as drafts)
+8. `20261029000700_catalog_seed.sql` (the 18 code models, Z.ai's two included, active at revision 1, the `anthropic.paid` offer, earlier promoted discovery models as drafts)
 9. `20261029000800_paid_billing_caps.sql` (per-pool daily spend caps `p_pool.cpd`, cache-aware settlement, abandoned paid reservations keep their credit hold for 60 minutes)
 10. `20261029000900_plan_features_claude.sql` (plan feature strings; tiers, limits and credits unchanged)
 11. `20261029001000_pool_concurrency.sql` (`p_pool.concurrency`: requests of a pool key running at once, for Z.ai's one-at-a-time free models)
@@ -168,7 +169,7 @@ cache arguments. Verify:
 
 - `SELECT pg_get_function_identity_arguments('public.zerox_settle_v2'::regproc);` lists 11 arguments;
 - `SELECT id, lifecycle FROM public.zerox_offers WHERE id = 'anthropic.paid';` returns `active`;
-- `SELECT id, status FROM public.zerox_catalog_snapshot() WHERE status = 'active';` returns 16 rows;
+- `SELECT id, status FROM public.zerox_catalog_snapshot() WHERE status = 'active';` returns 18 rows;
 - `SELECT plan, allowed_tiers, monthly_credit_microusd, jsonb_array_length(features) FROM public.zerox_plan_policy ORDER BY sort;`
   returns free `{free}` 0 4, pro `{free,paid}` 8000000 5, max `{free,paid}` 35000000 5, ultrawork `{free,paid}` 8000000 5.
 
