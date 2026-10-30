@@ -11,10 +11,13 @@ SET LOCAL lock_timeout = '5s';
 -- (20261028000000_reservation_leases.sql), so a request whose isolate died stops counting when its
 -- lease lapses, and a settle frees its slot at once. A full pool answers pool_exhausted, so the
 -- gateway moves on to its next candidate without calling the upstream, with retry_after_seconds
--- until the first lease lapses (at most 60). The count runs after the pool key's bucket rows are
--- locked, so two reservations of the same pool key cannot both take the last slot. Additive: the
--- signature, the results and every other check stay as 20261029000800_paid_billing_caps.sql left
--- them; a call without `concurrency` behaves as before. Roll back with
+-- until the first lease lapses (at most 60). The count runs under a transaction advisory lock on
+-- the pool key (taken after its bucket rows), so two reservations of the same pool key cannot both
+-- take the last slot, also when they lock different minute and day buckets around 00:00 UTC
+-- (check-quota-race.mjs races 100 of them and shows one waiting for the lock on a real Postgres;
+-- check-business-db.mjs checks the lock is held). Additive: the signature, the results and every
+-- other check stay as 20261029000800_paid_billing_caps.sql left them; a call without `concurrency`
+-- behaves as before. Roll back with
 -- migrations/down/20261029001000_pool_concurrency.sql (psql -X -v ON_ERROR_STOP=1 -f).
 
 -- Atomically checks the per-user plan quota, credits and the shared upstream pool budget,
@@ -184,8 +187,15 @@ BEGIN
       v_status := 'pool_exhausted';
       v_retry := greatest(1, ceil(extract(epoch FROM v_minute + interval '1 minute' - v_now)))::integer;
     ELSIF v_concurrency IS NOT NULL THEN
+      -- One count per pool key at a time, until this transaction ends: the bucket locks above do
+      -- not suffice, since two reservations that start on either side of 00:00 UTC lock different
+      -- minute and day rows. Taken last, after the bucket rows, and held by nobody who then waits
+      -- for a bucket row, so it adds no lock cycle. A hash collision only serializes two keys.
+      PERFORM pg_catalog.pg_advisory_xact_lock(
+        pg_catalog.hashtext('zerox_pool_concurrency:' || p_model || '|' || p_tier || '|' || v_pool_key));
       -- Requests running on this pool key now, every user's: their leases run (a lapsed lease is a
-      -- request whose isolate died). The bucket locks above serialize this count per pool key.
+      -- request whose isolate died). A fresh snapshot, so it sees a slot taken by a reservation
+      -- that held the lock before this one.
       SELECT count(*), min(r.lease_expires_at) INTO v_count, v_lease FROM public.zerox_reservations AS r
         WHERE r.status = 'active' AND r.model = p_model AND r.tier = p_tier AND r.pool_key = v_pool_key
           AND r.lease_expires_at > v_now;

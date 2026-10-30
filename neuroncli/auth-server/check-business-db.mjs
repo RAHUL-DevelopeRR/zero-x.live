@@ -910,8 +910,27 @@ try {
     for (const concurrency of [-1, '1', true]) {
       await assert.rejects(reserve(users[2], { p_model: model, p_pool: { concurrency } }), /invalid_pool_budget: concurrency/);
     }
+    // The count runs under a transaction advisory lock on the pool key: the bucket row locks alone
+    // do not serialize two reservations on either side of 00:00 UTC (different minute and day
+    // rows). PGlite has one connection, so this checks the lock is held until the transaction
+    // ends; check-quota-race.mjs shows a reservation waiting for it on a real Postgres.
+    const locker = await newUser('free');
+    const heldLocks = (poolModel, budget, poolKeyId = null) => db.transaction(async tx => {
+      const { rows: [reserved] } = await tx.query('SELECT * FROM public.zerox_reserve_v2($1, $2, $3, $4, $5, $6, $7::jsonb, $8)',
+        [locker, `req_${randomUUID()}`, poolModel, 'free', 100, 0, JSON.stringify(budget), poolKeyId]);
+      assert.equal(reserved.status, 'ok');
+      const { rows } = await tx.query(`SELECT ((l.classid::bigint << 32) | l.objid::bigint)
+          = pg_catalog.hashtext('zerox_pool_concurrency:' || $1 || '|free|' || $2)::bigint AS pool_key_lock
+        FROM pg_catalog.pg_locks AS l WHERE l.locktype = 'advisory' AND l.pid = pg_catalog.pg_backend_pid()`, [poolModel, poolKeyId ?? '']);
+      await tx.rollback();
+      return rows.map(row => row.pool_key_lock);
+    });
+    assert.deepEqual(await heldLocks('zai/glm-lock-flash', single), [true], 'the pool key\'s lock is held to the end of the reservation');
+    assert.deepEqual(await heldLocks('zai/glm-lock-flash', single, `zai:glm-lock-flash:free#${randomUUID()}`), [true], 'per pool key');
+    assert.deepEqual(await heldLocks('zai/glm-lock-flash', { rpm: 30 }), [], 'no lock without a concurrency limit');
+    assert.equal((await sql("SELECT count(*)::int AS n FROM pg_catalog.pg_locks WHERE locktype = 'advisory'"))[0].n, 0, 'released with the transaction');
   }
-  ok('per-pool concurrency: p_pool.concurrency counts the pool key\'s running reservations across users (refused: pool_exhausted within the minute, nothing counted); settles and lapsed leases free slots; keys and models are separate');
+  ok('per-pool concurrency: p_pool.concurrency counts the pool key\'s running reservations across users under the pool key\'s advisory lock (refused: pool_exhausted within the minute, nothing counted); settles and lapsed leases free slots; keys and models are separate');
 
   // ---------------------------------------------------------------- stale release and housekeeping
   const staleUser = await newUser('free');

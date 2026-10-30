@@ -94,6 +94,36 @@ try {
     ok(`credits: ${PARALLEL} parallel paid reservations with credit for 5 -> exactly 5, balance never negative`);
   }
 
+  // 5. A pool that serves one request at a time (p_pool.concurrency 1, contract section 8.6): 100
+  // users at once -> exactly 1, and after its settle exactly 1 again.
+  {
+    const single = { rpm: null, rpd: null, tpm: null, tpd: null, concurrency: 1 };
+    const users = await Promise.all(Array.from({ length: PARALLEL }, () => newUser('max')));
+    const rows = await Promise.all(users.map(user => reserve(user, { model: 'race/single', budget: single })));
+    assert.equal(count(rows, 'ok'), 1);
+    assert.equal(count(rows, 'pool_exhausted'), PARALLEL - 1);
+    await settle(rows.find(row => row.status === 'ok').reservation_id, 30, 10);
+    const again = await Promise.all(users.map(user => reserve(user, { model: 'race/single', budget: single })));
+    assert.equal(count(again, 'ok'), 1, 'a settle frees exactly one slot');
+    // The count waits for the pool key's advisory lock, not only for its bucket rows (which two
+    // reservations on either side of 00:00 UTC do not share): while another transaction holds the
+    // lock, a reservation of that pool key does not finish.
+    const holder = await pool.connect();
+    try {
+      await holder.query('BEGIN');
+      await holder.query("SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext('zerox_pool_concurrency:race/held|free|'))");
+      let finished = false;
+      const waiting = reserve(users[0], { model: 'race/held', budget: single }).finally(() => { finished = true; });
+      await new Promise(resolve => setTimeout(resolve, 500));
+      assert.equal(finished, false, 'the reservation waits for the pool key lock');
+      await holder.query('COMMIT');
+      assert.equal((await waiting).status, 'ok');
+    } finally {
+      holder.release();
+    }
+    ok(`pool concurrency: ${PARALLEL} parallel reservations of a one-slot pool -> exactly 1, again after its settle; the count waits for the pool key lock`);
+  }
+
   console.log(`\nPASS: quota race (${passed.length} groups) on a real Postgres`);
 } finally {
   await pool.end();

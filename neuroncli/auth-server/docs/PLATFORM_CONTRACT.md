@@ -513,8 +513,9 @@ with HTTP 429 (code 1302). Migration `20261029001000_pool_concurrency.sql`:
 - **`p_pool.concurrency`** (`zerox_reserve_v2`): at most that many reservations of the pool key
   may be running at once, across every user. Running means active with a running lease (section
   8.5): a settle frees the slot at once, a request whose isolate died frees it when its lease
-  lapses. The count is taken under the pool key's bucket locks, so two requests cannot both take
-  the last slot. Null is unlimited; 0 serves nothing.
+  lapses. The count is taken under a transaction advisory lock on the pool key (after its bucket
+  rows, which two requests on either side of 00:00 UTC do not share), so two requests cannot both
+  take the last slot. Null is unlimited; 0 serves nothing.
 - **A full pool** answers `pool_exhausted` with `retry_after_seconds` until its first lease lapses
   (1-60 s). The gateway moves on to its next candidate without calling the upstream, and
   /v1/models shows the model busy until then (budget name `concurrency`).
