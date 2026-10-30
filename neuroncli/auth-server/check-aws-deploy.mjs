@@ -615,8 +615,8 @@ if (ran && headHasKit) {
     const listed = spawnSync(shell.bash, ['-c', 'tar -tzf - < "$1"', '_', posix(out)], { encoding: 'utf8' }).stdout.trim().split('\n');
     const tracked = spawnSync('git', ['-c', 'core.quotePath=false', 'ls-tree', '-r', '--name-only', 'HEAD'], { cwd: repo, encoding: 'utf8' })
       .stdout.trim().split('\n');
-    const site = listed.filter(path => !path.startsWith('neuroncli/auth-server/') && !['REVISION', '.assetsignore'].includes(path) && !KIT.includes(path));
-    assert.deepEqual(site.sort(), tracked.filter(path => !ignored(path) && !path.startsWith('neuroncli/auth-server/') && !KIT.includes(path)).sort(),
+    const siteOnly = path => !path.startsWith('neuroncli/auth-server/') && !['REVISION', '.assetsignore'].includes(path) && !KIT.includes(path);
+    assert.deepEqual(listed.filter(siteOnly).sort(), tracked.filter(path => !ignored(path) && siteOnly(path)).sort(),
       'HEAD\'s website files are exactly what .assetsignore leaves');
     for (const path of [...GATEWAY_RUNTIME, ...KIT, 'REVISION', '.assetsignore', 'index.html']) assert.ok(listed.includes(path), `${path} is in the release`);
     assert.ok(!listed.some(path => NOT_SHIPPED.test(path) && !path.startsWith('deploy/aws/')), 'no tests, migrations, docs, Markdown or env files');
