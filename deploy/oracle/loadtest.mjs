@@ -1,17 +1,21 @@
 #!/usr/bin/env node
-// Capacity check for the gateway on the VM: N concurrent long token streams through a gateway
-// process (server.js, the code being deployed) against a fake upstream on loopback. Reports the
-// gateway's CPU per stream and the most streams it carried within the limits below.
+// Capacity check for the gateway on the VM: N concurrent token streams through a gateway process
+// (server.js, the code being deployed) against a fake upstream on loopback. Reports the gateway's
+// CPU per request and per token, and the most streams it carried within the limits below.
 //
 //   cd neuroncli/auth-server && npm ci        # a checkout of the release, not /opt/zerox/gateway
-//   node ../../deploy/oracle/loadtest.mjs --streams 50,100,200,400 --tokens 1000 --rate 50
+//   node ../../deploy/oracle/loadtest.mjs --streams 25,50,100,200 --tokens 300 --body-kb 100 --rate 50
 //
-// The gateway under test is its own process on a random loopback port: no database (anonymous
-// sessions in memory, development plan limits), the code catalog and a fake Groq key, with
+// --body-kb pads each request with earlier turns (code and tool output, JSON-escaped like a
+// coding agent's history) to about that size; the per-request cost (parsing, routing, the
+// upstream request) grows with it, and short answers spread it over few tokens. The gateway
+// under test is its own process on a random loopback port: no database (anonymous sessions in
+// memory, development plan limits), the code catalog and a fake Groq key, with
 // e2e-upstream-shim.mjs sending its upstream calls to the fake upstream served here, so nothing
 // leaves the machine and the production service is not touched (it does share the CPU: run
-// before go-live or with zerox-gateway stopped for clean numbers). Production adds per-request
-// Supabase round trips (reservation, settlement), which cost the VM little CPU but add latency.
+// before go-live or with zerox-gateway stopped for clean numbers). Not measured, all of which
+// add CPU per request in production: TLS to the upstream provider (here plain HTTP on loopback)
+// and the Supabase RPCs over TLS (reservation, renewals, settlement, session reads).
 //
 // A step passes when every stream finished with [DONE], the gateway's event loop was busy under
 // --max-elu of the time and its p99 event loop delay stayed under --max-lag-ms. Node runs the
@@ -31,6 +35,7 @@ const { values } = parseArgs({ options: {
   streams: { type: 'string', default: '25,50,100,200' },
   tokens: { type: 'string', default: '1000' },
   rate: { type: 'string', default: '50' },
+  'body-kb': { type: 'string', default: '0' },
   'ramp-ms': { type: 'string', default: '2000' },
   'max-elu': { type: 'string', default: '0.8' },
   'max-lag-ms': { type: 'string', default: '100' },
@@ -38,13 +43,15 @@ const { values } = parseArgs({ options: {
   help: { type: 'boolean' },
 } });
 if (values.help) {
-  console.log('usage: node loadtest.mjs [--streams 25,50,100,200] [--tokens 1000] [--rate 50] [--ramp-ms 2000]\n' +
+  console.log('usage: node loadtest.mjs [--streams 25,50,100,200] [--tokens 1000] [--rate 50] [--body-kb 0] [--ramp-ms 2000]\n' +
     '                   [--max-elu 0.8] [--max-lag-ms 100] [--gateway-dir <neuroncli/auth-server>] [--json <file>]');
   process.exit(0);
 }
 const steps = values.streams.split(',').map(Number).filter(n => Number.isInteger(n) && n > 0);
 const TOKENS = Number(values.tokens);
 const RATE = Number(values.rate);
+const BODY_KB = Number(values['body-kb']);
+if (!(BODY_KB >= 0)) throw new Error('--body-kb must be 0 or more');
 const RAMP_MS = Number(values['ramp-ms']);
 const MAX_ELU = Number(values['max-elu']);
 const MAX_LAG_MS = Number(values['max-lag-ms']);
@@ -135,6 +142,24 @@ async function startGateway(upstreamBase, cwd) {
   return { child, base: `http://127.0.0.1:${port}`, mark: () => ask('mark'), read: () => ask('read') };
 }
 
+// Earlier turns of about --body-kb: a system prompt, then user and assistant turns carrying
+// source code as tool output (quotes, backslashes and newlines, so JSON escaping costs what it
+// does for an agent's history). Built once; every request sends the same body.
+const SOURCE = 'export function handler(event) {\n  const { path = "/", headers = {} } = event;\n' +
+  '  if (!path.startsWith("/v1/")) return { status: 404, body: "{\\"error\\":\\"not found\\"}" };\n  return route(path, headers);\n}\n';
+function history(kb) {
+  if (!kb) return [];
+  const messages = [{ role: 'system', content: 'You are a coding agent. Read files with the tools before editing them.\n'.repeat(20) }];
+  for (let turn = 0; Buffer.byteLength(JSON.stringify(messages)) < kb * 1024; turn++) {
+    messages.push({ role: 'user', content: `Tool output, read_file src/module${turn}.js:\n${SOURCE.repeat(16)}` },
+      { role: 'assistant', content: `I read src/module${turn}.js; next I edit it.` });
+  }
+  return messages;
+}
+const REQUEST_BODY = JSON.stringify({ model: 'groq/openai/gpt-oss-120b', stream: true, max_tokens: TOKENS + 64,
+  messages: [...history(BODY_KB), { role: 'user', content: `loadtest:${TOKENS} Write a long answer.` }] });
+const REQUEST_KB = +(Buffer.byteLength(REQUEST_BODY) / 1024).toFixed(1);
+
 async function session(base) {
   const response = await fetch(base + '/auth/session', { method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ machine_fingerprint: `loadtest-${Math.random().toString(36).slice(2)}` }) });
@@ -148,11 +173,10 @@ async function stream(base, token) {
   try {
     const response = await fetch(base + '/v1/chat/completions', {
       method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: 'groq/openai/gpt-oss-120b', stream: true, max_tokens: TOKENS + 64,
-        messages: [{ role: 'user', content: `loadtest:${TOKENS} Write a long answer.` }] }),
+      body: REQUEST_BODY,
     });
     result.status = response.status;
-    if (response.status !== 200) { await response.text(); return result; }
+    if (response.status !== 200) { result.error = `HTTP ${response.status} ${(await response.text()).slice(0, 160)}`; return result; }
     const decoder = new TextDecoder();
     let last = null;
     let tail = '';
@@ -189,7 +213,7 @@ async function runStep(gateway, count) {
   // The rate the fake upstream reached (timer granularity can hold it under --rate, on Windows).
   const meanStreamS = results.reduce((sum, result) => sum + result.streamMs, 0) / Math.max(1, results.length) / 1000;
   const row = {
-    streams: count, ok, failed: count - ok, tokens_per_stream: TOKENS, rate_tps: RATE,
+    streams: count, ok, failed: count - ok, tokens_per_stream: TOKENS, request_kb: REQUEST_KB, rate_tps: RATE,
     actual_rate_tps: +(TOKENS / meanStreamS).toFixed(1), wall_s: +wallS.toFixed(1),
     gateway_cpu_ms: Math.round(probe.cpuMs), cpu_ms_per_stream: +cpuPerStreamMs.toFixed(1),
     cpu_us_per_token: +cpuPerToken.toFixed(1),
@@ -199,7 +223,9 @@ async function runStep(gateway, count) {
     ttfb_p95_ms: Math.round(percentile(results.map(result => result.ttfbMs).filter(Number.isFinite), 95) ?? -1),
     gap_p95_ms: Math.round(percentile(results.map(result => result.maxGapMs), 95) ?? -1),
     rss_mb: Math.round(probe.rssMb), max_rss_mb: Math.round(probe.maxRssMb),
-    // Tokens per second one core could relay, and streams at --rate, using at most --max-elu of it.
+    // Requests of this shape one core could start per second, tokens per second it could relay,
+    // and concurrent streams at --rate, each using at most --max-elu of the core.
+    est_requests_per_s_per_core: +(MAX_ELU * 1000 / cpuPerStreamMs).toFixed(1),
     est_tokens_per_s_per_core: Math.floor(MAX_ELU * 1e6 / cpuPerToken),
     est_streams_per_core: Math.floor(MAX_ELU * 1e6 / cpuPerToken / RATE),
   };
@@ -216,7 +242,7 @@ const gateway = await startGateway(`http://127.0.0.1:${upstream.address().port}`
 const rows = [];
 try {
   console.log(`gateway ${gateway.base} (node ${process.version}, ${process.platform}/${process.arch}); ` +
-    `${TOKENS} tokens per stream at ${RATE} tokens/s (${TOKENS / RATE} s), ramp ${RAMP_MS} ms`);
+    `${REQUEST_KB} KB requests, ${TOKENS} tokens per stream at ${RATE} tokens/s (${TOKENS / RATE} s), ramp ${RAMP_MS} ms`);
   await runStep(gateway, Math.min(5, steps[0])); // warm-up, not reported
   for (const count of steps) {
     const row = await runStep(gateway, count);
@@ -234,18 +260,21 @@ try {
 
 const passed = rows.filter(row => row.pass);
 const best = passed.at(-1);
-console.log('\nstreams  ok    cpu ms/stream  us/token  core %   elu    lag p99  ttfb p95  gap p95  rss MB  pass');
+console.log('\nstreams  ok    cpu ms/stream  us/token  req/s/core  core %   elu    lag p99  ttfb p95  gap p95  rss MB  pass');
 for (const row of rows) {
   console.log([String(row.streams).padEnd(8), String(row.ok).padEnd(5), String(row.cpu_ms_per_stream).padEnd(14),
-    String(row.cpu_us_per_token).padEnd(9), String(row.cpu_core_pct).padEnd(8), String(row.elu).padEnd(6),
-    String(row.lag_p99_ms).padEnd(8), String(row.ttfb_p95_ms).padEnd(9), String(row.gap_p95_ms).padEnd(8),
+    String(row.cpu_us_per_token).padEnd(9), String(row.est_requests_per_s_per_core).padEnd(11), String(row.cpu_core_pct).padEnd(8),
+    String(row.elu).padEnd(6), String(row.lag_p99_ms).padEnd(8), String(row.ttfb_p95_ms).padEnd(9), String(row.gap_p95_ms).padEnd(8),
     String(row.max_rss_mb).padEnd(7), row.pass ? 'yes' : 'NO'].join(' '));
 }
 const summary = {
   max_concurrency_passed: best?.streams ?? 0,
+  request_kb: REQUEST_KB, tokens_per_stream: TOKENS,
+  est_requests_per_s_per_core: best?.est_requests_per_s_per_core ?? null,
   est_tokens_per_s_per_core: best?.est_tokens_per_s_per_core ?? null,
   est_streams_per_core: best?.est_streams_per_core ?? null,
-  note: `estimates from the gateway's CPU per token (all its threads): what one core relays at --max-elu ${MAX_ELU}, streams at ${RATE} tokens/s`,
+  note: `estimates from the gateway's CPU per request and per token (all its threads) for this request size and length: ` +
+    `what one core carries at --max-elu ${MAX_ELU}, streams at ${RATE} tokens/s; no upstream TLS and no database`,
 };
 console.log(`\n${JSON.stringify(summary)}`);
 if (values.json) await writeFile(values.json, JSON.stringify({ rows, summary }, null, 2));
