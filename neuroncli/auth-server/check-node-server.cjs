@@ -6,7 +6,10 @@ const { start, asset } = require('./server.js');
   for (const pathname of ['/neuroncli/auth-server/src/index.js', '/.env', '/.git/config', '/neuroncli/auth-server/package.json']) {
     assert.equal((await asset(new Request('http://localhost' + pathname))).status, 404, pathname);
   }
-  assert.equal((await asset(new Request('http://localhost/neuroncli/login/'))).status, 200);
+  // Like the Worker's ASSETS (html_handling "none") a directory is not its index.html: the app maps
+  // /neuroncli/login/ to the file (below, through the server).
+  assert.equal((await asset(new Request('http://localhost/neuroncli/login/'))).status, 404);
+  assert.equal((await asset(new Request('http://localhost/neuroncli/login/index.html'))).status, 200);
   process.env.AUTH_PORT = '0';
   const server = await start();
   if (!server.listening) await once(server, 'listening');

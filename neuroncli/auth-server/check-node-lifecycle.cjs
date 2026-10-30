@@ -1,16 +1,23 @@
 // The Node server behind Cloudflare Tunnel (deploy/oracle): the visitor address for per-IP
 // limits (TRUST_CLOUDFLARE, spoof attempts included), SSE keep-alive comments while a stream is
 // quiet, the dev identity refused behind the tunnel, and the graceful stop on SIGTERM (in-flight
-// streams finish and settle, bounded by the grace; a longer tail after cut streams). Upstream
-// calls go to a fake Groq server through e2e-upstream-shim.mjs.
+// streams finish and settle, bounded by the grace; a longer tail after cut streams). Then the
+// zero-downtime restart (C6): two instances on one port (AUTH_REUSE_PORT, Linux only), the
+// loopback readiness listener (READY_PORT) draining with the main one, and the release's commit
+// (C9: REVISION, GIT_COMMIT wins). Upstream calls go to a fake Groq server through
+// e2e-upstream-shim.mjs.
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
 const http = require('node:http');
+const net = require('node:net');
+const os = require('node:os');
+const path = require('node:path');
 const { once } = require('node:events');
-const { start, requestHeaders, runtimeEnv, stopOnSignals } = require('./server.js');
+const { drain, start, requestHeaders, runtimeEnv, stopOnSignals } = require('./server.js');
 
 // server.js loads a developer .env: nothing here may reach a real database or provider.
 for (const name of Object.keys(process.env)) {
-  if (/^(SUPABASE_|DATABASE_|PGLITE_|DEV_AUTH)|_API_KEY$|_HOSTED$|_MODELS$|^(TRUST_CLOUDFLARE|SSE_HEARTBEAT_MS|SHUTDOWN_GRACE_MS)$/.test(name)) {
+  if (/^(SUPABASE_|DATABASE_|PGLITE_|DEV_AUTH)|_API_KEY$|_HOSTED$|_MODELS$|^(TRUST_CLOUDFLARE|TRUST_CF_IPCOUNTRY|SSE_HEARTBEAT_MS|SHUTDOWN_GRACE_MS|NODE_ENV|EC2_PROXY_SECRET|EXTRA_WEB_HOSTS|ASSETS_DIR|READY_PORT|AUTH_REUSE_PORT|GIT_COMMIT)$/.test(name)) {
     delete process.env[name];
   }
 }
@@ -48,6 +55,17 @@ async function listening(server) {
   if (!server.listening) await once(server, 'listening');
   return `http://127.0.0.1:${server.address().port}`;
 }
+// Settles when the listener is bound, or with its error (ENOTSUP for reusePort off Linux).
+const bound = server => server.listening ? Promise.resolve() : new Promise((resolve, reject) => {
+  server.once('listening', resolve);
+  server.once('error', reject);
+});
+const freePort = () => new Promise(resolve => {
+  const probe = net.createServer().listen(0, '127.0.0.1', () => {
+    const { port } = probe.address();
+    probe.close(() => resolve(port));
+  });
+});
 const closeServer = server => new Promise(resolve => (server.listening ? server.close(() => resolve()) : resolve()));
 
 // A fresh TCP connection (no pooled socket), to see whether the listener still accepts.
@@ -147,11 +165,18 @@ async function waitFor(check, ms) {
     assert.equal(await pkceStart(plain.base, { 'CF-Connecting-IP': '192.0.2.99', 'x-neuron-client-ip': '192.0.2.98' }), 429,
       'spoofed CF-Connecting-IP and x-neuron-client-ip share the loopback bucket');
 
-    process.env.TRUST_CLOUDFLARE = 'true';
+    // Behind the tunnel the server is the public origin: without the Worker's proxy secret it
+    // answers its test host only (check-node-origin.cjs), here the loopback address it listens on.
+    const tunnelPort = await freePort();
+    Object.assign(process.env, { TRUST_CLOUDFLARE: 'true', AUTH_PORT: String(tunnelPort), EXTRA_WEB_HOSTS: `127.0.0.1:${tunnelPort}` });
     const tunnel = await startServer();
+    Object.assign(process.env, { AUTH_PORT: '0' });
+    delete process.env.EXTRA_WEB_HOSTS;
     for (let i = 1; i <= 10; i++) assert.notEqual(await pkceStart(tunnel.base, { 'CF-Connecting-IP': '203.0.113.7' }), 429);
     assert.equal(await pkceStart(tunnel.base, { 'CF-Connecting-IP': '203.0.113.7' }), 429, 'one visitor is limited');
     assert.notEqual(await pkceStart(tunnel.base, { 'CF-Connecting-IP': '198.51.100.9' }), 429, 'another visitor has its own bucket');
+    assert.notEqual(await pkceStart(tunnel.base, { 'CF-Connecting-IP': '198.51.100.10', 'x-zerox-client-ip': '203.0.113.7' }), 429,
+      'x-zerox-client-ip without the proxy secret is ignored');
     assert.equal(await pkceStart(tunnel.base, { 'CF-Connecting-IP': 'not-an-ip' }), 429, 'an invalid header falls back to the socket');
     assert.equal(await pkceStart(tunnel.base), 429, 'no header falls back to the socket');
     delete process.env.TRUST_CLOUDFLARE;
@@ -230,8 +255,87 @@ async function waitFor(check, ms) {
       process.removeListener('SIGTERM', stopBounded);
       process.removeListener('SIGINT', stopBounded);
     }
+
+    // ── The readiness listener: GET /ready and /health of one instance on its own loopback port,
+    // answered by the app as on the main port (which, as the EC2 origin, refuses the rest without
+    // the proxy secret); nothing else; it closes with the main listener on SIGTERM ──
+    const readyPort = await freePort();
+    Object.assign(process.env, { READY_PORT: String(readyPort), EC2_PROXY_SECRET: 'lifecycle-proxy-secret-0123456789abcdef' });
+    const instance = await startServer();
+    delete process.env.READY_PORT;
+    delete process.env.EC2_PROXY_SECRET;
+    const readyBase = `http://127.0.0.1:${readyPort}`;
+    for (let tries = 0; await freshConnection(readyPort) === 'ECONNREFUSED'; tries++) {
+      assert.ok(tries < 100, 'the readiness listener is up');
+      await sleep(20);
+    }
+    const answer = async url => {
+      const response = await fetch(url);
+      return { status: response.status, body: await response.text() };
+    };
+    assert.deepEqual(await answer(readyBase + '/health'), await answer(instance.base + '/health'), 'GET /health, same handler');
+    const readiness = await answer(readyBase + '/ready');
+    assert.deepEqual(readiness, await answer(instance.base + '/ready'), 'GET /ready, same handler');
+    assert.equal(readiness.status, 503, 'not ready here: no session store');
+    assert.equal((await answer(instance.base + '/v1/models')).status, 403, 'the main port is the production origin');
+    for (const pathname of ['/v1/models', '/', '/auth/session', '/neuroncli/auth-server/health', '/health/']) {
+      assert.equal((await answer(readyBase + pathname)).status, 404, pathname);
+    }
+    assert.equal((await fetch(readyBase + '/health', { method: 'POST' })).status, 404, 'GET only');
+    assert.equal((await fetch(readyBase + '/health', { method: 'HEAD' })).status, 200);
+    assert.equal(await drain(instance.server, 2000), true);
+    assert.equal(await freshConnection(readyPort), 'ECONNREFUSED', 'the readiness listener drains with the instance');
+    assert.equal(await freshConnection(Number(new URL(instance.base).port)), 'ECONNREFUSED');
+
+    // ── Two instances on one port (AUTH_REUSE_PORT): the old one drains, the new one answers ──
+    const sharedPort = await freePort();
+    Object.assign(process.env, { AUTH_PORT: String(sharedPort), AUTH_REUSE_PORT: 'true' });
+    const old = await start();
+    servers.push(old);
+    let shared = true;
+    try { await bound(old); } catch (error) {
+      // reusePort reached listen(): libuv refuses SO_REUSEPORT where it cannot balance (Windows, macOS).
+      assert.equal(error.code, 'ENOTSUP');
+      assert.notEqual(process.platform, 'linux', 'Linux (the VM) supports reusePort');
+      shared = false;
+      console.log(`SKIP: reusePort is not supported on ${process.platform}; two instances on one port are checked on Linux only`);
+    }
+    if (shared) {
+      const next = await start();
+      servers.push(next);
+      await bound(next);
+      assert.equal(next.address().port, sharedPort, 'both bound the same port');
+      for (let i = 0; i < 6; i++) assert.equal(await freshConnection(sharedPort), 200, 'both instances accept');
+      const draining = drain(old, 2000);
+      for (let i = 0; i < 20; i++) assert.equal(await freshConnection(sharedPort), 200, 'no connection refused while the old one drains');
+      assert.equal(await draining, true);
+      assert.equal(await freshConnection(sharedPort), 200, 'the new instance carries on alone');
+    }
+    Object.assign(process.env, { AUTH_PORT: '0' });
+    delete process.env.AUTH_REUSE_PORT;
+
+    // ── The release's commit (C9): REVISION at the release root, GIT_COMMIT from the environment wins ──
+    const release = fs.mkdtempSync(path.join(os.tmpdir(), 'zerox-release-'));
+    try {
+      process.env.ASSETS_DIR = release;
+      assert.equal(runtimeEnv('127.0.0.1').GIT_COMMIT, undefined, 'no REVISION');
+      fs.writeFileSync(path.join(release, 'REVISION'), 'ab12cd3\n');
+      assert.equal(runtimeEnv('127.0.0.1').GIT_COMMIT, 'ab12cd3');
+      process.env.GIT_COMMIT = '9f8e7d6';
+      assert.equal(runtimeEnv('127.0.0.1').GIT_COMMIT, '9f8e7d6', 'the environment wins');
+      delete process.env.GIT_COMMIT;
+      const withRevision = await startServer();
+      const health = await (await fetch(withRevision.base + '/health')).json();
+      // /health names the commit once src/index.js reports env.GIT_COMMIT (the Worker lane's C9).
+      if ('commit' in health) assert.equal(health.commit, 'ab12cd3');
+      fs.writeFileSync(path.join(release, 'REVISION'), 'not a commit\n');
+      assert.equal(runtimeEnv('127.0.0.1').GIT_COMMIT, undefined, 'anything but a SHA is ignored');
+    } finally {
+      delete process.env.ASSETS_DIR;
+      fs.rmSync(release, { recursive: true, force: true });
+    }
   } finally {
     await Promise.all([...servers, upstream].map(closeServer));
   }
-  console.log('PASS: Node server trusts CF-Connecting-IP only from loopback with TRUST_CLOUDFLARE (and then refuses the dev identity), keeps quiet streams alive and drains on SIGTERM');
+  console.log('PASS: Node server trusts CF-Connecting-IP only from loopback with TRUST_CLOUDFLARE (and then refuses the dev identity), keeps quiet streams alive, drains on SIGTERM (readiness listener included), shares its port with the next release (Linux) and reports the release commit');
 })().catch(error => { console.error(error); process.exitCode = 1; });
