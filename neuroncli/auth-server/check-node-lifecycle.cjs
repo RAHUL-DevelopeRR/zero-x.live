@@ -1,11 +1,12 @@
 // The Node server behind Cloudflare Tunnel (deploy/oracle): the visitor address for per-IP
 // limits (TRUST_CLOUDFLARE, spoof attempts included), SSE keep-alive comments while a stream is
-// quiet, and the graceful stop on SIGTERM (in-flight streams finish and settle, bounded by the
-// grace). Upstream calls go to a fake Groq server through e2e-upstream-shim.mjs.
+// quiet, the dev identity refused behind the tunnel, and the graceful stop on SIGTERM (in-flight
+// streams finish and settle, bounded by the grace; a longer tail after cut streams). Upstream
+// calls go to a fake Groq server through e2e-upstream-shim.mjs.
 const assert = require('node:assert/strict');
 const http = require('node:http');
 const { once } = require('node:events');
-const { start, requestHeaders, stopOnSignals } = require('./server.js');
+const { start, requestHeaders, runtimeEnv, stopOnSignals } = require('./server.js');
 
 // server.js loads a developer .env: nothing here may reach a real database or provider.
 for (const name of Object.keys(process.env)) {
@@ -110,6 +111,17 @@ async function waitFor(check, ms) {
   assert.equal(addressOf(fakeRequest('198.51.100.20', { 'x-neuron-client-ip': '203.0.113.9' }), true), '198.51.100.20',
     'a client-supplied x-neuron-client-ip is dropped');
 
+  // ── Behind the tunnel a loopback AUTH_HOST is public: the dev identity is refused ──
+  const nodeEnv = process.env.NODE_ENV;
+  delete process.env.NODE_ENV;
+  process.env.DEV_AUTH_ENABLED = 'true';
+  process.env.TRUST_CLOUDFLARE = 'true';
+  assert.equal(runtimeEnv('127.0.0.1').DEV_AUTH_ENABLED, undefined, 'TRUST_CLOUDFLARE=true refuses the dev identity');
+  delete process.env.TRUST_CLOUDFLARE;
+  assert.equal(runtimeEnv('127.0.0.1').DEV_AUTH_ENABLED, 'true', 'loopback without the tunnel keeps it (development)');
+  delete process.env.DEV_AUTH_ENABLED;
+  if (nodeEnv !== undefined) process.env.NODE_ENV = nodeEnv;
+
   const upstreamBase = await listening(upstream.listen(0, '127.0.0.1'));
   process.env.E2E_UPSTREAM_BASE = upstreamBase;
   await import('./e2e-upstream-shim.mjs');
@@ -164,7 +176,7 @@ async function waitFor(check, ms) {
     const exits = [];
     const exit = code => exits.push({ code, at: Date.now() });
     const stream = await openStream(tunnel.base, drainToken, 'lifecycle:12:100');
-    const stop = stopOnSignals(tunnel.server, { graceMs: 5000, tailMs: 100, exit });
+    const stop = stopOnSignals(tunnel.server, { graceMs: 5000, tailMs: 100, cutTailMs: 3000, exit });
     try {
       process.emit('SIGTERM', 'SIGTERM');
       assert.equal(await freshConnection(tunnel.server.address()?.port ?? Number(new URL(tunnel.base).port)), 'ECONNREFUSED',
@@ -176,6 +188,7 @@ async function waitFor(check, ms) {
       await waitFor(() => exits.length, 3000);
       assert.equal(exits[0].code, 0);
       assert.ok(exits[0].at >= finishedAt - 5, 'exit only after the stream finished');
+      assert.ok(exits[0].at - finishedAt < 1000, 'a clean drain exits after the short tail (its settlement already ran)');
       const settled = await readRecord({ ALLOW_ANONYMOUS_SESSIONS: 'true' }, drainToken);
       assert.equal(settled.tokens_used, USAGE.total_tokens, 'the allocation was settled with the real usage before exit');
     } finally {
@@ -187,7 +200,8 @@ async function waitFor(check, ms) {
     const bounded = await startServer();
     const longStream = await openStream(bounded.base, await session(bounded.base), 'lifecycle:40:100');
     const boundedExits = [];
-    const stopBounded = stopOnSignals(bounded.server, { graceMs: 600, tailMs: 50, exit: code => boundedExits.push({ code, at: Date.now() }) });
+    const stopBounded = stopOnSignals(bounded.server, { graceMs: 600, tailMs: 50, cutTailMs: 400,
+      exit: code => boundedExits.push({ code, at: Date.now() }) });
     try {
       const stoppedAt = Date.now();
       stopBounded('SIGTERM');
@@ -195,7 +209,8 @@ async function waitFor(check, ms) {
       assert.ok(!cut.text.includes('[DONE]'), 'the stream past the grace was cut');
       await waitFor(() => boundedExits.length, 3000);
       const took = boundedExits[0].at - stoppedAt;
-      assert.ok(took >= 600 && took < 1600, `exit after the grace (${took} ms)`);
+      // The cut stream's settlement (a database round trip in production) gets the longer tail.
+      assert.ok(took >= 1000 && took < 2000, `exit after the grace and the cut tail (${took} ms)`);
     } finally {
       process.removeListener('SIGTERM', stopBounded);
       process.removeListener('SIGINT', stopBounded);
@@ -203,5 +218,5 @@ async function waitFor(check, ms) {
   } finally {
     await Promise.all([...servers, upstream].map(closeServer));
   }
-  console.log('PASS: Node server trusts CF-Connecting-IP only from loopback with TRUST_CLOUDFLARE, keeps quiet streams alive and drains on SIGTERM');
+  console.log('PASS: Node server trusts CF-Connecting-IP only from loopback with TRUST_CLOUDFLARE (and then refuses the dev identity), keeps quiet streams alive and drains on SIGTERM');
 })().catch(error => { console.error(error); process.exitCode = 1; });

@@ -54,6 +54,10 @@ function runtimeEnv(host) {
   } else if (env.DEV_AUTH_ENABLED === 'true' && !LOOPBACK_HOSTS.includes(host)) {
     console.warn('DEV_AUTH_ENABLED ignored: the dev identity requires AUTH_HOST to be a loopback address');
     delete env.DEV_AUTH_ENABLED;
+  } else if (env.DEV_AUTH_ENABLED === 'true' && env.TRUST_CLOUDFLARE === 'true') {
+    // Behind Cloudflare Tunnel the loopback listener is the public origin.
+    console.warn('DEV_AUTH_ENABLED ignored: the dev identity is refused when TRUST_CLOUDFLARE=true (public behind the tunnel)');
+    delete env.DEV_AUTH_ENABLED;
   } else if (env.DEV_AUTH_ENABLED === 'true') {
     console.warn('DEV_AUTH_ENABLED: dev_<base64url(email)> tokens are accepted from loopback hosts. Never use in production.');
   }
@@ -204,19 +208,21 @@ function drain(server, graceMs) {
 }
 
 // systemd stops and restarts the service with SIGTERM (TimeoutStopSec must exceed the grace,
-// SHUTDOWN_GRACE_MS, 110 s by default). Work a finished or cut response leaves behind (a
-// cancelled stream's settlement, session activity) gets tailMs before the process exits.
-// A second signal exits at once.
+// SHUTDOWN_GRACE_MS, 110 s by default, plus cutTailMs). Work a response leaves behind gets a
+// tail before the process exits: tailMs after a clean drain (a finished stream settled before
+// its last byte; only session activity is left), cutTailMs when streams were cut, since each
+// cut stream's settlement is a database round trip (a settlement still lost there leaves a
+// reservation for the stale-reservation cron). A second signal exits at once.
 function stopOnSignals(server, { graceMs = positiveMs(process.env.SHUTDOWN_GRACE_MS, 110000), tailMs = 1000,
-  exit = code => process.exit(code) } = {}) {
+  cutTailMs = 5000, exit = code => process.exit(code) } = {}) {
   let stopping = false;
   const stop = signal => {
     if (stopping) return exit(1);
     stopping = true;
     console.log(`${signal || 'Stop'}: draining ${server[IN_FLIGHT]?.size ?? 0} request(s) for up to ${Math.round(graceMs / 1000)} s`);
     drain(server, graceMs).then(clean => {
-      if (!clean) console.warn('Shutdown grace ended; requests still running were cut');
-      setTimeout(() => exit(0), tailMs);
+      if (!clean) console.warn(`Shutdown grace ended; requests still running were cut (${Math.round(cutTailMs / 1000)} s to settle them)`);
+      setTimeout(() => exit(0), clean ? tailMs : cutTailMs);
     });
   };
   process.on('SIGTERM', stop);
