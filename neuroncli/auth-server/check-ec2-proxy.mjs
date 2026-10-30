@@ -47,6 +47,12 @@ try {
     assert.deepEqual(parseProxyPrefixes(' , ,'), []);
     assert.deepEqual(parseProxyPrefixes(' zero-x.live/v1/ , ,Dashboard.Zero-X.live,  zero-x.live/Auth/azure/ '),
       ['zero-x.live/v1/', 'dashboard.zero-x.live/', 'zero-x.live/Auth/azure/']);
+    // An entry written as a URL means its host + path: the scheme is not part of the match.
+    assert.deepEqual(parseProxyPrefixes('https://zero-x.live/v1/, HTTP://Dashboard.zero-x.live'),
+      ['zero-x.live/v1/', 'dashboard.zero-x.live/']);
+    reset();
+    await app.request('https://zero-x.live/v1/models', {}, { ...base, ...PROXY, EC2_PROXY_PREFIXES: 'https://zero-x.live/v1/' });
+    assert.equal(forwarded.length, 1, 'a prefix written as a URL forwards its path');
     const env = { ...base, ...PROXY, EC2_PROXY_PREFIXES: ' zero-x.live/v1/ , , Dashboard.Zero-X.live ,neuron.zero-x.live/device' };
     const cases = [
       ['https://zero-x.live/v1/models', true], ['https://zero-x.live/v1/chat/completions?stream=1', true],
@@ -67,7 +73,7 @@ try {
         assert.equal(forwarded[0].url, `https://aws.zero-x.live${target.pathname}${target.search}`, url);
       } else assert.equal(response.headers.get('x-served-by'), null, url);
     }
-    ok('prefixes: host + path as written (trailing slash included), a bare host covers the host, case-insensitive hosts, blanks and spaces ignored');
+    ok('prefixes: host + path as written (trailing slash included), a bare host covers the host, case-insensitive hosts, blanks and spaces ignored, a URL entry means its host + path');
   }
 
   // ── Unset or empty: the Worker exactly as before ──
@@ -101,7 +107,8 @@ try {
     assert.equal(response.headers.get('x-served-by'), 'ec2');
     const sent = Object.fromEntries(forwarded[0].headers);
     assert.deepEqual(Object.keys(sent).filter(name => name.startsWith('x-zerox-')).sort(),
-      ['x-zerox-asn', 'x-zerox-city', 'x-zerox-client-ip', 'x-zerox-country', 'x-zerox-host', 'x-zerox-proto', 'x-zerox-proxy-secret']);
+      ['x-zerox-as-org', 'x-zerox-asn', 'x-zerox-city', 'x-zerox-client-ip', 'x-zerox-country', 'x-zerox-host', 'x-zerox-proto',
+        'x-zerox-proxy-secret', 'x-zerox-region']);
     assert.equal(sent['x-zerox-host'], 'zero-x.live');
     assert.equal(sent['x-zerox-proto'], 'https');
     assert.equal(sent['x-zerox-client-ip'], '198.51.100.7');
@@ -109,6 +116,9 @@ try {
     assert.equal(sent['x-zerox-city'], 'S%C3%A3o%20Paulo', 'percent-encoded UTF-8 (a header value cannot carry it raw)');
     assert.equal(decodeURIComponent(sent['x-zerox-city']), 'São Paulo');
     assert.equal(sent['x-zerox-asn'], '13335');
+    // The device sign-in shows the requester's region and network too (src/routes/device.js).
+    assert.equal(sent['x-zerox-region'], 'Karnataka');
+    assert.equal(sent['x-zerox-as-org'], 'Example%20Net', 'percent-encoded like the city');
     assert.equal(sent['x-zerox-proxy-secret'], SECRET);
     assert.equal(sent.authorization, 'Bearer ses_client');
     assert.equal(sent['x-neuron-conversation'], 'conv-1');
@@ -117,19 +127,23 @@ try {
 
     // A city outside Latin-1 would make the header throw; absent request.cf fields are left out.
     reset();
-    await app.fetch(workerRequest('http://dashboard.zero-x.live/api/account', {}, { city: 'Łódź', country: 'PL' }), { ...base, ...PROXY });
+    await app.fetch(workerRequest('http://dashboard.zero-x.live/api/account', {}, { city: 'Łódź', country: 'PL', region: 'Łódź Voivodeship' }),
+      { ...base, ...PROXY });
     let headers = forwarded[0].headers;
     assert.equal(headers.get('x-zerox-city'), encodeURIComponent('Łódź'));
+    assert.equal(headers.get('x-zerox-region'), encodeURIComponent('Łódź Voivodeship'));
     assert.equal(headers.get('x-zerox-proto'), 'http');
     assert.equal(headers.get('x-zerox-host'), 'dashboard.zero-x.live');
     assert.equal(headers.get('x-zerox-asn'), null);
+    assert.equal(headers.get('x-zerox-as-org'), null);
     assert.equal(headers.get('x-zerox-client-ip'), null, 'no CF-Connecting-IP, no header');
     reset();
-    await app.fetch(workerRequest('https://zero-x.live/v1/models', { headers: { 'X-Zerox-Country': 'US' } }), { ...base, ...PROXY });
+    await app.fetch(workerRequest('https://zero-x.live/v1/models', { headers: { 'X-Zerox-Country': 'US', 'X-Zerox-Region': 'Texas' } }),
+      { ...base, ...PROXY });
     headers = forwarded[0].headers;
-    assert.deepEqual([headers.get('x-zerox-country'), headers.get('x-zerox-city'), headers.get('x-zerox-asn')], [null, null, null],
+    assert.deepEqual(['country', 'city', 'asn', 'region', 'as-org'].map(name => headers.get(`x-zerox-${name}`)), [null, null, null, null, null],
       'no request.cf: no geo headers, and the client copy is gone');
-    ok('headers: every client x-zerox-* removed; host, proto, client IP, country, city (percent-encoded), ASN and the secret set; absent values omitted; Host not forwarded; other headers kept');
+    ok('headers: every client x-zerox-* removed; host, proto, client IP, country, city and region (percent-encoded), ASN, network (percent-encoded) and the secret set; absent values omitted; Host not forwarded; other headers kept');
   }
 
   // ── No secret: nothing is forwarded, logged once per isolate ──
@@ -146,6 +160,24 @@ try {
     }
     assert.equal(warnings.filter(line => line.includes('EC2_PROXY_SECRET')).length, 1, 'logged once');
 
+    // A secret a header cannot carry exactly (a control character, a character outside visible
+    // ASCII, surrounding whitespace, which Headers would trim) is refused the same way, instead of
+    // Headers throwing (error 1101 on every forwarded path) or sending another value than EC2 holds.
+    resetEc2ProxyState();
+    warnings.length = 0;
+    for (const secret of ['abc\ndef', 'pässwörd€', 'pässwörd', ' padded\n', 'trailing ', '\tleading', 'inner\ttab', 'nul\0byte']) {
+      reset();
+      const response = await app.request('https://zero-x.live/v1/models', {}, { ...base, ...PROXY, EC2_PROXY_SECRET: secret });
+      assert.equal(forwarded.length, 0, JSON.stringify(secret));
+      assert.equal(response.status, 200, `${JSON.stringify(secret)}: served by the Worker`);
+      assert.equal(forwardToEc2(new Request('https://zero-x.live/v1/models'), { ...PROXY, EC2_PROXY_SECRET: secret }), null);
+    }
+    assert.equal(warnings.filter(line => line.includes('EC2_PROXY_SECRET')).length, 1, 'logged once');
+    assert.ok(!warnings.some(line => line.includes('pässwörd') || line.includes('padded')), 'the secret itself is never logged');
+    reset();
+    await app.request('https://zero-x.live/v1/models', {}, { ...base, ...PROXY, EC2_PROXY_SECRET: 'with inner space ok' });
+    assert.equal(forwarded[0].headers.get('x-zerox-proxy-secret'), 'with inner space ok', 'inner spaces are sent as they are');
+
     // A target that is not https, or is the requested host itself, is refused the same way.
     for (const origin of ['http://aws.zero-x.live', 'not a url', 'https://zero-x.live', 'ftp://aws.zero-x.live']) {
       reset();
@@ -157,7 +189,7 @@ try {
     reset();
     await app.request('https://zero-x.live/v1/models', {}, { ...base, ...PROXY, NEURON_RUNTIME: 'node' });
     assert.equal(forwarded.length, 0);
-    ok('no EC2_PROXY_SECRET, a non-https or self-pointing EC2_PROXY_ORIGIN, or the Node runtime: served locally (the missing secret logged once)');
+    ok('no EC2_PROXY_SECRET or one a header cannot carry exactly, a non-https or self-pointing EC2_PROXY_ORIGIN, or the Node runtime: served locally (a bad secret logged once, never its value)');
   }
 
   // ── Method, body, query and streams pass through; redirects are not followed ──

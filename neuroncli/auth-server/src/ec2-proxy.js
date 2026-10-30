@@ -8,7 +8,9 @@
 //                                      nothing is forwarded (the Worker as before). A secret, not a
 //                                      var, so `wrangler secret put` switches a path in seconds
 //                                      without a commit, and deploy.yml never overwrites it.
-//   EC2_PROXY_SECRET    Worker secret  sent as x-zerox-proxy-secret; without it nothing is forwarded.
+//   EC2_PROXY_SECRET    Worker secret  sent as x-zerox-proxy-secret; without it, or when a header
+//                                      cannot carry it exactly (visible ASCII only, no surrounding
+//                                      whitespace), nothing is forwarded.
 //   EC2_PROXY_ORIGIN    var            https only, default https://aws.zero-x.live.
 //
 // A forward returns the upstream fetch's Response as it is: the Worker never reads or transforms
@@ -18,8 +20,13 @@
 //
 // The Node server trusts the x-zerox-* headers only when x-zerox-proxy-secret matches its own
 // EC2_PROXY_SECRET, so whatever a client sent under that prefix is dropped first and the trusted
-// values come from Cloudflare: the visitor's CF-Connecting-IP and request.cf (country, city, ASN).
-// The city is percent-encoded UTF-8 (encodeURIComponent): a header value cannot carry "Łódź".
+// values come from Cloudflare: the visitor's CF-Connecting-IP and request.cf (country, city,
+// region, ASN and its organisation, which the device sign-in shows). The city, region and
+// organisation are percent-encoded UTF-8 (encodeURIComponent): a header value cannot carry "Łódź".
+//
+// Every forward fetches EC2_PROXY_ORIGIN + path, so in Cloudflare's cache all visitor hosts and
+// schemes share one key per path. The app keeps what depends on them out of shared caches
+// (src/index.js); a cache-everything rule on the EC2_PROXY_ORIGIN host would undo that.
 import { errorResponse } from './errors.js';
 
 const DEFAULT_ORIGIN = 'https://aws.zero-x.live';
@@ -29,9 +36,11 @@ const PLAIN_VALUE = /^[\x21-\x7e](?:[\x20-\x7e]*[\x21-\x7e])?$/;
 
 // A prefix is host + path as written, compared with startsWith, so "zero-x.live/v1/" covers
 // /v1/models but not /v1 itself. An entry without a path covers its whole host. Hosts are compared
-// lowercased (request URLs carry them so); paths keep their case.
+// lowercased (request URLs carry them so); paths keep their case. An entry written as a URL
+// ("https://zero-x.live/v1/") means the same: the scheme is not part of the match, and an entry
+// that would otherwise never match must not look like a working switch.
 export function parseProxyPrefixes(value) {
-  return String(value ?? '').split(',').map(entry => entry.trim()).filter(Boolean).map(entry => {
+  return String(value ?? '').split(',').map(entry => entry.trim().replace(/^[a-z][a-z0-9+.-]*:\/\//i, '')).filter(Boolean).map(entry => {
     const slash = entry.indexOf('/');
     return slash < 0 ? `${entry.toLowerCase()}/` : entry.slice(0, slash).toLowerCase() + entry.slice(slash);
   });
@@ -66,6 +75,9 @@ function setTrusted(headers, name, value) {
   if (PLAIN_VALUE.test(text)) headers.set(name, text);
 }
 
+// Free text from request.cf (a city, a region, a network's name), percent-encoded UTF-8.
+const encodedText = value => (typeof value === 'string' && value ? encodeURIComponent(value) : null);
+
 /**
  * Forwards `request` to the Node server on EC2 when its host + path matches EC2_PROXY_PREFIXES.
  * Returns the upstream fetch's promise (a JSON 503 if the fetch itself fails), or null when the
@@ -84,6 +96,14 @@ export function forwardToEc2(request, env) {
   const secret = env.EC2_PROXY_SECRET;
   if (!secret) {
     warnOnce('secret', 'EC2_PROXY_PREFIXES is set without EC2_PROXY_SECRET: the Worker serves every request itself');
+    return null;
+  }
+  // Headers would throw on a control character or a character outside Latin-1 (error 1101 on
+  // every forwarded path) and silently trim surrounding whitespace (another value than EC2 holds,
+  // so every forward 403s). Such a secret is a misconfiguration like a missing one; its value is
+  // never logged.
+  if (!PLAIN_VALUE.test(String(secret))) {
+    warnOnce('secret-value', 'EC2_PROXY_SECRET is not visible ASCII without surrounding whitespace: the Worker serves every request itself');
     return null;
   }
   const origin = proxyOrigin(env.EC2_PROXY_ORIGIN);
@@ -108,9 +128,11 @@ export function forwardToEc2(request, env) {
   headers.set('x-zerox-proto', url.protocol === 'http:' ? 'http' : 'https');
   setTrusted(headers, 'x-zerox-client-ip', request.headers.get('cf-connecting-ip'));
   setTrusted(headers, 'x-zerox-country', cf.country);
-  setTrusted(headers, 'x-zerox-city', typeof cf.city === 'string' && cf.city ? encodeURIComponent(cf.city) : null);
+  setTrusted(headers, 'x-zerox-city', encodedText(cf.city));
+  setTrusted(headers, 'x-zerox-region', encodedText(cf.region));
   setTrusted(headers, 'x-zerox-asn', cf.asn);
-  headers.set('x-zerox-proxy-secret', secret);
+  setTrusted(headers, 'x-zerox-as-org', encodedText(cf.asOrganization));
+  headers.set('x-zerox-proxy-secret', String(secret));
 
   // Method, body (a stream, handed on unread), signal and the rest come from the client's request.
   const forward = new Request(origin.origin + url.pathname + url.search, new Request(request, { headers, redirect: 'manual' }));
