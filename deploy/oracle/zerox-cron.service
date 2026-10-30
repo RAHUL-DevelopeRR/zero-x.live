@@ -1,0 +1,44 @@
+# One run of the gateway's 10-minute cron (scripts/cron.mjs: stale reservation release,
+# subscription expiry, device grant purge, provider discovery), started by zerox-cron.timer.
+# Same user, environment and sandbox as zerox-gateway.service. deploy/oracle/README.md.
+[Unit]
+Description=Zero-X gateway cron (scheduled maintenance and discovery)
+Documentation=https://github.com/RAHUL-DevelopeRR/zero-x.live/tree/main/deploy/oracle
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=zerox
+Group=zerox
+WorkingDirectory=/opt/zerox/gateway
+EnvironmentFile=/etc/zerox/gateway.env
+Environment=NODE_ENV=production AUTH_HOST=127.0.0.1 NEURON_API_ONLY=true
+ExecStart=/usr/bin/node /opt/zerox/gateway/scripts/cron.mjs
+# A weekly research job can take minutes; a run never overlaps the next tick.
+TimeoutStartSec=540
+
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RemoveIPC=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+UMask=0077

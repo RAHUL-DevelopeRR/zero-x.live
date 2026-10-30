@@ -3,7 +3,9 @@
 The Worker (`wrangler.toml`: website + API on zero-x.live, `wrangler.api.toml`: API-only Worker)
 and `node server.js` run the same Hono application (`src/index.js`). Routes, errors, plans and
 RPCs are defined in [docs/PLATFORM_CONTRACT.md](docs/PLATFORM_CONTRACT.md). The local
-development runbook is in [README.md](README.md#local-development).
+development runbook is in [README.md](README.md#local-development). The Node server on an Oracle
+Cloud VM behind Cloudflare Tunnel (the `/v1` host) has its own runbook in
+[deploy/oracle/README.md](../../deploy/oracle/README.md).
 
 ## Environment and secrets
 

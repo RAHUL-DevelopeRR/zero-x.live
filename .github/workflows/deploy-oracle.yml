@@ -1,0 +1,112 @@
+name: Deploy gateway to Oracle VM
+
+# Manual only: Actions > "Deploy gateway to Oracle VM" > Run workflow, on the branch to ship.
+# Ships neuroncli/auth-server to the VM as a new release (deploy/oracle/README.md), writes the
+# gateway's environment from wrangler.toml [vars] and the same secrets deploy.yml gives the
+# Worker, restarts zerox-gateway (in-flight streams drain first) and checks /health on the VM
+# over loopback. A failed check puts the previous release and environment back and fails here.
+#
+# Secrets: ORACLE_SSH_KEY (private key of the VM's deploy user), ORACLE_HOST (its public IP or
+# DNS name), ORACLE_KNOWN_HOSTS (`ssh-keyscan -t ed25519 <host>`, checked against the VM's
+# console fingerprint once). Secret values are never echoed: GitHub masks them in logs, the
+# environment file is built in a 0600 file and goes to the VM on SSH's stdin.
+# Actions are pinned by commit (deploy.yml still uses tags).
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-oracle
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: neuroncli/auth-server/package-lock.json
+
+      - name: Verify the gateway
+        working-directory: neuroncli/auth-server
+        run: |
+          npm ci
+          npm run check:server
+
+      - name: Configure SSH
+        env:
+          ORACLE_SSH_KEY: ${{ secrets.ORACLE_SSH_KEY }}
+          ORACLE_HOST: ${{ secrets.ORACLE_HOST }}
+          ORACLE_KNOWN_HOSTS: ${{ secrets.ORACLE_KNOWN_HOSTS }}
+        run: |
+          set +x
+          for name in ORACLE_SSH_KEY ORACLE_HOST ORACLE_KNOWN_HOSTS; do
+            if [ -z "${!name}" ]; then echo "::error::Secret $name is not set"; exit 1; fi
+          done
+          if ! [[ "$ORACLE_HOST" =~ ^[A-Za-z0-9.:-]+$ ]]; then echo "::error::ORACLE_HOST must be a host name or an IP address"; exit 1; fi
+          install -d -m 0700 ~/.ssh
+          (umask 077
+           printf '%s\n' "$ORACLE_SSH_KEY" > ~/.ssh/zerox_deploy
+           printf '%s\n' "$ORACLE_KNOWN_HOSTS" > ~/.ssh/zerox_known_hosts
+           printf '%s\n' 'Host zerox' "  HostName $ORACLE_HOST" '  User deploy' '  IdentityFile ~/.ssh/zerox_deploy' \
+             '  IdentitiesOnly yes' '  UserKnownHostsFile ~/.ssh/zerox_known_hosts' '  StrictHostKeyChecking yes' \
+             '  BatchMode yes' '  ConnectTimeout 15' '  ServerAliveInterval 15' > ~/.ssh/config)
+          ssh zerox true
+          # Release id: UTC time and commit, so a redeploy of the same commit never touches the live tree.
+          echo "RELEASE=$(date -u +%Y%m%d%H%M%S)-${GITHUB_SHA::12}" >> "$GITHUB_ENV"
+
+      - name: Upload the release
+        run: |
+          rsync -rlpt --chmod=D2750,F640 \
+            --exclude node_modules/ --exclude '.env*' --exclude '.dev.vars*' --exclude .wrangler/ \
+            --exclude 'check-*' --exclude test.js --exclude fixtures/ --exclude e2e-upstream-shim.mjs \
+            --exclude 'wrangler*.toml' --exclude docs/ \
+            neuroncli/auth-server/ "zerox:/opt/zerox/releases/$RELEASE/"
+          ssh zerox "cd /opt/zerox/releases/$RELEASE && npm ci --omit=dev --no-audit --no-fund"
+
+      # The same secret set as deploy.yml (REQUIRED_SECRETS, OPTIONAL_SECRETS and one env entry per
+      # name); check-oracle-deploy.mjs keeps the two lists equal. CLOUDFLARE_API_TOKEN, the
+      # Worker deploy token, is deliberately not passed to the VM.
+      - name: Write the gateway environment
+        env:
+          REQUIRED_SECRETS: SUPABASE_SECRET_KEY
+          OPTIONAL_SECRETS: GROQ_API_KEY OPENROUTER_API_KEY GEMINI_API_KEY NVIDIA_API_KEY RAZORPAY_KEY_SECRET RAZORPAY_WEBHOOK_SECRET GATEWAY_ADMIN_TOKEN GROQ_PAID_API_KEY GEMINI_PAID_API_KEY SESSION_ENCRYPTION_KEY DEVICE_APPROVAL_SECRET PROVIDER_KEYS_KEK ANTHROPIC_API_KEY GLM_API_KEY
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          RAZORPAY_KEY_SECRET: ${{ secrets.RAZORPAY_KEY_SECRET }}
+          RAZORPAY_WEBHOOK_SECRET: ${{ secrets.RAZORPAY_WEBHOOK_SECRET }}
+          GATEWAY_ADMIN_TOKEN: ${{ secrets.GATEWAY_ADMIN_TOKEN }}
+          GROQ_PAID_API_KEY: ${{ secrets.GROQ_PAID_API_KEY }}
+          GEMINI_PAID_API_KEY: ${{ secrets.GEMINI_PAID_API_KEY }}
+          SESSION_ENCRYPTION_KEY: ${{ secrets.SESSION_ENCRYPTION_KEY }}
+          DEVICE_APPROVAL_SECRET: ${{ secrets.DEVICE_APPROVAL_SECRET }}
+          PROVIDER_KEYS_KEK: ${{ secrets.PROVIDER_KEYS_KEK }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
+        run: |
+          set +x
+          umask 077
+          env_file="$RUNNER_TEMP/gateway.env"
+          trap 'rm -f "$env_file"' EXIT
+          node deploy/oracle/gateway-env.mjs --wrangler neuroncli/auth-server/wrangler.toml --out "$env_file"
+          ssh zerox 'umask 077 && cat > /etc/zerox/gateway.env.next' < "$env_file"
+
+      - name: Activate and check /health
+        run: ssh zerox bash -s -- "$RELEASE" < deploy/oracle/activate-release.sh
+
+      - name: Remove the SSH key
+        if: always()
+        run: rm -f ~/.ssh/zerox_deploy ~/.ssh/config

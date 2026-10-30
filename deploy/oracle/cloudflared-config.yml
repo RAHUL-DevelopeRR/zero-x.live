@@ -1,0 +1,25 @@
+# /etc/cloudflared/config.yml: Cloudflare Tunnel for the Zero-X gateway (deploy/oracle/README.md).
+# Replace <TUNNEL_ID> with the id `cloudflared tunnel create zerox-gw` printed. The credentials
+# file (/etc/cloudflared/<TUNNEL_ID>.json, 0600 root) is the tunnel's secret: never commit it.
+# cloudflared only dials out to Cloudflare (QUIC on UDP 7844, HTTP/2 on TCP 7844 as fallback);
+# the VM opens no inbound port for it.
+tunnel: <TUNNEL_ID>
+credentials-file: /etc/cloudflared/<TUNNEL_ID>.json
+# /ready answers 200 while at least one connection to Cloudflare is up (loopback only).
+metrics: 127.0.0.1:20241
+
+originRequest:
+  connectTimeout: 10s
+  # Idle keep-alive connections to the gateway; the gateway's own keep-alive timeout is 5 s.
+  keepAliveTimeout: 4s
+
+ingress:
+  # Phase 1: the test hostname serves the whole API (CLI with NEURON_API_BASE=https://gw.zero-x.live).
+  - hostname: gw.zero-x.live
+    service: http://127.0.0.1:8787
+  # Phase 2: zero-x.live/v1/* only. The Worker keeps zero-x.live/* through its route; a route
+  # without a Worker on zero-x.live/v1/* lets these requests through to this tunnel.
+  # - hostname: zero-x.live
+  #   path: ^/v1/
+  #   service: http://127.0.0.1:8787
+  - service: http_status:404
