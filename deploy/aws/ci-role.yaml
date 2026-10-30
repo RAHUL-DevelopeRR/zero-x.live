@@ -1,0 +1,101 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  Zero-X CI access to the gateway VM - GitHub Actions jobs of RAHUL-DevelopeRR/zero-x.live that run
+  in the protected "production" environment assume this role through GitHub OIDC (no AWS keys in
+  GitHub). It can only open SSH (port 22) to the gateway VM through the Instance Connect Endpoint
+  and push one-time keys for the deploy user. See deploy/aws/README.md.
+
+Metadata:
+  AWSToolsMetrics:
+    AWSAgentToolkit: aws-cloudformation@3
+
+Parameters:
+  InstanceId:
+    Type: AWS::EC2::Instance::Id
+    Description: The gateway VM (stack zerox-gateway, output InstanceId).
+  InstancePrivateIp:
+    Type: String
+    Description: The VM's private IPv4 (OpenTunnel is limited to it).
+    AllowedPattern: '^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$'
+  EndpointId:
+    Type: String
+    Description: The Instance Connect Endpoint (stack zerox-gateway, output InstanceConnectEndpointId).
+    AllowedPattern: '^eice-[0-9a-f]+$'
+  Repository:
+    Type: String
+    Default: RAHUL-DevelopeRR/zero-x.live
+  Environment:
+    Type: String
+    Default: production
+
+Resources:
+  # One per account for this URL. AWS validates GitHub's token signatures against its own trusted
+  # certificate authorities, so no thumbprint is pinned here.
+  GitHubOidcProvider:
+    Type: AWS::IAM::OIDCProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList: [sts.amazonaws.com]
+      Tags:
+        - { Key: Project, Value: zerox-gateway }
+
+  # A customer-managed policy (not inline), so it can be reviewed and audited on its own.
+  GatewaySshPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: zerox-github-deploy-gateway-ssh
+      Description: SSH to the Zero-X gateway VM through its Instance Connect Endpoint, as deploy only
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: TunnelToTheVmSshOnly
+            Effect: Allow
+            Action: ec2-instance-connect:OpenTunnel
+            Resource: !Sub arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance-connect-endpoint/${EndpointId}
+            Condition:
+              NumericEquals:
+                ec2-instance-connect:remotePort: 22
+              IpAddress:
+                ec2-instance-connect:privateIpAddress: !Sub ${InstancePrivateIp}/32
+          - Sid: OneTimeKeyForDeployOnly
+            Effect: Allow
+            Action: ec2-instance-connect:SendSSHPublicKey
+            Resource: !Sub arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/${InstanceId}
+            Condition:
+              StringEquals:
+                ec2:osuser: deploy
+          # open-tunnel looks up the instance and its endpoint; these actions take no resource.
+          - Sid: LookUpTheVmAndEndpoint
+            Effect: Allow
+            Action:
+              - ec2:DescribeInstances
+              - ec2:DescribeInstanceConnectEndpoints
+            Resource: '*'
+
+  # Trusted only from jobs that declare the protected environment (its required reviewer gates
+  # every run), so a workflow on any other branch or job cannot assume it.
+  DeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: zerox-github-deploy
+      Description: GitHub Actions production jobs - SSH to the Zero-X gateway VM through the Instance Connect Endpoint, as deploy only
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Ref GitHubOidcProvider
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                token.actions.githubusercontent.com:sub: !Sub repo:${Repository}:environment:${Environment}
+      ManagedPolicyArns:
+        - !Ref GatewaySshPolicy
+      Tags:
+        - { Key: Project, Value: zerox-gateway }
+
+Outputs:
+  RoleArn:
+    Value: !GetAtt DeployRole.Arn
