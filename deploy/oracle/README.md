@@ -245,8 +245,10 @@ compares the VM's feature flags with the Worker's after a deploy.
 **Cloudflare Access on the operator APIs:** if the Worker's full `/health` shows
 `admin_access_configured: true`, put `CF_ACCESS_TEAM_DOMAIN` and `CF_ACCESS_AUD` in `wrangler.toml`
 `[vars]` (where `GATEWAY_SETUP.md` puts them), so the VM enforces Access as the Worker does. Without
-them the VM's operator APIs answer to the operator token alone; the tunnel keeps every operator
-path off the VM anyway, so this is the second layer.
+them the VM's operator APIs answer to the operator token alone. The tunnel's path rules are the
+first layer: they see the path as sent, so the server refuses (400) any path that URL parsing would
+rewrite, such as `/v1/%2e%2e/admin/overview`, which would otherwise pass `^/v1/` and resolve to
+`/admin/overview`. Access is the second layer.
 
 Add the three VM secrets once (owner, from a shell that does not log history):
 

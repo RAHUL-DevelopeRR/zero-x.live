@@ -64,16 +64,22 @@ async function current(api, { account, zone, hostname, tunnel }) {
 }
 
 // The second write of a pair, retried while the first settles (a deleted record can take a
-// moment to clear); undo() runs when it never lands.
-async function thenAtOnce(second, undo, { log, pause, retries = 6 }) {
+// moment to clear); undo() runs when it never lands. A write can land and still fail (a timeout
+// after Cloudflare applied it), so landed() and undone() re-read the state before a retry and
+// after a failed undo. The error says "restored" only when the undo is known to have worked.
+async function thenAtOnce(second, undo, { landed, undone, restored, broken, log, pause, retries = 6 }) {
   for (let attempt = 1; ; attempt++) {
     try { return await second(); } catch (error) {
-      if (attempt >= retries) {
-        log(`${error.message}; undoing the first step`);
-        await undo();
-        throw error;
+      if (await landed().catch(() => false)) return;
+      if (attempt < retries) { await pause(500); continue; }
+      log(`${error.message}; undoing the first step`);
+      try { await undo(); } catch (undoError) {
+        if (!(await undone().catch(() => false))) {
+          throw new Error(`${error.message}; the undo failed too (${undoError.message}): ${broken}`);
+        }
       }
-      await pause(500);
+      log(restored);
+      throw new Error(`${error.message} (${restored})`);
     }
   }
 }
@@ -104,6 +110,12 @@ export async function cutover(api, { to, account, zone, hostname = 'zero-x.live'
   const point = () => api('POST', `/zones/${zone}/dns_records`, {
     type: 'CNAME', name: hostname, content: target, proxied: true, ttl: 1, comment: 'Cloudflare Tunnel zerox-gw (deploy/oracle)',
   });
+  const attached = async () => ((await api('GET', `/accounts/${account}/workers/domains?hostname=${encodeURIComponent(hostname)}`)) || [])
+    .some(domain => domain.hostname === hostname && domain.service === worker);
+  const pointed = async () => ((await api('GET', `/zones/${zone}/dns_records?name=${encodeURIComponent(hostname)}`)) || [])
+    .some(record => record.type === 'CNAME' && record.content === target);
+  const broken = `${hostname} has neither the Custom Domain nor the tunnel CNAME, so the site, sign-in and API are down: ` +
+    `attach the Custom Domain to ${worker} (Workers > ${worker} > Domains) or create the proxied CNAME to ${target} by hand now`;
   if (now.negativeTtl === null) log('Could not read the zone SOA (dns_settings); a gap is cached for up to 1800 s by default');
   else if (now.negativeTtl > SHORT_NEGATIVE_TTL) {
     log(`SOA: resolvers cache a missing record for ${now.negativeTtl} s. Lower the zone's SOA minimum TTL a day ahead (README, Phase 2).`);
@@ -124,8 +136,7 @@ export async function cutover(api, { to, account, zone, hostname = 'zero-x.live'
       (missing.length ? `, then add the routes ${missing.map(route => route.pattern).join(', ')}` : ''));
     if (!apply) { log('Dry run: pass --apply to make these changes'); return; }
     await api('DELETE', `/accounts/${account}/workers/domains/${now.domain.id}`);
-    await thenAtOnce(point, async () => { await attach(); log('Custom Domain restored'); }, { log, pause })
-      .catch(error => { throw new Error(`${error.message} (Custom Domain restored)`); });
+    await thenAtOnce(point, attach, { landed: pointed, undone: attached, restored: 'Custom Domain restored', broken, log, pause });
     log(`${hostname} points at the tunnel (${Date.now() - started} ms from the first write)`);
     for (const route of missing) {
       await api('POST', `/zones/${zone}/workers/routes`, route);
@@ -140,8 +151,7 @@ export async function cutover(api, { to, account, zone, hostname = 'zero-x.live'
     'Afterwards delete the zero-x.live/* and zero-x.live/v1/* routes (README, Phase 2 rollback).');
   if (!apply) { log('Dry run: pass --apply to make these changes'); return; }
   await api('DELETE', `/zones/${zone}/dns_records/${now.cname.id}`);
-  await thenAtOnce(attach, async () => { await point(); log('Tunnel CNAME restored'); }, { log, pause })
-    .catch(error => { throw new Error(`${error.message} (tunnel CNAME restored)`); });
+  await thenAtOnce(attach, point, { landed: attached, undone: pointed, restored: 'tunnel CNAME restored', broken, log, pause });
   log(`${hostname} is the Worker's Custom Domain again (${Date.now() - started} ms from the first write)`);
 }
 

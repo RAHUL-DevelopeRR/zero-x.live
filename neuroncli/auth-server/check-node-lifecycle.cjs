@@ -156,6 +156,21 @@ async function waitFor(check, ms) {
     assert.equal(await pkceStart(tunnel.base), 429, 'no header falls back to the socket');
     delete process.env.TRUST_CLOUDFLARE;
 
+    // ── Only canonical paths: the tunnel's path rules see the raw path, so a path that URL parsing
+    // would rewrite (/v1/%2e%2e/admin/overview passes ^/v1/ and resolves to /admin) is refused ──
+    const rawStatus = path => new Promise((resolve, reject) => {
+      http.get({ host: '127.0.0.1', port: Number(new URL(tunnel.base).port), path, agent: false }, response => {
+        response.resume();
+        resolve(response.statusCode);
+      }).on('error', reject);
+    });
+    for (const path of ['/v1/%2e%2e/admin/overview', '/v1/../admin/overview', '/v1/x/%2E%2e/providers/health', '/v1/.%2e/admin/overview',
+      '/v1/%2e/models', '/v1/./models', '/v1\\..\\admin/overview', '//evil.example/admin/overview', 'http://evil.example/admin/overview']) {
+      assert.equal(await rawStatus(path), 400, `refuses ${path}`);
+    }
+    assert.notEqual(await rawStatus('/health'), 400, 'a canonical path is served');
+    assert.notEqual(await rawStatus('/v1/models?next=../admin'), 400, 'dots in the query are not a path');
+
     // ── SSE keep-alive while the upstream is quiet ──
     const token = await session(tunnel.base);
     const quiet = await (await openStream(tunnel.base, token, 'lifecycle:3:20:pause=700')).rest();

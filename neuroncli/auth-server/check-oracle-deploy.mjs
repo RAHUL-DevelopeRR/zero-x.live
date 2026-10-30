@@ -194,7 +194,10 @@ for (const name of readdirSync(join(repo, 'deploy/oracle'))) {
 // ── apex-cutover.mjs: the Custom Domain and the tunnel CNAME swap back to back, undone on failure ──
 const IDS = { account: 'a'.repeat(32), zone: 'b'.repeat(32), tunnel: '6ff42ae2-765d-4adf-8112-31c55c1551ef',
   worker: 'zerox-gateway', hostname: 'zero-x.live' };
-function fakeCloudflare({ domain = true, cname = false, routes = true, failCname = 0, failAttach = 0, soa = { min_ttl: 1800, ttl: 1800 } } = {}) {
+// failCname/failAttach: that many writes fail; lostCname/lostAttach: that many land, then report a
+// failure (a timeout after Cloudflare applied the write).
+function fakeCloudflare({ domain = true, cname = false, routes = true, failCname = 0, failAttach = 0, lostCname = 0, lostAttach = 0,
+  soa = { min_ttl: 1800, ttl: 1800 } } = {}) {
   const calls = [];
   const logs = [];
   const world = {
@@ -212,11 +215,15 @@ function fakeCloudflare({ domain = true, cname = false, routes = true, failCname
     if (method === 'DELETE' && path.includes('/workers/domains/')) { world.domain = null; return {}; }
     if (method === 'PUT' && path.endsWith('/workers/domains')) {
       if (failAttach-- > 0) throw new Error('PUT /workers/domains: 100117: hostname has a DNS record');
-      return (world.domain = { id: 'dom2', hostname: body.hostname, service: body.service });
+      world.domain = { id: 'dom2', hostname: body.hostname, service: body.service };
+      if (lostAttach-- > 0) throw new Error('PUT /workers/domains: The operation was aborted due to timeout');
+      return world.domain;
     }
     if (method === 'POST' && path.endsWith('/dns_records')) {
       if (failCname-- > 0) throw new Error('POST /dns_records: 81053: record already exists');
-      return (world.records = [{ id: 'rec2', ...body }])[0];
+      world.records = [{ id: 'rec2', ...body }];
+      if (lostCname-- > 0) throw new Error('POST /dns_records: The operation was aborted due to timeout');
+      return world.records[0];
     }
     if (method === 'DELETE' && path.includes('/dns_records/')) { world.records = []; return {}; }
     if (method === 'POST' && path.endsWith('/workers/routes')) { world.routes.push({ id: `r${world.routes.length + 1}`, ...body }); return {}; }
@@ -247,6 +254,21 @@ const writes = calls => calls.filter(call => !call.startsWith('GET '));
   await assert.rejects(cutover(cf.api, { ...IDS, to: 'tunnel', apply: true, ...cf.options }), /Custom Domain restored/);
   assert.equal(cf.world.domain?.service, IDS.worker, 'a CNAME that never lands puts the Custom Domain back');
 
+  cf = fakeCloudflare({ failCname: 99, failAttach: 99 });
+  await assert.rejects(cutover(cf.api, { ...IDS, to: 'tunnel', apply: true, ...cf.options }),
+    error => /undo failed too/.test(error.message) && /neither the Custom Domain nor the tunnel CNAME/.test(error.message) && !/restored/.test(error.message));
+  assert.ok(!cf.logs.some(line => /restored/.test(line)), 'a failed undo never claims a restore');
+
+  cf = fakeCloudflare({ failCname: 99, lostAttach: 1 });
+  await assert.rejects(cutover(cf.api, { ...IDS, to: 'tunnel', apply: true, ...cf.options }), /\(Custom Domain restored\)/);
+  assert.equal(cf.world.domain?.service, IDS.worker, 'an undo that landed but timed out counts as restored');
+
+  cf = fakeCloudflare({ lostCname: 1 });
+  await cutover(cf.api, { ...IDS, to: 'tunnel', apply: true, ...cf.options });
+  assert.deepEqual(writes(cf.calls), [`DELETE /accounts/${IDS.account}/workers/domains/dom1`, `POST /zones/${IDS.zone}/dns_records`],
+    'a CNAME that landed but timed out is not retried or undone');
+  assert.equal(cf.world.domain, null);
+
   cf = fakeCloudflare({ routes: false });
   await assert.rejects(cutover(cf.api, { ...IDS, to: 'tunnel', apply: true, ...cf.options }), /routes/);
   assert.deepEqual(writes(cf.calls), [], 'without the routes the whole site would reach the tunnel: refused');
@@ -268,6 +290,15 @@ const writes = calls => calls.filter(call => !call.startsWith('GET '));
   cf = fakeCloudflare({ domain: false, cname: true, failAttach: 99 });
   await assert.rejects(cutover(cf.api, { ...IDS, to: 'worker', apply: true, ...cf.options }), /tunnel CNAME restored/);
   assert.equal(cf.world.records[0]?.content, `${IDS.tunnel}.cfargotunnel.com`, 'a failed rollback puts the CNAME back');
+
+  cf = fakeCloudflare({ domain: false, cname: true, failAttach: 99, failCname: 99 });
+  await assert.rejects(cutover(cf.api, { ...IDS, to: 'worker', apply: true, ...cf.options }),
+    error => /undo failed too/.test(error.message) && !/restored/.test(error.message));
+
+  cf = fakeCloudflare({ domain: false, cname: true, lostAttach: 1 });
+  await cutover(cf.api, { ...IDS, to: 'worker', apply: true, ...cf.options });
+  assert.deepEqual(writes(cf.calls), [`DELETE /zones/${IDS.zone}/dns_records/rec1`, `PUT /accounts/${IDS.account}/workers/domains`],
+    'a rollback attach that landed but timed out is not retried or undone');
 
   cf = fakeCloudflare({ domain: false, cname: true });
   await cutover(cf.api, { ...IDS, to: 'tunnel', apply: true, ...cf.options });

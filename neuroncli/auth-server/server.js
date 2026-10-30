@@ -124,6 +124,20 @@ function keepAlive(res, body, heartbeatMs) {
 const IN_FLIGHT = Symbol('inFlight');
 const DRAINING = Symbol('draining');
 
+// Only a path that URL parsing leaves as it is gets served. cloudflared matches its ingress path
+// rules on the path as received, and new URL() then resolves dot segments (literal or %2e),
+// backslashes, a leading // and absolute forms, so /v1/%2e%2e/admin/overview would pass a ^/v1/
+// rule and reach /admin/overview.
+function canonicalPath(rawUrl) {
+  const raw = String(rawUrl || '');
+  if (!raw.startsWith('/')) return false;
+  try {
+    return new URL(raw, 'http://127.0.0.1').pathname === raw.split('?')[0];
+  } catch {
+    return false;
+  }
+}
+
 async function start() {
   const { default: app } = await import('./src/index.js');
   const port = Number(process.env.AUTH_PORT || 8787);
@@ -138,6 +152,11 @@ async function start() {
     if (server[DRAINING]) {
       res.writeHead(503, { 'Content-Type': 'application/json', 'Retry-After': '5', Connection: 'close' });
       res.end(JSON.stringify({ error: 'Gateway restarting' }));
+      return;
+    }
+    if (!canonicalPath(req.url)) {
+      res.writeHead(400, { 'Content-Type': 'application/json', Connection: 'close' });
+      res.end(JSON.stringify({ error: 'Invalid request path' }));
       return;
     }
     inFlight.add(res);
