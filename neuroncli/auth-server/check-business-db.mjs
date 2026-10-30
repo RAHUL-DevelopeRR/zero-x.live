@@ -1726,6 +1726,14 @@ try {
     assert.deepEqual(await migrate(scratch, { directory: brokenDir }), ['20990101000100'], 'the fixed migration applies on the next open');
     await writeFile(join(brokenDir, 'notes.sql'), '');
     await assert.rejects(listMigrations(brokenDir), /Unexpected migration file name: notes\.sql/);
+    await rm(join(brokenDir, 'notes.sql'));
+    // A renumbered migration whose old copy is back (a branch that still has it merged or rebased
+    // in) would run twice, once under each version.
+    await writeFile(join(brokenDir, '20990101000200_good.sql'), 'BEGIN; CREATE TABLE public.good_table (id int); COMMIT;');
+    await assert.rejects(listMigrations(brokenDir), /Duplicate migration name: good \(20990101000000 and 20990101000200\)/);
+    await rm(join(brokenDir, '20990101000200_good.sql'));
+    assert.equal(new Set((await listMigrations()).map(migration => migration.name)).size, (await listMigrations()).length,
+      'every migration name once');
   } finally {
     await scratch.close();
     assert.equal(dirname(resolve(brokenDir)), resolve(tmpdir()));

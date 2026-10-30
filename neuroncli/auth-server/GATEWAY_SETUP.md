@@ -180,6 +180,30 @@ cache arguments. Verify:
 - `SELECT plan, allowed_tiers, monthly_credit_microusd, jsonb_array_length(features) FROM public.zerox_plan_policy ORDER BY sort;`
   returns free `{free}` 0 4, pro `{free,paid}` 8000000 5, max `{free,paid}` 35000000 5, ultrawork `{free,paid}` 8000000 5.
 
+**Branches that still have the old migration names (fix before they merge).** Two pushed branches
+carry PR #27's migrations under their 20261023-20261025 versions:
+
+- `feat/relay-neuron-v1` has all ten (unchanged, so a git merge carries this branch's renames)
+  plus `20261026000000_push_devices.sql` and `down/20261026000000_push_devices.down.sql`, which
+  run `ALTER TABLE public.zerox_push_tokens`. Merged as is, push_devices sorts before
+  `20261029000100_push_tokens.sql` and a fresh apply fails (`relation "public.zerox_push_tokens"
+  does not exist`; `check-business-db.mjs` fails the same way). Before it merges, rename both
+  files to a version after `20261029001000` (for example `20261029001100_push_devices.sql`) and
+  their references (docs/RELAY.md, docs/PLATFORM_CONTRACT.md, check-business-db.mjs, the down
+  file's history row), and drop any old-named copy of the ten that a rebase or cherry-pick brings
+  back.
+- `feat/account-devices-relay` has `20261023000000_session_devices.sql` and
+  `20261023000100_push_tokens.sql`. PR #27 already contains that branch, so merging it adds
+  nothing; a rebased or cherry-picked copy must drop the two files (here `20261029000000` and
+  `20261029000100`).
+- Never apply those branches' 20261023-20261026 files to Supabase: this branch would run the
+  same migrations again under their 20261029 versions (each `CREATE TABLE` twice), and the
+  20261029 files are not plain copies (leased reservation functions, Z.ai rows), so they cannot
+  just be recorded as applied either.
+
+`src/db/migrations.js` refuses two migrations of the same name (`Duplicate migration name`), so
+the checks and `scripts/apply-migrations.mjs` stop before an old copy runs twice.
+
 **Spend limits, three layers.** (1) Postgres: each paid pool has a daily spend cap, checked
 atomically with every reservation (`p_pool.cpd`, billed micro-USD per UTC day; holds count while
 requests run): Claude Sonnet 5.5 $10, Claude Opus 5.5 $6, the Gemini paid pools $10, Groq and

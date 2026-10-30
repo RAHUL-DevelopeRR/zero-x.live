@@ -22,9 +22,16 @@ export async function listMigrations(directory = MIGRATIONS_DIR) {
   });
   migrations.sort((a, b) => sortKey(a.version).localeCompare(sortKey(b.version)) || a.file.localeCompare(b.file));
   const seen = new Set();
+  // Name -> version: a renumbered migration (PR #27's ten moved from 20261023-20261025 to
+  // 20261029, GATEWAY_SETUP.md) whose old copy came back with a merge or rebase would run twice.
+  const named = new Map();
   for (const migration of migrations) {
     if (seen.has(migration.version)) throw new Error(`Duplicate migration version: ${migration.version}`);
     seen.add(migration.version);
+    if (named.has(migration.name)) {
+      throw new Error(`Duplicate migration name: ${migration.name} (${named.get(migration.name)} and ${migration.version})`);
+    }
+    named.set(migration.name, migration.version);
   }
   return migrations;
 }
