@@ -38,6 +38,7 @@ import { registerCreditRoutes } from './routes/credits.js';
 import { loadVaultKeys, vaultConfigured } from './provider-keys.js';
 import { accessConfigured, passedAccess } from './access-auth.js';
 import { forwardToEc2 } from './ec2-proxy.js';
+import { extraWebOrigins } from './web-hosts.js';
 // Durable Object classes are exported from the Worker entry (wrangler.toml [[durable_objects]]).
 export { HealthHub } from './health-hub.js';
 export { RelayRoom } from './relay.js';
@@ -252,13 +253,16 @@ app.use('*', async (c, next) => {
 });
 
 // ── CORS: identity routes accept only the Zero-X origins; the OpenAI surface stays open ──
+// EXTRA_WEB_HOSTS adds a test host's https origin on EC2 (src/web-hosts.js); unset on the Worker.
 const IDENTITY_ORIGINS = ['https://zero-x.live', 'https://www.zero-x.live', 'https://dashboard.zero-x.live'];
 const DEV_ORIGIN = /^http:\/\/(127\.0\.0\.1|localhost)(:\d{1,5})?$/;
 const CORS_HEADERS = ['Content-Type', 'Authorization', 'X-Neuron-Trust-Tiers', 'X-Neuron-Allow-Training',
   'X-Neuron-Conversation'];
 const CORS_METHODS = ['GET', 'POST', 'DELETE', 'OPTIONS'];
+const identityOrigin = (origin, env) => IDENTITY_ORIGINS.includes(origin) || extraWebOrigins(env).includes(origin) ||
+  (devRuntimeEnabled(env) && DEV_ORIGIN.test(origin));
 const identityCors = cors({
-  origin: (origin, c) => IDENTITY_ORIGINS.includes(origin) || (devRuntimeEnabled(c.env) && DEV_ORIGIN.test(origin)) ? origin : null,
+  origin: (origin, c) => identityOrigin(origin, c.env) ? origin : null,
   allowHeaders: CORS_HEADERS, allowMethods: CORS_METHODS, maxAge: 600,
 });
 const openCors = cors({

@@ -12,6 +12,7 @@
 import { devAuthEnabled, errorResponse, isLoopbackHost } from '../auth-context.js';
 import { databaseConfigured, rpcRows } from '../account-store.js';
 import { sha256Hex } from '../session-store.js';
+import { extraWebOrigins, isExtraWebHost } from '../web-hosts.js';
 
 export const DEVICE_GRANT_TYPE = 'urn:ietf:params:oauth:grant-type:device_code';
 const USER_CODE_ALPHABET = 'BCDFGHJKLMNPQRSTVWXZ'; // no vowels: no accidental words
@@ -111,15 +112,19 @@ function loopbackOrigin(c) {
 function verificationUri(c) {
   if (c.env?.DEVICE_VERIFICATION_URL) return c.env.DEVICE_VERIFICATION_URL;
   const local = loopbackOrigin(c);
-  return local ? `${local}/neuroncli/device/` : 'https://neuron.zero-x.live/device';
+  if (local) return `${local}/neuroncli/device/`;
+  // A sign-in started on a test host (EXTRA_WEB_HOSTS, EC2 only) is approved on its page there.
+  const { hostname } = new URL(c.req.url);
+  return isExtraWebHost(c.env, hostname) ? `https://${hostname}/neuroncli/device/` : 'https://neuron.zero-x.live/device';
 }
 
 // The approval endpoints answer only the approval page: same-origin JSON with a bearer
 // header (no cookie authenticates them), which a cross-site form or fetch cannot produce.
+// EXTRA_WEB_HOSTS adds a test host's https page on EC2; unset on the Worker.
 function pageRequestRefused(c) {
   const origin = c.req.header('Origin');
   const local = loopbackOrigin(c);
-  const allowed = PAGE_ORIGINS.includes(origin) || (local !== null && origin === local);
+  const allowed = PAGE_ORIGINS.includes(origin) || extraWebOrigins(c.env).includes(origin) || (local !== null && origin === local);
   if (!allowed) return 'This request must come from the Zero-X device sign-in page.';
   const site = c.req.header('Sec-Fetch-Site');
   if (site && site !== 'same-origin') return 'This request must come from the Zero-X device sign-in page.';

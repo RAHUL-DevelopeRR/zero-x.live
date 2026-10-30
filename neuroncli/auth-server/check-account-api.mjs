@@ -481,6 +481,20 @@ try {
   assert.equal((await preflight('/api/account', 'http://localhost:3000', devEnv)).headers.get('access-control-allow-origin'), 'http://localhost:3000');
   assert.equal((await preflight('/api/account', 'http://127.0.0.1:5173', { ...env, DEV_AUTH_ENABLED: 'true' })).headers.get('access-control-allow-origin'), null,
     'loopback origins need the Node dev runtime');
+  // EXTRA_WEB_HOSTS (EC2 only: a test host such as aws.zero-x.live, C10) joins the identity origins
+  // over https; unset (the Worker, and EC2 after the test window) nothing else does.
+  const testHosts = { ...env, EXTRA_WEB_HOSTS: ' aws.zero-x.live , ,Staging.Example.test,not a host,ports.example:8443' };
+  for (const origin of ['https://aws.zero-x.live', 'https://staging.example.test', 'https://zero-x.live']) {
+    for (const path of ['/api/account', '/auth/cli/session']) {
+      assert.equal((await preflight(path, origin, testHosts)).headers.get('access-control-allow-origin'), origin, `${origin} ${path}`);
+    }
+  }
+  for (const origin of ['http://aws.zero-x.live', 'https://aws.zero-x.live.evil.example', 'https://ports.example:8443', 'https://not a host']) {
+    assert.equal((await preflight('/api/account', origin, testHosts)).headers.get('access-control-allow-origin'), null, origin);
+  }
+  for (const bindings of [env, { ...env, EXTRA_WEB_HOSTS: '' }]) {
+    assert.equal((await preflight('/api/account', 'https://aws.zero-x.live', bindings)).headers.get('access-control-allow-origin'), null);
+  }
   assert.equal((await preflight('/v1/chat/completions', 'https://any.example')).headers.get('access-control-allow-origin'), '*');
   const openModels = await request('/v1/models', { headers: { Origin: 'https://any.example' }, bindings: { ...env, ALLOW_ANONYMOUS_SESSIONS: 'true' } });
   assert.equal(openModels.headers.get('access-control-allow-origin'), '*');
