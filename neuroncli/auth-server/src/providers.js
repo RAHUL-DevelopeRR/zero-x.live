@@ -1,26 +1,22 @@
 import { CloudflareWorkersAIAdapter } from './cloudflare-adapter.js';
-import { OpenAICompatibleAdapter } from './provider-adapter.js';
+import { OpenAICompatibleAdapter, partialUsageOf, setPartialUsage, usageNow } from './provider-adapter.js';
+import { AnthropicAdapter } from './anthropic-adapter.js';
 import { toolCallSignature } from './provider-request.js';
 import { FailureKind, failureKindForStatus } from './provider-health.js';
 import {
-  AUTO_MODEL_ID, catalogEntries, catalogEntry, catalogWarnings, isHosted, isEnabled, listModelsForCaller, loadCatalogDbModels,
-  offeredEntries, poolConfigured, planPolicy,
+  AUTO_MODEL_ID, catalogEntries, catalogEntry, catalogWarnings, entryPools, isHosted, isEnabled, listModelsForCaller,
+  loadCatalog, offeredEntries, poolConfigured, planPolicy,
 } from './catalog.js';
+import { PROVIDER_TYPES, baseUrlFor } from './catalog-types.js';
+import { vaultKeys } from './provider-keys.js';
 import { errorEvent } from './errors.js';
 import { sessionTiers } from './capacity.js';
 import { estimatePromptTokens, estimateOutputTokens, publicPricing, utf8Bytes } from './pricing.js';
 
 export { estimatePromptTokens };
 
-function omnirouteBaseResolver(env) {
-  if (!env.OMNIROUTE_BASE_URL) return null;
-  try {
-    const url = new URL(env.OMNIROUTE_BASE_URL);
-    if (url.username || url.password || url.search || url.hash ||
-        !(url.protocol === 'https:' || (url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)))) return null;
-    return url.toString().replace(/\/$/, '');
-  } catch { return null; }
-}
+// OMNIROUTE_BASE_URL as the provider-type registry validates it (https, or http on loopback).
+const omnirouteBaseResolver = env => baseUrlFor('omniroute', env);
 
 function bedrockBaseResolver(env) {
   const region = env.BEDROCK_REGION || env.AWS_REGION;
@@ -30,13 +26,16 @@ function bedrockBaseResolver(env) {
     : `https://bedrock-mantle.${region}.api.aws/v1`;
 }
 
+// Catalog providers call the base URL of their provider type (src/catalog-types.js), the only
+// place upstream hosts are defined: neither catalog rows nor OIOP offers (zerox_offers.base_url,
+// display only) can choose where a request or a key goes.
 export const ADAPTERS = {
   cloudflare: new CloudflareWorkersAIAdapter(),
   openrouter: new OpenAICompatibleAdapter({
     id: 'openrouter',
     keyVar: 'OPENROUTER_API_KEY',
     modelsVar: 'OPENROUTER_MODELS',
-    defaultBase: 'https://openrouter.ai/api/v1',
+    defaultBase: PROVIDER_TYPES.openrouter.base_url,
     defaultFallbackModels: ['openrouter/free'],
   }),
   groq: new OpenAICompatibleAdapter({
@@ -44,7 +43,7 @@ export const ADAPTERS = {
     keyVar: 'GROQ_API_KEY',
     modelsVar: 'GROQ_MODELS',
     toolModelsVar: 'GROQ_TOOL_MODELS',
-    defaultBase: 'https://api.groq.com/openai/v1',
+    defaultBase: PROVIDER_TYPES.groq.base_url,
     providerPrefix: true,
   }),
   gemini: new OpenAICompatibleAdapter({
@@ -52,7 +51,7 @@ export const ADAPTERS = {
     keyVar: 'GEMINI_API_KEY',
     modelsVar: 'GEMINI_MODELS',
     toolModelsVar: 'GEMINI_TOOL_MODELS',
-    defaultBase: 'https://generativelanguage.googleapis.com/v1beta/openai',
+    defaultBase: PROVIDER_TYPES.gemini.base_url,
     providerPrefix: true,
   }),
   nvidia: new OpenAICompatibleAdapter({
@@ -60,9 +59,12 @@ export const ADAPTERS = {
     keyVar: 'NVIDIA_API_KEY',
     modelsVar: 'NVIDIA_MODELS',
     toolModelsVar: 'NVIDIA_TOOL_MODELS',
-    defaultBase: 'https://integrate.api.nvidia.com/v1',
+    defaultBase: PROVIDER_TYPES.nvidia.base_url,
     providerPrefix: true,
   }),
+  // Claude Sonnet 5.5 and Opus 5.5 (Messages API through @anthropic-ai/sdk): api.anthropic.com
+  // only, never a followed redirect, key from the anthropic.paid slot (ANTHROPIC_API_KEY).
+  anthropic: new AnthropicAdapter(),
   omniroute: new OpenAICompatibleAdapter({
     id: 'omniroute',
     keyVar: 'OMNIROUTE_API_KEY',
@@ -87,7 +89,7 @@ export const ADAPTERS = {
   }),
 };
 
-const HTTP_PROVIDER_KEYS = ['openrouter', 'groq', 'gemini', 'nvidia', 'omniroute', 'bedrock', 'azure'];
+const HTTP_PROVIDER_KEYS = ['openrouter', 'groq', 'gemini', 'nvidia', 'anthropic', 'omniroute', 'bedrock', 'azure'];
 const HOSTED_FLAGS = { nvidia: 'NVIDIA_HOSTED', openrouter: 'OPENROUTER_HOSTED' };
 
 export function providerConfiguration(env, session = {}) {
@@ -97,7 +99,8 @@ export function providerConfiguration(env, session = {}) {
     const entries = catalogEntries(env).filter(entry => entry.provider === provider);
     return {
       provider,
-      configured: adapter ? adapter.isConfigured(env, session) : false,
+      configured: adapter ? adapter.isConfigured(env, session) || vaultKeys(env).some(key => key.provider === provider) : false,
+      vault_keys: vaultKeys(env).filter(key => key.provider === provider).length,
       catalog_source: adapter ? adapter.catalogSource(env) : 'discovery',
       hosted: HOSTED_FLAGS[provider] ? env[HOSTED_FLAGS[provider]] === 'true' : entries.length > 0,
       catalog_models: entries.filter(entry => isHosted(env, entry) && isEnabled(env, entry)).map(entry => entry.id),
@@ -154,7 +157,7 @@ export function modelCatalog(env, session = {}) {
   const tiers = sessionTiers(env, session, planPolicy(env, session.plan));
   const catalog = [];
   for (const entry of offeredEntries(env)) {
-    const pools = entry.pools.filter(pool => tiers.includes(pool.tier) && poolConfigured(env, entry, pool));
+    const pools = entryPools(env, entry).filter(pool => tiers.includes(pool.tier) && poolConfigured(env, entry, pool));
     if (pools.length) catalog.push(legacyEntry(entry, pools));
   }
   return catalog;
@@ -203,7 +206,7 @@ export async function ownedCatalog(env, session) {
 
 export async function resolveModelCatalog(env, session = {}) {
   if (isOwnedSession(session)) return ownedCatalog(env, session);
-  await loadCatalogDbModels(env);
+  await loadCatalog(env);
   return modelCatalog(env, session);
 }
 
@@ -270,6 +273,9 @@ export const PROVIDER_PARAMS = Object.freeze({
   nvidia: [...SHARED_PARAMS, 'presence_penalty', 'frequency_penalty'],
   openrouter: [...SHARED_PARAMS, 'parallel_tool_calls', 'presence_penalty', 'frequency_penalty', 'user', 'reasoning_effort'],
   cloudflare: ['tools', 'temperature', 'top_p', 'seed', 'presence_penalty', 'frequency_penalty'],
+  // Claude 5.5 rejects sampling parameters (temperature, top_p, top_k) and the adapter builds its
+  // body from a whitelist anyway (src/anthropic-request.js); this list is the first filter.
+  anthropic: ['tools', 'tool_choice', 'stop', 'response_format', 'parallel_tool_calls', 'reasoning_effort'],
 });
 const STANDARD_EFFORTS = new Set(['low', 'medium', 'high']);
 
@@ -399,6 +405,12 @@ export function normalizeCompletion(result, model, messages, tools, { onToolSign
     }],
     usage,
   };
+}
+
+// True when the entry's upstream reports usage before the model runs (Claude's message_start), so
+// a failed attempt that reported none never reached the model (chat-handler settlement).
+export function reportsUsageAtStart(entry) {
+  return ADAPTERS[entry?.provider]?.reportsUsageAtStart === true;
 }
 
 // `request` carries per-request shaping context for the adapter ({ signatureFor }).
@@ -705,6 +717,8 @@ export function classifyUpstreamFailure(status, body = '', headers = null, fallb
     kind,
     status: effective,
     retryAfterSeconds: kind === FailureKind.RATE_LIMITED || effective === 413 ? retryDelay(headers, info) : null,
+    // The provider says a daily quota is spent (health: QUOTA_EXHAUSTED rather than RATE_LIMITED).
+    dailyQuota: kind === FailureKind.RATE_LIMITED && (info.workersCode === 3036 || info.dailyQuota === true),
   };
 }
 
@@ -728,6 +742,7 @@ export class UpstreamStreamError extends Error {
     const classified = classifyUpstreamFailure(Number.isInteger(status) ? status : null, body, null, fallbackKind);
     this.kind = classified.kind;
     this.retryAfterSeconds = classified.retryAfterSeconds;
+    this.dailyQuota = classified.dailyQuota;
     // Sanitized for operator logs (no raw provider text is kept on the error).
     this.summary = upstreamErrorSummary(Number.isInteger(status) ? status : null, body);
   }
@@ -893,8 +908,10 @@ function parseEvent(data) {
  * non-streaming response (whose generation may outlast the budget) by commitBy + idleMs. When
  * that, not the attempt's own deadline, ends it, the timeout's phase is 'budget': the pool did
  * not get its full time, so the cut is not a failure of the pool (chat-handler.js).
- * Resolves { ok:false, status, headers, bodyText } for HTTP errors and
- * { ok:true, json | stream } on success; throws timeout/abort/protocol errors.
+ * Resolves { ok:false, status, headers, bodyText, usage } for HTTP errors and
+ * { ok:true, json | stream } on success; throws timeout/abort/protocol errors. `usage` (and
+ * partialUsageOf(error) on a throw) is what the upstream reported before it failed (Claude's
+ * message_start counts), or null.
  */
 export async function startCompletion(env, session, entry, pool, payload,
   { clientSignal, timeouts = streamTimeouts(env), request = {}, commitBy = Infinity } = {}) {
@@ -912,11 +929,21 @@ export async function startCompletion(env, session, entry, pool, payload,
   const deadline = () => Math.min(own(), cutoff);
   const phase = () => (cutoff < own() ? 'budget' : payload.stream ? 'first_byte' : 'response');
   const guard = promise => guarded(promise, { deadline, phase, signal, controller });
-  const response = await guard(requestCompletion(env, session, entry, payload, signal, pool, request));
+  // Usage the adapter registered for this attempt, carried out of a failure.
+  const reported = error => {
+    const usageSoFar = partialUsageOf(signal);
+    const usage = usageNow(usageSoFar);
+    if (usage && error && typeof error === 'object') setPartialUsage(error, () => usage);
+    return error;
+  };
+  const response = await guard(requestCompletion(env, session, entry, payload, signal, pool, request)).catch(error => {
+    throw reported(error);
+  });
   try {
     if (!response.ok) {
       const bodyText = await guard(readBounded(response)).catch(() => '');
-      return { ok: false, status: response.status, headers: response.headers, bodyText, latencyMs: Date.now() - started };
+      return { ok: false, status: response.status, headers: response.headers, bodyText, latencyMs: Date.now() - started,
+        usage: usageNow(partialUsageOf(signal)) };
     }
     if (!payload.stream) {
       const json = await guard(response.json().catch(() => {
@@ -931,12 +958,12 @@ export async function startCompletion(env, session, entry, pool, payload,
     const first = await guard(reader.next());
     if (first === null || first === '[DONE]') throw new UpstreamProtocolError('Provider stream ended before the first event');
     parseEvent(first);
-    return { ok: true, stream: { reader, first }, controller, latencyMs: Date.now() - started };
+    return { ok: true, stream: { reader, first, usageSoFar: partialUsageOf(response) }, controller, latencyMs: Date.now() - started };
   } catch (error) {
     controller.abort(error);
     if (reader) await reader.cancel();
     else response.body?.cancel?.().catch?.(() => {});
-    throw error;
+    throw reported(error);
   }
 }
 
@@ -1080,9 +1107,13 @@ function normalizeStreamValue(value, state) {
  * Client-facing SSE stream for a committed upstream attempt. Applies the idle timeout
  * between upstream chunks, normalizes chunks and calls onFinish exactly once with
  * { status:'ok'|'error', usage, outputBytes, errorCode, kind } before the final event.
+ * `usageSoFar(outputBytes)` (provider-adapter.js setPartialUsage) supplies the usage when the
+ * stream ends without a usage chunk (a client abort or a mid-stream error before Claude's
+ * message_delta): the input and cache counts the provider already reported, instead of the
+ * byte estimate settlement would otherwise bill.
  */
 export function createCompletionStream({ reader, first, model, controller, clientSignal, timeouts, onFinish, requestId, env,
-  onToolSignature = null }) {
+  onToolSignature = null, restorer = null, usageSoFar = null }) {
   const encoder = new TextEncoder();
   const state = {
     id: `chatcmpl-${crypto.randomUUID()}`, created: Math.floor(Date.now() / 1000), model,
@@ -1112,13 +1143,14 @@ export function createCompletionStream({ reader, first, model, controller, clien
     void cancelUpstream();
   };
   const onAbort = () => interrupt(abortReason(clientSignal));
+  const reportedUsage = () => state.usage ?? usageNow(usageSoFar, state.outputBytes);
   const finish = async outcome => {
     if (finished) return;
     finished = true;
     clearTimeout(timer);
     clientSignal?.removeEventListener('abort', onAbort);
     try {
-      await onFinish({ usage: state.usage, outputBytes: state.outputBytes, ...outcome });
+      await onFinish({ usage: reportedUsage(), outputBytes: state.outputBytes, ...outcome });
     } catch (error) {
       console.error('Neuron stream settlement failed', { name: error?.name });
     }
@@ -1129,13 +1161,17 @@ export function createCompletionStream({ reader, first, model, controller, clien
       state.sawDone = true;
       return [];
     }
-    return normalizeStreamValue(event.value, state);
+    const chunks = normalizeStreamValue(event.value, state);
+    // Secrets withheld from the upstream go back into the client's stream (src/oiop/scrub.js).
+    return restorer?.active ? chunks.map(chunk => restorer.chunk(chunk)) : chunks;
   };
   const finalize = async () => {
     if (!state.sawDone && !state.sawFinish && !state.pendingToolFinish) {
       throw new UpstreamProtocolError('Provider stream ended before completion');
     }
     const tail = [];
+    const held = restorer?.active ? restorer.finalChunk(chunkOf(state, [])) : null;
+    if (held) tail.push(held);
     if (!state.sawFinish) tail.push(chunkOf(state, [{ index: 0, delta: {}, finish_reason: state.pendingToolFinish ? 'tool_calls' : 'stop' }]));
     if (state.usage && !state.usageForwarded) tail.push(chunkOf(state, [], { usage: state.usage }));
     await finish({ status: 'ok' });
@@ -1222,6 +1258,7 @@ export function createCompletionStream({ reader, first, model, controller, clien
         await cancelUpstream();
         await finish({ status: 'error', kind: client ? FailureKind.ABORTED : error.kind || FailureKind.SERVER,
           phase: timeout ? error.phase : null, retryAfterSeconds: error.retryAfterSeconds ?? null,
+          dailyQuota: error.dailyQuota === true,
           errorCode: client ? 'client_disconnected' : timeout ? 'upstream_timeout' : 'upstream_error',
           upstream: error.summary ?? null });
         if (client) {

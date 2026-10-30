@@ -2,15 +2,19 @@
 // reservation/settlement and resilient streaming (WP-B2). No network: every upstream and
 // database call goes through the fake fetch below.
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { Hono } from 'hono';
-import { createChatHandler } from './src/chat-handler.js';
+import { createChatHandler, MAX_OUTPUT_TOKENS } from './src/chat-handler.js';
 import { RoutingEngine, fitMaxTokens } from './src/router.js';
 import { FailureKind, HealthState, ProviderHealthTracker } from './src/provider-health.js';
 import {
   BUILTIN_PLANS, CATALOG, EEA_COUNTRIES, MODEL_ALIASES, POOL_LIMITS, callerCountry, catalogEntry, catalogWarnings,
-  expandCountries, listModelsForCaller, loadPlanPolicies, planPolicy, poolKey, resolveModelId,
+  expandCountries, listModelsForCaller, loadPlanPolicies, planPolicy, poolConfigured, poolKey, resolveModelId,
 } from './src/catalog.js';
-import { billableUsage, costMicrousd, estimatePromptTokens, priceFromCost } from './src/pricing.js';
+import {
+  LIST_PRICES, billableUsage, costMicrousd, dailyCapMicrousd, estimatePromptTokens, priceFromCost, priceFromList, publicPricing,
+  reserveCostMicrousd,
+} from './src/pricing.js';
 import { errorBody, errorResponse } from './src/errors.js';
 import { RESERVED_OUTPUT_TOKENS, reservationArgs, reservedTokens, reserveError, settlementArgs } from './src/capacity.js';
 import { exhaustedBudget, poolBudgetState, resetPoolBudgets } from './src/pool-budget.js';
@@ -41,7 +45,8 @@ let handlers = {};
 function targetOf(url) {
   if (url.includes('/rest/v1/rpc/')) return `rpc:${url.split('/').at(-1)}`;
   for (const [name, prefix] of [['groq', 'https://api.groq.com/'], ['gemini', 'https://generativelanguage.googleapis.com/'],
-    ['openrouter', 'https://openrouter.ai/'], ['nvidia', 'https://integrate.api.nvidia.com/'], ['cloudflare', 'https://api.cloudflare.com/']]) {
+    ['openrouter', 'https://openrouter.ai/'], ['nvidia', 'https://integrate.api.nvidia.com/'], ['cloudflare', 'https://api.cloudflare.com/'],
+    ['anthropic', 'https://api.anthropic.com/']]) {
     if (url.startsWith(prefix)) return name;
   }
   return 'unknown';
@@ -50,7 +55,7 @@ globalThis.fetch = async (input, options = {}) => {
   const url = String(input);
   const target = targetOf(url);
   const body = options.body ? JSON.parse(options.body) : null;
-  const call = { target, url, body, headers: options.headers || {}, signal: options.signal };
+  const call = { target, url, body, headers: options.headers || {}, signal: options.signal, redirect: options.redirect };
   calls.push(call);
   const handler = handlers[target];
   if (!handler) throw new Error(`Unexpected fetch to ${target}: ${url}`);
@@ -77,6 +82,18 @@ const completion = (message, usage = { prompt_tokens: 10, completion_tokens: 5, 
   Response.json({ id: 'up-1', choices: [{ index: 0, message: { role: 'assistant', ...message }, finish_reason: 'stop' }], usage });
 const chunk = (delta, finish = null, extra = {}) => ({ choices: [{ index: 0, delta, finish_reason: finish }], ...extra });
 const parseSse = text => text.split('\n\n').filter(Boolean).map(event => event.slice(6)).map(data => data === '[DONE]' ? data : JSON.parse(data));
+// A streamed Claude Messages API response (event + data frames, as api.anthropic.com sends them).
+const claudeSse = events => new Response(events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join(''),
+  { headers: { 'content-type': 'text/event-stream', 'request-id': 'req_claude' } });
+const claudeTurn = ({ text = 'Claude here.', usage, output = 800 }) => [
+  { type: 'message_start', message: { id: 'msg_1', type: 'message', role: 'assistant', model: 'claude-sonnet-5-5', content: [],
+    stop_reason: null, stop_sequence: null, usage: { output_tokens: 1, ...usage } } },
+  { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+  { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text } },
+  { type: 'content_block_stop', index: 0 },
+  { type: 'message_delta', delta: { stop_reason: 'end_turn', stop_sequence: null }, usage: { output_tokens: output } },
+  { type: 'message_stop' },
+];
 
 // ── Gateway under test ──
 const KEYS = { GROQ_API_KEY: 'groq-free-key', GEMINI_API_KEY: 'gemini-free-key', GROQ_PAID_API_KEY: 'groq-paid-key', GEMINI_PAID_API_KEY: 'gemini-paid-key' };
@@ -162,14 +179,68 @@ try {
     assert.equal(costMicrousd(pro, 300000, 0), 937500, 'prompts above 200K use the long-context rate');
     assert.equal(costMicrousd(null, 1000, 1000), 0);
     assert.equal(priceFromCost(0.293, 2.253).input_microusd_per_mtok, 366250);
+    assert.deepEqual(publicPricing(flash), { input_per_mtok_usd: 0.375, output_per_mtok_usd: 3.125 }, 'no cache fields without cache rates');
+  });
+
+  await test('Claude pricing: list price x 1.25 on every rate, cache reads and writes billed at their own rates', () => {
+    const sonnet = priceFromList(LIST_PRICES['anthropic:claude-sonnet-5-5']);
+    const opus = priceFromList(LIST_PRICES['anthropic:claude-opus-5-5']);
+    const rates = price => [price.input_microusd_per_mtok, price.output_microusd_per_mtok, price.cache_read_microusd_per_mtok,
+      price.cache_write_microusd_per_mtok, price.cache_write_1h_microusd_per_mtok];
+    assert.deepEqual(rates(sonnet), [2500000, 12500000, 250000, 3125000, 5000000]);
+    assert.deepEqual(rates(opus), [5000000, 25000000, 250000, 6250000, 10000000]);
+    assert.deepEqual(catalogEntry('anthropic/claude-sonnet-5-5').pools[0].price, sonnet, 'the catalog bills the list prices');
+    assert.deepEqual(catalogEntry('anthropic/claude-opus-5-5').pools[0].price, opus);
+    assert.deepEqual(publicPricing(sonnet), { input_per_mtok_usd: 2.5, output_per_mtok_usd: 12.5, cache_read_per_mtok_usd: 0.25,
+      cache_write_per_mtok_usd: 3.125 });
+    // A typical Neuron turn: 20K prompt tokens (16K read from the cache, 4K written), 800 output.
+    const warm = { cache_read_tokens: 16000, cache_write_tokens: 4000 };
+    assert.equal(costMicrousd(sonnet, 20000, 800, warm), 26500);
+    assert.equal(costMicrousd(opus, 20000, 800, warm), 49000);
+    assert.equal(costMicrousd(sonnet, 20000, 800, { cache_read_tokens: 16000 }), 24000, 'uncached tokens without a write bill as input');
+    assert.equal(costMicrousd(opus, 20000, 800, { cache_read_tokens: 16000 }), 44000);
+    assert.equal(costMicrousd(sonnet, 20000, 800, { cache_write_tokens: 20000 }), 72500, 'cold cache: every prompt token written');
+    assert.equal(costMicrousd(opus, 20000, 800, { cache_write_tokens: 20000 }), 145000);
+    assert.equal(costMicrousd(opus, 20000, 800, { cache_write_1h_tokens: 20000 }), 220000, '1-hour writes at 2x input');
+    assert.equal(costMicrousd(opus, 84000, 2000, { cache_read_tokens: 80000, cache_write_tokens: 3000 }), 93750, 'an Opus agent turn: about $0.094');
+    assert.equal(costMicrousd(sonnet, 100, 0, { cache_read_tokens: 500, cache_write_tokens: 500 }), 25, 'cache tokens never exceed the prompt');
+    assert.equal(costMicrousd(sonnet, 20000, 800), 60000, 'without a cache split every prompt token is plain input');
+    // The credit hold: every prompt token at the cache-write rate plus all of max_tokens.
+    assert.equal(reserveCostMicrousd(sonnet, 20000, 4096), 113700);
+    assert.equal(reserveCostMicrousd(sonnet, 20000, 32000), 462500);
+    assert.equal(reserveCostMicrousd(opus, 20000, 4096), 227400);
+    assert.equal(reserveCostMicrousd(opus, 20000, 32000), 925000);
+    assert.equal(reserveCostMicrousd(null, 20000, 32000), 0);
+    for (const entry of CATALOG) {
+      for (const pool of entry.pools.filter(item => item.tier === 'paid' && !item.price.cache_write_microusd_per_mtok)) {
+        for (const [prompt, max] of [[1000, 500], [20000, 4096], [300000, 8192]]) {
+          assert.equal(reserveCostMicrousd(pool.price, prompt, max), costMicrousd(pool.price, prompt, max), `${entry.id}: holds unchanged`);
+        }
+      }
+    }
+    assert.deepEqual([dailyCapMicrousd(10), dailyCapMicrousd(6), dailyCapMicrousd(5)], [12500000, 7500000, 6250000], 'caps billed at 1.25x');
   });
 
   await test('billable usage bills hidden reasoning tokens from total_tokens', () => {
+    const noCache = { cache_read_tokens: 0, cache_write_tokens: 0, cache_write_1h_tokens: 0 };
     assert.deepEqual(billableUsage({ prompt_tokens: 100, completion_tokens: 20, total_tokens: 150 }),
-      { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150, estimated: false });
+      { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150, estimated: false, ...noCache });
     assert.equal(billableUsage({ total_tokens: 13 }, { prompt_tokens: 40 }).total_tokens, 13);
     assert.deepEqual(billableUsage(null, { prompt_tokens: 7, completion_tokens: 3 }),
-      { prompt_tokens: 7, completion_tokens: 3, total_tokens: 10, estimated: true });
+      { prompt_tokens: 7, completion_tokens: 3, total_tokens: 10, estimated: true, ...noCache });
+    // The prompt-cache split (Claude reports reads, 5-minute and 1-hour writes; OpenAI-compatible
+    // providers at most cached_tokens), clamped so it never exceeds the prompt.
+    assert.deepEqual(billableUsage({ prompt_tokens: 20800, completion_tokens: 800, total_tokens: 21600,
+      prompt_tokens_details: { cached_tokens: 16000, cache_write_tokens: 4000, cache_write_1h_tokens: 0 } }),
+    { prompt_tokens: 20800, completion_tokens: 800, total_tokens: 21600, estimated: false, cache_read_tokens: 16000,
+      cache_write_tokens: 4000, cache_write_1h_tokens: 0 });
+    const bad = billableUsage({ prompt_tokens: 100, completion_tokens: 1, total_tokens: 101,
+      prompt_tokens_details: { cached_tokens: 90, cache_write_tokens: 50, cache_write_1h_tokens: -3 } });
+    assert.deepEqual([bad.cache_read_tokens, bad.cache_write_tokens, bad.cache_write_1h_tokens], [90, 10, 0]);
+    // Gemini reports cached_tokens too: billed exactly as before, its price has no cache rates.
+    const flash = catalogEntry('gemini/gemini-2.5-flash').pools[1].price;
+    const gemini = billableUsage({ prompt_tokens: 1000, completion_tokens: 500, total_tokens: 1500, prompt_tokens_details: { cached_tokens: 800 } });
+    assert.equal(costMicrousd(flash, gemini.prompt_tokens, gemini.completion_tokens, gemini), 1938);
     const bytes = new TextEncoder().encode(JSON.stringify(messages)).byteLength;
     const toolBytes = new TextEncoder().encode(JSON.stringify(tools)).byteLength;
     assert.equal(estimatePromptTokens(messages, tools), Math.ceil(bytes / 3.5) + Math.ceil(toolBytes / 3.5));
@@ -238,8 +309,8 @@ try {
     assert.deepEqual(byId.auto.capabilities, { tools: true, streaming: true, vision: false, reasoning: true });
     const flash = byId['gemini/gemini-2.5-flash'];
     assert.deepEqual(Object.keys(flash).sort(), ['available', 'capabilities', 'context_length', 'context_window', 'created',
-      'display_name', 'id', 'max_output_tokens', 'object', 'owned_by', 'pricing', 'reasoning_efforts', 'tiers',
-      'unavailable_reason']);
+      'display_name', 'id', 'max_output_tokens', 'models_dev_id', 'object', 'offers', 'owned_by', 'pricing', 'provider',
+      'reasoning_efforts', 'tiers', 'unavailable_reason']);
     assert.deepEqual(flash.capabilities, { tools: true, streaming: true, vision: true, reasoning: true });
     assert.equal(flash.context_length, flash.context_window);
     assert.equal(flash.available, true);
@@ -713,11 +784,14 @@ try {
         return order();
       } finally { resetHubClientCache(); }
     };
-    assert.deepEqual(await hubOrder({ status: 'degraded', slow_until: Date.now() + 60_000 }),
-      [...healthy, 'gemini:gemini-2.5-flash', 'gemini:gemini-3.6-flash'],
-      'B and the other healthy pools first, then slow A, then blurred C (still tried)');
-    assert.deepEqual(await hubOrder({ status: 'degraded' }), ['gemini:gemini-2.5-flash', ...healthy, 'gemini:gemini-3.6-flash'],
-      'degraded without slow_until (one 5xx anywhere, a slow non-streaming response) keeps its rank');
+    // The router skips pools the hub has parked (blurred C) and orders degraded ones after the
+    // healthier pools of their tier (router.js penalty); slow_until alone moves A back too.
+    assert.deepEqual(await hubOrder({ status: 'available', slow_until: Date.now() + 60_000 }), [...healthy, 'gemini:gemini-2.5-flash'],
+      'B and the other healthy pools first, then slow A; blurred C is skipped');
+    assert.deepEqual(await hubOrder({ status: 'degraded', slow_until: Date.now() + 60_000 }), [...healthy, 'gemini:gemini-2.5-flash'],
+      'slow and degraded: after the healthy pools');
+    assert.deepEqual(await hubOrder({ status: 'degraded' }), [...healthy, 'gemini:gemini-2.5-flash'],
+      'degraded without slow_until (one 5xx anywhere, a slow non-streaming response): the router penalty only');
     assert.equal((await hubOrder({ status: 'available', slow_until: Date.now() - 1 }))[0], 'gemini:gemini-2.5-flash',
       'an expired mark keeps its rank');
 
@@ -735,10 +809,17 @@ try {
     assert.deepEqual(await localOrder(tracker => timeout(tracker)),
       [healthy[0], 'gemini:gemini-3.6-flash', ...healthy.slice(1), 'gemini:gemini-2.5-flash'], 'one first-byte timeout');
     assert.equal((await localOrder(tracker => timeout(tracker, 'idle'))).at(-1), 'gemini:gemini-2.5-flash', 'one idle timeout');
-    assert.deepEqual(await localOrder(tracker => tracker.recordFailure(A, { kind: FailureKind.SERVER })), ranked,
-      'one 5xx (DEGRADED, circuit closed) keeps the rank');
-    assert.deepEqual(await localOrder(tracker => timeout(tracker, 'response')), ranked,
-      'so does a slow non-streaming response (it may be a long generation)');
+    // A degraded pool goes after the healthier pools of its tier in the router (router.js penalty)
+    // whether or not it is slow; what is slow is checked on the record.
+    const demoted = [healthy[0], 'gemini:gemini-3.6-flash', ...healthy.slice(1), 'gemini:gemini-2.5-flash'];
+    assert.deepEqual(await localOrder(tracker => {
+      tracker.recordFailure(A, { kind: FailureKind.SERVER });
+      assert.equal(tracker.getRecord(A).slow_until, 0, 'one 5xx (DEGRADED, circuit closed) is not slow');
+    }), demoted, 'one 5xx: only the router penalty');
+    assert.deepEqual(await localOrder(tracker => {
+      timeout(tracker, 'response');
+      assert.equal(tracker.getRecord(A).slow_until, 0, 'nor is a slow non-streaming response (it may be a long generation)');
+    }), demoted, 'a slow non-streaming response: only the router penalty');
     assert.deepEqual(await localOrder(tracker => { timeout(tracker); tracker.recordSuccess(A); }), ranked, 'a success clears the mark');
     // Two callers' timeouts park the pool for its cooldown; once that ends it is still slow, so
     // the worse pool does not rank above a pool with a single timeout.
@@ -748,10 +829,15 @@ try {
       assert.equal(tracker.getRecord(A).status, HealthState.DOWN);
       tracker.getRecord(A).circuit_open_until = Date.now() - 1;
     })).at(-1), 'gemini:gemini-2.5-flash', 'half-open after its cooldown and still slow');
-    assert.deepEqual(await localOrder(async tracker => {
-      timeout(tracker);
+    // Once the mark ends, the pool ranks like any degraded pool: half-open after its cooldown it
+    // goes first again.
+    assert.equal((await localOrder(async tracker => {
+      timeout(tracker, 'first_byte', 'user-1');
+      timeout(tracker, 'first_byte', 'user-2');
+      tracker.getRecord(A).circuit_open_until = Date.now() - 1;
       await new Promise(resolve => setTimeout(resolve, 40));
-    }, new ProviderHealthTracker({ slowWindowMs: 20 })), ranked, 'the mark ends after slowWindowMs (five minutes by default)');
+      assert.ok(tracker.getRecord(A).slow_until < Date.now());
+    }, new ProviderHealthTracker({ slowWindowMs: 20 })))[0], 'gemini:gemini-2.5-flash', 'the mark ends after slowWindowMs (five minutes by default)');
   });
 
   await test('413 skips a pool for this request only and never opens its circuit', async () => {
@@ -1015,7 +1101,7 @@ try {
     assert.equal(gw.tracker.isAvailable('groq:openai/gpt-oss-120b:free'), false, 'the chat handler passes the timeout phase and the caller');
   });
 
-  await test('Workers AI binding errors are rate limits and late streams are cancelled (review B2 P3)', async () => {
+  await test('Workers AI binding errors are rate limits (daily quota) and late streams are cancelled (review B2 P3)', async () => {
     const gw = gateway();
     gw.addSession('ses_anon', {});
     reset({});
@@ -1023,7 +1109,7 @@ try {
     const limited = await expectError(await gw.call(env, { model: '@cf/meta/llama-3.3-70b-instruct-fp8-fast', messages }), 503, 'capacity_exhausted');
     assert.ok(limited.retry_after_seconds > 0);
     const record = gw.tracker.getRecord('cloudflare:@cf/meta/llama-3.3-70b-instruct-fp8-fast:free');
-    assert.equal(record.status, HealthState.RATE_LIMITED);
+    assert.equal(record.status, HealthState.QUOTA_EXHAUSTED, '3036 is the spent daily allocation');
     const untilMidnight = (Math.floor(Date.now() / 86400000) + 1) * 86400000 - Date.now();
     assert.ok(Math.abs(gw.tracker.cooldownRemainingMs(record.key) - untilMidnight) < 5000, 'parked until 00:00 UTC');
     assert.equal(gw.session('ses_anon').requests, 0, 'refunded');
@@ -1157,10 +1243,12 @@ try {
       p_tokens: prompt + RESERVED_OUTPUT_TOKENS, p_cost_microusd: 0, p_pool: { rpm: 30, rpd: 1000, tpm: 8000, tpd: 200000 } });
     assert.equal(paid.p_request_id, requestId, 'no reservation existed yet, so the id is reused');
     assert.equal(paid.p_tier, 'paid');
-    assert.equal(paid.p_pool, null);
+    assert.deepEqual(paid.p_pool, { rpm: null, rpd: null, tpm: null, tpd: null, cpd: 6250000 },
+      'the paid pool carries its daily spend cap ($5 a day, billed at 1.25x)');
     assert.equal(paid.p_tokens, prompt + RESERVED_OUTPUT_TOKENS);
-    assert.equal(paid.p_cost_microusd, costMicrousd(catalogEntry('groq/openai/gpt-oss-120b').pools[1].price, prompt, 2048),
+    assert.equal(paid.p_cost_microusd, reserveCostMicrousd(catalogEntry('groq/openai/gpt-oss-120b').pools[1].price, prompt, 2048),
       'credits are held for the full max_tokens');
+    assert.equal(paid.p_cost_microusd, costMicrousd(catalogEntry('groq/openai/gpt-oss-120b').pools[1].price, prompt, 2048));
     assert.equal(waited.length, 1, 'settlement runs in waitUntil');
     await Promise.all(waited);
     assert.equal(settled.length, 1);
@@ -1172,6 +1260,7 @@ try {
     assert.equal(settle.p_provider, 'groq');
     assert.equal(settle.p_upstream_model, 'openai/gpt-oss-120b');
     assert.equal(settle.p_error_code, null);
+    assert.deepEqual([settle.p_cache_read_tokens, settle.p_cache_write_tokens], [0, 0]);
     assert.ok(Number.isInteger(settle.p_latency_ms));
     assert.deepEqual(gw.writes, []);
     // E2E finding (2026-10-21): max_tokens fitted to the rest of Groq's 8K minute made every
@@ -1210,6 +1299,12 @@ try {
     assert.equal(exhaustedBudget(POOL_LIMITS.nvidia_trial, 30, Date.UTC(2026, 9, 21, 12, 0, 30)), 'rpm');
     assert.equal(exhaustedBudget(POOL_LIMITS.groq_free, 30, Date.UTC(2026, 9, 21, 23, 59, 30)), 'rpm|tpm|rpd|tpd',
       'in the last minute of the day both windows end together');
+    // A paid pool's daily spend cap (p_pool.cpd) is a daily budget of its own.
+    assert.equal(exhaustedBudget({ cpd: 12500000 }, 3600), 'cpd');
+    assert.equal(exhaustedBudget({ rpm: null, rpd: null, tpm: null, tpd: null, cpd: 12500000 }, 3600), 'cpd');
+    assert.equal(exhaustedBudget({ rpm: null, rpd: null, tpm: null, tpd: null, cpd: 12500000 }, 30), 'rpm|tpm', 'not a per-minute budget');
+    assert.equal(exhaustedBudget(POOL_LIMITS.groq_free, 7200), 'rpd|tpd');
+    assert.equal(exhaustedBudget(null, 7200), 'rpd|tpd');
 
     // The next successful reservation on the pool clears it.
     reset({ 'rpc:zerox_plan_policies_v2': policiesRpc, 'rpc:zerox_reserve_v2': () => Response.json([okReserve({ reservation_id: 'res-ok' })]),
@@ -1644,13 +1739,14 @@ try {
       assert.deepEqual(settled.map(row => [row.p_status, row.p_error_code]),
         [['refunded', 'upstream_error'], ['failed_upstream', 'upstream_timeout']]);
 
-      // The next caller's `auto` still tries B right after A (one 503 keeps A's rank too).
+      // The next caller's `auto` tries B first: A's 503 degraded A (router.js penalty), the budget
+      // cut did nothing to B.
       reset({ ...handlers, gemini: call => call.body.model === 'gemini-2.5-flash' ? new Response('overloaded', { status: 503 })
         : sse([chunk({ content: 'ok' }, 'stop'), '[DONE]']) });
       const next = await gw.call(env, { model: 'auto', messages, tools, stream: true }, { token: 'ses_next', country: 'US' });
       assert.equal(next.headers.get('x-neuron-model'), 'gemini/gemini-3.5-flash');
       await next.text();
-      assert.deepEqual(upstreamCalls().map(call => call.body.model), ['gemini-2.5-flash', 'gemini-3.5-flash']);
+      assert.deepEqual(upstreamCalls().map(call => call.body.model), ['gemini-3.5-flash']);
     } finally { resetHubClientCache(); }
   });
 
@@ -1731,9 +1827,51 @@ try {
     const entry = catalogEntry('gemini/gemini-2.5-flash');
     const refund = settlementArgs({ reservationId: 'r', entry, pool: entry.pools[1], usage: { total_tokens: 99 }, status: 'refunded', latencyMs: 12.4, errorCode: 'upstream_error' });
     assert.deepEqual(refund, { p_reservation_id: 'r', p_prompt_tokens: 0, p_completion_tokens: 0, p_cost_microusd: 0, p_status: 'refunded',
-      p_latency_ms: 12, p_provider: 'gemini', p_upstream_model: 'gemini-2.5-flash', p_error_code: 'upstream_error' });
+      p_latency_ms: 12, p_provider: 'gemini', p_upstream_model: 'gemini-2.5-flash', p_error_code: 'upstream_error',
+      p_cache_read_tokens: 0, p_cache_write_tokens: 0 });
     const estimated = settlementArgs({ reservationId: 'r', entry, pool: entry.pools[0], usage: null, promptEstimate: 70, outputBytes: 35, status: 'error' });
     assert.deepEqual([estimated.p_prompt_tokens, estimated.p_completion_tokens, estimated.p_cost_microusd], [70, 10, 0]);
+    // Claude: the cache split goes to the 11-argument zerox_settle_v2 and prices each part.
+    const claude = catalogEntry('anthropic/claude-sonnet-5-5');
+    const usage = { prompt_tokens: 20800, completion_tokens: 800, total_tokens: 21600,
+      prompt_tokens_details: { cached_tokens: 16000, cache_write_tokens: 3000, cache_write_1h_tokens: 1000 } };
+    const settled = settlementArgs({ reservationId: 'r', entry: claude, pool: claude.pools[0], usage, status: 'ok' });
+    assert.deepEqual([settled.p_prompt_tokens, settled.p_completion_tokens, settled.p_cache_read_tokens, settled.p_cache_write_tokens,
+      settled.p_cost_microusd, settled.p_provider, settled.p_upstream_model], [20800, 800, 16000, 4000, 30375, 'anthropic', 'claude-sonnet-5-5'],
+      '16K reads at $0.25, 3K 5-minute writes at $3.125, 1K 1-hour writes at $5, 800 plain at $2.50, 800 output at $12.50');
+    const refunded = settlementArgs({ reservationId: 'r', entry: claude, pool: claude.pools[0], usage, status: 'refunded' });
+    assert.deepEqual([refunded.p_prompt_tokens, refunded.p_completion_tokens, refunded.p_cache_read_tokens, refunded.p_cache_write_tokens,
+      refunded.p_cost_microusd], [0, 0, 0, 0, 0]);
+  });
+
+  await test('paid reservations carry the daily spend cap (p_pool.cpd) and hold the worst case; unpriced paid pools fail closed', () => {
+    const args = (entry, pool, env = {}, promptTokens = 20000, maxTokens = 4096) => reservationArgs({ env, session: { user_id: ACCOUNT },
+      requestId: 'r', entry, pool, promptTokens, maxTokens });
+    const sonnet = catalogEntry('anthropic/claude-sonnet-5-5');
+    const opus = catalogEntry('anthropic/claude-opus-5-5');
+    const reserved = args(sonnet, sonnet.pools[0]);
+    assert.deepEqual(reserved.p_pool, { rpm: null, rpd: null, tpm: null, tpd: null, cpd: 12500000 }, 'Sonnet: $10 a day, billed');
+    assert.deepEqual([reserved.p_tier, reserved.p_cost_microusd, reserved.p_model], ['paid', 113700, 'anthropic/claude-sonnet-5-5']);
+    assert.equal(args(opus, opus.pools[0]).p_pool.cpd, 7500000, 'Opus: $6 a day');
+    assert.equal(args(opus, opus.pools[0], {}, 20000, 32000).p_cost_microusd, 925000);
+    assert.equal(args(sonnet, sonnet.pools[0], { PAID_DAILY_SPEND_CAP_USD: '4' }).p_pool.cpd, 5000000, 'PAID_DAILY_SPEND_CAP_USD lowers every cap');
+    const flash = catalogEntry('gemini/gemini-2.5-flash');
+    assert.deepEqual(args(flash, flash.pools[1]).p_pool, { rpm: null, rpd: null, tpm: null, tpd: null, cpd: 12500000 }, 'Gemini paid: $10 a day');
+    assert.deepEqual(args(flash, flash.pools[0]).p_pool, { rpm: 5, rpd: 20, tpm: 120000, tpd: 5000000 }, 'free pools: no cpd');
+    const workers = catalogEntry('@cf/meta/llama-3.3-70b-instruct-fp8-fast');
+    assert.equal(args(workers, workers.pools[1]).p_pool.cpd, 6250000, 'Workers AI paid: $5 a day');
+    assert.throws(() => args(flash, { tier: 'paid', key_var: 'GEMINI_PAID_API_KEY' }), /paid_pool_unpriced/);
+    assert.throws(() => args({ ...flash, provider: 'nvidia' }, flash.pools[1]), /paid_pool_unpriced/, 'no usable cap, no reservation');
+    for (const entry of CATALOG) {
+      for (const pool of entry.pools.filter(item => item.tier === 'paid')) {
+        assert.ok(pool.price && pool.daily_spend_cap_usd > 0, `${entry.id}: every paid pool has a price and a daily spend cap`);
+      }
+    }
+    // The router never offers a paid pool without a price or a usable cap.
+    const env = { ...KEYS };
+    assert.equal(poolConfigured(env, flash, flash.pools[1]), true);
+    assert.equal(poolConfigured(env, flash, { ...flash.pools[1], price: undefined }), false);
+    assert.equal(poolConfigured(env, { ...flash, provider: 'nvidia' }, flash.pools[1]), false);
   });
 
   await test('plan tiers from the database gate paid pools', async () => {
@@ -1763,6 +1901,196 @@ try {
     assert.equal(noPaid.upgrade_url, undefined, 'no upgrade link without paid capacity');
     assert.doesNotMatch(noPaid.message, /upgrade/);
     assert.equal(gw.session('ses_anon').requests, 0, 'refused before any reservation');
+  });
+
+  // ── Claude (src/anthropic-adapter.js) ──
+  await test('Claude Sonnet and Opus 5.5: Pro and Max only, never auto, default max_tokens, cache-aware billing through the adapter', async () => {
+    const KEY = 'sk-ant-api03-routing-check-key';
+    const env = accountEnv({ ANTHROPIC_API_KEY: KEY });
+    const byId = list => Object.fromEntries(list.data.map(model => [model.id, model]));
+    const free = byId(listModelsForCaller(env, { plan: 'free', country: 'US' }));
+    for (const id of ['anthropic/claude-sonnet-5-5', 'anthropic/claude-opus-5-5']) {
+      assert.deepEqual([free[id].available, free[id].unavailable_reason, free[id].tiers], [false, 'upgrade_required', ['paid']], id);
+    }
+    const pro = byId(listModelsForCaller(env, { plan: 'pro', tiers: ['free', 'paid'], country: 'US' }));
+    assert.deepEqual([pro['anthropic/claude-opus-5-5'].available, pro['anthropic/claude-opus-5-5'].context_window,
+      pro['anthropic/claude-opus-5-5'].max_output_tokens], [true, 200000, 32000]);
+    assert.deepEqual(pro.auto, byId(listModelsForCaller(accountEnv(), { plan: 'pro', tiers: ['free', 'paid'], country: 'US' })).auto,
+      'Claude never changes auto (its window, tiers or availability)');
+    assert.equal(byId(listModelsForCaller({ ...KEYS }, { plan: 'pro', tiers: ['free', 'paid'] }))['anthropic/claude-opus-5-5'].unavailable_reason,
+      'not_configured', 'without ANTHROPIC_API_KEY');
+    for (const entry of CATALOG) assert.ok(entry.max_output_tokens <= MAX_OUTPUT_TOKENS, `${entry.id}: its advertised output fits max_tokens validation`);
+
+    const router = new RoutingEngine(new ProviderHealthTracker());
+    const base = { env, promptTokens: 500, tiers: ['free', 'paid'], country: 'US' };
+    const auto = router.route({ ...base, requestedModel: 'auto', needsTools: true, maxTokens: 2000 });
+    assert.ok(auto.ok && !auto.candidates.some(candidate => candidate.entry.provider === 'anthropic'), 'auto never picks Claude');
+    const implicit = router.route({ ...base, requestedModel: 'claude-sonnet-5-5', maxTokens: 4096, maxTokensExplicit: false });
+    assert.deepEqual(ids(implicit), ['anthropic/claude-sonnet-5-5#paid'], 'the alias routes to the paid pool');
+    assert.equal(implicit.candidates[0].maxTokens, 16000, 'without max_tokens: the model default of 16,000 (thinking counts)');
+    assert.equal(router.route({ ...base, requestedModel: 'anthropic/claude-opus-5-5', maxTokens: 64000 }).candidates[0].maxTokens, 32000);
+    assert.equal(router.route({ ...base, requestedModel: 'anthropic/claude-opus-5-5', maxTokens: 2048 }).candidates[0].maxTokens, 2048);
+    assert.equal(router.route({ ...base, requestedModel: 'gemini/gemini-2.5-flash', maxTokens: 4096, maxTokensExplicit: false })
+      .candidates[0].maxTokens, 4096, 'models without a default keep the gateway default');
+    assert.equal(router.route({ ...base, requestedModel: 'anthropic/claude-opus-5-5', maxTokens: 4096, tiers: ['free'] }).error, 'upgrade_required');
+
+    // Free accounts: refused before any reservation.
+    const gw = accountGateway();
+    gw.addSession('ses_free', { account_backed: true, user_id: ACCOUNT, plan: 'free' });
+    reset({ 'rpc:zerox_plan_policies_v2': policiesRpc });
+    await expectError(await gw.call(env, { model: 'claude-opus-5-5', messages }, { token: 'ses_free' }), 403, 'upgrade_required');
+    assert.equal(rpcCalls('zerox_reserve_v2').length, 0);
+
+    // Pro: reserved at the worst case (16,000 default max_tokens), streamed through the SDK, settled
+    // with the cache split Claude reported.
+    const settled = [];
+    reset({ 'rpc:zerox_plan_policies_v2': policiesRpc, 'rpc:zerox_reserve_v2': () => Response.json([okReserve({ reservation_id: 'res-claude' })]),
+      'rpc:zerox_settle_v2': call => { settled.push(call.body); return Response.json([{ status: 'settled' }]); },
+      anthropic: call => {
+        assert.equal(call.url, 'https://api.anthropic.com/v1/messages?beta=true');
+        assert.equal(call.redirect, 'manual', 'the key never follows a redirect');
+        assert.equal(new Headers(call.headers).get('x-api-key'), KEY);
+        return claudeSse(claudeTurn({ usage: { input_tokens: 800, cache_creation_input_tokens: 4000, cache_read_input_tokens: 16000 } }));
+      } });
+    const response = await gw.call(env, { model: 'claude-sonnet-5-5', messages, stream: true, temperature: 0.2 }, { token: 'ses_pro' });
+    assert.equal(response.status, 200);
+    assert.deepEqual([response.headers.get('x-neuron-model'), response.headers.get('x-oiop-offer')], ['anthropic/claude-sonnet-5-5', 'anthropic.paid']);
+    const events = parseSse(await response.text());
+    assert.ok(events.some(event => event?.choices?.[0]?.delta?.content === 'Claude here.'));
+    assert.equal(events.at(-1), '[DONE]');
+    const [reserve] = rpcCalls('zerox_reserve_v2').map(call => call.body);
+    const price = catalogEntry('anthropic/claude-sonnet-5-5').pools[0].price;
+    assert.deepEqual([reserve.p_tier, reserve.p_pool, reserve.p_cost_microusd],
+      ['paid', { rpm: null, rpd: null, tpm: null, tpd: null, cpd: 12500000 }, reserveCostMicrousd(price, estimatePromptTokens(messages), 16000)]);
+    const sent = upstreamCalls().find(call => call.target === 'anthropic').body;
+    assert.deepEqual([sent.model, sent.max_tokens, sent.output_config?.effort, sent.stream], ['claude-sonnet-5-5', 16000, 'medium', true]);
+    assert.ok(!('temperature' in sent) && !('top_p' in sent) && !('top_k' in sent), 'sampling parameters are never sent');
+    assert.equal(sent.metadata.user_id, createHash('sha256').update(`zx-user:${ACCOUNT}`).digest('hex').slice(0, 32));
+    assert.equal(settled.length, 1);
+    assert.deepEqual([settled[0].p_status, settled[0].p_prompt_tokens, settled[0].p_completion_tokens, settled[0].p_cache_read_tokens,
+      settled[0].p_cache_write_tokens, settled[0].p_cost_microusd, settled[0].p_provider],
+    ['ok', 20800, 800, 16000, 4000, 28500, 'anthropic'], 'cache reads at $0.25, writes at $3.125, the rest at $2.50 per Mtok');
+
+    // A client abort (Esc in Neuron) or a mid-stream error event before message_delta settles from
+    // the counts message_start reported: 16,000 cache reads at $0.25, 4,000 input at $2.50 and
+    // ceil(27 / 3.5) = 8 output tokens at $12.50 per Mtok = 14,100 micro-USD. The byte estimate
+    // would have billed every prompt token at the input rate.
+    const TEXT = 'Here is the first sentence.';
+    const partialClaude = (call, ending) => {
+      const frames = claudeTurn({ text: TEXT, usage: { input_tokens: 4000, cache_creation_input_tokens: 0, cache_read_input_tokens: 16000 } })
+        .slice(0, 3).map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+      if (ending === 'error') frames.push(`event: error\ndata: ${JSON.stringify({ type: 'error', error: { type: 'overloaded_error', message: 'Overloaded' } })}\n\n`);
+      return new Response(new ReadableStream({
+        start(controller) {
+          for (const frame of frames) controller.enqueue(encoder.encode(frame));
+          if (ending === 'error') controller.close();
+          else call.signal?.addEventListener('abort', () => { try { controller.error(new DOMException('aborted', 'AbortError')); } catch { /* closed */ } });
+        },
+      }), { headers: { 'content-type': 'text/event-stream', 'request-id': 'req_claude' } });
+    };
+    for (const ending of ['abort', 'error']) {
+      const partialSettled = [];
+      reset({ 'rpc:zerox_plan_policies_v2': policiesRpc, 'rpc:zerox_reserve_v2': () => Response.json([okReserve({ reservation_id: `res-${ending}` })]),
+        'rpc:zerox_settle_v2': call => { partialSettled.push(call.body); return Response.json([{ status: 'settled' }]); },
+        anthropic: call => partialClaude(call, ending) });
+      const client = new AbortController();
+      const partial = await gw.call(env, { model: 'claude-sonnet-5-5', messages, stream: true }, { token: 'ses_pro', signal: client.signal });
+      assert.equal(partial.status, 200);
+      const reader = partial.body.getReader();
+      const decoder = new TextDecoder();
+      let seen = '';
+      while (!seen.includes(TEXT)) seen += decoder.decode((await reader.read()).value);
+      if (ending === 'abort') client.abort();
+      for (;;) {
+        const step = await reader.read().catch(() => ({ done: true }));
+        if (step.done) break;
+        seen += decoder.decode(step.value);
+      }
+      if (ending === 'error') assert.match(seen, /"code":"upstream_error"/);
+      assert.equal(partialSettled.length, 1, `${ending}: settled once`);
+      const args = partialSettled[0];
+      assert.deepEqual([args.p_reservation_id, args.p_status, args.p_prompt_tokens, args.p_completion_tokens, args.p_cache_read_tokens,
+        args.p_cache_write_tokens, args.p_cost_microusd], [`res-${ending}`, 'error', 20000, 8, 16000, 0, 14100],
+      `${ending}: message_start counts with the cache split, not the byte estimate`);
+    }
+    // Non-streaming Claude calls are streamed upstream too. A failure after message_start (an
+    // error event, the ttfb + idle budget running out, a client abort) ran the model: it keeps the
+    // cost message_start reported in the pool (failed_upstream, the caller refunded within the daily
+    // allowance) instead of a zero-cost refund, or every prompt token at the input rate.
+    for (const [ending, extra, expected] of [['error', {}, ['failed_upstream', 'upstream_error', 502]],
+      ['timeout', FAST, ['failed_upstream', 'upstream_timeout', 504]], ['abort', {}, ['error', 'client_disconnected', null]]]) {
+      const partialSettled = [];
+      const client = new AbortController();
+      gw.tracker.reset(); // each failure counts against the pool's circuit
+      reset({ 'rpc:zerox_plan_policies_v2': policiesRpc, 'rpc:zerox_reserve_v2': () => Response.json([okReserve({ reservation_id: `res-ns-${ending}` })]),
+        'rpc:zerox_settle_v2': call => { partialSettled.push(call.body); return Response.json([{ status: 'settled' }]); },
+        anthropic: call => {
+          if (ending === 'abort') setTimeout(() => client.abort(), 50); // Esc while Claude is writing
+          return partialClaude(call, ending === 'error' ? 'error' : 'abort');
+        } });
+      const answer = await gw.call({ ...env, ...extra }, { model: 'claude-sonnet-5-5', messages }, { token: 'ses_pro', signal: client.signal })
+        .catch(error => error);
+      if (expected[2]) assert.equal(answer.status, expected[2], `non-stream ${ending}`);
+      for (let wait = 0; wait < 50 && !partialSettled.length; wait++) await new Promise(resolve => setTimeout(resolve, 10));
+      assert.equal(partialSettled.length, 1, `non-stream ${ending}: settled once`);
+      const args = partialSettled[0];
+      assert.deepEqual([args.p_reservation_id, args.p_status, args.p_error_code, args.p_prompt_tokens, args.p_completion_tokens,
+        args.p_cache_read_tokens, args.p_cache_write_tokens, args.p_cost_microusd],
+      [`res-ns-${ending}`, expected[0], expected[1], 20000, 8, 16000, 0, 14100], `non-stream ${ending}: settled from message_start`);
+    }
+    // A Claude failure before message_start (a 529 answer) reported nothing: still a full refund.
+    const refundedSettled = [];
+    gw.tracker.reset();
+    reset({ 'rpc:zerox_plan_policies_v2': policiesRpc, 'rpc:zerox_reserve_v2': () => Response.json([okReserve({ reservation_id: 'res-529' })]),
+      'rpc:zerox_settle_v2': call => { refundedSettled.push(call.body); return Response.json([{ status: 'settled' }]); },
+      anthropic: () => Response.json({ type: 'error', error: { type: 'overloaded_error', message: 'Overloaded' } }, { status: 529 }) });
+    await expectError(await gw.call(env, { model: 'claude-sonnet-5-5', messages }, { token: 'ses_pro' }), 502, 'upstream_error');
+    assert.deepEqual(refundedSettled.map(args => [args.p_status, args.p_prompt_tokens, args.p_cost_microusd]), [['refunded', 0, 0]]);
+    // So does every other way a Claude attempt can end before message_start, the event Claude sends
+    // before the model runs: a first-byte or response timeout (with or without response headers)
+    // and a client abort. None may put the prompt estimate against the pool's spend cap or the
+    // caller's credits (a first-byte timeout of an OpenAI-compatible upstream stays failed_upstream).
+    const silentClaude = call => new Response(new ReadableStream({
+      start(controller) {
+        call.signal?.addEventListener('abort', () => { try { controller.error(new DOMException('aborted', 'AbortError')); } catch { /* closed */ } });
+      },
+    }), { headers: { 'content-type': 'text/event-stream', 'request-id': 'req_claude' } });
+    for (const [label, stream, ending] of [['timeout, no headers', false, 'timeout'], ['timeout, headers only', false, 'timeout-headers'],
+      ['timeout, no headers', true, 'timeout'], ['timeout, headers only', true, 'timeout-headers'],
+      ['client abort, no headers', false, 'abort'], ['client abort, headers only', true, 'abort-headers']]) {
+      const name = `${stream ? 'stream' : 'non-stream'} ${label}`;
+      const silentSettled = [];
+      const client = new AbortController();
+      gw.tracker.reset();
+      reset({ 'rpc:zerox_plan_policies_v2': policiesRpc, 'rpc:zerox_reserve_v2': () => Response.json([okReserve({ reservation_id: 'res-silent' })]),
+        'rpc:zerox_settle_v2': call => { silentSettled.push(call.body); return Response.json([{ status: 'settled' }]); },
+        anthropic: call => {
+          if (ending.startsWith('abort')) setTimeout(() => client.abort(), 50);
+          return ending.endsWith('headers') ? silentClaude(call) : untilAborted(call);
+        } });
+      const answer = await gw.call(ending.startsWith('abort') ? env : { ...env, ...FAST }, { model: 'claude-sonnet-5-5', messages, stream },
+        { token: 'ses_pro', signal: client.signal }).catch(error => error);
+      if (ending.startsWith('timeout')) await expectError(answer, 504, 'upstream_timeout');
+      for (let wait = 0; wait < 50 && !silentSettled.length; wait++) await new Promise(resolve => setTimeout(resolve, 10));
+      assert.deepEqual(silentSettled.map(args => [args.p_reservation_id, args.p_status, args.p_prompt_tokens, args.p_completion_tokens,
+        args.p_cache_read_tokens, args.p_cache_write_tokens, args.p_cost_microusd]), [['res-silent', 'refunded', 0, 0, 0, 0, 0]],
+      `${name}: Claude reported nothing, a full refund`);
+    }
+
+    // A spent daily spend cap names the model and the reset time; no credits is 402 with the hold explained.
+    resetPoolBudgets();
+    reset({ 'rpc:zerox_plan_policies_v2': policiesRpc,
+      'rpc:zerox_reserve_v2': () => Response.json([{ status: 'pool_exhausted', retry_after_seconds: 3600 }]) });
+    const capped = await expectError(await gw.call(env, { model: 'claude-sonnet-5-5', messages }, { token: 'ses_pro' }), 503, 'capacity_exhausted');
+    assert.equal(capped.message, "Claude Sonnet 5.5 has reached today's spending limit on Zero-X. It resets at 00:00 UTC; choose another model until then.");
+    assert.equal(capped.retry_after_seconds, 3600);
+    assert.equal(poolBudgetState('anthropic:claude-sonnet-5-5:paid').budget, 'cpd', '/v1/models shows it blurred until midnight');
+    resetPoolBudgets();
+    reset({ 'rpc:zerox_plan_policies_v2': policiesRpc,
+      'rpc:zerox_reserve_v2': () => Response.json([{ status: 'insufficient_credits', credit_balance_microusd: 300000 }]) });
+    const poor = await expectError(await gw.call(env, { model: 'claude-opus-5-5', messages, max_tokens: 32000 }, { token: 'ses_pro' }), 402, 'insufficient_credits');
+    assert.match(poor.message, /most a request can cost .*Lower max_tokens, top up, or wait for your renewal/);
+    assert.equal(upstreamCalls().length, 0, 'no upstream call without the credit hold');
   });
 
   // ── OpenRouter ──

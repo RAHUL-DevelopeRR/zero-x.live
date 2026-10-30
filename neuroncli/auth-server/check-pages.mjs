@@ -9,10 +9,11 @@ const root = new URL('../../', import.meta.url);
 const read = file => readFileSync(new URL(file, root), 'utf8');
 const isFile = file => existsSync(new URL(file, root)) && statSync(new URL(file, root)).isFile();
 
-const PUBLIC_PAGES = ['index.html', 'pricing.html', 'neuron-cli.html', 'docs.html', 'ai-coding-agent.html', 'refund.html', 'contact.html', 'shipping.html', 'privacy.html', 'terms.html'];
+const PUBLIC_PAGES = ['index.html', 'pricing.html', 'neuron-cli.html', 'docs.html', 'ai-coding-agent.html', 'docs/trust.html', 'download.html', 'changelog.html', 'refund.html', 'contact.html', 'shipping.html', 'privacy.html', 'terms.html'];
 const PRIVATE_PAGES = ['dashboard.html', '404.html', 'neuroncli/index.html'];
-const SITE_SCRIPTS = ['dashboard.js', 'pricing.js', 'billing-checkout.js', 'home.js'];
-const SITE_FILES = [...PUBLIC_PAGES, ...PRIVATE_PAGES, ...SITE_SCRIPTS, 'zx-tokens.css', 'home.css', 'zerox-auth.js', 'neuroncli/login/index.html', 'neuroncli/callback/index.html'];
+const SITE_SCRIPTS = ['dashboard.js', 'pricing.js', 'billing-checkout.js', 'home.js', 'download.js', 'changelog.js'];
+const RELEASE_MANIFESTS = ['releases/cli/latest.json', 'releases/desktop/latest.json'];
+const SITE_FILES = [...PUBLIC_PAGES, ...PRIVATE_PAGES, ...SITE_SCRIPTS, ...RELEASE_MANIFESTS, 'zx-tokens.css', 'home.css', 'zerox-auth.js', 'neuroncli/login/index.html', 'neuroncli/callback/index.html'];
 const BASES = {'dashboard.html': 'https://dashboard.zero-x.live/', '404.html': 'https://zero-x.live/404', 'neuroncli/index.html': 'https://zero-x.live/neuroncli/'};
 const CSP = {
   script: ['https://cdn.jsdelivr.net', 'https://checkout.razorpay.com'],
@@ -193,7 +194,7 @@ for (const file of [...PUBLIC_PAGES, ...PRIVATE_PAGES]) for (const script of inl
 for (const file of SITE_SCRIPTS) {
   for (const m of read(file).matchAll(/fetch\(/g)) assert.equal(file, 'billing-checkout.js', `${file}: network calls must go through apiFetch`);
 }
-assert.match(read('billing-checkout.js'), /API_PATH = \/\^\\\/\(\?:api\|v1\|auth\)\\\//, 'apiFetch only allows same-origin gateway paths');
+assert.match(read('billing-checkout.js'), /API_PATH = \/\^\\\/\(\?:api\|v1\|auth\|releases\)\\\//, 'apiFetch only allows same-origin gateway paths and release manifests');
 
 /* ───────────── CSP-compatible origins ───────────── */
 
@@ -234,7 +235,7 @@ assert.match(read('zerox-auth.js'), /getAccessToken: getAccessToken/);
 {
   const patterns = read('.assetsignore').split(/\r?\n/).map(line => line.trim()).filter(line => line && !line.startsWith('#'));
   const toRegex = pattern => new RegExp('^' + pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*\*\//g, '(?:.*/)?').replace(/\*/g, '[^/]*') + (pattern.endsWith('/') ? '' : '$'));
-  for (const file of [...PUBLIC_PAGES, ...PRIVATE_PAGES, ...SITE_SCRIPTS, 'zx-tokens.css', 'site-fonts.css', 'home.css',
+  for (const file of [...PUBLIC_PAGES, ...PRIVATE_PAGES, ...SITE_SCRIPTS, ...RELEASE_MANIFESTS, 'zx-tokens.css', 'site-fonts.css', 'home.css',
     'neucockpit.html', 'favicon.ico', 'Assets/zerox-share.png']) {
     assert.ok(isFile(file), `${file} exists`);
     assert.ok(!patterns.some(pattern => toRegex(pattern).test(file)), `${file} is excluded from the Worker assets`);
@@ -291,6 +292,33 @@ const ADDRESS = '6/2, N. Pugalur, Karur 639113, Tamil Nadu, India';
   assert.match(text('terms.html'), /upstream provider's price plus 25%/);
   assert.match(text('terms.html'), /may not resell, sublicense, rent or share access/);
   assert.match(text('terms.html'), /at least 18 years old/);
+
+  // Claude on Pro and Max (Anthropic as a processor, credit holds, daily spend limits).
+  for (const file of ['privacy.html', 'terms.html']) assert.match(text(file), /Effective date: 25 October 2026\. Replaces the (?:policy|terms) dated 24 October 2026/, file + ' effective date');
+  const anthropicRow = read('privacy.html').match(/<tr><th scope="row"><a href="https:\/\/www\.anthropic\.com\/legal\/privacy">Anthropic<\/a><\/th>([\s\S]*?)<\/tr>/);
+  assert.ok(anthropicRow, 'privacy: Anthropic is listed as a processor');
+  assert.match(anthropicRow[1], /does not use these prompts or responses to train its models/);
+  assert.doesNotMatch(anthropicRow[1], /\d+[ -]days?/, 'privacy: no Anthropic retention period until it is confirmed in docs/PROVIDER_TERMS.md');
+  assert.match(privacy, /On Pro and Max, requests to Claude Sonnet 5\.5 or Claude Opus 5\.5 go to Anthropic/);
+  assert.match(privacy, /read from or written to Anthropic's prompt cache/);
+  assert.match(text('terms.html'), /including Anthropic, Groq, Google, Cloudflare, NVIDIA and OpenRouter;/);
+  assert.match(text('terms.html'), /paid-capacity models, including Claude Sonnet 5\.5 and Claude Opus 5\.5/);
+  assert.match(text('terms.html'), /we hold the most it could cost[\s\S]*daily spending limit shared by all users/);
+  const pricingPage = text('pricing.html');
+  assert.match(pricingPage, /Claude Sonnet 5\.5 \$2\.50 \$0\.25 \$3\.125 \$12\.50/, 'pricing: Sonnet 5.5 at list price plus 25%');
+  assert.match(pricingPage, /Claude Opus 5\.5 \$5\.00 \$0\.25 \$6\.25 \$25\.00/, 'pricing: Opus 5.5 at list price plus 25%');
+  assert.match(pricingPage, /Anthropic \(Claude Sonnet 5\.5 and Claude Opus 5\.5\)/, 'pricing: the provider FAQ names Anthropic');
+  // The price table shows exactly what the gateway bills (src/catalog.js: list price x MARKUP).
+  const { catalogEntry } = await import('./src/catalog.js');
+  const dollars = micro => `$${(micro / 1e6).toFixed(Math.max(2, String(micro / 1e6).split('.')[1]?.length ?? 0))}`;
+  for (const [id, name] of [['anthropic/claude-sonnet-5-5', 'Claude Sonnet 5.5'], ['anthropic/claude-opus-5-5', 'Claude Opus 5.5']]) {
+    const price = catalogEntry(id).pools.find(pool => pool.tier === 'paid').price;
+    const row = [price.input_microusd_per_mtok, price.cache_read_microusd_per_mtok, price.cache_write_microusd_per_mtok,
+      price.output_microusd_per_mtok].map(dollars).join(' ');
+    assert.ok(pricingPage.includes(`${name} ${row}`), `pricing: ${name} row equals the gateway's billed rates (${row})`);
+  }
+  assert.match(text('docs.html'), /and for Claude cache_read_per_mtok_usd and cache_write_per_mtok_usd/, 'docs: the Claude cache price fields');
+  assert.match(text('dashboard.html'), /Credits pay for Claude Sonnet 5\.5, Claude Opus 5\.5 and other paid capacity/);
 }
 
 /* ───────────── Prices and limits match PLATFORM_CONTRACT.md §1 ───────────── */
@@ -369,7 +397,7 @@ for (const file of ['pricing.html', 'neuron-cli.html']) {
   // Error codes documented in docs.html match contract §3.3.
   const section = contract.match(/### 3\.3 Errors([\s\S]*?)### 3\.4/)[1];
   const codes = [...section.matchAll(/^\| (\d{3}) \| `([a-z_]+)` \| ([a-z_]+) \|/gm)].map(m => [m[1], m[2], m[3]]);
-  assert.equal(codes.length, 12);
+  assert.equal(codes.length, 13);
   const docs = read('docs.html');
   for (const [status, code, type] of codes) {
     assert.match(docs, new RegExp(`<td>${status}</td><th scope="row"><code>${code}</code></th><td><code>${type}</code></td>`), 'docs.html error row ' + code);
@@ -611,11 +639,18 @@ assert.equal(checkout.normalizeCurrency('EUR'), 'USD');
     assert.ok(page.includes('Not yet: npm still serves the old, unsupported 6.2.0 build. Use the install script above.'), file + ': npm tab');
     assert.ok(page.includes('Not yet: PyPI still serves the old, unsupported <code>neuroncli</code> 6.2.4. Use the install script above.'), file + ': pip tab');
   }
-  for (const file of ['index.html', 'neuron-cli.html', 'docs.html', 'dashboard.html', 'pricing.html']) {
+  for (const file of ['index.html', 'neuron-cli.html', 'docs.html', 'dashboard.html', 'pricing.html', 'download.html',
+    'docs/trust.html', 'changelog.html']) {
     const page = read(file);
     assert.doesNotMatch(page, /@zero-x\.live\/neuron/, file + ': npm package offered before the alpha is on npm');
     assert.doesNotMatch(page, /pip install neuroncli/, file + ': pip install of the old PyPI package');
     assert.doesNotMatch(page, /install script is not published|installer is not published/, file + ': stale installer notice');
+    assert.doesNotMatch(page, /releases\/latest\/download\/install\./, file + ': unpinned installer (the alpha is a pre-release)');
+    assert.doesNotMatch(page, /href="https:\/\/neuron\.zero-x\.live\/(?:#[\w-]*)?"/, file + ': NeuCockpit lives at https://zero-x.live/neucockpit');
+  }
+  // docs.html lists `neuron auth login` as the alias it is; the pages that only name one command use neuron login.
+  for (const file of ['download.html', 'docs/trust.html', 'changelog.html']) {
+    assert.doesNotMatch(read(file), /neuron auth login/, file + ': the sign-in command is neuron login');
   }
   for (const id of ['get-started', 'features', 'models', 'pricing', 'docs', 'faq', 'products']) assert.ok(ids(html).includes(id), 'index.html section #' + id);
   for (const plan of ['free', 'pro', 'max']) assert.match(html, new RegExp(`data-plan-price="${plan}"`), 'index.html hydrates the ' + plan + ' price');
@@ -664,4 +699,100 @@ assert.equal(checkout.normalizeCurrency('EUR'), 'USD');
   assert.equal(home.pollSeconds(null), 30);
 }
 
-console.log('PASS: ' + (PUBLIC_PAGES.length + PRIVATE_PAGES.length) + ' pages: structure, landmarks, aria references, robots, resolvable links, legal sections, contract prices/limits/error codes, CSP origins, pinned SDK, no secrets or unsafe sinks; pure helpers for formatting, chart scaling, normalisation, routing and checkout validation');
+/* Download page (A6), trust page and support (A8), gateway logging policy (A17) */
+{
+  const html = read('download.html');
+  for (const command of [INSTALL_SH, INSTALL_PS1, 'neuron login', 'Get-FileHash',
+    'shasum -a 256', 'gh attestation verify']) {
+    assert.ok(html.includes(command), 'download.html shows ' + command);
+  }
+  assert.match(text('download.html'), /Not on npm or pip yet: npm still serves the old, unsupported 6\.2\.0 build/);
+  assert.ok(html.includes('href="https://zero-x.live/neucockpit#downloads"'), 'download.html links the NeuCockpit downloads');
+  for (const id of ['desktop', 'cli', 'mobile', 'verify', 'desktop-note', 'cli-release-note', 'cli-binaries', 'checksums-link', 'copy-status']) {
+    assert.ok(ids(html).includes(id), 'download.html #' + id);
+  }
+  for (const os of ['windows', 'macos', 'linux']) {
+    const card = html.match(new RegExp(`<article class="zx-card" id="desktop-${os}"[\\s\\S]*?</article>`))?.[0] || '';
+    assert.ok(card.includes('data-status') && card.includes('data-links') && /data-your-os hidden/.test(card), 'download.html desktop card ' + os);
+  }
+  assert.match(text('download.html'), /Mobile app Coming soon/);
+  assert.match(html, /<body data-download>/);
+  for (const button of tags(html, 'button').filter(b => 'data-copy-target' in b)) assert.ok(ids(html).includes(button['data-copy-target']), 'copy target ' + button['data-copy-target']);
+
+  const trust = read('docs/trust.html');
+  for (const id of ['folder-trust', 'permissions', 'data', 'gateway', 'account', 'report']) assert.ok(ids(trust).includes(id), 'docs/trust.html #' + id);
+  assert.match(text('docs/trust.html'), /stores usage metadata only/);
+  assert.match(text('docs/trust.html'), /Until you trust the folder, Neuron ignores all four/);
+  assert.match(trust, /support@zero-x\.live/);
+  assert.match(read('docs.html'), /<section id="support"[\s\S]*support@zero-x\.live[\s\S]*href="\/docs\/trust#report"/, 'docs.html help and support section');
+
+  const privacy = text('privacy.html');
+  assert.ok(ids(read('privacy.html')).includes('gateway-logging'), 'privacy: gateway logging paragraph');
+  assert.match(privacy, /The gateway stores usage metadata only/);
+  assert.match(privacy, /never written to our database or logs/);
+  assert.match(privacy, /Prompt and response text: not stored/);
+  assert.match(privacy, /Operational logs: [^.]*never prompt or response text[^.]*\. Kept for at most 7 days/);
+}
+
+{
+  const download = await import(new URL('download.js', root));
+  assert.deepEqual(download.MANIFEST_PATHS, {cli: '/releases/cli/latest.json', desktop: '/releases/desktop/latest.json'});
+  for (const path of Object.values(download.MANIFEST_PATHS)) assert.ok(isFile('.' + path), path + ' is committed');
+  assert.equal(download.detectOs('Mozilla/5.0 (Windows NT 10.0; Win64; x64)'), 'windows');
+  assert.equal(download.detectOs('', 'macOS'), 'macos');
+  assert.equal(download.detectOs('Mozilla/5.0 (X11; Linux x86_64)'), 'linux');
+  assert.equal(download.detectOs('Mozilla/5.0 (Linux; Android 14; Pixel 8)'), 'android', 'Android is not desktop Linux');
+  assert.equal(download.detectOs('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)'), 'ios', 'iPhones are not Macs');
+  assert.equal(download.detectOs(''), null);
+  assert.equal(download.safeDownloadUrl('https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v6.3.0/x.exe'), 'https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v6.3.0/x.exe');
+  for (const bad of ['http://github.com/x', 'https://evil.example/x', 'https://github.com.evil.example/x', 'https://user:pw@github.com/x', 'javascript:alert(1)', 'https://github.com:8443/x', null]) {
+    assert.equal(download.safeDownloadUrl(bad), '', String(bad));
+  }
+  assert.equal(download.formatBytes(31457280), '30 MB');
+  assert.equal(download.formatBytes(5 * 1024 * 1024 + 1), '5.0 MB');
+  assert.equal(download.formatBytes(2048), '2 KB');
+  assert.equal(download.formatBytes(-1), '');
+  assert.equal(download.formatReleaseDate('2026-11-02T09:30:00Z'), 'Nov 2, 2026');
+  assert.equal(download.releaseView(JSON.parse(read('releases/cli/latest.json')), 'cli'), null, 'nothing released yet');
+  assert.equal(download.releaseView(JSON.parse(read('releases/desktop/latest.json')), 'desktop'), null);
+  const sha = 'ab'.repeat(32);
+  const view = download.releaseView({schema_version: 1, product: 'desktop', version: '0.2.0', released_at: '2026-11-02T09:30:00Z',
+    notes_url: 'https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/tag/desktop-v0.2.0', checksums_url: 'https://evil.example/SHA256SUMS', downloads: [
+      {platform: 'windows-x64', kind: 'installer', file: 'Neuron_0.2.0_x64-setup.exe', url: 'https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/desktop-v0.2.0/Neuron_0.2.0_x64-setup.exe', sha256: sha, size: 31457280},
+      {platform: 'macos-universal', kind: 'installer', file: 'Neuron.dmg', url: 'https://evil.example/Neuron.dmg', sha256: sha},
+      {platform: 'linux-x64', kind: 'installer', file: 'neuron.AppImage', url: 'https://github.com/x/neuron.AppImage', sha256: 'not-a-hash'},
+      {platform: 'plan9', kind: 'installer', file: 'x', url: 'https://github.com/x/x', sha256: sha},
+    ]}, 'desktop');
+  assert.equal(view.version, '0.2.0');
+  assert.equal(view.released, 'Nov 2, 2026');
+  assert.equal(view.checksumsUrl, '', 'off-allowlist links are dropped');
+  assert.deepEqual(view.downloads.map(entry => [entry.platform, entry.size]), [['windows-x64', '30 MB']], 'unsafe or malformed entries are never shown');
+  assert.equal(download.releaseView({schema_version: 1, product: 'cli', version: '0.2.0', downloads: []}, 'desktop'), null, 'product must match');
+  assert.equal(download.releaseView({schema_version: 2, product: 'cli', version: '1.0.0'}, 'cli'), null, 'unknown schema versions are ignored');
+}
+
+{
+  const changelog = await import(new URL('changelog.js', root));
+  assert.match(read('changelog.html'), /<body data-changelog>/);
+  for (const id of ['changelog-status', 'changelog-list']) assert.ok(ids(read('changelog.html')).includes(id), 'changelog.html #' + id);
+  assert.deepEqual(changelog.inlineParts('Run `neuron update` or see [the docs](https://zero-x.live/docs) **now**'), [
+    {type: 'text', text: 'Run '}, {type: 'code', text: 'neuron update'}, {type: 'text', text: ' or see '},
+    {type: 'link', text: 'the docs', href: 'https://zero-x.live/docs'}, {type: 'text', text: ' '}, {type: 'strong', text: 'now'}]);
+  assert.deepEqual(changelog.inlineParts('[bad](javascript:alert(1)) <img src=x onerror=alert(1)>'),
+    [{type: 'text', text: '[bad](javascript:alert(1)) <img src=x onerror=alert(1)>'}], 'only https links; HTML stays text');
+  assert.deepEqual(changelog.markdownBlocks(['## Added', '- Trust screen', '- `/usage` panel', '', 'Fixes a crash', 'on resume.', '### Notes', 'text'].join('\n')), [
+    {type: 'heading', level: 3, parts: [{type: 'text', text: 'Added'}]},
+    {type: 'list', items: [[{type: 'text', text: 'Trust screen'}], [{type: 'code', text: '/usage'}, {type: 'text', text: ' panel'}]]},
+    {type: 'paragraph', parts: [{type: 'text', text: 'Fixes a crash on resume.'}]},
+    {type: 'heading', level: 4, parts: [{type: 'text', text: 'Notes'}]},
+    {type: 'paragraph', parts: [{type: 'text', text: 'text'}]}]);
+  assert.deepEqual(changelog.markdownBlocks(''), []);
+  assert.equal(changelog.changelogView({nope: 1}), null);
+  const view = changelog.changelogView({data: [
+    {product: 'cli', version: '6.3.0', title: 'Neuron 6.3.0', published_at: '2026-11-02T09:30:00Z', prerelease: false, url: 'https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/tag/v6.3.0', notes: '- New'},
+    {product: 'neucockpit', version: '1.0.0', url: 'https://github.com/x'}, {product: 'cli', version: '1.0.0', url: 'https://evil.example/'}]});
+  assert.equal(view.length, 1, 'unknown products and foreign links are dropped');
+  assert.equal(view[0].published, 'November 2, 2026');
+}
+
+console.log('PASS: ' + (PUBLIC_PAGES.length + PRIVATE_PAGES.length) + ' pages: structure, landmarks, aria references, robots, resolvable links, legal sections, contract prices/limits/error codes, CSP origins, pinned SDK, no secrets or unsafe sinks; download, trust and support pages and the gateway logging policy; pure helpers for formatting, chart scaling, normalisation, routing, checkout validation and release manifests');

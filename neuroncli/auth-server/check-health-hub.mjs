@@ -24,7 +24,10 @@ function fakeState(saved = new Map()) {
   };
 }
 
+// HEALTH_CANARIES=false: these checks count every upstream request of the list, status-page and
+// half-open probe paths; the OIOP canaries are covered by check-oiop.mjs.
 const ENV = {
+  HEALTH_CANARIES: 'false',
   GROQ_API_KEY: 'groq-test', GEMINI_API_KEY: 'gemini-test', NVIDIA_API_KEY: 'nvidia-test', NVIDIA_HOSTED: 'true',
   OPENROUTER_API_KEY: 'or-test', OPENROUTER_HOSTED: 'true',
   OPENROUTER_MODELS: 'cohere/north-mini-code:free,minimax/minimax-m3.1-flash:free',
@@ -124,14 +127,14 @@ try {
   }
   console.log('ok - slow pools: first-byte and idle timeouts and whole-share budget cuts only, five minutes or until a success, kept after a cooldown');
 
-  // 2. Alarm: free checks. Lists and status pages, two per alarm, staggered.
+  // 2. Alarm: free checks. Lists (one per key), key checks and status pages, four per alarm, staggered.
   upstream = lists;
   calls.length = 0;
   offset = 31_000;
   await hub.alarm();
   assert.equal(state.alarm, base + offset + ALARM_INTERVAL_MS, 'the alarm re-arms itself');
   const checked = calls.map(call => call.url);
-  assert.equal(checked.filter(url => !url.includes('chat/completions')).length, 2, 'two checks per alarm');
+  assert.equal(checked.filter(url => !url.includes('chat/completions')).length, 4, 'four checks per alarm');
   for (let i = 0; i < 3; i++) { offset += 31_000; await hub.alarm(); }
   snap = hub.snapshot();
   assert.equal(snap.pools[GROQ_QWEN].status, 'blurred', 'missing from the Groq list -> greyed out');
@@ -240,7 +243,8 @@ try {
   console.log('ok - test requests: none for Gemini (cap 0), Groq still tested, one log line {pool, outcome, ms} per test request');
 
   // 3c. A check that never answers is cut off at its timeout and logged (check, time, status);
-  // the other check of the alarm still runs. A non-200 answer or an unreadable body is logged too.
+  // the other checks of the alarm still run. A non-200 answer or an unreadable body is logged too.
+  // Keyed checks are named after the key (list:groq:env), never the key itself.
   {
     const before = offset;
     const hangCalls = [];
@@ -266,12 +270,13 @@ try {
     try {
       offset += 31_000;
       await hangHub.alarm();
-      assert.deepEqual(hangCalls, ['https://api.groq.com/openai/v1/models',
-        'https://generativelanguage.googleapis.com/v1beta/models?pageSize=200'], 'the Gemini list runs after the Groq list hung');
-      assert.equal(hangHub.seen.get(GEMINI_25), clock(), 'and its result is used');
+      assert.deepEqual(hangCalls, ['https://generativelanguage.googleapis.com/v1beta/models?pageSize=200',
+        'https://api.groq.com/openai/v1/models', 'https://groqstatus.com/api/v2/summary.json',
+        'https://www.cloudflarestatus.com/api/v2/summary.json'], 'the status pages run after the Groq list hung');
+      assert.equal(hangHub.seen.get(GEMINI_25), clock(), 'and the Gemini list result is used');
       assert.equal(warnings.length, 1);
       assert.equal(warnings[0][0], 'HealthHub check failed');
-      assert.equal(warnings[0][1].check, 'list:groq');
+      assert.equal(warnings[0][1].check, 'list:groq:env');
       assert.equal(warnings[0][1].status, null);
       assert.equal(typeof warnings[0][1].ms, 'number');
       warnings.length = 0;

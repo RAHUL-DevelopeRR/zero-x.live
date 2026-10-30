@@ -1,16 +1,22 @@
 import { errorResponse, newRequestId } from './errors.js';
 import {
   buildUpstreamPayload, classifyUpstreamFailure, createCompletionStream, isOwnedSession, normalizeCompletion,
-  ownedCatalog, startCompletion, streamTimeouts, upstreamErrorSummary,
+  ownedCatalog, reportsUsageAtStart, startCompletion, streamTimeouts, upstreamErrorSummary,
 } from './providers.js';
 import { globalSignatureCache } from './provider-request.js';
+import { claudeTurnHooks, globalClaudeTurnCache } from './anthropic-turns.js';
+import { partialUsageOf, usageNow } from './provider-adapter.js';
 import { globalRouter } from './router.js';
 import { FailureKind, globalHealthTracker } from './provider-health.js';
-import { hubHealthRows, publishHealth } from './health-hub-client.js';
+import { hubHealthForRouting, hubHealthRows, publishHealth } from './health-hub-client.js';
 import { readShared } from './health-share.js';
-import { callerCountry, loadCatalogDbModels, loadPlanPolicies, planPolicy, resolveModelId } from './catalog.js';
-import { billableUsage, costMicrousd, estimateOutputTokens, estimatePromptTokens, utf8Bytes } from './pricing.js';
+import { callerCountry, loadCatalog, loadPlanPolicies, planPolicy, poolSecret, resolveModelId } from './catalog.js';
+import { touchVaultKey } from './provider-keys.js';
+import { billableUsage, estimateOutputTokens, estimatePromptTokens, reserveCostMicrousd, utf8Bytes } from './pricing.js';
 import { exhaustedBudget, notePoolExhausted, notePoolReserved, poolBudgetState } from './pool-budget.js';
+import { loadOffers, offerIdFor } from './oiop/offers.js';
+import { callerPolicy } from './oiop/policy.js';
+import { scrubMode, scrubRequest, scrubsOffer, SecretRestorer } from './oiop/scrub.js';
 import {
   PAID_DENIED_STATUSES, RESERVATION_LEASE_SECONDS, RESERVATION_RENEW_MS, RESERVE_ERRORS, TERMINAL_RESERVE_STATUSES,
   renewCapacity, reservationArgs, reserveCapacity, reserveError, reserveSessionQuota, runInBackground, sessionTiers,
@@ -18,8 +24,13 @@ import {
 } from './capacity.js';
 
 const ROLES = new Set(['system', 'developer', 'user', 'assistant', 'tool']);
+// 1 MiB holds roughly 300K tokens of prompt, which is why no catalog model advertises more
+// context than the gateway can carry (Claude rows: 200,000).
 const MAX_BODY_BYTES = 1048576;
+// The largest max_tokens a client may send; every catalog model's max_output_tokens fits under it
+// (check-routing-v2), and the router clamps each request to its model's own limit.
 export const MAX_OUTPUT_TOKENS = 65536;
+// Without max_tokens a request gets this, or its model's default_max_tokens (router.js).
 const DEFAULT_MAX_TOKENS = 4096;
 const EFFORTS = new Set(['none', 'minimal', 'low', 'medium', 'high', 'default']);
 
@@ -70,6 +81,43 @@ export function validateCompletionBody(body) {
   return null;
 }
 
+// What the request needs from a model (router.js lacks()).
+const IMAGE_PARTS = new Set(['image_url', 'input_image', 'image']);
+export function requestNeeds(body) {
+  return {
+    tools: Array.isArray(body.tools) && body.tools.length > 0,
+    vision: body.messages.some(message => Array.isArray(message.content) &&
+      message.content.some(part => IMAGE_PARTS.has(part?.type))),
+    stream: body.stream === true,
+    json: ['json_object', 'json_schema'].includes(body.response_format?.type),
+  };
+}
+
+// FNV-1a over text, as 8 hex digits.
+function fnv(text) {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < text.length; index++) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, '0');
+}
+
+const CONVERSATION_HEADER = /^[A-Za-z0-9._:-]{1,128}$/;
+const messageText = message => (typeof message?.content === 'string' ? message.content
+  : Array.isArray(message?.content) ? message.content.map(part => (typeof part?.text === 'string' ? part.text : '')).join('') : '');
+
+// Identifies a conversation for sticky routing: the client's X-Neuron-Conversation id when it
+// sends one, otherwise a hash of the first system and user messages (the same in every turn of a
+// conversation). Never stored or logged beyond the per-isolate sticky map.
+export function conversationKey(header, messages) {
+  if (typeof header === 'string' && CONVERSATION_HEADER.test(header.trim())) return `c:${header.trim()}`;
+  const system = messages.find(message => message.role === 'system' || message.role === 'developer');
+  const user = messages.find(message => message.role === 'user');
+  if (!user) return null;
+  return `h:${fnv(`${messageText(system).slice(0, 4000)}\u0000${messageText(user).slice(0, 4000)}`)}`;
+}
+
 function positiveInt(value, fallback) {
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
@@ -95,7 +143,12 @@ const ERROR_CODES_BY_KIND = {
 // Failures after the upstream ran the model (a model-side rejection such as tool_use_failed, a
 // first-byte, idle or response timeout). The upstream counted them against its own limits, so
 // they keep their share of the shared pool budget ('failed_upstream'); everything else (429,
-// 5xx, network and auth failures) is returned to the pool ('refunded').
+// 5xx, network and auth failures) is returned to the pool ('refunded'). An attempt whose upstream
+// reported usage before it failed (Claude's message_start, then an error event, a timeout or an
+// abort) ran the model whatever its kind: it is settled 'failed_upstream' too, from that usage.
+// An upstream that reports usage before the model runs (reportsUsageAtStart: Claude) and reported
+// none did not run it, whatever the kind: a first-byte or response timeout, or a client abort,
+// before message_start is 'refunded' (contract §13.4).
 const GENERATED_KINDS = new Set([FailureKind.MODEL_ERROR, FailureKind.TIMEOUT]);
 
 function minimum(values) {
@@ -113,13 +166,15 @@ function minimum(values) {
 // the parked ones: one caller's timeout does not open a circuit, and without this the next
 // request waits through the same pool's first-byte timeout again. A 5xx or a slow
 // non-streaming response does not make a pool slow. Parked and slow pools stay in the list:
-// when every candidate is parked, the request still tries them in order.
-async function orderBySharedHealth(env, candidates, tracker, now = Date.now()) {
+// when every candidate is parked, the request still tries them in order. `sharedHealth` is the
+// HealthHub snapshot the router already read (hubHealthForRouting); without one the hub is
+// asked, then KV.
+async function orderBySharedHealth(env, candidates, tracker, sharedHealth = null, now = Date.now()) {
   if (candidates.length < 2) return candidates;
   const keys = [...new Set(candidates.map(candidate => candidate.key))];
   let rows = null;
   try {
-    rows = (await hubHealthRows(env, keys, now)) || await readShared(env, keys);
+    rows = sharedHealth ?? (await hubHealthRows(env, keys, now)) ?? await readShared(env, keys);
   } catch {
     rows = null;
   }
@@ -136,13 +191,22 @@ async function orderBySharedHealth(env, candidates, tracker, now = Date.now()) {
     .map(item => item.candidate);
 }
 
+// A paid model whose daily spend cap (p_pool.cpd) is spent for every user until 00:00 UTC.
+function spendLimitMessage(exhausted) {
+  if (!exhausted.length || !exhausted.every(row => row.budget === 'cpd')) return undefined;
+  const names = [...new Set(exhausted.map(row => row.model))];
+  return `${names.length === 1 ? names[0] : 'This model'} has reached today's spending limit on Zero-X. ` +
+    'It resets at 00:00 UTC; choose another model until then.';
+}
+
 // The client-facing error once every candidate failed (contract §3.3).
 function finalError({ failures, exhausted, paidDenied }) {
   const paid = paidDenied ? reserveError(paidDenied) : null;
   if (!failures.length) {
     if (paid) return paid;
     if (exhausted.length) {
-      return { code: 'capacity_exhausted', retryAfterSeconds: minimum(exhausted.map(row => row.retry_after_seconds)) ?? 60 };
+      return { code: 'capacity_exhausted', retryAfterSeconds: minimum(exhausted.map(row => row.retry_after_seconds)) ?? 60,
+        message: spendLimitMessage(exhausted) };
     }
     return { code: 'service_unavailable' };
   }
@@ -167,7 +231,7 @@ function finalError({ failures, exhausted, paidDenied }) {
 }
 
 export function createChatHandler({ validateSession, setSession, getSession, planLimits, router = globalRouter,
-  healthTracker = globalHealthTracker, signatureCache = globalSignatureCache }) {
+  healthTracker = globalHealthTracker, signatureCache = globalSignatureCache, claudeTurns = globalClaudeTurnCache }) {
   // Until when this isolate skips lease renewals because zerox_renew_reservation is missing.
   let renewalUnavailableUntil = 0;
   return async c => {
@@ -197,22 +261,33 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
     if (session.account_backed && !ledger) return fail('service_unavailable');
     const policies = ledger ? await loadPlanPolicies(env) : undefined;
     const policy = planPolicy(env, session.plan, policies);
-    await loadCatalogDbModels(env);
+    const [, , sharedHealth] = await Promise.all([loadCatalog(env), loadOffers(env), hubHealthForRouting(env)]);
     headers['x-neuron-plan'] = policy.id;
     const promptTokens = estimatePromptTokens(body.messages, body.tools);
-    const requestedMax = body.max_completion_tokens ?? body.max_tokens ?? DEFAULT_MAX_TOKENS;
+    const explicitMax = body.max_completion_tokens ?? body.max_tokens;
+    const requestedMax = explicitMax ?? DEFAULT_MAX_TOKENS;
+    // phase ('first_byte' | 'idle' | 'response') tells liveness timeouts from slow generations;
+    // caller lets the tracker require timeouts from several callers before parking a shared pool,
+    // and keeps one caller on the same vault key of a model (router.js rotateKeyPools).
+    const caller = session.user_id || String(token).slice(0, 16);
 
     let route;
     try {
       route = router.route({
         env,
         requestedModel: body.model,
-        needsTools: Array.isArray(body.tools) && body.tools.length > 0,
+        needs: requestNeeds(body),
         promptTokens,
         maxTokens: requestedMax,
+        maxTokensExplicit: isSet(explicitMax),
         tiers: sessionTiers(env, session, policy),
         country: callerCountry(c.req.raw, env),
         ownedCatalog: isOwnedSession(session) ? await ownedCatalog(env, session) : null,
+        affinity: caller,
+        conversation: conversationKey(c.req.header('x-neuron-conversation'), body.messages),
+        policy: callerPolicy(c.req.raw.headers),
+        sharedHealth,
+        budgetState: poolBudgetState,
       });
     } catch (error) {
       console.error('Neuron routing failed', { name: error?.name, request_id: requestId });
@@ -324,29 +399,34 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
         await background(settleKv({ actualTokens: billed.total_tokens, refundRequest: false }));
       }
     };
-    // phase ('first_byte' | 'idle' | 'response') tells liveness timeouts from slow generations;
-    // caller lets the tracker require timeouts from several callers before parking a shared pool.
-    const caller = session.user_id || String(token).slice(0, 16);
     // Every outcome is also published for the whole gateway: to the HealthHub Durable Object,
     // or through KV without it (health-hub-client.js). A client abort says nothing about the pool.
-    const recordFailure = (key, kind, retryAfterSeconds, latencyMs, phase = null) => {
+    const recordFailure = (key, kind, retryAfterSeconds, latencyMs, phase = null, dailyQuota = false) => {
       if (!key) return;
-      const outcome = { success: false, kind, retryAfterSeconds: retryAfterSeconds || 0, latencyMs, phase, caller };
+      const outcome = { success: false, kind, retryAfterSeconds: retryAfterSeconds || 0, latencyMs, phase, caller, dailyQuota };
       const record = healthTracker.recordFailure(key, outcome);
       if (record && kind !== FailureKind.ABORTED) publishHealth(c, env, key, record, outcome);
     };
-    const recordSuccess = (key, latencyMs) => {
+    const recordSuccess = (key, latencyMs, pool) => {
       if (!key) return;
       healthTracker.recordSuccess(key, { latencyMs });
       publishHealth(c, env, key, healthTracker.getRecord(key), { success: true, latencyMs });
+      // Vault keys show when they last served (written at most every 10 minutes per isolate).
+      const touch = pool?.key_id ? touchVaultKey(env, pool.key_id) : null;
+      if (touch) background(touch);
     };
 
     const timeouts = streamTimeouts(env);
     const clientSignal = c.req.raw.signal;
 
     // Gemini thought signatures are kept per caller and upstream model (provider-request.js):
-    // recorded from responses, restored into the next turn's history.
+    // recorded from responses, restored into the next turn's history. Claude's thinking turns
+    // (signed thinking blocks) are kept per caller the same way (anthropic-turns.js) and replayed
+    // into the next request; the adapter hashes the user id into metadata.user_id.
     const signatureHooks = entry => {
+      if (entry.provider === 'anthropic') {
+        return { request: { caller, turns: claudeTurnHooks(claudeTurns, caller) }, onToolSignature: null };
+      }
       if (entry.provider !== 'gemini') return { request: {}, onToolSignature: null };
       const scope = { caller, model: entry.upstream_model };
       return {
@@ -360,16 +440,30 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
       if (upstream) console.warn('Neuron upstream error detail', { ...log, kind, upstream });
     };
 
+    // Credentials in the prompt are replaced before it leaves the gateway and put back into the
+    // answer (src/oiop/scrub.js); scrubbed once per request, for the offers OIOP_SCRUB covers.
+    const scrub = scrubMode(env);
+    let scrubbed = null;
+    const outgoing = async offer => {
+      if (!scrubsOffer(scrub, offer)) return { body, secrets: new Map(), count: 0 };
+      scrubbed ||= scrubRequest(body);
+      return scrubbed;
+    };
+
     // commitBy ends this attempt's share of the failover budget: a stream's first byte and first
     // data event are due by then at the latest, however much of their own timeouts is left.
     // wholeShare: no earlier attempt took more than min(5 s, a tenth of the budget) of that share.
     const attempt = async (candidate, reservation, commitBy, wholeShare) => {
       const { entry, pool, key } = candidate;
-      const payload = buildUpstreamPayload(entry, body, candidate.maxTokens);
+      const sent = await outgoing(candidate.offer);
+      const restorer = new SecretRestorer(sent.secrets);
+      if (sent.count) headers['x-oiop-redacted'] = String(sent.count);
+      else delete headers['x-oiop-redacted'];
+      const payload = buildUpstreamPayload(entry, sent.body, candidate.maxTokens);
       const startedAt = Date.now();
       const log = { provider: entry.provider, model: entry.upstream_model, tier: pool.tier, request_id: requestId };
       const { request, onToolSignature } = signatureHooks(entry);
-      const secrets = [pool.key_var ? env[pool.key_var] : null, session.openrouter_key];
+      const secrets = [poolSecret(env, pool), session.openrouter_key];
       let started;
       try {
         started = await startCompletion(env, session, entry, pool, payload, { clientSignal, timeouts, request, commitBy });
@@ -383,49 +477,52 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
         // capacity end at 70 % of the budget at the latest, before their own first-byte timeout,
         // so without it each such request waits out the same dead pool. A generation cut by the
         // budget says nothing about its pool. The upstream still received the request, so it
-        // settles like a timeout (failed_upstream).
+        // settles like a timeout (failed_upstream; for Claude only once message_start reported usage).
         if (kind === FailureKind.TIMEOUT && error?.phase === 'budget') {
           if (payload.stream && wholeShare) recordFailure(key, kind, null, latencyMs, 'budget');
           console.warn('Neuron failover budget ended an attempt', { ...log, latency_ms: latencyMs });
-          return { ok: false, kind, budgetCut: true, retryAfterSeconds: null, latencyMs, errorCode: ERROR_CODES_BY_KIND[kind] };
+          return { ok: false, kind, budgetCut: true, retryAfterSeconds: null, latencyMs, errorCode: ERROR_CODES_BY_KIND[kind],
+            usage: usageNow(partialUsageOf(error)) };
         }
-        recordFailure(key, kind, error?.retryAfterSeconds, latencyMs, error?.phase ?? null);
+        recordFailure(key, kind, error?.retryAfterSeconds, latencyMs, error?.phase ?? null, error?.dailyQuota === true);
         if (kind !== FailureKind.ABORTED) {
           console.error('Neuron upstream request failed', { ...log, kind });
           logUpstreamDetail(log, kind, error?.summary);
         }
-        return { ok: false, kind, retryAfterSeconds: error?.retryAfterSeconds ?? null, latencyMs, errorCode: ERROR_CODES_BY_KIND[kind] };
+        return { ok: false, kind, retryAfterSeconds: error?.retryAfterSeconds ?? null, latencyMs, errorCode: ERROR_CODES_BY_KIND[kind],
+          usage: usageNow(partialUsageOf(error)) };
       }
       if (!started.ok) {
         const failure = classifyUpstreamFailure(started.status, started.bodyText, started.headers);
-        recordFailure(key, failure.kind, failure.retryAfterSeconds, started.latencyMs);
+        recordFailure(key, failure.kind, failure.retryAfterSeconds, started.latencyMs, null, failure.dailyQuota);
         console.error('Neuron upstream rejected request', { ...log, status: started.status, kind: failure.kind });
         logUpstreamDetail(log, failure.kind, upstreamErrorSummary(started.status, started.bodyText, { secrets }));
-        return { ok: false, ...failure, latencyMs: started.latencyMs, errorCode: ERROR_CODES_BY_KIND[failure.kind] };
+        return { ok: false, ...failure, latencyMs: started.latencyMs, errorCode: ERROR_CODES_BY_KIND[failure.kind], usage: started.usage ?? null };
       }
       const responseHeaders = { ...headers, 'x-neuron-model': entry.id, 'Cache-Control': 'no-store' };
       const info = { reservation, candidate, startedAt };
       if (!payload.stream) {
         let completion;
         try {
-          completion = normalizeCompletion(started.json, entry.id, body.messages, body.tools, { onToolSignature });
+          completion = restorer.completion(normalizeCompletion(started.json, entry.id, sent.body.messages, body.tools, { onToolSignature }));
         } catch {
           recordFailure(key, FailureKind.SERVER, null, started.latencyMs);
           console.error('Neuron upstream returned an invalid completion', log);
           return { ok: false, kind: FailureKind.SERVER, latencyMs: started.latencyMs, errorCode: 'upstream_error' };
         }
-        recordSuccess(key, started.latencyMs);
+        recordSuccess(key, started.latencyMs, pool);
         await finishAttempt(info, { status: 'ok', usage: completion.usage, outputBytes: utf8Bytes(completion.choices) });
         return { ok: true, response: new Response(JSON.stringify(completion), {
           status: 200, headers: { ...responseHeaders, 'Content-Type': 'application/json' } }) };
       }
-      recordSuccess(key, started.latencyMs);
+      recordSuccess(key, started.latencyMs, pool);
       const stream = createCompletionStream({
         ...started.stream, model: entry.id, controller: started.controller, clientSignal, timeouts, requestId, env,
-        onToolSignature,
+        onToolSignature, restorer,
         onFinish: async outcome => {
           if (outcome.status !== 'ok') {
-            recordFailure(key, outcome.kind, outcome.retryAfterSeconds, Date.now() - startedAt, outcome.phase ?? null);
+            recordFailure(key, outcome.kind, outcome.retryAfterSeconds, Date.now() - startedAt, outcome.phase ?? null,
+              outcome.dailyQuota === true);
             if (outcome.kind !== FailureKind.ABORTED) {
               console.error('Neuron stream interrupted', { ...log, kind: outcome.kind });
               logUpstreamDetail(log, outcome.kind, outcome.upstream);
@@ -457,7 +554,7 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
     const failoverBudgetMs = positiveInt(env.UPSTREAM_FAILOVER_BUDGET_MS, 50000);
     const minAttemptMs = Math.min(5000, failoverBudgetMs / 10);
     const paidReserveMs = Math.round(failoverBudgetMs * 0.3);
-    const candidates = await orderBySharedHealth(env, route.candidates, healthTracker);
+    const candidates = await orderBySharedHealth(env, route.candidates, healthTracker, sharedHealth);
     const paidCandidates = candidates.filter(candidate => candidate.pool.tier === 'paid');
     // The paid attempt is owed its last attempt and share of the budget only until it is made (a
     // 429 does not make it while another paid pool is left), refused or ruled out: then nothing is
@@ -468,13 +565,17 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
     // a balance below the credits the cheapest paid attempt holds (zerox_reserve_v2 refuses it
     // then), rules the paid attempt out.
     const paidHoldFloor = Math.min(...paidCandidates.map(candidate =>
-      Math.max(1, costMicrousd(candidate.pool.price, promptTokens, candidate.maxTokens))));
+      Math.max(1, reserveCostMicrousd(candidate.pool.price, promptTokens, candidate.maxTokens))));
     const accountCanPay = row => !(row.plan && !planPolicy(env, row.plan, policies).tiers.includes('paid'))
       && !(isSet(row.credit_balance_microusd) && Number(row.credit_balance_microusd) < paidHoldFloor);
     let paidOwed = paidCandidates.length > 0 && maxAttempts > 1;
     const failures = [];
     const exhausted = [];
     const skipModels = new Set();
+    // The first candidate actually tried (after the shared-health reordering) and why it did not
+    // serve, for X-OIOP-Fallback (contract §12.3).
+    const first = candidates[0];
+    let firstMiss = null;
     let paidDenied = null;
     let pending = null; // reservation of the last failed attempt, settled once its fate is known
     let current = null; // reservation whose attempt is in flight
@@ -486,15 +587,20 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
     // Without an explicit status a failed attempt is settled by how it failed (see GENERATED_KINDS):
     // the user gets the request back either way (within the daily refund allowance for
     // failed_upstream), while the pool keeps attempts the upstream counted.
+    // `reported`: usage the upstream reported before the attempt failed (cache split included),
+    // which replaces the prompt estimate wherever usage is billed.
     const releasePending = async (status = null, outcome = {}, inBackground = false) => {
       if (!pending) return;
-      const { reservation, candidate, latencyMs = 0, errorCode = null, kind = null } = pending;
+      const { reservation, candidate, latencyMs = 0, errorCode = null, kind = null, reported = null } = pending;
       pending = null;
-      const generated = !status && GENERATED_KINDS.has(kind);
+      const generated = !status && (reported !== null || (GENERATED_KINDS.has(kind) && !reportsUsageAtStart(candidate.entry)));
       const settled = status || (generated ? 'failed_upstream' : 'refunded');
-      const usage = generated ? { prompt_tokens: promptTokens, completion_tokens: 0 } : undefined;
+      const usage = generated ? reported ?? { prompt_tokens: promptTokens, completion_tokens: 0 } : undefined;
       await settleDb(reservation, candidate, { status: settled, latencyMs, errorCode, usage, ...outcome }, inBackground);
     };
+    const abortedUsage = () => pending?.reported ?? { prompt_tokens: promptTokens, completion_tokens: 0 };
+    // A Claude attempt the client aborted before message_start never reached the model.
+    const abortedUnreached = () => Boolean(pending && pending.reported == null && reportsUsageAtStart(pending.candidate.entry));
 
     const failoverStart = Date.now();
     const commitBy = failoverStart + failoverBudgetMs;
@@ -542,9 +648,11 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
           // concurrency slot or counts as a second request.
           await releasePending();
           let row;
+          let args;
           try {
-            row = await reserveCapacity(env, reservationArgs({ session, entry: candidate.entry, pool: candidate.pool,
-              requestId: reservations ? `${requestId}.${reservations}` : requestId, promptTokens, maxTokens: candidate.maxTokens }));
+            args = reservationArgs({ env, session, entry: candidate.entry, pool: candidate.pool,
+              requestId: reservations ? `${requestId}.${reservations}` : requestId, promptTokens, maxTokens: candidate.maxTokens });
+            row = await reserveCapacity(env, args);
           } catch (error) {
             console.error('Neuron capacity reservation unavailable', { name: error?.name, request_id: requestId });
             stopLeases();
@@ -557,13 +665,15 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
               const error = reserveError(row);
               return fail(error.code, error);
             }
+            if (candidate === first) firstMiss = row.status;
             if (PAID_DENIED_STATUSES.has(row.status)) {
               paidDenied = row;
               releaseHeld(index);
             } else {
-              // pool_exhausted: the shared budget of this pool is spent for every user.
-              exhausted.push(row);
-              const budget = exhaustedBudget(candidate.pool.limits, row.retry_after_seconds);
+              // pool_exhausted: the shared budget of this pool (a paid pool's daily spend cap
+              // included) is spent for every user.
+              const budget = exhaustedBudget(args.p_pool, row.retry_after_seconds);
+              exhausted.push({ ...row, budget, model: candidate.entry.display_name });
               notePoolExhausted(candidate.key, { budget, retryAfterSeconds: row.retry_after_seconds });
               console.warn('Neuron pool budget exhausted', { pool: candidate.key, model: candidate.entry.id,
                 budget, retry_after_seconds: row.retry_after_seconds ?? null, request_id: requestId });
@@ -581,11 +691,22 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
         }
         attempts++;
         if (candidate.pool.tier !== 'paid') freeAttempts++;
+        headers['x-oiop-offer'] = offerIdFor(candidate.entry, candidate.pool);
+        if (candidate !== first) {
+          headers['x-oiop-fallback'] = `${first.entry.id}; offer=${offerIdFor(first.entry, first.pool)}; reason=${firstMiss || 'skipped'}`;
+        }
         const result = await attempt(candidate, reservation, shareEnd(candidate), Date.now() - failoverStart < minAttemptMs);
         current = null;
-        if (result.ok) return result.response;
+        if (result.ok) {
+          if (route.sticky) router.remember(route.sticky, candidate.entry.id);
+          return result.response;
+        }
+        if (candidate === first) firstMiss = result.kind;
         failures.push(result);
-        if (reservation) pending = { reservation, candidate, latencyMs: result.latencyMs, errorCode: result.errorCode, kind: result.kind };
+        if (reservation) {
+          pending = { reservation, candidate, latencyMs: result.latencyMs, errorCode: result.errorCode, kind: result.kind,
+            reported: result.usage ?? null };
+        }
         if (result.kind === FailureKind.ABORTED) break;
         if (result.kind === FailureKind.RATE_LIMITED) {
           attempts--;
@@ -602,12 +723,18 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
     } catch (error) {
       console.error('Neuron completion failed unexpectedly', { name: error?.name, request_id: requestId });
       if (current) pending = { ...current, errorCode: 'internal_error' };
+      delete headers['x-oiop-offer'];
+      delete headers['x-oiop-fallback'];
       await releasePending('refunded');
       stopLeases();
       await settleKv({ actualTokens: 0, refundRequest: true });
       return fail('upstream_error');
     }
 
+    // No offer served this request.
+    delete headers['x-oiop-offer'];
+    delete headers['x-oiop-fallback'];
+    delete headers['x-oiop-redacted'];
     const aborted = failures.some(failure => failure.kind === FailureKind.ABORTED);
     // A request that ran out of failover budget answers upstream_timeout instead of a generic
     // upstream_error; a client error (a slow 400 or 413), a cancellation or a capacity refusal
@@ -628,7 +755,8 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
     // with the invocation, so the settlement goes through waitUntil (as after a mid-stream
     // cancel). Otherwise it completes before the answer, so a retry finds the slot released.
     const disconnected = aborted || Boolean(clientSignal?.aborted);
-    if (aborted) await releasePending('error', { usage: { prompt_tokens: promptTokens, completion_tokens: 0 } }, true);
+    if (aborted && abortedUnreached()) await releasePending('refunded', {}, true);
+    else if (aborted) await releasePending('error', { usage: abortedUsage() }, true);
     else if (clientSide) await releasePending('error', { usage: { prompt_tokens: 0, completion_tokens: 0 } }, disconnected);
     else await releasePending(null, {}, disconnected);
     // No attempt runs any more (a successful one returned its response above).

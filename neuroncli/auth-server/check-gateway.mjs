@@ -293,7 +293,9 @@ try {
   const settles = leaseCalls.filter(([rpc]) => rpc === 'zerox_settle_v2');
   assert.equal(settles.length, 4, 'each failed settle is retried once');
   assert.deepEqual(settles.slice(0, 2).map(([, args]) => [args.p_reservation_id, args.p_status]), [['res-lease', 'ok'], ['res-lease', 'ok']]);
-  assert.deepEqual(leaseLogs.map(([level, message]) => `${level}: ${message}`), [
+  // This fake database has no catalog or offer RPCs either; their loaders report that themselves.
+  const ownLoaders = /^error: (Neuron catalog rows unavailable|OIOP offers unavailable)/;
+  assert.deepEqual(leaseLogs.map(([level, message]) => `${level}: ${message}`).filter(line => !ownLoaders.test(line)), [
     'warn: Neuron reservation renewal unavailable',
     'error: Neuron settlement failed',
   ], 'one warning for the missing RPC; a settle is reported only when its retry failed too');

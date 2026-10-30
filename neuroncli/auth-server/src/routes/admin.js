@@ -1,42 +1,79 @@
 import { rpc, databaseConfigured } from '../account-store.js';
 import { errorResponse, sendApiError } from '../auth-context.js';
 import { isOperator } from '../operator-auth.js';
-import { loadCatalogDbModels, offeredEntries, poolConfigured, poolKey } from '../catalog.js';
+import { passedAccess } from '../access-auth.js';
+import { entryPools, loadCatalog, offeredEntries, poolConfigured, poolKey } from '../catalog.js';
 import { globalHealthTracker } from '../provider-health.js';
+import { billedDailyCapMicrousd } from '../catalog-guardrails.js';
 
 const counter = value => {
   const number = Number(value);
   return Number.isFinite(number) && number >= 0 ? number : 0;
 };
 
+// cost_today_microusd: the pool's held plus settled credit cost of the UTC day (paid pools), the
+// figure zerox_reserve_v2 checks against the daily spend cap.
+const counters = row => ({
+  requests_today: counter(row?.requests_today), tokens_today: counter(row?.tokens_today),
+  requests_this_minute: counter(row?.requests_this_minute), tokens_this_minute: counter(row?.tokens_this_minute),
+  cost_today_microusd: counter(row?.cost_today_microusd),
+});
+const budget = limits => limits ? { rpm: limits.rpm ?? null, rpd: limits.rpd ?? null, tpm: limits.tpm ?? null, tpd: limits.tpd ?? null } : null;
+
 // Contract §3.6 pools[]: every pool this deployment offers, with today's counters from
 // zerox_admin_overview, the shared budget from the catalog (null = no shared budget) and the
-// in-memory health of this isolate (keyed provider:upstream_model:tier).
+// in-memory health of this isolate (keyed provider:upstream_model:tier). A pool served by
+// provider key vault keys (§11.1) lists each key in `keys` with its own counters (its Postgres
+// bucket), budget and health. The pool itself reports the model totals: counters summed over
+// its keys, `limits` the sum of their budgets and its best key's health, since it serves while
+// any key can. Keys disabled since they served today keep their counters (with no budget or
+// health), as they are part of the totals. Paid pools add spend_cap_microusd, their daily spend
+// cap in billed micro-USD (p_pool.cpd), to compare with cost_today_microusd.
 export function overviewPools(env, rows = [], tracker = globalHealthTracker) {
-  const counters = new Map(rows.filter(row => row && typeof row === 'object').map(row => [`${row.model}#${row.tier}`, row]));
+  const byPool = new Map(rows.filter(row => row && typeof row === 'object').map(row => [`${row.model}#${row.tier}`, row]));
   const snapshot = tracker.getSnapshot();
+  const healthOf = key => {
+    const health = snapshot[key];
+    return { status: health?.status ?? 'HEALTHY', circuit_open: health?.circuit_open === true,
+      cooldown_remaining_ms: health?.cooldown_remaining_ms ?? 0, last_failure_kind: health?.last_failure_kind ?? null };
+  };
   const pools = [];
   for (const entry of offeredEntries(env)) {
+    const expanded = entryPools(env, entry);
     for (const pool of entry.pools) {
-      const row = counters.get(`${entry.id}#${pool.tier}`);
-      counters.delete(`${entry.id}#${pool.tier}`);
-      const health = snapshot[poolKey(entry, pool)];
+      const row = byPool.get(`${entry.id}#${pool.tier}`);
+      byPool.delete(`${entry.id}#${pool.tier}`);
+      // zerox_admin_overview buckets: pool_key is the vault pool's key, null for the default bucket.
+      const buckets = new Map((Array.isArray(row?.keys) ? row.keys : [])
+        .filter(item => item && typeof item === 'object').map(item => [item.pool_key || null, item]));
+      const served = expanded.filter(item => item.tier === pool.tier);
+      const keys = served.map(item => {
+        const bucket = item.key_id ? poolKey(entry, item) : null;
+        const usage = buckets.get(bucket);
+        buckets.delete(bucket);
+        return { key_id: item.key_id ?? null, source: item.key_id ? 'vault' : 'env', ...counters(usage),
+          limits: budget(item.limits), health: healthOf(poolKey(entry, item)) };
+      });
+      const best = keys.reduce((left, right) => !left.health.circuit_open ? left : !right.health.circuit_open ? right
+        : right.health.cooldown_remaining_ms < left.health.cooldown_remaining_ms ? right : left);
+      for (const [bucket, usage] of buckets) {
+        keys.push({ key_id: bucket ? bucket.slice(bucket.lastIndexOf('#') + 1) : null, source: bucket ? 'vault' : 'env',
+          ...counters(usage), limits: null, health: null });
+      }
       pools.push({
-        model: entry.id, tier: pool.tier, provider: entry.provider, configured: poolConfigured(env, entry, pool),
-        requests_today: counter(row?.requests_today), tokens_today: counter(row?.tokens_today),
-        requests_this_minute: counter(row?.requests_this_minute), tokens_this_minute: counter(row?.tokens_this_minute),
-        limits: pool.limits ? { rpm: pool.limits.rpm ?? null, rpd: pool.limits.rpd ?? null,
-          tpm: pool.limits.tpm ?? null, tpd: pool.limits.tpd ?? null } : null,
-        health: { status: health?.status ?? 'HEALTHY', circuit_open: health?.circuit_open === true,
-          cooldown_remaining_ms: health?.cooldown_remaining_ms ?? 0, last_failure_kind: health?.last_failure_kind ?? null },
+        model: entry.id, tier: pool.tier, provider: entry.provider,
+        configured: served.some(item => poolConfigured(env, entry, item)),
+        ...counters(row),
+        limits: budget(served[0]?.shared_limits || pool.limits),
+        ...(pool.tier === 'paid' ? { spend_cap_microusd: billedDailyCapMicrousd(env, entry, pool) } : {}),
+        health: best.health,
+        ...(keys.some(key => key.source === 'vault') ? { keys } : {}),
       });
     }
   }
   // Counters for pools no longer offered (e.g. disabled since this morning) stay visible.
-  for (const row of counters.values()) {
-    pools.push({ model: row.model, tier: row.tier, provider: null, configured: false,
-      requests_today: counter(row.requests_today), tokens_today: counter(row.tokens_today),
-      requests_this_minute: counter(row.requests_this_minute), tokens_this_minute: counter(row.tokens_this_minute),
+  for (const row of byPool.values()) {
+    pools.push({ model: row.model, tier: row.tier, provider: null, configured: false, ...counters(row),
       limits: null, health: null });
   }
   return pools;
@@ -69,11 +106,13 @@ export async function runScheduledMaintenance(env) {
 }
 
 export function registerAdminRoutes(api) {
-  // GET /admin/overview (Bearer GATEWAY_ADMIN_TOKEN) → zerox_admin_overview().overview
+  // GET /admin/overview (Bearer GATEWAY_ADMIN_TOKEN, plus Cloudflare Access when configured, as
+  // for every operator API) → zerox_admin_overview().overview
   api.get('/admin/overview', async c => {
     if (!await isOperator(c)) return errorResponse(c, 401, 'invalid_session', 'Operator authentication required.');
+    if (!await passedAccess(c)) return errorResponse(c, 403, 'access_required', 'Cloudflare Access authentication required.');
     try {
-      const [row] = await Promise.all([rpc(c.env, 'zerox_admin_overview', {}), loadCatalogDbModels(c.env)]);
+      const [row] = await Promise.all([rpc(c.env, 'zerox_admin_overview', {}), loadCatalog(c.env)]);
       const overview = row?.overview && typeof row.overview === 'object' ? row.overview : null;
       if (!overview) throw new Error('Admin overview returned no data');
       c.header('Cache-Control', 'no-store');

@@ -32,6 +32,9 @@ ALLOW_ANONYMOUS_SESSIONS=false      # development only: account-less sessions an
 
 # ── Operator ──
 GATEWAY_ADMIN_TOKEN=                # SECRET: >= 32 chars; /admin/*, /v1/providers/health, full /health
+PROVIDER_KEYS_KEK=                  # SECRET: openssl rand -base64 32; encrypts the provider key vault
+CF_ACCESS_TEAM_DOMAIN=              # <team>.cloudflareaccess.com; with CF_ACCESS_AUD, /admin/keys needs an Access JWT
+CF_ACCESS_AUD=                      # audience tag of the Access application on dashboard.zero-x.live/admin
 
 # ── Website and security headers ──
 PRICING_URL=https://zero-x.live/pricing   # upgrade_url in errors

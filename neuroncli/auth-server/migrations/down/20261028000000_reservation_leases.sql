@@ -13,6 +13,16 @@ SET LOCAL lock_timeout = '5s';
 -- their lease lapsed stay released. A gateway that renews leases warns once and skips renewals
 -- while zerox_renew_reservation is missing. The history row is removed so the runner can apply
 -- the migration again.
+-- Only while it is the newest migration that defines zerox_reserve_v2: the 8-argument function of
+-- 20261029000300_provider_key_budgets.sql and later keeps the leases and reads lease_expires_at,
+-- so with it in place this script stops before changing anything.
+DO $$
+BEGIN
+  IF to_regprocedure('public.zerox_reserve_v2(uuid, text, text, text, bigint, bigint, jsonb, text)') IS NOT NULL THEN
+    RAISE EXCEPTION 'zerox_reserve_v2 is the 8-argument function of 20261029000300 or later, which keeps the leases: not rolled back';
+  END IF;
+END;
+$$;
 
 -- Atomically checks the per-user plan quota, credits and the shared upstream pool budget,
 -- then records a reservation. p_pool is {rpm, rpd, tpm, tpd}; a null budget is unlimited.

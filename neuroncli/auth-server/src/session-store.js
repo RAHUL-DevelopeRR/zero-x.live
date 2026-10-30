@@ -128,6 +128,22 @@ export async function rearmRecord(env, key, record, now = Date.now()) {
   return done;
 }
 
+// Rewrites a session record with a later `expires` (sliding expiry, src/session-activity.js).
+// The Postgres store's write is conditional and never recreates a deleted session. KV has no
+// conditional write, so the caller must re-check the session index afterwards and delete the
+// record when the session was signed out meanwhile. Returns whether the record was written.
+export async function extendRecord(env, key, record, now = Date.now()) {
+  const remaining = (sessionExpiry(env, record) - now) / 1000;
+  if (!(remaining > 60)) return false;
+  const { target, ttl } = await recordTarget(env, key, record, remaining);
+  const value = JSON.stringify(record);
+  if (env.SESSIONS_KV) {
+    await env.SESSIONS_KV.put(target, value, { expirationTtl: ttl });
+    return true;
+  }
+  return recordStore(env).rearm(target, value, { expirationTtl: ttl });
+}
+
 // Revoke-all only knows token hashes (from the session index).
 export async function deleteRecordByHash(env, hash) {
   if (!/^[0-9a-f]{64}$/.test(hash)) return;

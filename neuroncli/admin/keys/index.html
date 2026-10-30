@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="theme-color" content="#0A0A0C">
+  <title>Provider keys | Zero-X admin</title>
+  <link rel="icon" type="image/png" sizes="32x32" href="/Assets/zerox-favicon-32.png">
+  <link rel="stylesheet" href="/site-fonts.css">
+  <link rel="stylesheet" href="/zx-tokens.css">
+  <link rel="stylesheet" href="/admin/keys/keys.css">
+  <script defer src="/admin/keys/keys.js"></script>
+</head>
+<body>
+  <a class="zx-skip" href="#main">Skip to content</a>
+  <header class="zx-header">
+    <div class="zx-container zx-header__inner">
+      <a class="zx-brand" href="https://dashboard.zero-x.live/"><img src="/Assets/zerox-favicon-32.png" width="28" height="28" alt="">Zero-X</a>
+      <span class="zx-badge zx-badge--purple">Operator</span>
+    </div>
+  </header>
+
+  <main id="main" class="zx-container" tabindex="-1">
+    <div class="zx-dash-head">
+      <div>
+        <p class="zx-eyebrow">Admin</p>
+        <h1>Provider keys</h1>
+      </div>
+    </div>
+    <p class="zx-muted keys-intro">Free-tier API keys the gateway serves hosted models with. Each active key is its own pool with its
+      own health, so several Groq orgs or Gemini projects take turns, and a dead key greys out only its own models. Keys stay
+      on the server: after you add one, this page only ever sees its last four characters.</p>
+
+    <p id="message" class="zx-alert zx-mb" role="status" aria-live="polite"></p>
+
+    <form id="unlock" class="zx-card" method="post" autocomplete="off">
+      <div class="zx-form-row">
+        <div class="zx-field">
+          <label for="admin-token">Gateway admin token</label>
+          <input id="admin-token" class="zx-input" type="password" autocomplete="off" spellcheck="false" minlength="32" required>
+          <p class="zx-help">GATEWAY_ADMIN_TOKEN. Kept in this tab's memory only; reloading forgets it.</p>
+        </div>
+        <button id="unlock-button" class="zx-btn zx-btn--primary" type="submit">Unlock</button>
+      </div>
+    </form>
+
+    <div id="vault" hidden>
+      <div class="zx-row zx-row--between keys-section-head">
+        <h2>Keys</h2>
+        <button id="lock" class="zx-btn zx-btn--ghost zx-btn--sm" type="button">Forget token</button>
+      </div>
+      <div class="zx-table-wrap">
+        <table class="zx-table">
+          <thead>
+            <tr><th scope="col">Provider</th><th scope="col">Label</th><th scope="col">Key</th><th scope="col">Status</th>
+              <th scope="col">Models</th><th scope="col">Added</th><th scope="col">Last used</th>
+              <th scope="col"><span class="zx-visually-hidden">Actions</span></th></tr>
+          </thead>
+          <tbody id="keys"></tbody>
+        </table>
+      </div>
+      <p id="empty" class="zx-muted zx-mt" hidden>No keys in the vault yet. Until you add one, the Worker secrets below serve alone.</p>
+
+      <h2 class="keys-section-head">Worker secret fallback</h2>
+      <ul id="fallback" class="keys-fallback"></ul>
+
+      <form id="add" class="zx-card zx-mt-lg" method="post" autocomplete="off">
+        <h2>Add a key</h2>
+        <div class="zx-form-row">
+          <div class="zx-field">
+            <label for="provider">Provider</label>
+            <select id="provider" class="zx-select" required>
+              <option value="groq">Groq</option>
+              <option value="gemini">Gemini (Google AI Studio)</option>
+              <option value="nvidia">NVIDIA</option>
+              <option value="openrouter">OpenRouter</option>
+            </select>
+          </div>
+          <div class="zx-field">
+            <label for="label">Label</label>
+            <input id="label" class="zx-input" maxlength="64" autocomplete="off" placeholder="gemini-project-3" required>
+          </div>
+        </div>
+        <div class="zx-field zx-mt">
+          <label for="key">API key</label>
+          <input id="key" class="zx-input zx-mono" type="password" autocomplete="off" spellcheck="false" minlength="16" maxlength="512" required>
+          <p class="zx-help">Checked with one free request to the provider before it is saved (NVIDIA: one 1-token request).
+            Free-tier terms and quotas apply per account; how many accounts to pool is your call.</p>
+        </div>
+        <button id="add-button" class="zx-btn zx-btn--primary zx-mt" type="submit">Check and save</button>
+      </form>
+    </div>
+  </main>
+</body>
+</html>

@@ -10,6 +10,7 @@ This is an engineering summary, not legal advice; confirm with counsel before la
 | NVIDIA API Catalog | ~40 RPM community-observed, no published table | Trial Terms §1.2/§1.4: trial and internal evaluation only, not production; §4.2 no making Generated Content available to others | `hosted=false` (`NVIDIA_HOSTED=true` for internal evaluation only) |
 | OpenRouter | Free models 20 RPM; 50 RPD (<$10 credits) or 1,000 RPD; this key is free tier (limit $0, 50/day) | Terms §7.4 bans "reselling API access to Models"; §7.3 bans extra accounts to bypass limits | BYOK only (user OAuth / own key); `OPENROUTER_HOSTED=true` re-enables operator key; send `provider.data_collection:'deny'` |
 | Cloudflare Workers AI | 10,000 Neurons/day free; $0.011 / 1K Neurons on Workers Paid | Customer responsible for End Users; no training on customer content | Free pool within allocation; paid overage only on Workers Paid |
+| Anthropic (Claude API, added 2026-10-25) | No free tier used: paid API only. Rate limits per organization usage tier (console); list prices Sonnet 5.5 $2 / $10, Opus 5.5 $4 / $20 per Mtok, cache reads $0.20, 5-minute cache writes 1.25x input, 1-hour writes 2x (claude-api skill docs, 2026-10) | Commercial Terms govern API use; API inputs and outputs are not used for training by default. Serving Pro and Max subscribers through the gateway, billed from their credits, is an operator decision (2026-10-24), recorded as such in the `anthropic.paid` offer evidence, not a verified reading of the terms. The retention period is not recorded here yet: confirm it on Anthropic's privacy center before the site states a number | Paid pools only (Pro and Max), `ANTHROPIC_API_KEY` (key slot `anthropic.paid`); daily spend caps Sonnet $10 and Opus $6 in Postgres; a monthly spend limit in the Anthropic console |
 
 Business consequences:
 
@@ -76,6 +77,23 @@ details. Verified directly against the live endpoints with a captured Neuron 6.2
   calls. Schemas are therefore forwarded as sent. Parameters a provider rejects are dropped by
   `PROVIDER_PARAMS` in `src/providers.js` (e.g. penalties, `parallel_tool_calls` and `user` for
   Gemini).
+- **Claude Sonnet 5.5 and Opus 5.5** (native Messages API, `src/anthropic-request.js`; not yet
+  probed live from the Worker, see `node check-live-providers.mjs --claude`). The 5.5 models
+  reject sampling parameters, so the body is built from a whitelist: `temperature`, `top_p`,
+  `top_k`, `seed`, penalties and `user` are never sent. With adaptive thinking a forced
+  `tool_choice` (`any`, `tool`) is refused, so `required` and a named function become `auto` plus a
+  trailing system instruction. Thinking is never sent as `disabled`: Opus 5.5 cannot turn it off
+  (effort `low` instead), Sonnet 5.5 keeps it off between tool calls for `reasoning_effort: none`.
+  Effort is always explicit (`medium` by default). Thinking blocks are signed and bound to the
+  conversation prefix; OpenAI clients cannot echo them, so the gateway keeps each turn's exact
+  blocks per caller (per isolate, 2 h after last use) and replays them with
+  `block_binding.prefix_mismatch_behavior: drop_block` under the `thinking-binding-controls-2026-08-01`
+  beta; a rejected beta or signature is retried once without it. Prompt caching uses 5-minute
+  breakpoints on the last tool and the last system block plus automatic caching (prefixes under
+  512 tokens are not cached). Server-side refusal fallbacks are not used: a refusal is
+  `content_filter`. Every call goes to `https://api.anthropic.com/v1/` only, with
+  `redirect: 'manual'` (`x-api-key` would survive a followed cross-origin redirect), through
+  `@anthropic-ai/sdk` with `maxRetries: 0` (the router fails over).
 - **Known limitation: Gemini 3 through OpenRouter (BYOK).** The signature cache covers the direct
   `gemini` provider only. OpenRouter carries Gemini thought signatures in `reasoning_details`,
   which the gateway strips from responses and does not record or restore, so a BYOK tool loop on
@@ -90,4 +108,5 @@ assets.ngc.nvidia.com/products/api-catalog/legal/NVIDIA API Trial Terms of Servi
 openrouter.ai/terms, openrouter.ai/docs/api-reference/limits,
 developers.cloudflare.com/workers-ai/platform/pricing,
 razorpay.com/docs/payments/dashboard/account-settings/business-website-details,
+www.anthropic.com/legal/commercial-terms, www.anthropic.com/legal/privacy,
 support.stripe.com/questions/how-can-i-open-a-stripe-account-in-india.
