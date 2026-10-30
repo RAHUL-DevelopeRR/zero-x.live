@@ -39,9 +39,9 @@ import { loadVaultKeys, vaultConfigured } from './provider-keys.js';
 import { accessConfigured, passedAccess } from './access-auth.js';
 import { forwardToEc2 } from './ec2-proxy.js';
 import { extraWebOrigins } from './web-hosts.js';
-// Durable Object classes are exported from the Worker entry (wrangler.toml [[durable_objects]]).
+// Durable Object classes are exported from the Worker entry (wrangler.toml [[durable_objects]]),
+// each with its binding. RelayRoom (src/relay.js) is not bound for now, so it is not exported.
 export { HealthHub } from './health-hub.js';
-export { RelayRoom } from './relay.js';
 import { registerWebhookRoutes } from './routes/webhooks.js';
 
 const SERVICE = 'neuroncli-gateway-worker';

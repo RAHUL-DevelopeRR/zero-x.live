@@ -610,7 +610,8 @@ The page is `https://zero-x.live/changelog`. Optional secret `GITHUB_RELEASES_TO
 
 Protocol, limits, close codes and push rules: `docs/RELAY.md`. Endpoints `wss://zero-x.live/relay/v1/host`,
 `/relay/v1/client`, `POST /relay/v1/ticket`, `GET /relay/v1/hosts`, and `POST|GET /api/push/tokens`,
-`DELETE /api/push/tokens/:id`. Durable Object binding `RELAY` (class `RelayRoom`). Optional secret
+`DELETE /api/push/tokens/:id`. Durable Object binding `RELAY` (class `RelayRoom`), not bound on the
+Worker for now (every relay route answers `503 relay_unavailable`). Optional secret
 `EXPO_ACCESS_TOKEN`.
 
 ### 10.5 RPCs

@@ -3,6 +3,7 @@
 // fake Expo push service (docs/RELAY.md). Run: node check-relay.mjs
 import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import app from './src/index.js';
 import { rpc, rpcRows } from './src/account-store.js';
 import { closeAllPglite, getPgliteHandle } from './src/db/pglite.js';
@@ -364,12 +365,23 @@ try {
     assert.equal(response.status, 200, 'the upgrade passes through untouched');
     assert.ok(response.webSocket, 'with its WebSocket');
 
-    // Without the binding (Node server, API-only Worker) the relay says so.
-    response = await call('/relay/v1/host', { token: bob.session_token, headers: upgrade, bindings: { ...env, RELAY: undefined } });
-    assert.equal(response.status, 503);
-    assert.equal((await response.json()).error.code, 'relay_unavailable');
+    // Without the binding (the Worker as deployed now, the Node server, the API-only Worker)
+    // every relay route says so, and signing a device out still works.
+    const unbound = { ...env, RELAY: undefined };
+    for (const [path, init] of [
+      ['/relay/v1/host', { headers: upgrade }], ['/relay/v1/client', { headers: upgrade }],
+      ['/relay/v1/ticket', { method: 'POST', body: { role: 'client' } }], ['/relay/v1/hosts', {}],
+    ]) {
+      response = await call(path, { token: bob.session_token, bindings: unbound, ...init });
+      assert.equal(response.status, 503, path);
+      assert.equal((await response.json()).error.code, 'relay_unavailable', path);
+    }
+    const spare = await (await call('/auth/cli/session', { method: 'POST', token: devToken('bob.relay@example.test'), body: {}, bindings: unbound })).json();
+    const bobSessions = (await (await call('/api/sessions', { token: spare.session_token, bindings: unbound })).json()).sessions;
+    response = await call(`/api/sessions/${bobSessions.find(s => s.current).id}`, { method: 'DELETE', token: devToken('bob.relay@example.test'), bindings: unbound });
+    assert.equal(response.status, 200, 'revocation needs no relay');
     assert.equal((await call('/relay/v2/anything')).status, 404);
-    ok('Worker: header or single-use ticket auth, API keys refused (403), per-account rooms (another account cannot see or attach), revocation closes sockets, 503 without the binding');
+    ok('Worker: header or single-use ticket auth, API keys refused (403), per-account rooms (another account cannot see or attach), revocation closes sockets, 503 relay_unavailable on every route without the binding');
 
     // ── 9. Push tokens and delivery ──
     const owner = alice.user_id;
@@ -421,8 +433,28 @@ try {
     assert.equal((await rpcRows(pgEnv, 'zerox_push_list', { p_user_id: owner })).length, 10, 'at most 10 phones per account');
     ok('push tokens: register (token never returned), validation, API keys refused, per-preference delivery, DeviceNotRegistered pruned, tokens move between accounts, 10 per account');
   }
+
+  // ── 10. The Worker is deployed without the RelayRoom (owner decision, 2026-10-30) ──
+  // No RELAY binding and no migration that creates the class, so the relay routes answer
+  // relay_unavailable (above) until the relay runs on the Node server. Every Durable Object class
+  // the Worker exports is bound, and every bound class exported (a binding to a missing export
+  // fails the deploy).
+  {
+    const config = name => readFileSync(new URL(name, import.meta.url), 'utf8').replace(/^\s*#.*$/gm, '');
+    for (const name of ['wrangler.toml', 'wrangler.api.toml']) {
+      assert.doesNotMatch(config(name), /"RELAY"|RelayRoom|v2-relay/, `${name} binds and creates no RelayRoom`);
+    }
+    const bound = [...config('wrangler.toml').matchAll(/^\s*class_name\s*=\s*"([^"]+)"/gm)].map(match => match[1]).sort();
+    const created = [...config('wrangler.toml').matchAll(/^\s*new_sqlite_classes\s*=\s*\[([^\]]*)\]/gm)]
+      .flatMap(match => [...match[1].matchAll(/"([^"]+)"/g)].map(name => name[1])).sort();
+    const exported = Object.keys(await import('./src/index.js')).filter(name => name !== 'default').sort();
+    assert.deepEqual(bound, ['HealthHub']);
+    assert.deepEqual(created, ['HealthHub']);
+    assert.deepEqual(exported, bound, 'the exported Durable Object classes are the bound ones');
+    ok('wrangler.toml and wrangler.api.toml bind no RelayRoom and create none; the Worker exports exactly its bound Durable Object classes (HealthHub)');
+  }
 } finally {
   await closeAllPglite();
 }
 
-console.log(`PASS: relay and push (${passed.length} groups): registration, opaque forwarding, replay by seq, presence, limits, account isolation, ticket and header auth, revocation, contentless push with delay and dedupe, push tokens on Postgres`);
+console.log(`PASS: relay and push (${passed.length} groups): registration, opaque forwarding, replay by seq, presence, limits, account isolation, ticket and header auth, revocation, contentless push with delay and dedupe, push tokens on Postgres, no RelayRoom on the deployed Worker`);
