@@ -390,4 +390,240 @@ try {
   rmSync(work, { recursive: true, force: true });
 }
 
-console.log(`PASS: EC2 kit: env file from [vars] and the deploy.yml secrets (systemd quoting, VM settings refused), parity secrets required, pinned workflow, complete env template, two gateway instances on one port with their own readiness ports, cron in the same sandbox and never enabled by setup, exact deploy sudoers, /v1 base URLs${ran ? ', activation run (new instance ready before the old one stops, rollback without a gap, commit check, prune), host setup run (sudoers checked, cloud-init rule removed, idempotent)' : ''}`);
+// ── package-release.sh, install-release.sh and push-release.sh, run: a fixture repository with
+// the real .assetsignore and this deploy kit, stub aws, ssh (which runs the remote command
+// locally), npm, sudo, systemctl and curl. ──
+// .assetsignore read with gitignore rules (what wrangler applies), independently of git: a
+// pattern matches a path or one of its directories; one with a slash before its end is anchored.
+function assetsIgnored(text) {
+  const rules = text.split(/\r?\n/).map(line => line.trim()).filter(line => line && !line.startsWith('#')).map(pattern => {
+    assert.ok(!pattern.startsWith('!'), 'no negated patterns (this reading does not support them)');
+    const dirOnly = pattern.endsWith('/');
+    const body = (dirOnly ? pattern.slice(0, -1) : pattern).replace(/^\//, '');
+    let source = '';
+    for (let i = 0; i < body.length; i++) {
+      if (body.startsWith('**/', i)) { source += '(?:.*/)?'; i += 2; }
+      else if (body.startsWith('**', i)) { source += '.*'; i += 1; }
+      else if (body[i] === '*') source += '[^/]*';
+      else if (body[i] === '?') source += '[^/]';
+      else source += body[i].replace(/[.+^${}()|[\]\\]/g, '\\$&');
+    }
+    const anchored = (dirOnly ? pattern.slice(0, -1) : pattern).includes('/');
+    return { re: new RegExp(`^${anchored ? '' : '(?:.*/)?'}${source}$`), dirOnly };
+  });
+  return path => path.split('/').some((_, i, parts) => {
+    const sub = parts.slice(0, i + 1).join('/');
+    const isDir = i < parts.length - 1;
+    return rules.some(rule => (!rule.dirOnly || isDir) && rule.re.test(sub));
+  });
+}
+const ignored = assetsIgnored(read('.assetsignore'));
+assert.ok(ignored('neuroncli/auth-server/server.js') && ignored('README.md') && ignored('docs/x/y.md') && ignored('Assets/RahulCIT.png') &&
+  ignored('Assets/Pasted text.txt') && ignored('a/node_modules/b.js') && !ignored('index.html') && !ignored('Assets/logo.png') &&
+  !ignored('videos/clip.mp4') && ignored('Assets/demo.mp4'), 'the reading of .assetsignore');
+const GATEWAY_RUNTIME = ['neuroncli/auth-server/server.js', 'neuroncli/auth-server/package.json', 'neuroncli/auth-server/package-lock.json',
+  'neuroncli/auth-server/src/index.js', 'neuroncli/auth-server/scripts/cron.mjs'];
+const KIT = ['install-release.sh', 'activate-release.sh', 'host-setup.sh', 'zerox-gateway@.service', 'zerox-cron.service',
+  'zerox-cron.timer', 'cloudflared.service', 'zerox-deploy.sudoers', 'zerox-sysctl.conf'].map(name => `deploy/aws/${name}`);
+const NOT_SHIPPED = /^neuroncli\/auth-server\/(check-|test\.js$|e2e-|fixtures\/|migrations\/|docs\/|wrangler[^/]*\.toml$|Dockerfile$|\.)|(^|\/)(output|tmp)\/|\.md$|(^|\/)\.(env|dev\.vars)/;
+let packaged = false;
+const fixture = mkdtempSync(join(tmpdir(), 'zerox-package-'));
+try {
+  if (ran) {
+    packaged = true;
+    const bash = (args, options = {}) => spawnSync(shell.bash, args, { encoding: 'utf8', ...options, env: { ...process.env, ...shell.env, ...options.env } });
+    const tarList = file => bash(['-c', 'tar -tzf - < "$1"', '_', posix(file)]).stdout.trim().split('\n').sort();
+    const fxRepo = join(fixture, 'repo');
+    const files = {
+      '.assetsignore': read('.assetsignore'), '.gitignore': 'node_modules/\n', 'index.html': '<!doctype html>', '404.html': '',
+      'Assets/logo.png': 'png', 'Assets/RahulCIT.png': 'private', 'Assets/Pasted text.txt': 'notes', 'videos/clip.mp4': 'mp4',
+      'releases/neuron/latest.json': '{}', 'neuroncli/callback/index.html': '', 'SEO_AUDIT.md': '# notes', 'seo-pages.json': '[]',
+      'legacy.html': '', 'tailwind.config.cjs': '', '.github/workflows/deploy.yml': '', 'docs/guide.html': '', '.env': 'SECRET=1',
+      'neuroncli/auth-server/server.js': '', 'neuroncli/auth-server/package.json': '{}', 'neuroncli/auth-server/package-lock.json': '{}',
+      'neuroncli/auth-server/src/index.js': 'export default {};\nexport const lf = true;\n', 'neuroncli/auth-server/scripts/cron.mjs': '', 'neuroncli/auth-server/check-gateway.mjs': '',
+      'neuroncli/auth-server/check-node-lifecycle.cjs': '', 'neuroncli/auth-server/test.js': '', 'neuroncli/auth-server/e2e-upstream-shim.mjs': '',
+      'neuroncli/auth-server/fixtures/request.json': '{}', 'neuroncli/auth-server/migrations/20261001000000_x.sql': '',
+      'neuroncli/auth-server/docs/RELAY.md': '', 'neuroncli/auth-server/README.md': '', 'neuroncli/auth-server/wrangler.toml': '',
+      'neuroncli/auth-server/wrangler.api.toml': '', 'neuroncli/auth-server/.dev.vars.example': '', 'neuroncli/auth-server/.env.example': '',
+      'neuroncli/auth-server/Dockerfile': '',
+    };
+    for (const name of readdirSync(join(repo, 'deploy/aws'))) files[`deploy/aws/${name}`] = read(`deploy/aws/${name}`);
+    for (const [path, text] of Object.entries(files)) {
+      mkdirSync(join(fxRepo, path, '..'), { recursive: true });
+      writeFileSync(join(fxRepo, path), text);
+    }
+    const git = (...args) => spawnSync('git', ['-c', 'user.name=check', '-c', 'user.email=check@example.invalid', '-c', 'core.autocrlf=false', ...args],
+      { cwd: fxRepo, encoding: 'utf8' });
+    git('init', '-q');
+    git('add', '-A', '-f');
+    git('commit', '-q', '-m', 'fixture');
+    const head = git('rev-parse', 'HEAD').stdout.trim();
+    const out = join(fixture, 'release.tar.gz');
+    const pack = (ref = 'HEAD') => bash([posix(join(fxRepo, 'deploy/aws/package-release.sh')), ref, posix(out)], { cwd: fxRepo });
+    const packed = pack();
+    assert.equal(packed.status, 0, `package-release.sh: ${packed.stderr}`);
+    assert.equal(packed.stdout.trim(), head.slice(0, 7), 'it prints the release id');
+    const listed = tarList(out);
+    const expectedSite = Object.keys(files).filter(path => !ignored(path));
+    assert.deepEqual(listed, [...new Set(['REVISION', '.assetsignore', ...expectedSite, ...GATEWAY_RUNTIME, ...KIT])].sort(),
+      'the website as .assetsignore leaves it, the gateway without tests and tools, the VM\'s deploy kit, REVISION');
+    assert.equal(bash(['-c', 'tar -xzOf - REVISION < "$1"', '_', posix(out)]).stdout, `${head.slice(0, 7)}\n`);
+    assert.equal(bash(['-c', 'tar -xzOf - neuroncli/auth-server/src/index.js < "$1"', '_', posix(out)]).stdout,
+      files['neuroncli/auth-server/src/index.js'], 'files as committed (no CRLF from a Windows checkout)');
+    assert.ok(!listed.some(path => NOT_SHIPPED.test(path) && !path.startsWith('deploy/aws/')), 'no tests, migrations, docs, Markdown or env files');
+    // A tracked working file or key fails the build instead of shipping.
+    const leaks = ['output/plan.txt', 'tmp/notes.txt', 'keys/zerox.pem'];
+    for (const leak of leaks) {
+      mkdirSync(join(fxRepo, leak, '..'), { recursive: true });
+      writeFileSync(join(fxRepo, leak), 'x');
+    }
+    git('add', '-f', ...leaks);
+    git('commit', '-q', '-m', 'leaks');
+    const refused = pack();
+    assert.equal(refused.status, 2, 'tracked working files and keys are refused');
+    assert.match(refused.stderr, /refusing to ship 3 file\(s\)/);
+    git('rm', '-q', ...leaks);
+    git('commit', '-q', '-m', 'no leaks');
+    assert.equal(pack('no-such-ref').status, 2);
+    const fxRelease = git('rev-parse', 'HEAD').stdout.trim().slice(0, 7);
+    assert.equal(pack().status, 0);
+
+    // install-release.sh and activation through push-release.sh, with the remote side run here.
+    const vm = join(fixture, 'vm');
+    const root = join(vm, 'opt');
+    const etc = join(vm, 'etc');
+    const stubs = join(fixture, 'bin');
+    const state = join(fixture, 'state');
+    const log = join(fixture, 'calls.log');
+    for (const dir of [join(root, 'releases'), etc, stubs, state]) mkdirSync(dir, { recursive: true });
+    const stub = (name, body, sh = '/bin/sh') => writeFileSync(join(stubs, name), `#!${sh}\n${body}\n`, { mode: 0o755 });
+    stub('sudo', 'echo "sudo $*" >> "$STUB_LOG"\nif [ "$1" = -u ]; then shift 2; fi\nexec "$@"');
+    stub('sleep', 'exit 0');
+    stub('npm', 'echo "npm $*" >> "$STUB_LOG"\nmkdir -p node_modules');
+    stub('systemctl', [
+      'echo "systemctl $*" >> "$STUB_LOG"',
+      'case "$1" in',
+      '  start) readlink "$ZEROX_ROOT/current" > "$STUB_STATE/$2" || true ;;',
+      '  stop) rm -f "$STUB_STATE/$2" ;;',
+      '  is-active) [ "$2" = --quiet ] && shift; [ -e "$STUB_STATE/$2" ] ;;',
+      'esac',
+    ].join('\n'));
+    stub('curl', [
+      'echo "curl $*" >> "$STUB_LOG"',
+      'for a in "$@"; do url="$a"; done',
+      'port="$(echo "$url" | sed -n "s#^http://127\\.0\\.0\\.1:\\([0-9]*\\)/.*#\\1#p")"',
+      'rel="$(cat "$STUB_STATE/zerox-gateway@${port#879}.service" 2>/dev/null)" || { printf 000; exit 7; }',
+      'case "$url" in',
+      '  */ready) printf 200 ;;',
+      '  */health) printf \'{"status":"ok","commit":"%s"}\' "$(cat "$rel/REVISION")" ;;',
+      'esac',
+    ].join('\n'));
+    stub('aws', [
+      'echo "aws $*" >> "$STUB_LOG"',
+      'case "$1 $2" in',
+      '  "cloudformation describe-stacks") echo i-0abc1234def567890 ;;',
+      '  "ec2 describe-instances") printf "i-0abc1234def567890\\r\\n" ;;',
+      '  "ec2-instance-connect send-ssh-public-key")',
+      '    while [ $# -gt 0 ]; do [ "$1" = --ssh-public-key ] && echo "$2" | cut -d" " -f1,2 > "$STUB_DIR/pushed-key"; shift; done',
+      '    echo True ;;',
+      'esac',
+    ].join('\n'));
+    // sshd runs the command with the user's shell; the probe (no authentication method) only records a host key.
+    stub('ssh', [
+      'echo "ssh $*" >> "$STUB_LOG"',
+      'key=; opts=()',
+      'while [ $# -gt 0 ]; do case "$1" in -i) key="$2"; shift 2 ;; -o) opts+=("$2"); shift 2 ;; -*) shift ;; *) break ;; esac; done',
+      'shift',
+      'printf "%s\\n" "${opts[@]}" > "$STUB_DIR/ssh-opts"',
+      'for opt in "${opts[@]}"; do [ "$opt" = PubkeyAuthentication=no ] && exit 255; done',
+      'ssh-keygen -y -f "$key" | cut -d" " -f1,2 > "$STUB_DIR/ssh-key"',
+      'echo "$key" > "$STUB_DIR/ssh-key-path"',
+      'exec bash -c "$*"',
+    ].join('\n'), '/bin/bash');
+    const knownHosts = join(fixture, 'known_hosts');
+    writeFileSync(knownHosts, 'zerox-gateway ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGkLSo4hRj3mnsTQUAmJKSv1n6ssD3wDq4d2qy4ZpC3H\n');
+    const envSecret = join(fixture, 'gateway.env');
+    writeFileSync(envSecret, 'SUPABASE_URL="https://example.invalid"\n');
+    const pushEnv = { [pathKey]: `${stubs}${delimiter}${process.env[pathKey]}`, ZEROX_ROOT: posix(root), ZEROX_ETC: posix(etc),
+      STUB_LOG: posix(log), STUB_STATE: posix(state), STUB_DIR: posix(fixture), AWS_PROFILE: '' };
+    const push = (...args) => {
+      rmSync(log, { force: true });
+      return bash([posix(join(fxRepo, 'deploy/aws/push-release.sh')), ...args], { cwd: fxRepo, env: pushEnv, input: '' });
+    };
+    const pushCalls = () => existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n') : [];
+    const ci = push('--os-user', 'deploy', '--lookup', 'tags', '--env-file', posix(envSecret), '--known-hosts', posix(knownHosts));
+    assert.equal(ci.status, 0, `push-release.sh as CI: ${ci.stdout}${ci.stderr}`);
+    const released = join(root, 'releases', fxRelease);
+    assert.equal(basename(posix(readlinkSync(join(root, 'current')))), fxRelease, 'the pushed release is current');
+    assert.ok(existsSync(join(released, '.installed')) && existsSync(join(released, 'neuroncli/auth-server/node_modules')));
+    assert.deepEqual(readdirSync(join(root, 'releases')), [fxRelease], 'no partial release left behind');
+    assert.equal(readFileSync(join(etc, 'gateway.env'), 'utf8'), readFileSync(envSecret, 'utf8'), 'CI\'s environment file is in place');
+    assert.deepEqual(readdirSync(state), ['zerox-gateway@0.service']);
+    let seen = pushCalls();
+    assert.ok(seen.some(line => /^aws ec2 describe-instances .*Name=tag:aws:cloudformation:stack-name,Values=zerox-gateway/.test(line)));
+    assert.ok(seen.some(line => /^aws ec2-instance-connect send-ssh-public-key .*--instance-id i-0abc1234def567890 --instance-os-user deploy /.test(line)));
+    assert.ok(seen.includes('npm ci --omit=dev --ignore-scripts --no-audit --no-fund --prefer-offline --loglevel=error'), 'production dependencies, no install scripts');
+    const sshOptions = readFileSync(join(fixture, 'ssh-opts'), 'utf8').trim().split('\n');
+    for (const option of ['ProxyCommand=aws ec2-instance-connect open-tunnel --instance-id %h --region ap-south-1', 'HostKeyAlias=zerox-gateway',
+      `UserKnownHostsFile=${posix(knownHosts)}`, 'StrictHostKeyChecking=yes', 'BatchMode=yes', 'IdentitiesOnly=yes']) {
+      assert.ok(sshOptions.includes(option), `ssh ${option}`);
+    }
+    assert.equal(readFileSync(join(fixture, 'ssh-key'), 'utf8'), readFileSync(join(fixture, 'pushed-key'), 'utf8'), 'ssh uses the key it pushed');
+    const keyPath = readFileSync(join(fixture, 'ssh-key-path'), 'utf8').trim();
+    assert.equal(bash(['-c', '[ -e "$1" ]', '_', keyPath]).status, 1, 'the one-time key is deleted');
+
+    // The same commit again (a new environment only): installed once, activated again on the other instance.
+    const again = push('--os-user', 'deploy', '--lookup', 'tags', '--known-hosts', posix(knownHosts));
+    assert.equal(again.status, 0, `${again.stdout}${again.stderr}`);
+    assert.match(again.stdout, /already installed/);
+    assert.deepEqual(readdirSync(state), ['zerox-gateway@1.service']);
+
+    // The laptop: ubuntu, instance from the stack outputs, deploy through sudo -u deploy, no secret.
+    const laptop = push('--known-hosts', posix(knownHosts));
+    assert.equal(laptop.status, 0, `push-release.sh from the laptop: ${laptop.stdout}${laptop.stderr}`);
+    seen = pushCalls();
+    assert.ok(seen.some(line => /^aws cloudformation describe-stacks --stack-name zerox-gateway /.test(line)));
+    assert.ok(seen.some(line => /--instance-os-user ubuntu /.test(line)));
+    assert.ok(seen.some(line => /^sudo -u deploy bash .*install-release\.sh /.test(line)), 'installed as deploy');
+    for (const line of seen.filter(line => line.startsWith('sudo ') && !line.startsWith('sudo -u deploy '))) {
+      assert.ok(sudoAllowed(line), `sudoers allows "${line}"`);
+    }
+    const refusedEnv = push('--env-file', posix(envSecret), '--known-hosts', posix(knownHosts));
+    assert.equal(refusedEnv.status, 2, 'the laptop never sends an environment file');
+    assert.match(refusedEnv.stderr, /never sends secrets/);
+    assert.ok(!pushCalls().some(line => line.startsWith('aws ') || line.startsWith('ssh ')), 'refused before any call');
+    const noHostKey = push('--os-user', 'deploy', '--lookup', 'tags', '--known-hosts', posix(join(fixture, 'none')));
+    assert.equal(noHostKey.status, 2, 'CI without a known host key stops');
+    assert.ok(!pushCalls().some(line => /send-ssh-public-key/.test(line)), 'before pushing a key');
+  }
+} finally {
+  rmSync(fixture, { recursive: true, force: true });
+}
+
+// ── The real repository's HEAD, when it has this kit: what the VM would get from it ──
+let packagedHead = false;
+const headHasKit = spawnSync('git', ['cat-file', '-e', 'HEAD:deploy/aws/package-release.sh'], { cwd: repo }).status === 0;
+if (ran && headHasKit) {
+  packagedHead = true;
+  const out = join(mkdtempSync(join(tmpdir(), 'zerox-head-')), 'release.tar.gz');
+  try {
+    const packed = spawnSync(shell.bash, [posix(join(repo, 'deploy/aws/package-release.sh')), 'HEAD', posix(out)],
+      { cwd: repo, encoding: 'utf8', env: { ...process.env, ...shell.env } });
+    assert.equal(packed.status, 0, `package-release.sh HEAD: ${packed.stderr}`);
+    const head = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).stdout.trim();
+    assert.equal(packed.stdout.trim(), head.slice(0, 7));
+    const listed = spawnSync(shell.bash, ['-c', 'tar -tzf - < "$1"', '_', posix(out)], { encoding: 'utf8' }).stdout.trim().split('\n');
+    const tracked = spawnSync('git', ['-c', 'core.quotePath=false', 'ls-tree', '-r', '--name-only', 'HEAD'], { cwd: repo, encoding: 'utf8' })
+      .stdout.trim().split('\n');
+    const site = listed.filter(path => !path.startsWith('neuroncli/auth-server/') && !['REVISION', '.assetsignore'].includes(path) && !KIT.includes(path));
+    assert.deepEqual(site.sort(), tracked.filter(path => !ignored(path) && !path.startsWith('neuroncli/auth-server/') && !KIT.includes(path)).sort(),
+      'HEAD\'s website files are exactly what .assetsignore leaves');
+    for (const path of [...GATEWAY_RUNTIME, ...KIT, 'REVISION', '.assetsignore', 'index.html']) assert.ok(listed.includes(path), `${path} is in the release`);
+    assert.ok(!listed.some(path => NOT_SHIPPED.test(path) && !path.startsWith('deploy/aws/')), 'no tests, migrations, docs, Markdown or env files');
+    assert.ok(!listed.some(path => /^(output|tmp|Microsoft)\//.test(path)));
+  } finally {
+    rmSync(join(out, '..'), { recursive: true, force: true });
+  }
+}
+
+console.log(`PASS: EC2 kit: env file from [vars] and the deploy.yml secrets (systemd quoting, VM settings refused), parity secrets required, pinned workflow, complete env template, two gateway instances on one port with their own readiness ports, cron in the same sandbox and never enabled by setup, exact deploy sudoers, /v1 base URLs${ran ? ', activation run (new instance ready before the old one stops, rollback without a gap, commit check, prune), host setup run (sudoers checked, cloud-init rule removed, idempotent)' : ''}${packaged ? ', release tarball (.assetsignore as wrangler reads it, gateway without tests, kit, REVISION, tracked secrets and working files refused), push and install through stub endpoint and ssh (CI with its env file, the same commit again, the laptop without secrets, host key required)' : ''}${packagedHead ? ', HEAD packaged' : ''}`);
