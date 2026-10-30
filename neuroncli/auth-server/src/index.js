@@ -37,6 +37,7 @@ import { registerCatalogAdminRoutes } from './routes/catalog-admin.js';
 import { registerCreditRoutes } from './routes/credits.js';
 import { loadVaultKeys, vaultConfigured } from './provider-keys.js';
 import { accessConfigured, passedAccess } from './access-auth.js';
+import { forwardToEc2 } from './ec2-proxy.js';
 // Durable Object classes are exported from the Worker entry (wrangler.toml [[durable_objects]]).
 export { HealthHub } from './health-hub.js';
 export { RelayRoom } from './relay.js';
@@ -887,7 +888,8 @@ api.post('/v1/models/health', async (c) => {
     body: JSON.stringify({ model: body.model, messages: [{ role: 'user', content: 'Reply OK.' }], max_tokens: 8 }),
     signal: c.req.raw.signal,
   }), callerCountry(c.req.raw, c.env));
-  const response = await app.fetch(probe, c.env);
+  // Hono's own fetch: the probe is never forwarded to EC2, whatever EC2_PROXY_PREFIXES covers.
+  const response = await honoFetch(probe, c.env);
   const result = await response.json();
   if (!response.ok) return c.json({ model: body.model, status: 'unavailable', error: result.error, latency_ms: Date.now() - started }, response.status);
   const validCompletion = result.choices?.some(choice => choice.message?.content || choice.message?.tool_calls?.length);
@@ -1064,5 +1066,12 @@ app.scheduled = (controller, env, ctx) => {
   ctx?.waitUntil?.(task.catch(() => {}));
   return task;
 };
+
+// The Worker's fetch: the EC2 proxy switch (src/ec2-proxy.js) decides first, before Hono and any
+// middleware, so a forwarded request costs the Worker one header copy. Unset, it returns null at
+// once and Hono answers exactly as before. app.request (the checks) goes through it too; the
+// gateway's own sub-requests use honoFetch and are never forwarded.
+const honoFetch = app.fetch;
+app.fetch = (request, env, executionCtx) => forwardToEc2(request, env) ?? honoFetch(request, env, executionCtx);
 
 export default app;
