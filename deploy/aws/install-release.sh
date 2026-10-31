@@ -1,10 +1,13 @@
 #!/bin/bash
 # Runs on the VM as the deploy user (push-release.sh runs it from the tarball's own deploy/aws,
 # for the laptop and for CI):
-#   bash install-release.sh <release.tar.gz> <commit>
+#   bash install-release.sh <release.tar.gz> <commit> [--env <file>]
 # Unpacks a release tarball (package-release.sh) into /opt/zerox/releases/<commit>, installs its
-# production dependencies, then hands over to that release's activate-release.sh. The release is
-# unpacked into .partial-<commit> and renamed only once complete, so a failed install never
+# production dependencies, then hands over to that release's activate-release.sh, with the new
+# environment file when there is one (--env: CI's, or the operator's /etc/zerox/gateway.env.next).
+# Nothing in /etc/zerox changes before the lock is held and the release is complete, so a failed
+# install, or a deploy that finds another one running, leaves the environment as it was. The
+# release is unpacked into .partial-<commit> and renamed only once complete, so a failed install never
 # leaves a release that looks usable, and the live release is never touched. A release already
 # installed (the same commit deployed again, for a new environment) is reused as it is.
 #
@@ -18,6 +21,13 @@ tarball="${1:-}"
 release="${2:-}"
 [[ "$release" =~ ^[0-9a-f]{7}$ ]] || { echo "invalid release id (the commit's first 7 hex digits)"; exit 2; }
 [ -f "$tarball" ] || { echo "no release tarball at $tarball"; exit 2; }
+shift 2
+env_args=()
+if [ $# -gt 0 ]; then
+  [ "$1" = --env ] && [ $# = 2 ] || { echo "usage: install-release.sh <release.tar.gz> <commit> [--env <file>]"; exit 2; }
+  [ -s "$2" ] || { echo "no environment file at $2"; exit 2; }
+  env_args=(--env "$2")
+fi
 root="${ZEROX_ROOT:-/opt/zerox}"
 dir="$root/releases/$release"
 partial="$root/releases/.partial-$release"
@@ -48,4 +58,4 @@ else
   touch "$partial/.installed"
   mv -T -- "$partial" "$dir"
 fi
-exec bash "$dir/deploy/aws/activate-release.sh" "$release"
+exec bash "$dir/deploy/aws/activate-release.sh" "$release" "${env_args[@]}"

@@ -221,15 +221,20 @@ assert.equal(settings.AUTH_HOST, '127.0.0.1', 'only cloudflared on the VM reache
 assert.equal(settings.AUTH_PORT, '8787');
 assert.equal(settings.AUTH_REUSE_PORT, 'true', 'both instances listen on the tunnel origin port');
 assert.equal(settings.READY_PORT, '879%i', 'each instance answers /ready on its own loopback port');
-assert.equal(settings.ASSETS_DIR, '/opt/zerox/current', 'the VM serves the website from the current release');
+// Each instance runs the release its own link names (/opt/zerox/instance-N), which
+// activate-release.sh changes only while that instance is stopped; /opt/zerox/current, which the
+// cron follows, flips only once a release passed its checks.
+assert.equal(settings.ASSETS_DIR, '/opt/zerox/instance-%i', 'the VM serves the website from the instance\'s release');
 assert.equal(settings.TRUST_CLOUDFLARE, 'true');
 assert.ok(!/NEURON_API_ONLY/.test(code_(unit)), 'the VM serves the website: no API-only switch');
-const app = '/opt/zerox/current/neuroncli/auth-server';
+const app = '/opt/zerox/instance-%i/neuroncli/auth-server';
 assert.match(unit, new RegExp(`^WorkingDirectory=${app}$`, 'm'));
 assert.match(unit, new RegExp(`^ExecStart=/usr/bin/node ${app}/server\\.js$`, 'm'));
 assert.match(unit, new RegExp(`^ConditionPathExists=${app}/server\\.js$`, 'm'), 'nothing to start at boot before the first release');
-assert.match(cron, new RegExp(`^WorkingDirectory=${app}$`, 'm'));
-assert.match(cron, new RegExp(`^ExecStart=/usr/bin/node ${app}/scripts/cron\\.mjs$`, 'm'));
+assert.ok(!/\/opt\/zerox\/current/.test(code_(unit)), 'no instance follows /opt/zerox/current');
+const cronApp = '/opt/zerox/current/neuroncli/auth-server';
+assert.match(cron, new RegExp(`^WorkingDirectory=${cronApp}$`, 'm'));
+assert.match(cron, new RegExp(`^ExecStart=/usr/bin/node ${cronApp}/scripts/cron\\.mjs$`, 'm'));
 assert.ok(existsSync(join(here, 'scripts/cron.mjs')));
 assert.ok(!/NEURON_API_ONLY/.test(code_(cron)));
 const serverJs = readFileSync(join(here, 'server.js'), 'utf8');
@@ -276,6 +281,18 @@ const sudoAllowed = line => allowed.includes(line.replace(/^sudo systemctl /, '/
 assert.ok(!/(enable|start|restart|reenable)\b[^\n]*zerox-cron\.timer/.test(code_(setup)), 'host-setup.sh never enables or starts the cron timer');
 assert.match(setup, /visudo -cqf /, 'the sudoers file is checked before it is installed');
 assert.ok(!/cloudflared[^\n]*--token(?!-file)/.test(code_(setup)), 'no tunnel token on a command line');
+
+// ── Upgrades: needrestart leaves the gateway alone (a restart closes the only listener for the
+// whole drain); apt starts the refresh, which root runs from a root-owned path (never a file
+// deploy can write) and which hands the swap to deploy ──
+const refreshUnit = read('deploy/aws/zerox-gateway-refresh.service');
+assert.match(refreshUnit, /^Type=oneshot$/m);
+assert.match(refreshUnit, /^ExecStart=\/usr\/local\/sbin\/zerox-gateway-refresh$/m);
+assert.ok(!/\/opt\/zerox|^User=/m.test(code_(refreshUnit)) && !/^\[Install\]/m.test(refreshUnit), 'root runs only its own copy; apt starts it, nothing enables it');
+assert.match(read('deploy/aws/zerox-apt-refresh.conf'), /^DPkg::Post-Invoke \{ "systemctl start --no-block zerox-gateway-refresh\.service[^"]*\|\| true"; \};$/m,
+  'apt never waits for the swap, and never fails because of it');
+assert.match(read('deploy/aws/zerox-gateway-refresh.sh'), /^exec runuser -u deploy -- bash "\$dir\/deploy\/aws\/activate-release\.sh" "\$release"$/m);
+assert.match(read('deploy/aws/zerox-needrestart.conf'), /^\$nrconf\{override_rc\}\{qr\(\^zerox-gateway\\@\\d\+\\\.service\$\)\} = 0;$/m);
 
 // ── Runbooks: the CLI's base URL includes /v1 (it appends /chat/completions and /models to it),
 // every script they name exists, the cutover keeps its switch and rollbacks, no account id ──
@@ -372,21 +389,34 @@ try {
     const stub = (name, body) => writeFileSync(join(stubs, name), `#!/bin/sh\n${body}\n`, { mode: 0o755 });
     stub('sudo', 'echo "sudo $*" >> "$STUB_LOG"\nexec "$@"');
     stub('sleep', 'exit 0');
-    // A started instance remembers the release /opt/zerox/current pointed at when it started.
+    // A started instance remembers the release its link (/opt/zerox/instance-N) pointed at when it
+    // started; `show` gives a running instance a main PID (100 + N).
     stub('systemctl', [
       'echo "systemctl $*" >> "$STUB_LOG"',
+      'unit="$2"; [ "$1" = show ] && unit="$5"',
+      'n="${unit#zerox-gateway@}"; n="${n%.service}"',
       'case "$1" in',
-      '  start) readlink "$ZEROX_ROOT/current" > "$STUB_STATE/$2" || true ;;',
-      '  stop) rm -f "$STUB_STATE/$2" ;;',
+      '  start) readlink "$ZEROX_ROOT/instance-$n" > "$STUB_STATE/$unit" || true ;;',
+      '  stop) rm -f "$STUB_STATE/$unit" ;;',
       '  is-active) [ "$2" = --quiet ] && shift; [ -e "$STUB_STATE/$2" ] ;;',
+      '  show) if [ -e "$STUB_STATE/$unit" ]; then echo $((100 + n)); else echo 0; fi ;;',
       'esac',
     ].join('\n'));
     // Port 879N is instance N: /ready answers 503 while its release carries a not-ready marker,
-    // /health reports the release's REVISION (or the commit in its health-commit file).
+    // /health reports the release's REVISION (or the commit in its health-commit file). Each
+    // readiness poll logs where /opt/zerox/current points; with STUB_RESTART, systemd restarts
+    // every running instance first (Restart=always after a crash), on its link.
     stub('curl', [
       'echo "curl $*" >> "$STUB_LOG"',
       'for a in "$@"; do url="$a"; done',
       'port="$(echo "$url" | sed -n "s#^http://127\\.0\\.0\\.1:\\([0-9]*\\)/.*#\\1#p")"',
+      'case "$url" in */ready) cur="$(readlink "$ZEROX_ROOT/current" 2>/dev/null || true)"; echo "ready-check current=${cur##*/}" >> "$STUB_LOG" ;; esac',
+      'if [ -n "$STUB_RESTART" ]; then',
+      '  for f in "$STUB_STATE"/zerox-gateway@*.service; do',
+      '    [ -e "$f" ] || continue; u="${f##*/}"; u="${u#zerox-gateway@}"',
+      '    readlink "$ZEROX_ROOT/instance-${u%.service}" > "$f"',
+      '  done',
+      'fi',
       'rel="$(cat "$STUB_STATE/zerox-gateway@${port#879}.service" 2>/dev/null)" || { printf 000; exit 7; }',
       'case "$url" in',
       '  */ready) if [ -e "$rel/not-ready" ]; then printf 503; else printf 200; fi ;;',
@@ -402,20 +432,26 @@ try {
       writeFileSync(join(dir, 'REVISION'), `${id}\n`);
       if (!ready) writeFileSync(join(dir, 'not-ready'), '');
       if (commit) writeFileSync(join(dir, 'health-commit'), commit);
-      writeFileSync(join(etc, 'gateway.env.next'), `N="${id}"\n`);
       return id;
     };
     const calls = () => existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n') : [];
-    const activateRun = id => {
+    // Each activation gets a new environment file through --env (as CI's push passes it), unless told otherwise.
+    const activateRun = (id, { args, vars = {} } = {}) => {
       rmSync(log, { force: true });
-      const run = spawnSync(shell.bash, ['-s', '--', id], { input: activate, encoding: 'utf8', env });
+      if (!args) {
+        writeFileSync(join(work, `env-${id}`), `N="${id}"\n`);
+        args = ['--env', posix(join(work, `env-${id}`))];
+      }
+      const run = spawnSync(shell.bash, ['-s', '--', id, ...args], { input: activate, encoding: 'utf8', env: { ...env, ...vars } });
       for (const line of calls().filter(line => line.startsWith('sudo '))) assert.ok(sudoAllowed(line), `sudoers allows "${line}"`);
       return run;
     };
     const current = () => basename(posix(readlinkSync(join(root, 'current'))));
+    const link = n => basename(posix(readlinkSync(join(root, `instance-${n}`))));
     const running = () => readdirSync(state).sort().map(name => `${name}:${basename(posix(readFileSync(join(state, name), 'utf8').trim()))}`);
     const envFile = name => readFileSync(join(etc, name), 'utf8').trim();
     const position = text => calls().findIndex(line => line.includes(text));
+    const currentDuringChecks = () => calls().filter(line => line.startsWith('ready-check ')).map(line => line.slice('ready-check current='.length));
 
     const first = release('1111111');
     const firstRun = activateRun(first);
@@ -423,8 +459,9 @@ try {
     assert.match(firstRun.stdout, /is live/);
     assert.equal(current(), first);
     assert.deepEqual(running(), ['zerox-gateway@0.service:1111111'], 'nothing ran: instance 0 starts on the release');
+    assert.deepEqual([link(0), link(1)], [first, first], 'both instances start on the live release (@0 at boot)');
+    assert.deepEqual([...new Set(currentDuringChecks())], [''], '/opt/zerox/current appears only once the release passed its checks');
     assert.equal(envFile('gateway.env'), 'N="1111111"');
-    assert.ok(!existsSync(join(etc, 'gateway.env.next')));
     assert.ok(calls().some(line => /^curl .*http:\/\/127\.0\.0\.1:8790\/ready$/.test(line)), 'readiness on instance 0\'s own port');
 
     const second = release('2222222');
@@ -433,6 +470,8 @@ try {
     assert.ok(position('systemctl start zerox-gateway@1.service') < position('8791/ready') &&
       position('8791/ready') < position('systemctl stop zerox-gateway@0.service'),
     'the new instance is started and ready before the old one stops (zero downtime)');
+    assert.deepEqual([...new Set(currentDuringChecks())], [first], 'cron, boot and operators keep the previous release while the new one is checked');
+    assert.deepEqual([current(), link(0), link(1)], [second, second, second], 'then current flips, and the stopped instance\'s link follows');
     const ids = [first, second];
     for (const id of ['3333333', '4444444', '5555555', '6666666']) {
       ids.push(release(id));
@@ -442,15 +481,25 @@ try {
     assert.equal(envFile('gateway.env.prev'), 'N="5555555"');
     assert.deepEqual(running(), ['zerox-gateway@1.service:6666666']);
 
-    // Not ready: the new instance stops, the release and environment go back, the old instance never stopped.
+    // Not ready: the new instance stops, its link and the environment go back; the old instance
+    // and /opt/zerox/current were never touched.
     const bad = release('7777777', { ready: false });
     const badRun = activateRun(bad);
     assert.equal(badRun.status, 1, 'a release that is not ready fails the deploy');
-    assert.match(badRun.stdout, /previous release is live again/);
-    assert.equal(current(), '6666666', 'the previous release is back');
-    assert.equal(envFile('gateway.env'), 'N="6666666"', 'and its environment');
+    assert.match(badRun.stdout, /zerox-gateway@1 never stopped; it serves 6666666/);
+    assert.equal(current(), '6666666', 'current never left the previous release');
+    assert.equal(link(0), '6666666', 'the idle instance\'s link is put back');
+    assert.equal(envFile('gateway.env'), 'N="6666666"', 'and the environment');
     assert.deepEqual(running(), ['zerox-gateway@1.service:6666666'], 'the serving instance was never stopped');
     assert.ok(!calls().includes('systemctl stop zerox-gateway@1.service'));
+
+    // The serving instance crashes during the checks of a bad release: systemd restarts it on its
+    // own link, which still names the previous release (not the release being checked).
+    const crash = release('7777770', { ready: false });
+    const crashRun = activateRun(crash, { vars: { STUB_RESTART: '1' } });
+    assert.equal(crashRun.status, 1);
+    assert.deepEqual(running(), ['zerox-gateway@1.service:6666666'], 'restarted on the previous release');
+    assert.match(crashRun.stdout, /it serves 6666666/);
 
     // Ready, but /health reports another commit: refused the same way.
     const stale = release('8888888', { commit: 'deadbee' });
@@ -467,6 +516,9 @@ try {
     assert.ok(position('systemctl stop zerox-gateway@1.service') < position('systemctl start zerox-gateway@1.service') &&
       position('systemctl start zerox-gateway@1.service') < position('systemctl stop zerox-gateway@0.service'));
     assert.deepEqual(running(), ['zerox-gateway@1.service:9999999']);
+    // The three releases that failed their checks never went live: pruned before any rollback target.
+    assert.deepEqual(readdirSync(join(root, 'releases')).sort(), ['4444444', '5555555', '6666666', '9999999'],
+      'releases that never went live are removed first; the three most recently activated stay');
 
     // Nothing running (after a crash or a reboot) and the new release is not ready: the previous one is started again.
     rmSync(join(state, 'zerox-gateway@1.service'));
@@ -476,11 +528,58 @@ try {
     assert.match(coldRun.stdout, /previous release is live again/);
     assert.equal(current(), '9999999');
     assert.deepEqual(running(), ['zerox-gateway@1.service:9999999']);
+    assert.deepEqual([link(0), link(1)], ['9999999', '9999999']);
+
+    // The environment changes only with --env. A gateway.env.next left behind is never picked up;
+    // the operator's, passed with --env, is removed once live; --env gateway.env.prev swaps back.
+    writeFileSync(join(etc, 'gateway.env.next'), 'N="operator"\n');
+    assert.equal(activateRun('9999999', { args: [] }).status, 0, 'the same release again, environment unchanged');
+    assert.equal(envFile('gateway.env'), 'N="9999999"', 'no --env: the environment stays');
+    assert.ok(existsSync(join(etc, 'gateway.env.next')), 'and gateway.env.next is left alone');
+    assert.equal(activateRun('9999999', { args: ['--env', posix(join(etc, 'gateway.env.next'))] }).status, 0);
+    assert.equal(envFile('gateway.env'), 'N="operator"');
+    assert.ok(!existsSync(join(etc, 'gateway.env.next')), 'the operator\'s gateway.env.next is consumed once live');
+    assert.equal(activateRun('9999999', { args: ['--env', posix(join(etc, 'gateway.env.prev'))] }).status, 0);
+    assert.deepEqual([envFile('gateway.env'), envFile('gateway.env.prev')], ['N="9999999"', 'N="operator"'], 'the previous environment back');
 
     assert.equal(activateRun('not-a-sha').status, 2, 'a release id is a 7-character commit');
     const partial = release('bbbbbbb', { modules: false });
     assert.equal(activateRun(partial).status, 2, 'a release without its dependencies is refused');
+    assert.equal(activateRun('9999999', { args: ['--env', posix(join(work, 'none'))] }).status, 2, 'a missing environment file is refused');
+    assert.equal(activateRun('9999999', { args: ['--force'] }).status, 2, 'an unknown argument is refused');
     assert.equal(current(), '9999999');
+
+    // zerox-gateway-refresh, which apt starts after every dpkg run: the current release is
+    // activated again (as deploy) only when a running instance maps a system file an upgrade
+    // replaced, so the idle instance takes the new node or library before the old one drains.
+    const proc = join(work, 'proc');
+    stub('runuser', 'echo "runuser $*" >> "$STUB_LOG"\n[ "$1 $2 $3" = "-u deploy --" ] || exit 9\nshift 3\nexec "$@"');
+    mkdirSync(join(root, 'releases/9999999/deploy/aws'), { recursive: true });
+    writeFileSync(join(root, 'releases/9999999/deploy/aws/activate-release.sh'), activate);
+    const maps = lines => {
+      for (const pid of [100, 101]) {
+        mkdirSync(join(proc, String(pid)), { recursive: true });
+        writeFileSync(join(proc, String(pid), 'maps'), `${lines.join('\n')}\n`);
+      }
+    };
+    const refresh = () => {
+      rmSync(log, { force: true });
+      return spawnSync(shell.bash, [posix(join(repo, 'deploy/aws/zerox-gateway-refresh.sh'))], { encoding: 'utf8', env: { ...env, ZEROX_PROC: posix(proc) } });
+    };
+    const serving = running();
+    maps(['aaaa0000-aaaa1000 r-xp 00000000 103:01 4242 /usr/bin/node', 'bbbb0000-bbbb1000 rw-s 00000000 00:01 77 /memfd:v8 (deleted)']);
+    const quiet = refresh();
+    assert.equal(quiet.status, 0, `${quiet.stdout}${quiet.stderr}`);
+    assert.match(quiet.stdout, /no replaced file/);
+    assert.ok(!calls().some(line => /^runuser /.test(line)) && running().join() === serving.join(), 'nothing replaced: nothing restarts');
+    maps(['aaaa0000-aaaa1000 r-xp 00000000 103:01 4242 /usr/bin/node (deleted)']);
+    const swapped = refresh();
+    assert.equal(swapped.status, 0, `${swapped.stdout}${swapped.stderr}`);
+    assert.ok(calls().some(line => /^runuser -u deploy -- bash \S+\/releases\/9999999\/deploy\/aws\/activate-release\.sh 9999999$/.test(line)),
+      'the current release, activated again as deploy');
+    assert.notDeepEqual(running(), serving, 'the other instance took over');
+    assert.equal(running().length, 1);
+    assert.equal(envFile('gateway.env'), 'N="9999999"', 'with the environment as it was');
 
     // host-setup.sh against a temporary system root: units, sudoers, kernel setting, legacy unit.
     const sys = join(work, 'sys');
@@ -513,10 +612,16 @@ try {
     for (const [kit, target] of [['zerox-gateway@.service', 'etc/systemd/system/zerox-gateway@.service'],
       ['zerox-cron.service', 'etc/systemd/system/zerox-cron.service'], ['zerox-cron.timer', 'etc/systemd/system/zerox-cron.timer'],
       ['cloudflared.service', 'etc/systemd/system/cloudflared.service'], ['zerox-deploy.sudoers', 'etc/sudoers.d/zerox-deploy'],
-      ['zerox-sysctl.conf', 'etc/sysctl.d/60-zerox.conf']]) {
+      ['zerox-sysctl.conf', 'etc/sysctl.d/60-zerox.conf'], ['zerox-needrestart.conf', 'etc/needrestart/conf.d/60-zerox-gateway.conf'],
+      ['zerox-apt-refresh.conf', 'etc/apt/apt.conf.d/80zerox-gateway-refresh'],
+      ['zerox-gateway-refresh.service', 'etc/systemd/system/zerox-gateway-refresh.service'],
+      ['zerox-gateway-refresh.sh', 'usr/local/sbin/zerox-gateway-refresh']]) {
       assert.equal(readFileSync(sysPath(target), 'utf8'), read(`deploy/aws/${kit}`), `${target} installed`);
     }
-    if (process.platform !== 'win32') assert.equal(statSync(sysPath('etc/sudoers.d/zerox-deploy')).mode & 0o777, 0o440);
+    if (process.platform !== 'win32') {
+      assert.equal(statSync(sysPath('etc/sudoers.d/zerox-deploy')).mode & 0o777, 0o440);
+      assert.equal(statSync(sysPath('usr/local/sbin/zerox-gateway-refresh')).mode & 0o777, 0o755);
+    }
     const cloudInitAfter = readFileSync(sysPath('etc/sudoers.d/90-cloud-init-users'), 'utf8');
     assert.ok(!/^deploy\s/m.test(cloudInitAfter) && /^ubuntu ALL=\(ALL\) NOPASSWD:ALL$/m.test(cloudInitAfter),
       'cloud-init\'s rule for deploy is gone, ubuntu\'s stays');
@@ -528,7 +633,8 @@ try {
     assert.ok(setupCalls.includes('visudo -cq'), 'the whole sudo configuration checked after');
     assert.ok(setupCalls.includes('systemctl daemon-reload'));
     assert.ok(setupCalls.includes('systemctl enable zerox-gateway@0.service'), 'instance 0 starts at boot');
-    assert.ok(setupCalls.some(line => /^systemd-analyze verify .*zerox-gateway@0\.service/.test(line)));
+    assert.ok(setupCalls.some(line => /^systemd-analyze verify .*zerox-gateway@0\.service.*zerox-gateway-refresh\.service/.test(line)));
+    assert.ok(!setupCalls.some(line => /zerox-gateway-refresh/.test(line) && /\b(enable|start)\b/.test(line)), 'the refresh runs only when apt starts it');
     assert.ok(setupCalls.some(line => /^sysctl -q -p .*60-zerox\.conf$/.test(line)));
     assert.ok(!setupCalls.some(line => /zerox-cron\.timer/.test(line) && /\b(enable|start|restart)\b/.test(line)), 'the cron timer stays off');
     assert.ok(!setupCalls.some(line => /cloudflared/.test(line) && /\b(enable|start)\b/.test(line)), 'no tunnel token yet: cloudflared stays off');
@@ -551,6 +657,22 @@ try {
     assert.equal(refused.status, 1);
     assert.ok(!existsSync(sysPath('etc/sudoers.d/zerox-deploy')));
     assert.equal(readFileSync(sysPath('etc/sudoers.d/90-cloud-init-users'), 'utf8'), cloudInitSudo);
+
+    // Any other sudo rule for deploy fails the setup: zerox-deploy must be all deploy may run as root.
+    freshSystem();
+    writeFileSync(sysPath('etc/sudoers.d/99-extra'), '# added by hand\ndeploy ALL=(ALL) ALL\n');
+    const extraRule = setupRun();
+    assert.equal(extraRule.status, 1, 'another sudo rule names deploy');
+    assert.match(extraRule.stderr, /other sudo rules name deploy: \S*99-extra/);
+
+    // needrestart, reading conf.d as it does (Perl), never restarts a gateway instance and still restarts the rest.
+    const perl = spawnSync(shell.bash, ['-c', 'command -v perl >/dev/null || exit 3; perl -e "$1" "$2" zerox-gateway@0.service zerox-gateway@1.service zerox-cron.service cloudflared.service',
+      '_', 'our %nrconf; my $file = shift; defined(do $file) or die "$file: $@$!"; for my $unit (@ARGV) { my @hit = grep { $unit =~ /$_/ } keys %{$nrconf{override_rc}}; print "$unit=", (@hit ? $nrconf{override_rc}{$hit[0]} : "restart"), "\\n" }',
+      posix(join(repo, 'deploy/aws/zerox-needrestart.conf'))], { encoding: 'utf8' });
+    if (perl.status !== 3) {
+      assert.equal(perl.status, 0, perl.stderr);
+      assert.deepEqual(perl.stdout.trim().split('\n'), ['zerox-gateway@0.service=0', 'zerox-gateway@1.service=0', 'zerox-cron.service=restart', 'cloudflared.service=restart']);
+    }
   }
 } finally {
   rmSync(work, { recursive: true, force: true });
@@ -559,8 +681,9 @@ try {
 // ── package-release.sh, install-release.sh and push-release.sh, run: a fixture repository with
 // the real .assetsignore and this deploy kit, stub aws, ssh (which runs the remote command
 // locally), npm, sudo, systemctl and curl. ──
-// .assetsignore read with gitignore rules (what wrangler applies), independently of git: a
-// pattern matches a path or one of its directories; one with a slash before its end is anchored.
+// .assetsignore read with gitignore rules, as wrangler applies them (the `ignore` package, which
+// ignores case by default), independently of git: a pattern matches a path or one of its
+// directories, case-insensitively; one with a slash before its end is anchored.
 function assetsIgnored(text) {
   const rules = text.split(/\r?\n/).map(line => line.trim()).filter(line => line && !line.startsWith('#')).map(pattern => {
     assert.ok(!pattern.startsWith('!'), 'no negated patterns (this reading does not support them)');
@@ -575,7 +698,7 @@ function assetsIgnored(text) {
       else source += body[i].replace(/[.+^${}()|[\]\\]/g, '\\$&');
     }
     const anchored = (dirOnly ? pattern.slice(0, -1) : pattern).includes('/');
-    return { re: new RegExp(`^${anchored ? '' : '(?:.*/)?'}${source}$`), dirOnly };
+    return { re: new RegExp(`^${anchored ? '' : '(?:.*/)?'}${source}$`, 'i'), dirOnly };
   });
   return path => path.split('/').some((_, i, parts) => {
     const sub = parts.slice(0, i + 1).join('/');
@@ -586,11 +709,16 @@ function assetsIgnored(text) {
 const ignored = assetsIgnored(read('.assetsignore'));
 assert.ok(ignored('neuroncli/auth-server/server.js') && ignored('README.md') && ignored('docs/x/y.md') && ignored('Assets/RahulCIT.png') &&
   ignored('Assets/Pasted text.txt') && ignored('a/node_modules/b.js') && !ignored('index.html') && !ignored('Assets/logo.png') &&
-  !ignored('videos/clip.mp4') && ignored('Assets/demo.mp4'), 'the reading of .assetsignore');
+  !ignored('videos/clip.mp4') && ignored('Assets/demo.mp4') && ignored('Assets/Demo.MP4') && ignored('Assets/whatsapp-chat.png'),
+'the reading of .assetsignore');
+// git applies the patterns with core.ignoreCase, which `git init` sets true on Windows and macOS and
+// false on Linux: the scan sets it, so the laptop and CI ship the same files the Worker uploads.
+assert.match(read('deploy/aws/package-release.sh'), /git -c core\.ignoreCase=true -c core\.quotePath=false --git-dir=\S+ --work-tree=\S+ ls-files --others/);
 const GATEWAY_RUNTIME = ['neuroncli/auth-server/server.js', 'neuroncli/auth-server/package.json', 'neuroncli/auth-server/package-lock.json',
   'neuroncli/auth-server/src/index.js', 'neuroncli/auth-server/scripts/cron.mjs'];
 const KIT = ['install-release.sh', 'activate-release.sh', 'host-setup.sh', 'zerox-gateway@.service', 'zerox-cron.service',
-  'zerox-cron.timer', 'cloudflared.service', 'zerox-deploy.sudoers', 'zerox-sysctl.conf'].map(name => `deploy/aws/${name}`);
+  'zerox-cron.timer', 'cloudflared.service', 'zerox-deploy.sudoers', 'zerox-sysctl.conf', 'zerox-needrestart.conf', 'zerox-apt-refresh.conf',
+  'zerox-gateway-refresh.service', 'zerox-gateway-refresh.sh'].map(name => `deploy/aws/${name}`);
 const NOT_SHIPPED = /^neuroncli\/auth-server\/(check-|test\.js$|e2e-|fixtures\/|migrations\/|docs\/|wrangler[^/]*\.toml$|Dockerfile$|\.)|(^|\/)(output|tmp)\/|\.md$|(^|\/)\.(env|dev\.vars)/;
 let packaged = false;
 const fixture = mkdtempSync(join(tmpdir(), 'zerox-package-'));
@@ -603,6 +731,7 @@ try {
     const files = {
       '.assetsignore': read('.assetsignore'), '.gitignore': 'node_modules/\n', 'index.html': '<!doctype html>', '404.html': '',
       'Assets/logo.png': 'png', 'Assets/RahulCIT.png': 'private', 'Assets/Pasted text.txt': 'notes', 'videos/clip.mp4': 'mp4',
+      'Assets/Demo.MP4': 'mp4', 'Assets/whatsapp-chat.png': 'private', // excluded only when case is ignored, as wrangler does
       'releases/neuron/latest.json': '{}', 'neuroncli/callback/index.html': '', 'SEO_AUDIT.md': '# notes', 'seo-pages.json': '[]',
       'legacy.html': '', 'tailwind.config.cjs': '', '.github/workflows/deploy.yml': '', 'docs/guide.html': '', '.env': 'SECRET=1',
       'neuroncli/auth-server/server.js': '', 'neuroncli/auth-server/package.json': '{}', 'neuroncli/auth-server/package-lock.json': '{}',
@@ -665,11 +794,12 @@ try {
     const stub = (name, body, sh = '/bin/sh') => writeFileSync(join(stubs, name), `#!${sh}\n${body}\n`, { mode: 0o755 });
     stub('sudo', 'echo "sudo $*" >> "$STUB_LOG"\nif [ "$1" = -u ]; then shift 2; fi\nexec "$@"');
     stub('sleep', 'exit 0');
-    stub('npm', 'echo "npm $*" >> "$STUB_LOG"\nmkdir -p node_modules');
+    stub('npm', 'echo "npm $*" >> "$STUB_LOG"\n[ -z "$STUB_NPM_FAIL" ] || exit 1\nmkdir -p node_modules');
     stub('systemctl', [
       'echo "systemctl $*" >> "$STUB_LOG"',
+      'n="${2#zerox-gateway@}"; n="${n%.service}"',
       'case "$1" in',
-      '  start) readlink "$ZEROX_ROOT/current" > "$STUB_STATE/$2" || true ;;',
+      '  start) readlink "$ZEROX_ROOT/instance-$n" > "$STUB_STATE/$2" || true ;;',
       '  stop) rm -f "$STUB_STATE/$2" ;;',
       '  is-active) [ "$2" = --quiet ] && shift; [ -e "$STUB_STATE/$2" ] ;;',
       'esac',
@@ -714,9 +844,11 @@ try {
       STUB_LOG: posix(log), STUB_STATE: posix(state), STUB_DIR: posix(fixture), AWS_PROFILE: '' };
     const push = (...args) => {
       rmSync(log, { force: true });
-      return bash([posix(join(fxRepo, 'deploy/aws/push-release.sh')), ...args], { cwd: fxRepo, env: pushEnv, input: '' });
+      const vars = typeof args[0] === 'object' ? args.shift() : {};
+      return bash([posix(join(fxRepo, 'deploy/aws/push-release.sh')), ...args], { cwd: fxRepo, env: { ...pushEnv, ...vars }, input: '' });
     };
     const pushCalls = () => existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n') : [];
+    const etcFiles = () => readdirSync(etc).sort();
     const ci = push('--os-user', 'deploy', '--lookup', 'tags', '--env-file', posix(envSecret), '--known-hosts', posix(knownHosts));
     assert.equal(ci.status, 0, `push-release.sh as CI: ${ci.stdout}${ci.stderr}`);
     const released = join(root, 'releases', fxRelease);
@@ -724,7 +856,16 @@ try {
     assert.ok(existsSync(join(released, '.installed')) && existsSync(join(released, 'neuroncli/auth-server/node_modules')));
     assert.deepEqual(readdirSync(join(root, 'releases')), [fxRelease], 'no partial release left behind');
     assert.equal(readFileSync(join(etc, 'gateway.env'), 'utf8'), readFileSync(envSecret, 'utf8'), 'CI\'s environment file is in place');
+    assert.deepEqual(etcFiles(), ['gateway.env', 'gateway.env.prev'], 'no copy of it left in /etc/zerox (it travels to activate-release.sh as --env)');
     assert.deepEqual(readdirSync(state), ['zerox-gateway@0.service']);
+    // The remote side runs with umask 077: install-release.sh opens the release to the zerox group
+    // (read only), or zerox could not read a file of it and the instance would never be ready.
+    assert.match(read('deploy/aws/install-release.sh'), /^\s*chmod -R u=rwX,g=rX,o= -- "\$partial"$/m);
+    if (process.platform !== 'win32') {
+      for (const [path, mode] of [['neuroncli/auth-server/server.js', 0o640], ['neuroncli/auth-server', 0o750], ['REVISION', 0o640], ['index.html', 0o640]]) {
+        assert.equal(statSync(join(released, path)).mode & 0o777, mode, `${path} is ${mode.toString(8)} in the release`);
+      }
+    }
     let seen = pushCalls();
     assert.ok(seen.some(line => /^aws ec2 describe-instances .*Name=tag:aws:cloudformation:stack-name,Values=zerox-gateway/.test(line)));
     assert.ok(seen.some(line => /^aws ec2-instance-connect send-ssh-public-key .*--instance-id i-0abc1234def567890 --instance-os-user deploy /.test(line)));
@@ -744,6 +885,18 @@ try {
     assert.match(again.stdout, /already installed/);
     assert.deepEqual(readdirSync(state), ['zerox-gateway@1.service']);
 
+    // An install that fails (npm here) changes no environment and leaves none behind for a later activation.
+    writeFileSync(join(fxRepo, 'index.html'), '<!doctype html><title>2</title>');
+    git('commit', '-q', '-am', 'second');
+    const liveEnv = readFileSync(join(etc, 'gateway.env'), 'utf8');
+    writeFileSync(envSecret, 'SUPABASE_URL="https://changed.invalid"\n');
+    const npmFails = push({ STUB_NPM_FAIL: '1' }, '--os-user', 'deploy', '--lookup', 'tags', '--env-file', posix(envSecret), '--known-hosts', posix(knownHosts));
+    assert.notEqual(npmFails.status, 0, 'a failed npm ci fails the push');
+    assert.equal(readFileSync(join(etc, 'gateway.env'), 'utf8'), liveEnv, 'the live environment is untouched');
+    assert.deepEqual(etcFiles(), ['gateway.env', 'gateway.env.prev'], 'and no gateway.env.next waits for a later activation');
+    assert.equal(basename(posix(readlinkSync(join(root, 'current')))), fxRelease, 'the live release is untouched');
+    assert.deepEqual(readdirSync(state), ['zerox-gateway@1.service']);
+
     // The laptop: ubuntu, instance from the stack outputs, deploy through sudo -u deploy, no secret.
     const laptop = push('--known-hosts', posix(knownHosts));
     assert.equal(laptop.status, 0, `push-release.sh from the laptop: ${laptop.stdout}${laptop.stderr}`);
@@ -754,6 +907,18 @@ try {
     for (const line of seen.filter(line => line.startsWith('sudo ') && !line.startsWith('sudo -u deploy '))) {
       assert.ok(sudoAllowed(line), `sudoers allows "${line}"`);
     }
+    assert.equal(readFileSync(join(etc, 'gateway.env'), 'utf8'), liveEnv, 'the laptop leaves the environment as it is');
+
+    // A hand-written environment (README.md, "Environment file"): the operator writes gateway.env.next
+    // on the VM, then pushes with --env-next; it goes live with a release check, then is consumed.
+    writeFileSync(join(etc, 'gateway.env.next'), 'SUPABASE_URL="https://by-hand.invalid"\n');
+    const byHand = push('--known-hosts', posix(knownHosts), '--env-next');
+    assert.equal(byHand.status, 0, `push-release.sh --env-next: ${byHand.stdout}${byHand.stderr}`);
+    assert.ok(pushCalls().some(line => /^sudo -u deploy bash \S+install-release\.sh \S+ [0-9a-f]{7} --env \S+\/gateway\.env\.next$/.test(line)));
+    assert.equal(readFileSync(join(etc, 'gateway.env'), 'utf8'), 'SUPABASE_URL="https://by-hand.invalid"\n');
+    assert.deepEqual(etcFiles(), ['gateway.env', 'gateway.env.prev']);
+    assert.equal(push('--os-user', 'deploy', '--lookup', 'tags', '--known-hosts', posix(knownHosts), '--env-next', '--env-file', posix(envSecret)).status, 2,
+      'one environment source per push');
     const refusedEnv = push('--env-file', posix(envSecret), '--known-hosts', posix(knownHosts));
     assert.equal(refusedEnv.status, 2, 'the laptop never sends an environment file');
     assert.match(refusedEnv.stderr, /never sends secrets/);

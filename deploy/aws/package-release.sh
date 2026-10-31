@@ -7,12 +7,13 @@
 #
 # The tarball's root is a release root (/opt/zerox/releases/<commit> on the VM):
 #   - the website: every file of the commit that the Worker's asset upload keeps, i.e. the root
-#     .assetsignore applied with gitignore rules, as wrangler applies it, plus .assetsignore
-#     itself (server.js derives its allow-list from it);
+#     .assetsignore applied with gitignore rules and ignoring case, as wrangler applies it, plus
+#     .assetsignore itself (server.js derives its allow-list from it);
 #   - neuroncli/auth-server without its tests and fixtures, migrations (applied from a laptop,
 #     not read at runtime), docs, Markdown, Worker and Docker configuration, the CI-only tools
 #     and dotfiles; scripts/ stays (cron.mjs runs on the VM);
-#   - the VM's half of deploy/aws (install, activation, host setup, units, sudoers);
+#   - the VM's half of deploy/aws (install, activation, host setup, units, sudoers, the upgrade
+#     refresh and its apt and needrestart settings);
 #   - REVISION: the release id, which server.js reports in /health.
 # No node_modules: install-release.sh runs `npm ci --omit=dev --ignore-scripts` on the VM from the
 # release's package-lock.json (integrity-checked). The production dependencies are plain
@@ -41,9 +42,12 @@ done
 
 # Website. git evaluates the patterns: in a scratch repository, ls-files --others lists every
 # file of the tree except those .assetsignore matches, and reads no other ignore file (no
-# .gitignore, info/exclude or core.excludesFile without --exclude-standard).
+# .gitignore, info/exclude or core.excludesFile without --exclude-standard). wrangler matches
+# without regard to case (the ignore package's default); git does only with core.ignoreCase, which
+# `git init` sets on Windows and macOS but not on Linux. Set here, so the laptop and CI ship the
+# same files, and never one the Worker leaves out (Assets/demo.MP4 under Assets/*.mp4).
 git init -q --bare "$work/scan.git"
-git -c core.quotePath=false --git-dir="$work/scan.git" --work-tree="$src" ls-files --others \
+git -c core.ignoreCase=true -c core.quotePath=false --git-dir="$work/scan.git" --work-tree="$src" ls-files --others \
   --exclude-from="$src/.assetsignore" > "$work/site"
 # Gateway: what server.js and scripts/ need at runtime.
 git_ ls-tree -r --name-only "$full" -- neuroncli/auth-server | grep -vE \
@@ -53,7 +57,7 @@ grep -qx neuroncli/auth-server/server.js "$work/gateway" || die "could not list 
 # The VM's half of the deploy kit (the laptop- and CI-side files ship only if the website list
 # has them, as the Worker uploads them).
 git_ ls-tree --name-only "$full" -- deploy/aws/ | grep -E \
-  '^deploy/aws/(install-release\.sh|activate-release\.sh|host-setup\.sh|[a-z@-]+\.(service|timer|sudoers)|zerox-sysctl\.conf)$' \
+  '^deploy/aws/(install-release\.sh|activate-release\.sh|host-setup\.sh|[a-z@-]+\.(service|timer|sudoers)|zerox-[a-z-]+\.(conf|sh))$' \
   > "$work/kit" || true
 grep -qx deploy/aws/host-setup.sh "$work/kit" || die "$ref has no deploy/aws/host-setup.sh"
 

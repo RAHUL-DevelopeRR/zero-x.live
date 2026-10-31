@@ -9,7 +9,11 @@
 #   - /etc/sudoers.d/zerox-deploy, checked with visudo before and after; cloud-init's older rule
 #     for deploy (restart of the single-instance unit) is removed, so the file is all deploy may
 #     run as root, and the run fails if any other sudo rule or an administrators group names deploy;
-#   - /etc/sysctl.d/60-zerox.conf (connections queued on a stopping instance move to the other).
+#   - /etc/sysctl.d/60-zerox.conf (connections queued on a stopping instance move to the other);
+#   - upgrades without a gap: needrestart never restarts a gateway instance
+#     (/etc/needrestart/conf.d/60-zerox-gateway.conf); instead apt starts
+#     zerox-gateway-refresh.service after each dpkg run (/etc/apt/apt.conf.d/80zerox-gateway-refresh),
+#     which runs /usr/local/sbin/zerox-gateway-refresh, a root-owned copy of zerox-gateway-refresh.sh.
 # Then: removes the single-instance zerox-gateway.service of the smoke test (it drains first),
 # enables zerox-gateway@0 for boot (the unit starts nothing before the first release), and enables
 # cloudflared once /etc/cloudflared/token exists. It never enables or starts zerox-cron.timer:
@@ -81,13 +85,20 @@ if [ -f "$units/zerox-gateway.service" ]; then
   changed="$changed $units/zerox-gateway.service"
 fi
 if [ -L "$sys/opt/zerox/gateway" ]; then rm -f "$sys/opt/zerox/gateway"; fi
-for name in zerox-gateway@.service zerox-cron.service zerox-cron.timer cloudflared.service; do
+# The refresh unit's script first (systemd-analyze verify checks that ExecStart exists).
+put "$kit/zerox-gateway-refresh.sh" "$sys/usr/local/sbin/zerox-gateway-refresh" 0755
+for name in zerox-gateway@.service zerox-cron.service zerox-cron.timer cloudflared.service zerox-gateway-refresh.service; do
   put "$kit/$name" "$units/$name" 0644
 done
 if [[ "$changed" == *"$units/"* ]]; then systemctl daemon-reload; fi
-systemd-analyze verify zerox-gateway@0.service zerox-cron.service zerox-cron.timer cloudflared.service ||
+systemd-analyze verify zerox-gateway@0.service zerox-cron.service zerox-cron.timer cloudflared.service zerox-gateway-refresh.service ||
   fail "systemd-analyze verify found errors in the units above"
 systemctl enable zerox-gateway@0.service
+
+# ── Upgrades: needrestart leaves the gateway alone; apt starts the refresh after each dpkg run.
+# The hook last, once the unit it starts is in place. ──
+put "$kit/zerox-needrestart.conf" "$sys/etc/needrestart/conf.d/60-zerox-gateway.conf" 0644
+put "$kit/zerox-apt-refresh.conf" "$sys/etc/apt/apt.conf.d/80zerox-gateway-refresh" 0644
 
 # ── Cloudflare Tunnel (README.md, "Cloudflare Tunnel token") ──
 token="$sys/etc/cloudflared/token"

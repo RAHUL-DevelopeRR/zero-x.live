@@ -3,8 +3,10 @@
 # no open port, no stored SSH key.
 #
 # From the laptop (Git Bash on Windows, Linux or macOS; AWS CLI v2 signed in with `aws login`),
-# for the smoke test (plan section 2, step 5) and by hand. --setup runs host-setup.sh first:
-#   deploy/aws/push-release.sh --profile zerox [--ref <commit>] [--setup]
+# for the smoke test (plan section 2, step 5) and by hand. --setup runs host-setup.sh first;
+# --env-next activates the release with the environment file the operator wrote on the VM as
+# /etc/zerox/gateway.env.next (README.md, "Environment file"):
+#   deploy/aws/push-release.sh --profile zerox [--ref <commit>] [--setup] [--env-next]
 # From CI (.github/workflows/deploy.yml, job ec2), as deploy, with the environment file:
 #   deploy/aws/push-release.sh --os-user deploy --lookup tags --env-file <file> --known-hosts <file>
 #
@@ -16,7 +18,9 @@
 #    its public half for one OS user (ubuntu from the laptop, deploy from CI), valid for 60 s.
 # 4. One ssh connection, tunnelled by `aws ec2-instance-connect open-tunnel` (ProxyCommand),
 #    carries the tarball (and CI's environment file) on stdin and runs install-release.sh as
-#    deploy (from ubuntu through sudo -u deploy), which installs and activates the release.
+#    deploy (from ubuntu through sudo -u deploy), which installs and activates the release. CI's
+#    environment file stays in the connection's temporary directory (removed at exit) and reaches
+#    activate-release.sh as --env, under the deploy lock: a failed install leaves none behind.
 #    The host key is checked against --known-hosts under the name zerox-gateway; on the laptop's
 #    first connection ssh asks, next to the fingerprints from the instance's console.
 # The key pair is deleted at exit. Never sends a secret from the laptop: --env-file is accepted
@@ -28,10 +32,10 @@ die() { echo "push-release: $*" >&2; exit 2; }
 usage() {
   echo 'usage: push-release.sh [--ref <commit>] [--setup] [--profile <name>] [--region <region>]' >&2
   echo '                       [--instance-id <id> | --lookup stack|tags] [--os-user ubuntu|deploy]' >&2
-  echo '                       [--env-file <file>] [--known-hosts <file>]' >&2
+  echo '                       [--env-file <file> | --env-next] [--known-hosts <file>]' >&2
   exit 2
 }
-ref=HEAD setup=0 profile="${AWS_PROFILE:-}" region=ap-south-1 instance='' lookup=stack user=ubuntu env_file=''
+ref=HEAD setup=0 profile="${AWS_PROFILE:-}" region=ap-south-1 instance='' lookup=stack user=ubuntu env_file='' env_next=0
 known_hosts="$HOME/.ssh/zerox_known_hosts"
 stack=zerox-gateway
 while [ $# -gt 0 ]; do
@@ -44,6 +48,7 @@ while [ $# -gt 0 ]; do
     --lookup) lookup="${2:?}"; shift 2 ;;
     --os-user) user="${2:?}"; shift 2 ;;
     --env-file) env_file="${2:?}"; shift 2 ;;
+    --env-next) env_next=1; shift ;;
     --known-hosts) known_hosts="${2:?}"; shift 2 ;;
     *) usage ;;
   esac
@@ -54,6 +59,7 @@ case "$lookup" in stack|tags) ;; *) die "--lookup is stack or tags" ;; esac
 [[ "$profile" =~ ^[A-Za-z0-9_.-]*$ ]] || die "invalid profile name"
 if [ -n "$env_file" ] && [ "$user" != deploy ]; then die "--env-file only with --os-user deploy (CI): the laptop never sends secrets"; fi
 if [ -n "$env_file" ] && [ ! -s "$env_file" ]; then die "no environment file at $env_file"; fi
+if [ -n "$env_file" ] && [ "$env_next" = 1 ]; then die "--env-file or --env-next, not both"; fi
 if [ "$setup" = 1 ] && [ "$user" != ubuntu ]; then die "--setup needs --os-user ubuntu (deploy may not run host-setup.sh)"; fi
 
 aws_() { aws "$@" --region "$region" ${profile:+--profile "$profile"}; }
@@ -93,10 +99,11 @@ if ! ssh-keygen -F zerox-gateway -f "$known_hosts" >/dev/null 2>&1; then
   ssh-keygen -F zerox-gateway -f "$known_hosts" >/dev/null 2>&1 || die "the host key was not accepted"
 fi
 
-# Runs on the VM as the OS user (bash -c, with the release id, --setup and the user as $1..$3).
+# Runs on the VM as the OS user (bash -c, with the release id, --setup, the user and the
+# environment source, none, file or next, as $1..$4).
 remote="$(cat <<'REMOTE'
 set -euo pipefail
-release="$1" setup="$2" user="$3"
+release="$1" setup="$2" user="$3" env="$4"
 etc="${ZEROX_ETC:-/etc/zerox}"
 cd /
 umask 077
@@ -107,15 +114,19 @@ mkdir "$work/kit"
 tar -xzf "$work/release.tar.gz" -C "$work/kit" deploy/aws
 kit="$work/kit/deploy/aws"
 if [ "$setup" = 1 ]; then sudo bash "$kit/host-setup.sh"; fi
+env_args=()
+case "$env" in
+  file) env_args=(--env "$work/gateway.env") ;;
+  next) env_args=(--env "$etc/gateway.env.next") ;;
+esac
 if [ "$user" = deploy ]; then
-  if [ -f "$work/gateway.env" ]; then install -m 0600 "$work/gateway.env" "$etc/gateway.env.next"; fi
-  bash "$kit/install-release.sh" "$work/release.tar.gz" "$release" < /dev/null
+  bash "$kit/install-release.sh" "$work/release.tar.gz" "$release" "${env_args[@]}" < /dev/null
 else
   if [ -e "$work/gateway.env" ]; then echo "an environment file only comes from CI, as deploy" >&2; exit 2; fi
   # deploy reads the tarball and the scripts (public code, no secret) from ubuntu's directory.
   chmod 0711 "$work"
   chmod -R a+rX "$work/kit" "$work/release.tar.gz"
-  sudo -u deploy bash "$kit/install-release.sh" "$work/release.tar.gz" "$release" < /dev/null
+  sudo -u deploy bash "$kit/install-release.sh" "$work/release.tar.gz" "$release" "${env_args[@]}" < /dev/null
 fi
 REMOTE
 )"
@@ -125,9 +136,9 @@ echo "pushing release $release ($(git -C "$here" log -1 --format=%s "$release" |
 aws_ ec2-instance-connect send-ssh-public-key --instance-id "$instance" --instance-os-user "$user" \
   --ssh-public-key "$(cat "$work/key.pub")" --query Success --output text | tr -d '\r' | grep -qx True ||
   die "send-ssh-public-key was refused"
-payload=(release.tar.gz)
-if [ -n "$env_file" ]; then payload+=(gateway.env); fi
+payload=(release.tar.gz) env_source=none
+if [ -n "$env_file" ]; then payload+=(gateway.env) env_source=file; elif [ "$env_next" = 1 ]; then env_source=next; fi
 tar -cf - -C "$work" "${payload[@]}" |
   ssh "${ssh_base[@]}" -i "$work/key" -o IdentitiesOnly=yes -o IdentityAgent=none -o BatchMode=yes \
-    -o StrictHostKeyChecking=yes "$user@$instance" "bash -c $(printf %q "$remote") zerox-push $release $setup $user"
+    -o StrictHostKeyChecking=yes "$user@$instance" "bash -c $(printf %q "$remote") zerox-push $release $setup $user $env_source"
 echo "release $release is live on $instance" >&2
