@@ -214,9 +214,10 @@ function releaseRevision(dir) {
 const LOOPBACK_HOSTS = ['127.0.0.1', 'localhost', '::1', '[::1]'];
 const hostList = value => String(value || '').split(',').map(host => host.trim().toLowerCase()).filter(Boolean);
 
-// ASSETS_DIR resolved through links once, at start. On EC2 it names /opt/zerox/current, which the
-// deploy points at the next release before it stops this instance: resolved, the draining instance
-// keeps serving the release it started with (the allow-list it built, the REVISION it reported).
+// ASSETS_DIR resolved through links once, at start. On EC2 it names the instance's own link,
+// /opt/zerox/instance-N (zerox-gateway@.service), which the deploy moves only while that instance is
+// stopped; resolved anyway, a running instance keeps serving the release it started with (the
+// allow-list it built, the REVISION it reported) whatever a link names later.
 function releaseDirectory(dir) {
   try { return fs.realpathSync(dir); } catch { return dir; }
 }

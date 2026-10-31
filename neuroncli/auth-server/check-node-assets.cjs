@@ -5,7 +5,7 @@
 // git's own matcher on this checkout; the release's REVISION file is never served. Then the caching
 // the Worker leaves to Cloudflare: a week for /Assets/, revalidation for the rest, a content ETag
 // with 304s (one hash for simultaneous first requests), and byte ranges for the videos. An
-// ASSETS_DIR reached through the deploy's /opt/zerox/current link stays the release it named at start.
+// ASSETS_DIR reached through a link (the instance's /opt/zerox/instance-N) stays the release it named at start.
 const assert = require('node:assert/strict');
 const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
@@ -185,9 +185,9 @@ function tree(files) {
     assert.equal(await status(assetServer(dir).fetch, '/index.html'), 404);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 
-  // ── ASSETS_DIR through a link (the deploy's /opt/zerox/current): the deploy flips the link, starts
-  // the new instance, then drains the old one, which keeps serving the release it started with
-  // (its allow-list, its files and its REVISION all agree) ──
+  // ── ASSETS_DIR through a link (the instance's /opt/zerox/instance-N): should the link move under
+  // a running instance, it keeps serving the release it started with (its allow-list, its files and
+  // its REVISION all agree) ──
   const releases = fs.mkdtempSync(path.join(os.tmpdir(), 'zerox-releases-'));
   const release = (name, files) => {
     for (const [file, content] of Object.entries(files)) {

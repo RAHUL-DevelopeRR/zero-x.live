@@ -39,7 +39,7 @@ provider off.
 | `AUTH_HOST` / `AUTH_PORT` | var (Node) | `127.0.0.1` / `8787` | Bind address and port (`0` = any free port, logged at start). |
 | `AUTH_REUSE_PORT` | var (Node) | unset | `true` binds `AUTH_PORT` with `SO_REUSEPORT` (Linux, Node 22.12 or later; an older Node is refused at start), so the next release's instance listens before the old one drains (`zerox-gateway@0` and `@1` on EC2). |
 | `READY_PORT` | var (Node) | unset | A second listener on `127.0.0.1:<port>` that answers only `GET /ready` and `GET /health`, so a deploy can check one instance while both share `AUTH_PORT`. It drains with the main listener. |
-| `ASSETS_DIR` | var (Node) | the repository root | The website files: exactly what the Worker uploads from that directory under `.assetsignore` (never the release's `REVISION`). On EC2 `/opt/zerox/current`; the link is resolved at start, so an instance keeps serving the release it started with. |
+| `ASSETS_DIR` | var (Node) | the repository root | The website files: exactly what the Worker uploads from that directory under `.assetsignore` (never the release's `REVISION`). On EC2 the instance's link `/opt/zerox/instance-N` (`zerox-gateway@.service`); the link is resolved at start, so an instance keeps serving the release it started with. |
 | `NEURON_API_ONLY` | var (Node) | unset | `true` = API only, no website assets. |
 | `NEURON_RUNTIME` | set by server.js | — | Marks the Node runtime; never set it on the Worker. |
 | `TRUST_CLOUDFLARE` | var (Node) | unset | `true` behind Cloudflare Tunnel: the per-IP limits use `CF-Connecting-IP`, honoured only from a loopback peer (cloudflared) and only when it is one valid address. Unset: the socket address, so every tunnel visitor would share one bucket. |
