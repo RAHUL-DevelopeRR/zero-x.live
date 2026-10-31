@@ -66,6 +66,10 @@ const REFUSED_FAMILY = /^(NODE_|LD_|BASH_)|_PROXY$/i;
 // server.js refuses to start with a shorter proxy secret (the only gate on the tunnel's public
 // host); failing here keeps such a deploy from reaching the VM at all.
 const MIN_LENGTH = { EC2_PROXY_SECRET: 32, EC2_PROXY_SECRET_ROTATION: 32 };
+// Optional secrets that are unset except for a while (EC2_PROXY_SECRET_ROTATION: only during a
+// rotation, README.md "Rotating the proxy secret"): no warning when they are missing, since one on
+// every deploy would teach the operator to read past the warnings that matter.
+const UNSET_NORMALLY = new Set(['EC2_PROXY_SECRET_ROTATION']);
 
 // Whether a name may be in the VM's environment file. zerox-install-env.sh, which installs the file
 // as root on the VM, applies the same rule (check-aws-deploy.mjs compares the two).
@@ -119,7 +123,7 @@ function main() {
     vmVars: names(process.env.VM_VARS),
   });
   writeFileSync(values.out, text, { mode: 0o600 });
-  for (const name of skipped) console.log(`::warning::Optional secret ${name} is not set; the feature that needs it stays disabled`);
+  for (const name of skipped.filter(name => !UNSET_NORMALLY.has(name))) console.log(`::warning::Optional secret ${name} is not set; the feature that needs it stays disabled`);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

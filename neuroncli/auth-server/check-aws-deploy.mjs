@@ -84,6 +84,21 @@ assert.throws(() => buildEnvFile({ vars: {}, env: { EC2_PROXY_SECRET: 'a'.repeat
   /Secret EC2_PROXY_SECRET must be at least 32 characters/);
 assert.match(buildEnvFile({ vars: {}, env: { EC2_PROXY_SECRET: 'a'.repeat(32) }, required: ['EC2_PROXY_SECRET'], optional: [] }).text,
   /^EC2_PROXY_SECRET="a{32}"$/m);
+// The command as job ec2 runs it: an optional secret that is not set is named in a warning, except
+// the rotation value, which is unset except during a rotation (a warning on every deploy would
+// teach the operator to read past them). It is still left out of the file.
+{
+  const dir = mkdtempSync(join(tmpdir(), 'zerox-env-'));
+  try {
+    writeFileSync(join(dir, 'wrangler.toml'), '[vars]\nPLAIN = "v"\n');
+    const run = spawnSync(process.execPath, [join(repo, 'deploy/aws/gateway-env.mjs'), '--wrangler', join(dir, 'wrangler.toml'),
+      '--out', join(dir, 'gateway.env')], { encoding: 'utf8', env: { ...process.env, REQUIRED_SECRETS: '', VM_VARS: '',
+      OPTIONAL_SECRETS: 'GLM_API_KEY EC2_PROXY_SECRET_ROTATION', GLM_API_KEY: '', EC2_PROXY_SECRET_ROTATION: '' } });
+    assert.equal(run.status, 0, run.stdout + run.stderr);
+    assert.deepEqual(run.stdout.trim().split('\n'), ['::warning::Optional secret GLM_API_KEY is not set; the feature that needs it stays disabled']);
+    assert.ok(!readFileSync(join(dir, 'gateway.env'), 'utf8').includes('EC2_PROXY_SECRET_ROTATION'));
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+}
 
 // ── deploy.yml: job verify, then the Worker (job deploy) and job ec2 for the same commit, approved
 // together, then job same-commit ──
@@ -1317,4 +1332,4 @@ if (ran && headHasKit) {
   }
 }
 
-console.log(`PASS: EC2 kit: env file from [vars], VM-only values and the Worker's secrets (systemd quoting, VM settings refused), job verify (kit included) before both deploys, the Worker and job ec2 approved together in production, OIDC only in job ec2, a read-only workflow token, pinned actions, parity secrets required, CI role limited to the tunnel, the deploy key and two lookups, complete env template, two gateway instances on one port with their own readiness ports and release links, cron in the same sandbox and never enabled by setup, needrestart leaving the gateway to the refresh, exact deploy sudoers, /v1 base URLs${commitChecked ? ', the commit check run (another commit or none fails)' : ''}${hostKeyChecked ? ', the host key step run (only the configured instance\x27s key, written under zerox-gateway)' : ''}${ran ? ', activation run (new instance ready before the old one stops, current flipped only after the checks, a crash meanwhile restarts on the old release, rollback without a gap, commit check, environment only with --env, never-activated releases pruned first), refresh run (only for a replaced /usr file), host setup run (sudoers checked, cloud-init rule removed, other rules for deploy refused, upgrade files installed, idempotent)' : ''}${packaged ? ', release tarball (.assetsignore as wrangler reads it, case included, gateway without tests, kit, REVISION, tracked secrets and working files refused), push and install through stub endpoint and ssh (CI with its env file under the lock, a failed install leaving none, the same commit again, the laptop without secrets, --env-next, host key required)' : ''}${packagedHead ? ', HEAD packaged' : ''}`);
+console.log(`PASS: EC2 kit: env file from [vars], VM-only values and the Worker's secrets (systemd quoting, VM settings and the NODE_/LD_/BASH_/_PROXY families refused), job verify (kit included) before both deploys, the Worker and job ec2 approved together in production, OIDC only in job ec2, a read-only workflow token, pinned actions, npm ci without install scripts and checkouts without credentials, parity secrets required, CI role limited to the tunnel, the deploy key and two lookups, complete env template, two gateway instances on one port with their own readiness ports and release links, cron in the same sandbox and never enabled by setup, needrestart leaving the gateway to the refresh, exact deploy sudoers, /v1 base URLs, crons = [] at the cron step${commitChecked ? ', the commit check run (another commit or none fails)' : ''}${hostKeyChecked ? ', the host key step run (only the configured instance\x27s key, written under zerox-gateway)' : ''}${ran ? ', activation run (new instance ready before the old one stops, current flipped only after the checks, a crash meanwhile restarts on the old release, rollback without a gap, commit check, environment only with --env or --env-next through root's installer, never-activated releases pruned first), root's environment installer run (gateway-env.mjs's names and quoting, printable ASCII, never a link, never a value), refresh run (only for a replaced /usr file; the id from current's target, never REVISION's contents), host setup run (/etc/zerox root's and a link there refused, releases deploy's, sudoers checked, cloud-init rule removed, other rules for deploy refused, upgrade files installed, idempotent)' : ''}${packaged ? ', release tarball (.assetsignore as wrangler reads it, case included, the sitemap built for the commit, gateway without tests, kit, REVISION, tracked secrets and working files refused), push and install through stub endpoint and ssh (CI with its env file under the lock, a failed install leaving none, the same commit again, the laptop without secrets, --env-next, --setup-only, host key required)' : ''}${packagedHead ? ', HEAD packaged' : ''}`);

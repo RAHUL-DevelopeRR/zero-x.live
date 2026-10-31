@@ -414,7 +414,7 @@ secrets:
 |---|---|---|
 | Environment `production`, secret | `SUPABASE_SECRET_KEY_EC2` | The VM's own Supabase secret key. |
 | Environment `production`, secret | `EC2_PROXY_SECRET` | Random printable ASCII, 32 characters or more: `openssl rand -hex 32 \| gh secret set EC2_PROXY_SECRET --env production`. The Worker gets it too (its job runs in `production`). Never a repository secret: a workflow pushed on any branch could read that, without the environment's reviewer. |
-| Environment `production`, secret, only during a rotation | `EC2_PROXY_SECRET_ROTATION` | "Rotating the proxy secret" below; unset otherwise (the job then warns that it is not set). |
+| Environment `production`, secret, only during a rotation | `EC2_PROXY_SECRET_ROTATION` | "Rotating the proxy secret" below; unset otherwise (the job does not warn about it then, unlike the other optional secrets). |
 | Secret (already there) | `SESSION_ENCRYPTION_KEY`, `PROVIDER_KEYS_KEK`, `DEVICE_APPROVAL_SECRET` | The Worker's values: required for the VM. |
 | Environment `production`, secret (already there) | `AWS_DEPLOY_ROLE_ARN` | Output `RoleArn` of stack `zerox-ci`. A secret because run logs are public; the job also masks the account id. |
 | Environment `production`, variables (already there) | `EC2_INSTANCE_ID`, `EC2_HOST_KEY` | "Host key" above. |
