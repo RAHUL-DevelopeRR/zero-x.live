@@ -36,6 +36,9 @@ provider off.
 | `SESSIONS_KV` | binding | — | Worker KV for sessions and PKCE records. Without it sessions use the hashed Postgres store (7-day write cap; sessions in use are re-armed daily). |
 | `AI` | binding | — | Workers AI (free pool for Llama 3.3 70B). Node: `CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_API_TOKEN` (**secret**). |
 | `AUTH_HOST` / `AUTH_PORT` | var (Node) | `127.0.0.1` / `8787` | Bind address and port (`0` = any free port, logged at start). |
+| `AUTH_REUSE_PORT` | var (Node) | unset | `true` binds `AUTH_PORT` with `SO_REUSEPORT` (Linux, Node 22.12 or later; an older Node is refused at start), so the next release's instance listens before the old one drains (`zerox-gateway@0` and `@1` on EC2). |
+| `READY_PORT` | var (Node) | unset | A second listener on `127.0.0.1:<port>` that answers only `GET /ready` and `GET /health`, so a deploy can check one instance while both share `AUTH_PORT`. It drains with the main listener. |
+| `ASSETS_DIR` | var (Node) | the repository root | The website files: exactly what the Worker uploads from that directory under `.assetsignore` (never the release's `REVISION`). On EC2 `/opt/zerox/current`; the link is resolved at start, so an instance keeps serving the release it started with. |
 | `NEURON_API_ONLY` | var (Node) | unset | `true` = API only, no website assets. |
 | `NEURON_RUNTIME` | set by server.js | — | Marks the Node runtime; never set it on the Worker. |
 | `TRUST_CLOUDFLARE` | var (Node) | unset | `true` behind Cloudflare Tunnel: the per-IP limits use `CF-Connecting-IP`, honoured only from a loopback peer (cloudflared) and only when it is one valid address. Unset: the socket address, so every tunnel visitor would share one bucket. |
@@ -43,7 +46,7 @@ provider off.
 | `SSE_HEARTBEAT_MS` | var (Node) | `30000` | An event stream with no output for this long gets an SSE comment, so Cloudflare's 125 s origin read timeout never ends a quiet stream. |
 | `DEV_AUTH_ENABLED` | var (Node) | unset | Local dev identity (`dev_<base64url(email)>`). Ignored unless the Node server is bound to loopback; never in wrangler files. |
 | `ALLOW_ANONYMOUS_SESSIONS` | var | unset | Development only: account-less sessions with an in-memory store. |
-| `NODE_ENV` | var (Node) | — | `production` refuses the PGlite driver. |
+| `NODE_ENV` | var (Node) | — | `production` refuses the PGlite driver, and makes the server an origin, as `EC2_PROXY_SECRET`, `EXTRA_WEB_HOSTS` or `TRUST_CLOUDFLARE=true` do. An origin answers requests the Worker forwards with `EC2_PROXY_SECRET` (at least 32 characters, or the server does not start; a forward carrying another value gets `403 proxy_secret_mismatch`, logged once), the hosts in `EXTRA_WEB_HOSTS` directly, the relay paths (`/v1/relay`, `/relay/…`) on `relay.zero-x.live`, and `GET /health` and `/ready`. Anything else gets a 403. Behind your own TLS proxy, list its public host in `EXTRA_WEB_HOSTS`. |
 
 ### Sessions, security and operator access
 
