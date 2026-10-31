@@ -35,6 +35,46 @@ Every push to `main` runs job `verify` first, then waits for one approval in the
 leaves both runtimes on the previous commit. From step 2 until the close-out, approve each run
 promptly or not at all (reject it), and keep `main` frozen during a window.
 
+## Before this kit reaches `main` (once)
+
+The EC2 smoke test left the VM on main's code (66f29a1) under the single unit
+`zerox-gateway.service`, and the environment `production` set up for the one-off workflow
+`ec2-smoke-env.yml` on branch `ops/ec2-smoke`. In this order:
+
+1. **Let `main` deploy to `production`** (you, in GitHub). Its deployment branch policy allows only
+   `ops/ec2-smoke` today, and with this `deploy.yml` the Worker job runs in `production` too: until
+   `main` is added, every push to `main` stops at the Worker deploy ("not allowed to deploy to
+   production"). Settings > Environments > production > Deployment branches and tags > add `main`,
+   or `gh api -X POST repos/RAHUL-DevelopeRR/zero-x.live/environments/production/deployment-branch-policies -f name=main -f type=branch`.
+   From then on every push to `main` waits for your approval (required reviewer, no admin bypass),
+   the Worker included.
+2. **Secrets and variables for job `ec2`** (README.md, "Deploys"). Already in `production` since the
+   smoke test: the secret `AWS_DEPLOY_ROLE_ARN` and the variables `EC2_INSTANCE_ID` and
+   `EC2_HOST_KEY`. New: the secret `SUPABASE_SECRET_KEY_EC2` (a Supabase secret key of the VM's
+   own, not the Worker's) and the secret `EC2_PROXY_SECRET` (`openssl rand -hex 32`; the Worker
+   gets the same value from the same secret). The smoke test's `DEVICE_VERIFICATION_URL` is not
+   needed any more: forwarded requests carry the visitor's host, so device sign-ins point at
+   `https://neuron.zero-x.live/device` (or at the test host's own page on the test host).
+3. **Move the VM to the two-instance layout** (you, from the laptop, signed in with `aws login`).
+   If the running tunnel was installed with `cloudflared service install`, first write its token
+   to `/etc/cloudflared/token` (README.md, "Cloudflare Tunnel"); `host-setup.sh` keeps a tunnel's
+   own unit until that file exists. Then:
+   `deploy/aws/push-release.sh --profile zerox --setup`. It stops and removes `zerox-gateway.service`
+   and `/opt/zerox/gateway`, installs `zerox-gateway@.service` and the deploy user's sudoers, and
+   activates the commit on `zerox-gateway@0` with the environment file the smoke test wrote. Only
+   the test host is affected: `aws.zero-x.live` is down from the stop until `@0` is ready (a
+   minute or two), and then answers only `/health` and `/ready` until job `ec2` writes
+   `EXTRA_WEB_HOSTS` and `EC2_PROXY_SECRET` (the smoke test's file has neither). Until this step
+   job `ec2` cannot deploy: the deploy user's old sudo rule covers `zerox-gateway.service` only, so
+   its activation fails and leaves the VM as it is. `/opt/zerox/releases/66f29a1` is pruned by
+   later activations.
+4. **Turn job `ec2` on**: `gh variable set EC2_DEPLOY --body true` (and `EXTRA_WEB_HOSTS` to
+   `aws.zero-x.live` for the test window). The next approved push writes the whole environment
+   file from GitHub (`gateway-env.mjs`), replacing the smoke test's.
+5. **Retire the smoke workflow**: remove `ops/ec2-smoke` from the environment's deployment
+   branches and delete the branch, so it can no longer write `/etc/zerox/gateway.env` behind the
+   deploy's back.
+
 ## Pre-flight: all of these hold before step 1
 
 | | Check | How |

@@ -199,7 +199,9 @@ or on the VM, from a copy of `deploy/aws`: `sudo bash host-setup.sh`. It:
 
 - installs `zerox-gateway@.service`, `zerox-cron.service` and `.timer`, `cloudflared.service`,
   `zerox-gateway-refresh.service` and `/etc/sysctl.d/60-zerox.conf`, and checks the units with
-  `systemd-analyze verify`;
+  `systemd-analyze verify`. A tunnel that already runs from a unit of its own (`cloudflared service
+  install`) keeps that unit until `/etc/cloudflared/token` exists: replaced before, the next restart
+  would start the tunnel without its token;
 - installs the upgrade handling ("Timeouts, upgrades and restarts" below):
   `/etc/needrestart/conf.d/60-zerox-gateway.conf`, `/usr/local/sbin/zerox-gateway-refresh` (root's
   own copy) and the apt hook `/etc/apt/apt.conf.d/80zerox-gateway-refresh`;
@@ -324,8 +326,11 @@ secret): nothing ships unless it passes. Then the Worker (job `deploy`) and job 
 approval in the environment `production`, at the same time: one approval in the run's "Review
 deployments" starts both, so the two runtimes change within the same couple of minutes and
 neither ships ahead of the other's approval. Job `same-commit` then requires both to report the
-commit. With `EC2_DEPLOY` off, only the Worker waits for that approval. It needs, besides the
-Worker's secrets:
+commit. With `EC2_DEPLOY` off, only the Worker waits for that approval. The environment's
+deployment branches must include `main` (the smoke test allowed only `ops/ec2-smoke`), or every
+push stops at the Worker deploy: [CUTOVER.md](CUTOVER.md), "Before this kit reaches `main`", has
+that and the VM's move from the smoke test's single unit. Job `ec2` needs, besides the Worker's
+secrets:
 
 | Where | Name | Value |
 |---|---|---|

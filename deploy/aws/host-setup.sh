@@ -5,7 +5,8 @@
 #   sudo bash deploy/aws/host-setup.sh
 #
 # Installs from this directory:
-#   - zerox-gateway@.service, zerox-cron.service and .timer, cloudflared.service;
+#   - zerox-gateway@.service, zerox-cron.service and .timer, cloudflared.service (once
+#     /etc/cloudflared/token exists, if a tunnel already runs from a unit of its own);
 #   - /etc/sudoers.d/zerox-deploy, checked with visudo before and after; cloud-init's older rule
 #     for deploy (restart of the single-instance unit) is removed, so the file is all deploy may
 #     run as root, and the run fails if any other sudo rule or an administrators group names deploy;
@@ -87,9 +88,19 @@ fi
 if [ -L "$sys/opt/zerox/gateway" ]; then rm -f "$sys/opt/zerox/gateway"; fi
 # The refresh unit's script first (systemd-analyze verify checks that ExecStart exists).
 put "$kit/zerox-gateway-refresh.sh" "$sys/usr/local/sbin/zerox-gateway-refresh" 0755
-for name in zerox-gateway@.service zerox-cron.service zerox-cron.timer cloudflared.service zerox-gateway-refresh.service; do
+for name in zerox-gateway@.service zerox-cron.service zerox-cron.timer zerox-gateway-refresh.service; do
   put "$kit/$name" "$units/$name" 0644
 done
+# The kit's cloudflared.service reads its token from /etc/cloudflared/token. A tunnel that already
+# runs from a unit of its own (the smoke test's: `cloudflared service install` puts the token on
+# that unit's command line) keeps it until the file exists; replaced earlier, the next restart or
+# reboot would start the tunnel without a token and take every hostname behind it down.
+token="$sys/etc/cloudflared/token"
+if [ ! -s "$token" ] && { [ -f "$units/cloudflared.service" ] || systemctl is-active --quiet cloudflared.service; }; then
+  echo "keeping the cloudflared.service that runs now: write $token (README.md, \"Cloudflare Tunnel\"), then run this again"
+else
+  put "$kit/cloudflared.service" "$units/cloudflared.service" 0644
+fi
 if [[ "$changed" == *"$units/"* ]]; then systemctl daemon-reload; fi
 systemd-analyze verify zerox-gateway@0.service zerox-cron.service zerox-cron.timer cloudflared.service zerox-gateway-refresh.service ||
   fail "systemd-analyze verify found errors in the units above"
@@ -100,8 +111,7 @@ systemctl enable zerox-gateway@0.service
 put "$kit/zerox-needrestart.conf" "$sys/etc/needrestart/conf.d/60-zerox-gateway.conf" 0644
 put "$kit/zerox-apt-refresh.conf" "$sys/etc/apt/apt.conf.d/80zerox-gateway-refresh" 0644
 
-# ── Cloudflare Tunnel (README.md, "Cloudflare Tunnel token") ──
-token="$sys/etc/cloudflared/token"
+# ── Cloudflare Tunnel (README.md, "Cloudflare Tunnel token"; $token is set with the units above) ──
 if [ -s "$token" ]; then
   chown root:root "$token"
   chmod 0600 "$token"

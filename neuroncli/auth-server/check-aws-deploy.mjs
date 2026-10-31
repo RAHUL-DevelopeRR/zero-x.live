@@ -735,6 +735,25 @@ try {
     assert.equal(extraRule.status, 1, 'another sudo rule names deploy');
     assert.match(extraRule.stderr, /other sudo rules name deploy: \S*99-extra/);
 
+    // The smoke-test VM: a tunnel running from a unit of its own (`cloudflared service install`
+    // puts the token on its command line) and no token file yet. That unit stays until the file
+    // exists: replaced earlier, the next restart or reboot would start the tunnel without a token.
+    freshSystem();
+    const legacyTunnel = '[Service]\nExecStart=/usr/bin/cloudflared --no-autoupdate tunnel run --token eyJsZWdhY3kifQ\n';
+    writeFileSync(sysPath('etc/systemd/system/cloudflared.service'), legacyTunnel);
+    const keptTunnel = setupRun();
+    assert.equal(keptTunnel.status, 0, `host setup with the smoke test's tunnel: ${keptTunnel.stdout}${keptTunnel.stderr}`);
+    assert.equal(readFileSync(sysPath('etc/systemd/system/cloudflared.service'), 'utf8'), legacyTunnel, 'the running tunnel\'s unit is kept');
+    assert.match(keptTunnel.stdout, /keeping the cloudflared\.service that runs now/);
+    assert.ok(!calls().some(line => /cloudflared/.test(line) && /\b(enable|start|stop|restart|disable)\b/.test(line)), 'and left alone');
+    assert.ok(!`${keptTunnel.stdout}${keptTunnel.stderr}`.includes('eyJsZWdhY3kifQ'), 'its token is never printed');
+    assert.equal(readFileSync(sysPath('etc/systemd/system/zerox-gateway@.service'), 'utf8'), read('deploy/aws/zerox-gateway@.service'),
+      'everything else is installed');
+    writeFileSync(sysPath('etc/cloudflared/token'), 'eyJ0ZXN0IjoidG9rZW4ifQ');
+    const tokenFile = setupRun();
+    assert.equal(tokenFile.status, 0, `host setup once the token file exists: ${tokenFile.stdout}${tokenFile.stderr}`);
+    assert.equal(readFileSync(sysPath('etc/systemd/system/cloudflared.service'), 'utf8'), read('deploy/aws/cloudflared.service'),
+      'then the kit\'s unit, which reads the token file');
 
     // needrestart, reading conf.d as it does (Perl), never restarts a gateway instance and still restarts the rest.
     const perl = spawnSync(shell.bash, ['-c', 'command -v perl >/dev/null || exit 3; perl -e "$1" "$2" zerox-gateway@0.service zerox-gateway@1.service zerox-cron.service cloudflared.service',
