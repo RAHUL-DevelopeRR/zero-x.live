@@ -271,6 +271,28 @@ try {
     assert.equal(body.error.type, 'server_error');
     assert.ok(warnings.some(line => line.includes('EC2 proxy request failed')));
 
+    // The tunnel without a connector (Cloudflare's 530, error 1033) or cloudflared with nothing on
+    // 127.0.0.1:8787 (its HTML 502): the gateway's JSON 503 with Retry-After, and the HTML page is
+    // cancelled unread. The gateway's own JSON 502 (upstream_error) passes through as it is.
+    for (const [status, type] of [[530, 'text/html; charset=UTF-8'], [530, 'text/plain'], [502, 'text/html'], [502, 'TEXT/HTML; charset=utf-8']]) {
+      reset();
+      warnings.length = 0;
+      let cancelled = false;
+      const page = new ReadableStream({ cancel() { cancelled = true; } });
+      answer = () => new Response(page, { status, headers: { 'Content-Type': type } });
+      const down = await app.request('https://zero-x.live/v1/chat/completions', { method: 'POST', body: '{}' }, { ...base, ...PROXY });
+      assert.equal(down.status, 503, `${status} ${type}`);
+      assert.equal(down.headers.get('retry-after'), '5');
+      assert.equal(down.headers.get('content-type'), 'application/json');
+      assert.equal((await down.json()).error.code, 'service_unavailable');
+      assert.ok(cancelled, 'the HTML body is cancelled, never read');
+      assert.ok(warnings.some(line => line.includes('EC2 origin unreachable')));
+    }
+    reset();
+    const gatewayError = new Response(JSON.stringify({ error: { code: 'upstream_error' } }), { status: 502, headers: { 'Content-Type': 'application/json' } });
+    answer = () => gatewayError;
+    assert.equal(await app.request('https://zero-x.live/v1/models', {}, { ...base, ...PROXY }), gatewayError, 'the gateway\'s own 502 is returned untouched');
+
     // POST /v1/models/health served by the Worker probes /v1/chat/completions through Hono itself,
     // even when a prefix covers that path: the probe never leaves the Worker.
     reset();
@@ -279,7 +301,7 @@ try {
     }, { ...base, ...PROXY, EC2_PROXY_PREFIXES: 'zero-x.live/v1/chat/' });
     assert.equal(forwarded.length, 0, 'the internal completion was not forwarded');
     assert.equal((await probe.json()).error.code, 'invalid_session', 'it ran on the Worker (no credential)');
-    ok('a forward that fails answers 503 service_unavailable (JSON); the /v1/models/health probe stays inside the Worker');
+    ok('a forward that fails, or reaches a tunnel or VM that is down (530, HTML 502), answers 503 service_unavailable (JSON, Retry-After); the gateway\'s JSON 502 passes; the /v1/models/health probe stays inside the Worker');
   }
 
   // ── CPU shape: the forward is a header copy and one fetch call, whatever the body holds ──

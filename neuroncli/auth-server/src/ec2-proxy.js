@@ -16,7 +16,9 @@
 // A forward returns the upstream fetch's Response as it is: the Worker never reads or transforms
 // either body, and waiting on the network is not CPU time, so a 90 s token stream (or a WebSocket,
 // which passes through the same way) costs the Worker far less than its 10 ms CPU cap. Redirects
-// are not followed: EC2's own 301s and 308s reach the client.
+// are not followed: EC2's own 301s and 308s reach the client. The one exception is an origin that
+// is down (the tunnel's 530, cloudflared's HTML 502): told so by the status and Content-Type
+// alone, the Worker answers the gateway's JSON 503 with Retry-After instead of an HTML page.
 //
 // The Node server trusts the x-zerox-* headers only when x-zerox-proxy-secret matches its own
 // EC2_PROXY_SECRET, so whatever a client sent under that prefix is dropped first and the trusted
@@ -136,10 +138,26 @@ export function forwardToEc2(request, env) {
 
   // Method, body (a stream, handed on unread), signal and the rest come from the client's request.
   const forward = new Request(origin.origin + url.pathname + url.search, new Request(request, { headers, redirect: 'manual' }));
-  return fetch(forward).catch(error => {
+  return fetch(forward).then(response => {
+    if (!originDown(response)) return response;
+    // Only the status and a header were read; the HTML page is dropped unread.
+    response.body?.cancel().catch(() => {});
+    console.warn('EC2 origin unreachable', { status: response.status, host: url.host });
+    return errorResponse('service_unavailable', { retryAfterSeconds: 5 });
+  }, error => {
     console.warn('EC2 proxy request failed', { name: error?.name, host: url.host });
     return errorResponse('service_unavailable', { retryAfterSeconds: 5 });
   });
+}
+
+// The VM or its tunnel is down, as Cloudflare and cloudflared say it: 530 (error 1033, no
+// connector for the tunnel) from the edge, or cloudflared's own HTML 502 when nothing listens on
+// 127.0.0.1:8787. Both are HTML pages; passed on, the CLI would get a body that is none of
+// errors.js's shapes, with no Retry-After. The gateway itself never answers 530, and its 502s
+// (upstream_error) are JSON.
+function originDown(response) {
+  if (response.status === 530) return true;
+  return response.status === 502 && /^text\/html\b/i.test(response.headers.get('content-type') || '');
 }
 
 // Test hook.
