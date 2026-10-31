@@ -267,7 +267,10 @@ async function serverWith(settings, logs = []) {
     const qaPort = qa.address().port;
     const index = await call(qaPort, { path: '/index.html', headers: { host: 'aws.zero-x.live' } });
     assert.equal(index.status, 301);
-    assert.equal(index.headers.location, 'https://aws.zero-x.live/', 'the test host is the app\'s host, over https');
+    // The app sees https://aws.zero-x.live: a test host serves the whole site on its own origin, so
+    // its redirects stay relative (src/index.js), and the scheme is https (HSTS).
+    assert.equal(index.headers.location, '/', 'the test host is the app\'s host');
+    assert.match(index.headers['strict-transport-security'], /max-age=31536000/, 'over https');
     assert.equal(await geminiAvailable(qaPort, { host: 'aws.zero-x.live', 'cf-ipcountry': 'US' }), true);
     assert.equal(await geminiAvailable(qaPort, { host: 'aws.zero-x.live', 'cf-ipcountry': 'DE', 'x-zerox-country': 'US' }), false,
       'a spoofed x-zerox-country is ignored');

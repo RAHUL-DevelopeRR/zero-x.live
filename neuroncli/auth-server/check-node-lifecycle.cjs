@@ -464,16 +464,8 @@ const terminate = instance => (process.platform === 'win32' ? instance.child.sen
       delete process.env.GIT_COMMIT;
       const withRevision = await startServer();
       const health = await (await fetch(withRevision.base + '/health')).json();
-      // /health names the commit through the app (the Worker lane's half of C9). The assertion arms
-      // itself once src/ reads GIT_COMMIT, so the merged branch cannot pass without the commit.
-      const appSources = dir => fs.readdirSync(dir, { withFileTypes: true }).flatMap(entry => entry.isDirectory()
-        ? appSources(path.join(dir, entry.name)) : entry.name.endsWith('.js') ? [fs.readFileSync(path.join(dir, entry.name), 'utf8')] : []);
-      if (appSources(path.join(__dirname, 'src')).some(source => /\bGIT_COMMIT\b/.test(source))) {
-        assert.equal(health.commit, 'ab12cd3', '/health reports the release\'s commit');
-      } else {
-        assert.ok(!('commit' in health));
-        console.log('NOTE: src/ does not read GIT_COMMIT yet (the Worker lane adds it): /health is checked for the commit once it does');
-      }
+      // /health names the commit through the app (src/index.js reads GIT_COMMIT, as on the Worker).
+      assert.equal(health.commit, 'ab12cd3', '/health reports the release\'s commit');
       fs.writeFileSync(path.join(release, 'REVISION'), 'not a commit\n');
       assert.equal(runtimeEnv('127.0.0.1').GIT_COMMIT, undefined, 'anything but a SHA is ignored');
     } finally {
