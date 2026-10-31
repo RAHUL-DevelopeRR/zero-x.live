@@ -810,7 +810,7 @@ try {
   const paidPro = overview.body.pools.find(pool => pool.model === 'gemini/gemini-2.5-pro' && pool.tier === 'paid');
   assert.equal(paidPro.requests_today, 1);
   assert.equal(paidPro.limits, null);
-  assert.deepEqual(Object.keys((await call('/health')).body).sort(), ['service', 'status', 'version']);
+  assert.deepEqual(Object.keys((await call('/health')).body).sort(), ['commit', 'service', 'status', 'version']);
   assert.equal((await call('/health', { token: ADMIN })).body.database_configured, true);
   step('GET /admin/overview', `users ${overview.body.users.total}, active subscriptions 1, MRR $10, ${overview.body.pools.length} pools with limits and health`);
 

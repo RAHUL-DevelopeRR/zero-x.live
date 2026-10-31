@@ -394,6 +394,60 @@ try {
   assert.ok(elapsed >= 1550 && elapsed < 1850, `the non-streaming attempt ended at budget + idle (${elapsed} ms)`);
   assert.equal(globalHealthTracker.records.size, 1, 'only the 503 is recorded');
 
+  // C8: a non-streaming answer is one JSON body with no byte before it, so it is due
+  // UPSTREAM_RESPONSE_TIMEOUT_MS (90 s) after the request arrived, under the first-byte limit of the
+  // proxy in front of the Node server, whatever budget + idle (up to 140 s) would allow. The same
+  // 503-then-silent upstream, capped at 1200 ms: a clean JSON 504, and the cut is not held against
+  // the second pool, which did not get its own time.
+  globalHealthTracker.reset();
+  upstreamStarts = [];
+  budgetStart = Date.now();
+  response = await request('/v1/chat/completions', { model: 'auto', messages }, 'ses_budget',
+    { ...budgetEnv, UPSTREAM_FAILOVER_BUDGET_MS: '1000', UPSTREAM_TTFB_TIMEOUT_MS: '600', UPSTREAM_IDLE_TIMEOUT_MS: '600',
+      UPSTREAM_RESPONSE_TIMEOUT_MS: '1200' });
+  elapsed = Date.now() - budgetStart;
+  assert.equal(response.status, 504);
+  assert.equal(response.headers.get('content-type'), 'application/json');
+  let capped = await response.json();
+  assert.deepEqual([capped.error.code, capped.error.type], ['upstream_timeout', 'server_error'], 'the contract error shape');
+  assert.equal(capped.error.request_id, response.headers.get('x-request-id'));
+  assert.equal(upstreamStarts.length, 2);
+  assert.ok(elapsed >= 1150 && elapsed < 1450, `the non-streaming request ended at its deadline (${elapsed} ms)`);
+  assert.equal(globalHealthTracker.records.size, 1, 'only the 503 is recorded');
+
+  // One silent pool whose own timeouts (5 s) and budget (3 s, + idle 2.5 s) would let it run on:
+  // the 1 s deadline ends it, and no candidate starts after it (each needs a tenth of the budget).
+  globalHealthTracker.reset();
+  upstreamStarts = [];
+  globalThis.fetch = async (url, options) => { upstreamStarts.push(Date.now()); return silent(options); };
+  budgetStart = Date.now();
+  response = await request('/v1/chat/completions', { model: 'auto', messages }, 'ses_budget',
+    { ...budgetEnv, UPSTREAM_FAILOVER_BUDGET_MS: '3000', UPSTREAM_TTFB_TIMEOUT_MS: '2500', UPSTREAM_IDLE_TIMEOUT_MS: '2500',
+      UPSTREAM_RESPONSE_TIMEOUT_MS: '1000' });
+  elapsed = Date.now() - budgetStart;
+  assert.equal(response.status, 504);
+  capped = await response.json();
+  assert.equal(capped.error.code, 'upstream_timeout');
+  assert.ok(elapsed >= 950 && elapsed < 1300, `ended at the 1 s deadline (${elapsed} ms)`);
+  assert.equal(upstreamStarts.length, 1, 'nothing starts once the deadline is too close');
+  assert.equal(globalHealthTracker.records.size, 0, 'a pool cut by the deadline is not marked failed');
+
+  // Streams are not capped: their first data event commits them within the budget, and the
+  // Node server's keep-alives (server.js) carry a quiet one.
+  globalHealthTracker.reset();
+  upstreamStarts = [];
+  globalThis.fetch = async () => {
+    upstreamStarts.push(Date.now());
+    await new Promise(resolve => setTimeout(resolve, 450));
+    return new Response('data: {"choices":[{"index":0,"delta":{"content":"late but fine"},"finish_reason":null}]}\n\n' +
+      'data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n', { headers: { 'Content-Type': 'text/event-stream' } });
+  };
+  response = await request('/v1/chat/completions', { model: 'auto', messages, stream: true }, 'ses_budget',
+    { ...budgetEnv, UPSTREAM_FAILOVER_BUDGET_MS: '5000', UPSTREAM_TTFB_TIMEOUT_MS: '2000', UPSTREAM_RESPONSE_TIMEOUT_MS: '200' });
+  assert.equal(response.status, 200);
+  assert.ok((await response.text()).includes('late but fine'));
+  assert.equal(upstreamStarts.length, 1);
+
   // SSE comments before the first data event extend a candidate's wait (up to TTFB + idle),
   // but not past the budget.
   globalHealthTracker.reset();

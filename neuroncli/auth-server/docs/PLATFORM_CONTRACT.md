@@ -127,7 +127,7 @@ credential (never an `nzx_` key). Session tokens are stored hashed (SHA-256) in 
 | 429 | `rate_limited` | rate_limit_error | per-user rpm/concurrency (`retry_after_seconds`) — clients may retry after the delay |
 | 503 | `capacity_exhausted` | server_error | shared free pool exhausted (`retry_after_seconds`, `upgrade_url`) |
 | 502 | `upstream_error` | server_error | upstream failure after failover; request count refunded |
-| 504 | `upstream_timeout` | server_error | no first byte within 45 s or idle > 90 s |
+| 504 | `upstream_timeout` | server_error | no first byte within 45 s or idle > 90 s; a non-streaming completion not ready 90 s after the request |
 
 `upgrade_url` = `https://zero-x.live/pricing` (env `PRICING_URL`).
 
@@ -610,7 +610,8 @@ The page is `https://zero-x.live/changelog`. Optional secret `GITHUB_RELEASES_TO
 
 Protocol, limits, close codes and push rules: `docs/RELAY.md`. Endpoints `wss://zero-x.live/relay/v1/host`,
 `/relay/v1/client`, `POST /relay/v1/ticket`, `GET /relay/v1/hosts`, and `POST|GET /api/push/tokens`,
-`DELETE /api/push/tokens/:id`. Durable Object binding `RELAY` (class `RelayRoom`). Optional secret
+`DELETE /api/push/tokens/:id`. Durable Object binding `RELAY` (class `RelayRoom`), not bound on the
+Worker for now (every relay route answers `503 relay_unavailable`). Optional secret
 `EXPO_ACCESS_TOKEN`.
 
 ### 10.5 RPCs
@@ -731,7 +732,8 @@ migration `20261029000400_oiop_offers.sql`; checks `check-oiop.mjs`, `check-quot
   `facts:null|{models_dev_id, name, family, canonical_model_id, release_date, knowledge, open_weights,
   reasoning, structured_output, modalities:{input, output}, list_price_per_million:{input, output}}`
   (`auto`: provider `zero-x`, empty offers, null ids and facts). Facts come from models.dev via the
-  cron (at most daily; KV key `oiop:models-dev:v1`).
+  cron (at most daily; record `oiop:models-dev:v1` in the Postgres record store
+  `gateway_session_store`, or in KV without a database; KV is read only while Postgres has none).
 - `GET /v1/models/stream` (same auth as `/v1/models`): `text/event-stream`; `retry: 5000`, then
   `event: catalog.updated` with `id: <status ETag>` and the `/v1/models/status` body at start and
   on every change, `: keepalive` comments every 15 s, closed after 10 minutes; `Last-Event-ID`

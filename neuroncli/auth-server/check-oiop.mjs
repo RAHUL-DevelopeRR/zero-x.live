@@ -10,7 +10,8 @@ import { RoutingEngine } from './src/router.js';
 import { FailureKind, globalHealthTracker, HealthState, ProviderHealthTracker } from './src/provider-health.js';
 import { canaryBudget, canaryIntervalMs, HealthHub, PROBE_DAILY_CAPS } from './src/health-hub.js';
 import { classifyUpstreamFailure } from './src/providers.js';
-import { refreshModelsDevFacts, resetModelsDevCache } from './src/oiop/models-dev.js';
+import { FACTS_KV_KEY, modelsDevFacts, refreshModelsDevFacts, resetModelsDevCache } from './src/oiop/models-dev.js';
+import { sha256Hex } from './src/session-store.js';
 import { conversationKey, createChatHandler, requestNeeds } from './src/chat-handler.js';
 import { callerPolicy, DEFAULT_TRUST_TIERS, TRAINING_HEADER, TRUST_HEADER } from './src/oiop/policy.js';
 import { findSecrets, scrubMode, scrubRequest, scrubsOffer, SecretRestorer } from './src/oiop/scrub.js';
@@ -583,9 +584,68 @@ try {
       'a failed refresh keeps the last facts');
     assert.deepEqual(await refreshModelsDevFacts(env, CATALOG, { now: day + 60_000, fetchImpl }), { skipped: 'fresh' }, 'retried after an hour');
     assert.deepEqual(await refreshModelsDevFacts(env, CATALOG, { now: day + 3601_000, fetchImpl }), { refreshed: true, models: 2 });
-    assert.deepEqual(await refreshModelsDevFacts({}, CATALOG, { fetchImpl }), { skipped: 'no_kv' });
+    assert.deepEqual(await refreshModelsDevFacts({}, CATALOG, { fetchImpl }), { skipped: 'no_store' });
     resetModelsDevCache();
-    ok('catalog: every model names its provider with a models.dev logo and favicon fallback, its offers (tier, trust tier, training) and models.dev id; the caller policy marks ruled-out models policy_restricted; models.dev facts refreshed daily into KV, kept on failure, retried after an hour');
+
+    // C5: with a database the facts live in the Postgres record store (gateway_session_store, as
+    // sessions do without KV), so the Node server and a Worker whose KV namespace is unbound share them.
+    const factsKey = await sha256Hex(FACTS_KV_KEY);
+    const factsRow = async () => (await sql('SELECT value, expires_at FROM public.gateway_session_store WHERE key = $1', [factsKey]))[0] ?? null;
+    const dropFactsRow = () => sql('DELETE FROM public.gateway_session_store WHERE key = $1', [factsKey]);
+    const dbEnv = { ...DB, GROQ_API_KEY: 'groq-key', GEMINI_API_KEY: 'gemini-key', ALLOW_UNKNOWN_COUNTRY: 'true' };
+    await dropFactsRow();
+    assert.deepEqual(await modelsDevFacts(dbEnv), {}, 'nothing stored yet');
+    fetches = 0;
+    assert.deepEqual(await refreshModelsDevFacts(dbEnv, CATALOG, { fetchImpl }), { refreshed: true, models: 2 });
+    assert.deepEqual(await refreshModelsDevFacts(dbEnv, CATALOG, { fetchImpl }), { skipped: 'fresh' });
+    assert.equal(fetches, 1, 'once a day');
+    const row = await factsRow();
+    assert.ok(row, 'stored under the hashed key');
+    const ttlSeconds = (new Date(row.expires_at).getTime() - Date.now()) / 1000;
+    assert.ok(ttlSeconds > 6.9 * 86400 && ttlSeconds <= 7 * 86400 + 5, `kept the store's longest TTL, 7 days (${Math.round(ttlSeconds)} s), renewed by the daily refresh`);
+    resetModelsDevCache();
+    assert.equal((await modelsDevFacts(dbEnv))['groq/openai/gpt-oss-120b'].name, 'GPT OSS 120B');
+    resetModelsDevCache();
+    assert.equal((await list({}, dbEnv)).data.find(model => model.id === 'groq/openai/gpt-oss-120b').facts.name, 'GPT OSS 120B',
+      '/v1/models shows them without KV');
+
+    // The move off KV: a Worker with both writes and reads Postgres. KV's facts serve only while
+    // Postgres has none, and do not hold back the first refresh into Postgres.
+    await dropFactsRow();
+    const both = { ...dbEnv, SESSIONS_KV: kv };
+    resetModelsDevCache();
+    assert.equal((await modelsDevFacts(both))['groq/openai/gpt-oss-120b'].name, 'GPT OSS 120B', "KV's facts until Postgres has some");
+    const kvBefore = kvData.get(FACTS_KV_KEY);
+    fetches = 0;
+    assert.deepEqual(await refreshModelsDevFacts(both, CATALOG, { fetchImpl }), { refreshed: true, models: 2 },
+      'Postgres empty: refreshed at once, however fresh KV is');
+    assert.equal(fetches, 1);
+    assert.ok(await factsRow());
+    assert.equal(kvData.get(FACTS_KV_KEY), kvBefore, 'KV is no longer written');
+    // A failed first refresh carries KV's facts into Postgres, so the Node server has them too.
+    await dropFactsRow();
+    console.warn = () => {};
+    try {
+      assert.deepEqual(await refreshModelsDevFacts(both, CATALOG, { fetchImpl: async () => new Response('', { status: 502 }) }),
+        { refreshed: false });
+    } finally { console.warn = warn; }
+    const carried = JSON.parse((await factsRow()).value);
+    assert.equal(carried.facts['groq/openai/gpt-oss-120b'].name, 'GPT OSS 120B');
+    assert.ok(carried.failed_at, 'retried after an hour');
+    resetModelsDevCache();
+    assert.equal((await modelsDevFacts(dbEnv))['groq/openai/gpt-oss-120b'].name, 'GPT OSS 120B');
+    // Postgres unreachable: a Worker still has KV's facts.
+    resetModelsDevCache();
+    const unreachable = { ...both, DATABASE_DRIVER: 'postgrest', SUPABASE_URL: 'https://db.invalid', SUPABASE_SECRET_KEY: 'sb_secret_test' };
+    globalThis.fetch = async () => { throw new TypeError('fetch failed'); };
+    try {
+      assert.equal((await modelsDevFacts(unreachable))['groq/openai/gpt-oss-120b'].name, 'GPT OSS 120B');
+    } finally {
+      globalThis.fetch = async input => { throw new Error(`Unexpected outbound request: ${String(input?.url ?? input)}`); };
+    }
+    await dropFactsRow();
+    resetModelsDevCache();
+    ok('catalog: every model names its provider with a models.dev logo and favicon fallback, its offers (tier, trust tier, training) and models.dev id; the caller policy marks ruled-out models policy_restricted; models.dev facts refreshed daily into the Postgres record store (KV without a database, KV read only until Postgres has facts), kept on failure, retried after an hour');
   }
 
   // ── Catalog push: GET /v1/models/stream ──

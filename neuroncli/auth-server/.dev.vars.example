@@ -36,6 +36,17 @@ PROVIDER_KEYS_KEK=                  # SECRET: openssl rand -base64 32; encrypts 
 CF_ACCESS_TEAM_DOMAIN=              # <team>.cloudflareaccess.com; with CF_ACCESS_AUD, /admin/keys needs an Access JWT
 CF_ACCESS_AUD=                      # audience tag of the Access application on dashboard.zero-x.live/admin
 
+# ── Moving to the Node server on EC2 ──
+# Worker only (src/ec2-proxy.js): requests whose host + path starts with an EC2_PROXY_PREFIXES
+# entry go to EC2_PROXY_ORIGIN with EC2_PROXY_SECRET; empty or unset forwards nothing.
+# EC2_PROXY_PREFIXES=zero-x.live/v1/ # SECRET (wrangler secret put only, never deploy.yml); comma list
+# EC2_PROXY_SECRET=                 # SECRET: the Node server's value, visible ASCII; without it nothing is forwarded
+# EC2_PROXY_ORIGIN=https://aws.zero-x.live
+# EC2 only, for the test window: hosts that serve the whole site (dashboard, device and admin pages
+# included) and sign in like the production ones.
+# EXTRA_WEB_HOSTS=aws.zero-x.live   # never on the Worker
+# GIT_COMMIT=                       # the commit /health reports (set by the deploy, not by hand)
+
 # ── Website and security headers ──
 PRICING_URL=https://zero-x.live/pricing   # upgrade_url in errors
 CSP_ENFORCE=false                   # true sends Content-Security-Policy instead of -Report-Only
@@ -67,6 +78,7 @@ CLOUDFLARE_API_TOKEN=               # SECRET, Node only
 # TRUST_CF_IPCOUNTRY=true
 # ALLOW_UNKNOWN_COUNTRY=true
 # UPSTREAM_TTFB_TIMEOUT_MS=45000    # first byte; UPSTREAM_IDLE_TIMEOUT_MS=90000 between bytes
+# UPSTREAM_RESPONSE_TIMEOUT_MS=90000  # a non-streaming completion is due this long after the request
 # ROUTER_MAX_ATTEMPTS=3             # upstream attempts per request (one is kept for paid pools)
 # RESERVATION_RENEW_MS=30000        # renew a running attempt's concurrency lease this often (at most a third of the lease)
 # RESERVATION_LEASE_SECONDS=90      # for this long (a killed request frees its slot when it lapses)

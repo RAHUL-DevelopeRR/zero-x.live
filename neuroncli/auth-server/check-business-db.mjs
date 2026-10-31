@@ -1592,7 +1592,7 @@ try {
   globalThis.fetch = async url => { throw new Error(`network disabled in check-business-db: ${url}`); };
   try {
     const { default: app } = await import('./src/index.js');
-    // Anonymous /health is trimmed to {status, service, version} (WP-B3), so the database
+    // Anonymous /health is trimmed to {status, service, version, commit} (WP-B3), so the database
     // configuration is read with the operator token.
     const ADMIN = 'check-business-db-operator-token-0123456789';
     const operator = { headers: { Authorization: `Bearer ${ADMIN}` } };

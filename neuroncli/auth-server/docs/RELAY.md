@@ -38,8 +38,8 @@ Tests: `check-relay.mjs`.
 - Signing out a device (`DELETE /api/sessions/:id`) or every device (`POST /api/sessions/revoke-all`)
   closes the relay sockets opened with those CLI sessions (close code 4403). Clients must not
   reconnect after 4403; they ask the user to sign in again.
-- Without the `RELAY` binding (the Node server, the API-only Worker) every relay route answers
-  `503 relay_unavailable`.
+- Without the `RELAY` binding (the Worker as deployed now, the Node server, the API-only Worker)
+  every relay route answers `503 relay_unavailable`.
 
 ## 3. Frames
 
@@ -123,8 +123,11 @@ enhanced push security.
 
 ## 6. Deploying
 
-- `wrangler.toml` binds `RELAY` to `RelayRoom` with the `v2-relay` migration; the class is created
-  on deploy, nothing to provision.
+- Not bound for now (owner decision, 2026-10-30): `wrangler.toml` has no `RELAY` binding and no
+  migration that creates `RelayRoom`, and `src/index.js` does not export the class, so the Worker
+  answers `503 relay_unavailable` on every relay route. The relay comes later on the Node server.
+  Binding it on the Worker again takes all three: the export, the binding and a new
+  `[[migrations]]` tag with `new_sqlite_classes = ["RelayRoom"]` (`check-relay.mjs` checks they agree).
 - Apply `migrations/20261029000100_push_tokens.sql` (and `20261029000000_session_devices.sql`)
   before deploying, like every migration (see `deploy.yml`).
 - Optional later: a `relay.zero-x.live` custom domain routed to the same Worker paths.

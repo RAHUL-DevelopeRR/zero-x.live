@@ -239,6 +239,7 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
   // Until when this isolate skips lease renewals because zerox_renew_reservation is missing.
   let renewalUnavailableUntil = 0;
   return async c => {
+    const receivedAt = Date.now();
     const requestId = newRequestId();
     const env = c.env || {};
     const headers = { 'x-request-id': requestId };
@@ -454,6 +455,15 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
       return scrubbed;
     };
 
+    // A non-streaming answer is one JSON body with no byte before it, so the client and the proxy
+    // in front of the server (Cloudflare now, CloudFront later) wait for its first byte the whole
+    // time. It is due UPSTREAM_RESPONSE_TIMEOUT_MS (90 s) after the request arrived, under those
+    // proxies' first-byte limits, whatever the attempts' own timeouts or the budget plus the idle
+    // timeout (up to 140 s) would allow: no attempt starts too close to it, and the attempt it cuts
+    // ends like a spent budget (504 upstream_timeout, not counted against the pool, which did not
+    // get its own time). Streams commit within the budget and are not affected.
+    const responseBy = body.stream ? Infinity : receivedAt + positiveInt(env.UPSTREAM_RESPONSE_TIMEOUT_MS, 90000);
+
     // commitBy ends this attempt's share of the failover budget: a stream's first byte and first
     // data event are due by then at the latest, however much of their own timeouts is left.
     // wholeShare: no earlier attempt took more than min(5 s, a tenth of the budget) of that share.
@@ -470,7 +480,7 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
       const secrets = [poolSecret(env, pool), session.openrouter_key];
       let started;
       try {
-        started = await startCompletion(env, session, entry, pool, payload, { clientSignal, timeouts, request, commitBy });
+        started = await startCompletion(env, session, entry, pool, payload, { clientSignal, timeouts, request, commitBy, responseBy });
       } catch (error) {
         const kind = clientSignal?.aborted ? FailureKind.ABORTED : error?.kind || FailureKind.SERVER;
         const latencyMs = Date.now() - startedAt;
@@ -612,7 +622,8 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
     // A free attempt leaves the paid attempt its share while that is owed.
     const keepsPaidShare = candidate => paidOwed && candidate.pool.tier !== 'paid';
     const shareEnd = candidate => (keepsPaidShare(candidate) ? paidCommitBy : commitBy);
-    const startBy = candidate => shareEnd(candidate) + (!body.stream && candidate.pool.tier === 'paid' ? timeouts.idleMs : 0);
+    const startBy = candidate => Math.min(responseBy,
+      shareEnd(candidate) + (!body.stream && candidate.pool.tier === 'paid' ? timeouts.idleMs : 0));
     // Free pools held back for the paid attempt (its last attempt or its share of the budget).
     // Once it is made (any outcome but a 429 while another paid pool is left), refused (credits
     // held by the account's other paid requests are not in the balance) or ruled out (every paid

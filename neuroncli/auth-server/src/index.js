@@ -37,9 +37,11 @@ import { registerCatalogAdminRoutes } from './routes/catalog-admin.js';
 import { registerCreditRoutes } from './routes/credits.js';
 import { loadVaultKeys, vaultConfigured } from './provider-keys.js';
 import { accessConfigured, passedAccess } from './access-auth.js';
-// Durable Object classes are exported from the Worker entry (wrangler.toml [[durable_objects]]).
+import { forwardToEc2 } from './ec2-proxy.js';
+import { extraWebOrigins, isExtraWebHost } from './web-hosts.js';
+// Durable Object classes are exported from the Worker entry (wrangler.toml [[durable_objects]]),
+// each with its binding. RelayRoom (src/relay.js) is not bound for now, so it is not exported.
 export { HealthHub } from './health-hub.js';
-export { RelayRoom } from './relay.js';
 import { registerWebhookRoutes } from './routes/webhooks.js';
 
 const SERVICE = 'neuroncli-gateway-worker';
@@ -102,6 +104,10 @@ const ADMIN_CONTENT_SECURITY_POLICY = [
   "base-uri 'none'",
 ].join('; ');
 
+// A file other than a page (an image, a script, a video, robots.txt, the sitemap): what a shared
+// cache stores by default (Cloudflare caches by file extension, and HTML is not on its list).
+const isStaticFile = pathname => /\.[A-Za-z0-9]{1,10}$/.test(pathname) && !/\.html?$/i.test(pathname);
+
 app.use('*', async (c, next) => {
   const url = new URL(c.req.url);
   const path = routePath(url.pathname);
@@ -113,15 +119,24 @@ app.use('*', async (c, next) => {
   c.header('Referrer-Policy', 'strict-origin-when-cross-origin');
   c.header('X-Frame-Options', 'DENY');
   if (url.protocol === 'https:') c.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  const testHost = isExtraWebHost(c.env, url.hostname);
   // The Neuron sign-in pages carry session tokens, so their policy is always enforced; the
   // rest of the site stays report-only until CSP_ENFORCE=true.
   const signInPage = url.pathname.startsWith('/neuroncli/') ||
-    ((url.hostname === 'neuron.zero-x.live' || isLoopbackHost(url.host)) && url.pathname.startsWith('/device'));
+    ((url.hostname === 'neuron.zero-x.live' || isLoopbackHost(url.host) || testHost) && url.pathname.startsWith('/device'));
   const adminPage = Object.hasOwn(ADMIN_PAGE_FILES, url.pathname);
   const enforceCsp = c.env?.CSP_ENFORCE === 'true' || signInPage || adminPage;
   c.header(enforceCsp ? 'Content-Security-Policy' : 'Content-Security-Policy-Report-Only',
     adminPage ? ADMIN_CONTENT_SECURITY_POLICY : CONTENT_SECURITY_POLICY);
   if (adminPage) c.header('Referrer-Policy', 'no-referrer');
+  // Every forward from the Worker fetches EC2_PROXY_ORIGIN + path (src/ec2-proxy.js), so in
+  // Cloudflare's cache all hosts and schemes share one key per path. What depends on them is
+  // private, so no shared cache keeps it for another host: robots.txt (the dashboard and test
+  // hosts disallow everything) and every redirect (to https, the canonical host or a clean URL).
+  // The no-store below still wins on the paths that have it.
+  if (url.pathname === '/robots.txt' || (c.res.status >= 300 && c.res.status < 400 && !c.res.headers.has('Cache-Control'))) {
+    c.header('Cache-Control', 'private');
+  }
   if (path.startsWith('/auth/') || signInPage) {
     c.header('Cache-Control', 'no-store');
     c.header('Referrer-Policy', url.pathname.startsWith('/neuroncli/login/') ? 'origin' : 'no-referrer');
@@ -129,7 +144,11 @@ app.use('*', async (c, next) => {
   if (['/api/', '/admin/', '/webhooks/', '/relay/'].some(prefix => path.startsWith(prefix)) && !PUBLIC_API_PATHS.includes(path)) {
     c.header('Cache-Control', 'no-store');
   }
-  if (url.hostname === 'dashboard.zero-x.live' || url.pathname.startsWith('/neuroncli/') || path === '/health' ||
+  // The dashboard host (and a test host) are never indexed: their pages and APIs say so. Their
+  // static files answer exactly as on the other hosts, because a shared cache keeps one copy of
+  // each for all of them; their robots.txt keeps crawlers away from those files.
+  if (((url.hostname === 'dashboard.zero-x.live' || testHost) && !isStaticFile(url.pathname)) ||
+      url.pathname.startsWith('/neuroncli/') || path === '/health' ||
       ['/auth/', '/api/', '/v1/', '/admin/', '/webhooks/', '/relay/', '/oiop/'].some(prefix => path.startsWith(prefix))) {
     c.header('X-Robots-Tag', 'noindex, nofollow');
   }
@@ -155,8 +174,12 @@ app.use('*', async (c, next) => {
   const url = new URL(c.req.url);
   const hostname = url.hostname;
   const path = url.pathname;
-  // The local Node server keeps visitors on the loopback origin (relative redirects).
-  const loopback = isLoopbackHost(url.host);
+  // The local Node server keeps visitors on the loopback origin (relative redirects), and so does
+  // a test host on EC2 (EXTRA_WEB_HOSTS, src/web-hosts.js): one origin serves the whole site there,
+  // the dashboard, the device page and the operator pages included, so every browser flow can be
+  // tried on it before a production host moves. The dev identity stays loopback-only (auth-context.js).
+  const testHost = isExtraWebHost(c.env, hostname);
+  const oneOrigin = isLoopbackHost(url.host) || testHost;
 
   // Let Hono handle OPTIONS/CORS preflight
   if (c.req.method === 'OPTIONS') {
@@ -172,7 +195,7 @@ app.use('*', async (c, next) => {
   if (path.startsWith('/neuroncli/admin/')) return (await notFoundPage(c)) || c.text('Not Found', 404);
 
   if (c.req.method === 'GET' || c.req.method === 'HEAD') {
-    if (hostname === 'dashboard.zero-x.live' && path === '/robots.txt')
+    if ((hostname === 'dashboard.zero-x.live' || testHost) && path === '/robots.txt')
       return c.text('User-agent: *\nDisallow: /\n');
     if (path === '/neuroncli/callback/' && c.env?.ASSETS) {
       return c.env.ASSETS.fetch(new Request(new URL('/neuroncli/callback/index.html', url), c.req.raw));
@@ -181,21 +204,22 @@ app.use('*', async (c, next) => {
       return c.env.ASSETS.fetch(new Request(new URL('/neuroncli/login/index.html', url), c.req.raw));
     }
     // Device sign-in approval page: https://neuron.zero-x.live/device (also /neuroncli/device/,
-    // and /device on the local Node server, whose request URLs carry the loopback host).
+    // and /device on the local Node server, whose request URLs carry the loopback host, or a test host).
     if (c.env?.ASSETS && (path === '/neuroncli/device/' ||
-        ((hostname === 'neuron.zero-x.live' || loopback) && (path === '/device' || path === '/device/')))) {
+        ((hostname === 'neuron.zero-x.live' || oneOrigin) && (path === '/device' || path === '/device/')))) {
       return c.env.ASSETS.fetch(new Request(new URL('/neuroncli/device/index.html', url), c.req.raw));
     }
-    // Operator pages (key vault, model catalog): dashboard host (or the local Node server), behind Cloudflare Access.
-    if (c.env?.ASSETS && Object.hasOwn(ADMIN_PAGE_FILES, path) && (hostname === 'dashboard.zero-x.live' || loopback)) {
+    // Operator pages (key vault, model catalog): dashboard host (or the local Node server or a test
+    // host), behind Cloudflare Access (on a test host, only when an Access application covers it).
+    if (c.env?.ASSETS && Object.hasOwn(ADMIN_PAGE_FILES, path) && (hostname === 'dashboard.zero-x.live' || oneOrigin)) {
       if (!await passedAccess(c)) return c.text('Cloudflare Access authentication required.', 403);
       return c.env.ASSETS.fetch(new Request(new URL(ADMIN_PAGE_FILES[path], url), c.req.raw));
     }
     let target = null;
     let fragment = '';
-    const site = loopback ? '' : 'https://zero-x.live';
+    const site = oneOrigin ? '' : 'https://zero-x.live';
     const clean = path.replace(/\.html$/, '').replace(/\/$/, '');
-    if (loopback && clean === '/dashboard') {
+    if (oneOrigin && clean === '/dashboard') {
       if (path !== clean) target = clean;
     }
     // neuron.zero-x.live belongs to Neuron: its home is the Neuron CLI page, and /device (above)
@@ -207,9 +231,9 @@ app.use('*', async (c, next) => {
     else if (clean === '/start') { target = site + '/neuron-cli'; fragment = '#install'; }
     else if (clean === '/features') { target = site + '/neucockpit'; fragment = '#features'; }
     else if (clean === '/dashboard') target = 'https://dashboard.zero-x.live/';
-    else if (['/index','/index2'].includes(clean)) target = loopback ? '/' : `https://${hostname === 'www.zero-x.live' ? 'zero-x.live' : hostname}/`;
+    else if (['/index','/index2'].includes(clean)) target = oneOrigin ? '/' : `https://${hostname === 'www.zero-x.live' ? 'zero-x.live' : hostname}/`;
     else if (SITE_PAGES.includes(clean)) {
-      if (loopback ? path !== clean : hostname !== 'zero-x.live' || path !== clean) target = site + clean;
+      if (oneOrigin ? path !== clean : hostname !== 'zero-x.live' || path !== clean) target = site + clean;
     } else if (hostname === 'www.zero-x.live' && path !== '/health' && !isApiRoute(path) && !path.startsWith('/neuroncli/') &&
                !path.startsWith('/Assets/') && !path.startsWith('/assets/') && !/\.(css|js|png|ico|webp|svg|jpg|mp4|woff2)$/.test(path))
       target = 'https://zero-x.live' + path;
@@ -251,13 +275,16 @@ app.use('*', async (c, next) => {
 });
 
 // ── CORS: identity routes accept only the Zero-X origins; the OpenAI surface stays open ──
+// EXTRA_WEB_HOSTS adds a test host's https origin on EC2 (src/web-hosts.js); unset on the Worker.
 const IDENTITY_ORIGINS = ['https://zero-x.live', 'https://www.zero-x.live', 'https://dashboard.zero-x.live'];
 const DEV_ORIGIN = /^http:\/\/(127\.0\.0\.1|localhost)(:\d{1,5})?$/;
 const CORS_HEADERS = ['Content-Type', 'Authorization', 'X-Neuron-Trust-Tiers', 'X-Neuron-Allow-Training',
   'X-Neuron-Conversation'];
 const CORS_METHODS = ['GET', 'POST', 'DELETE', 'OPTIONS'];
+const identityOrigin = (origin, env) => IDENTITY_ORIGINS.includes(origin) || extraWebOrigins(env).includes(origin) ||
+  (devRuntimeEnabled(env) && DEV_ORIGIN.test(origin));
 const identityCors = cors({
-  origin: (origin, c) => IDENTITY_ORIGINS.includes(origin) || (devRuntimeEnabled(c.env) && DEV_ORIGIN.test(origin)) ? origin : null,
+  origin: (origin, c) => identityOrigin(origin, c.env) ? origin : null,
   allowHeaders: CORS_HEADERS, allowMethods: CORS_METHODS, maxAge: 600,
 });
 const openCors = cors({
@@ -491,9 +518,13 @@ function takePkceStart(address) {
 
 // ── Routes ──
 
-// 1. Health check: anonymous callers learn only that the service is up.
+// 1. Health check: anonymous callers learn only that the service is up, and which commit runs
+// (GIT_COMMIT: deploy.yml's --var on the Worker, the release's REVISION file on EC2), so a deploy
+// can confirm the Worker and the Node server serve the same code. The repository is public. Once
+// an EC2_PROXY_PREFIXES entry covers a host, its /health is EC2's: the Worker's own commit then
+// has to be read through a URL that no prefix covers.
 api.get('/health', async (c) => {
-  const status = { status: "ok", service: SERVICE, version: VERSION };
+  const status = { status: "ok", service: SERVICE, version: VERSION, commit: c.env?.GIT_COMMIT || null };
   if (!await isOperator(c)) return c.json(status);
   const { supabaseUrl, supabaseKey } = readIdentityConfig(c.env);
   c.header('Cache-Control', 'no-store');
@@ -887,7 +918,8 @@ api.post('/v1/models/health', async (c) => {
     body: JSON.stringify({ model: body.model, messages: [{ role: 'user', content: 'Reply OK.' }], max_tokens: 8 }),
     signal: c.req.raw.signal,
   }), callerCountry(c.req.raw, c.env));
-  const response = await app.fetch(probe, c.env);
+  // Hono's own fetch: the probe is never forwarded to EC2, whatever EC2_PROXY_PREFIXES covers.
+  const response = await honoFetch(probe, c.env);
   const result = await response.json();
   if (!response.ok) return c.json({ model: body.model, status: 'unavailable', error: result.error, latency_ms: Date.now() - started }, response.status);
   const validCompletion = result.choices?.some(choice => choice.message?.content || choice.message?.tool_calls?.length);
@@ -1064,5 +1096,12 @@ app.scheduled = (controller, env, ctx) => {
   ctx?.waitUntil?.(task.catch(() => {}));
   return task;
 };
+
+// The Worker's fetch: the EC2 proxy switch (src/ec2-proxy.js) decides first, before Hono and any
+// middleware, so a forwarded request costs the Worker one header copy. Unset, it returns null at
+// once and Hono answers exactly as before. app.request (the checks) goes through it too; the
+// gateway's own sub-requests use honoFetch and are never forwarded.
+const honoFetch = app.fetch;
+app.fetch = (request, env, executionCtx) => forwardToEc2(request, env) ?? honoFetch(request, env, executionCtx);
 
 export default app;

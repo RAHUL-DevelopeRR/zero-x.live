@@ -107,7 +107,8 @@ Nothing below needs Supabase, Razorpay or provider accounts.
 
 ## Operations
 
-- `GET /health` answers `{status, service, version}`; with `Authorization: Bearer
+- `GET /health` answers `{status, service, version, commit}` (`commit`: `GIT_COMMIT`, the
+  deployed short SHA, or null); with `Authorization: Bearer
   $GATEWAY_ADMIN_TOKEN` it adds the configuration flags. `GET /ready` checks plan policies,
   session storage and the catalog.
 - `GET /admin/overview` (operator token, plus Cloudflare Access when configured, like every

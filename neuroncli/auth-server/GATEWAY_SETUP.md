@@ -63,6 +63,28 @@ provider off.
 | `CSP_ENFORCE` | var | `false` | `true` sends `Content-Security-Policy` instead of `-Report-Only`. |
 | `PRICING_URL` | var | `https://zero-x.live/pricing` | `upgrade_url` in errors (https only). |
 
+### Moving to the Node server on EC2
+
+The Worker keeps every Custom Domain and forwards chosen paths to the Node server (`server.js`)
+on EC2, which runs the same app behind Cloudflare Tunnel. The switch is the first thing in the
+Worker's `fetch`, before Hono and any middleware (`src/ec2-proxy.js`); a forward returns EC2's
+answer untouched (streams, redirects and WebSocket upgrades included), so it costs the Worker
+almost no CPU.
+
+| Variable | Kind | Default | Purpose |
+|---|---|---|---|
+| `EC2_PROXY_PREFIXES` | **Worker secret** | unset | Comma list of host + path prefixes to forward, e.g. `zero-x.live/v1/,dashboard.zero-x.live/` (an entry without a path covers its host; `zero-x.live/v1/` covers `/v1/models` but not `/v1`; an entry written as a URL, `https://zero-x.live/v1/`, means its host + path). Empty or unset: nothing is forwarded. Set it only with `wrangler secret put EC2_PROXY_PREFIXES`: it takes effect in seconds without a commit, and `deploy.yml` never lists it, so a deploy never overwrites it. Emptying it is the rollback. |
+| `EC2_PROXY_SECRET` | **secret** (Worker and EC2) | unset | Sent as `x-zerox-proxy-secret` with every forward; the Node server trusts the forwarded `x-zerox-*` headers (host, scheme, client IP, country, city, region, ASN, network name) only when it matches its own value. Visible ASCII only, with no surrounding whitespace or newline: the Worker forwards nothing (logged once, never the value) without it or when a header cannot carry it exactly. Bound by the deploy from one GitHub secret, so both runtimes hold the same value. |
+| `EC2_PROXY_ORIGIN` | var (Worker) | `https://aws.zero-x.live` | Where forwards go (https only; a host the Worker itself serves is refused). |
+| `EXTRA_WEB_HOSTS` | var (EC2 only) | unset | Comma list of test hosts, e.g. `aws.zero-x.live`. A test host serves the whole site on its own origin, like the local Node server: site pages and clean URLs, `/dashboard`, `/device` and the operator pages `/admin/keys` and `/admin/models` (behind Cloudflare Access when `CF_ACCESS_*` are set, so the Access application must then cover `<test host>/admin` too), with relative redirects, `noindex` on its pages and a `Disallow: /` robots.txt, but never the dev identity. Its https pages may call the identity APIs (CORS) and approve device sign-ins like the production hosts; a device sign-in started there is approved there. Never set it on the Worker, and remove it on EC2 when the test window closes. |
+| `GIT_COMMIT` | set by the deploy | unset | The short commit SHA `/health` reports as `commit` (null when unset): `deploy.yml` passes it to the Worker with `--var`; on EC2 `server.js` reads the release's `REVISION` file. Once a prefix covers a host, that host's `/health` is EC2's: compare the Worker's commit through a URL no prefix covers. |
+
+Every forward fetches `EC2_PROXY_ORIGIN` + path, so in Cloudflare's cache all visitor hosts and
+schemes share one key per path. The app keeps static files the same on every host and marks what
+depends on the host or scheme `Cache-Control: private` (robots.txt, every redirect). Never put a
+cache-everything rule on the `EC2_PROXY_ORIGIN` host: it would store pages and answers of one host
+for all of them.
+
 ### Billing (Razorpay)
 
 | Variable | Kind | Purpose |
@@ -95,6 +117,7 @@ them in `zerox_plan_policy.razorpay_plan_id_inr/usd`.
 | `TRUST_CF_IPCOUNTRY` | var (Node) | unset | `true` only when the Node origin is reachable exclusively through Cloudflare. Workers use `request.cf.country`. |
 | `ALLOW_UNKNOWN_COUNTRY` | var | unset | Local development only: serve free Gemini when the caller's country is unknown (fails closed otherwise). |
 | `UPSTREAM_TTFB_TIMEOUT_MS` / `UPSTREAM_IDLE_TIMEOUT_MS` | var | `45000` / `90000` | First byte / gap between bytes (SSE keep-alives count). The first data event is due within their sum. |
+| `UPSTREAM_RESPONSE_TIMEOUT_MS` | var | `90000` | A non-streaming completion is due this long after the request arrived, whatever its attempts' own timeouts and the budget plus `UPSTREAM_IDLE_TIMEOUT_MS` would allow (up to 140 s): its JSON body has no byte before it, and the proxy in front of the gateway (Cloudflare, later CloudFront) ends a response whose first byte is later than its own limit. No attempt starts too close to it; the cut answers `504 upstream_timeout` and is not counted against the pool. Streams are not affected. |
 | `UPSTREAM_FAILOVER_BUDGET_MS` | var | `50000` | Failover time of one request before its stream is committed: a stream's first byte and first data event are due within what is left of it (a non-streaming response within what is left plus `UPSTREAM_IDLE_TIMEOUT_MS`), no attempt starts with under min(5 s, a tenth of it) left, and a spent budget answers `upstream_timeout` (client errors and capacity refusals keep their own answer). Plans with paid capacity keep its last 30 % (15 s) for their paid attempt while the account can pay for one (the reservation shows its plan and credit balance): their free attempts are due within the first 70 %, and each non-streaming paid attempt starts while its share of the budget plus `UPSTREAM_IDLE_TIMEOUT_MS` is left (free pools with no time left are passed over). Once the paid attempt is made (a 429 does not make it while another paid pool is left), refused or ruled out (every paid pool's budget spent, or its model rejected the request), the free pools skipped for it are tried next with what is left, before any further paid pool. So after a paid 5xx, a free pool that hangs or fails can take the rest of the budget, or the last attempt, and the next paid pool is not tried. An attempt the budget cut is not counted against its pool's health; a stream that got its whole share and sent no data event (SSE keep-alives at most) only marks its pool slow, on any plan. Keep it under the CLI's 60 s retry. |
 | `ROUTER_MAX_ATTEMPTS` | var | `3` | Upstream attempts per request; plans with paid capacity keep the last one (and the end of the failover budget) for a paid pool while the account can pay for it and until the paid attempt is made or ruled out. A 429 does not count as an attempt: after a paid 429 the next paid pool gets the kept attempt. |
 | `ROUTER_MAX_RATE_LIMITED` | var | `6` | Upstream 429s per request; they do not count against `ROUTER_MAX_ATTEMPTS`. |
