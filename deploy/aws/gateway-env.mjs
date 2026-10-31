@@ -1,15 +1,17 @@
 #!/usr/bin/env node
-// Builds the gateway's environment file (/etc/zerox/gateway.env on the VM) for
-// .github/workflows/deploy-oracle.yml: the Worker's plain values from wrangler.toml [vars] (one
-// source for the Worker and the VM) plus the secrets deploy.yml binds to the Worker, read from
-// this process's environment under the names in REQUIRED_SECRETS and OPTIONAL_SECRETS. Values
-// are never printed; the names of optional secrets that are not set are.
+// Builds the gateway's environment file (/etc/zerox/gateway.env on the VM) for job ec2 of
+// .github/workflows/deploy.yml: the Worker's plain values from wrangler.toml [vars] (one source
+// for the Worker and the VM), the VM-only plain values named in VM_VARS (EXTRA_WEB_HOSTS, from a
+// repository variable; unset means the production default and is not written), and the secrets
+// the Worker job binds to the Worker, read from this process's environment under the names in
+// REQUIRED_SECRETS and OPTIONAL_SECRETS. Values are never printed; the names of optional secrets
+// that are not set are.
 //
-//   node deploy/oracle/gateway-env.mjs --wrangler neuroncli/auth-server/wrangler.toml --out "$RUNNER_TEMP/gateway.env"
+//   node deploy/aws/gateway-env.mjs --wrangler neuroncli/auth-server/wrangler.toml --out "$RUNNER_TEMP/gateway.env"
 //
 // The file is in systemd's EnvironmentFile syntax: KEY="value" with \ " ` $ escaped, one per
 // line. Settings that describe the VM itself (NODE_ENV, AUTH_HOST, TRUST_CLOUDFLARE, ...) are
-// in zerox-gateway.service and refused here, like the development switches.
+// in zerox-gateway@.service and refused here, like the development switches.
 import { readFileSync, writeFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
@@ -42,27 +44,37 @@ export function envLine(name, value) {
 const names = list => String(list || '').split(/\s+/).filter(Boolean);
 
 // systemd lets EnvironmentFile= override the unit's Environment=, so a [vars] entry or secret
-// with one of these names would silently replace the VM's runtime settings (zerox-gateway.service)
-// or switch on a development path. They are refused instead.
-const UNIT_SETTINGS = new Set(['NODE_ENV', 'AUTH_HOST', 'AUTH_PORT', 'NEURON_API_ONLY', 'TRUST_CLOUDFLARE',
-  'TRUST_CF_IPCOUNTRY', 'SHUTDOWN_GRACE_MS']);
+// with one of these names would silently replace the VM's runtime settings (zerox-gateway@.service,
+// NEURON_API_ONLY included: the VM serves the website) or switch on a development path. GIT_COMMIT
+// comes from the release's REVISION file on the VM, so an environment file kept across a rollback
+// can never report the wrong commit. EC2_PROXY_PREFIXES and EC2_PROXY_ORIGIN steer the Worker's
+// forward to the VM; on the VM they could only make it forward to itself. They are refused instead.
+const UNIT_SETTINGS = new Set(['NODE_ENV', 'AUTH_HOST', 'AUTH_PORT', 'AUTH_REUSE_PORT', 'READY_PORT', 'ASSETS_DIR',
+  'NEURON_API_ONLY', 'TRUST_CLOUDFLARE', 'TRUST_CF_IPCOUNTRY', 'SHUTDOWN_GRACE_MS', 'GIT_COMMIT']);
+const WORKER_ONLY = new Set(['EC2_PROXY_PREFIXES', 'EC2_PROXY_ORIGIN']);
 const DEVELOPMENT_ONLY = new Set(['DEV_AUTH_ENABLED', 'ALLOW_ANONYMOUS_SESSIONS', 'ALLOW_UNKNOWN_COUNTRY',
   'DATABASE_DRIVER', 'PGLITE_DATA_DIR', 'ALLOW_LOCAL_DATABASE', 'RAZORPAY_API_BASE', 'NEURON_RUNTIME']);
 function allowed(name) {
-  if (UNIT_SETTINGS.has(name) || DEVELOPMENT_ONLY.has(name) || name.startsWith('E2E_')) {
-    throw new Error(`${name} is not allowed in the VM environment (zerox-gateway.service sets it, or it is development-only)`);
+  if (UNIT_SETTINGS.has(name) || WORKER_ONLY.has(name) || DEVELOPMENT_ONLY.has(name) || name.startsWith('E2E_')) {
+    throw new Error(`${name} is not allowed in the VM environment (zerox-gateway@.service or the release sets it, ` +
+      'or it is Worker-only or development-only)');
   }
   return name;
 }
 
-// { text, skipped }: vars first, then the secrets that are set. A required secret that is not
-// set, a secret that would replace a var, or a refused name (above) fails.
-export function buildEnvFile({ vars, env, required, optional }) {
-  const lines = ['# Written by .github/workflows/deploy-oracle.yml; local edits are replaced on the next deploy.'];
+// { text, skipped }: vars first, then the VM-only values and the secrets that are set. A
+// required secret that is not set, a value that would replace a var, or a refused name (above)
+// fails.
+export function buildEnvFile({ vars, env, required, optional, vmVars = [] }) {
+  const lines = ['# Written by job ec2 of .github/workflows/deploy.yml; local edits are replaced on the next deploy.'];
   for (const [name, value] of Object.entries(vars)) lines.push(envLine(allowed(name), value));
+  for (const name of vmVars.map(allowed)) {
+    if (Object.hasOwn(vars, name)) throw new Error(`${name} is both a wrangler var and a VM variable`);
+    if (typeof env[name] === 'string' && env[name] !== '') lines.push(envLine(name, env[name]));
+  }
   const skipped = [];
   for (const name of [...required, ...optional].map(allowed)) {
-    if (Object.hasOwn(vars, name)) throw new Error(`${name} is both a wrangler var and a secret`);
+    if (Object.hasOwn(vars, name) || vmVars.includes(name)) throw new Error(`${name} is both a plain value and a secret`);
     const value = env[name];
     if (typeof value === 'string' && value !== '') lines.push(envLine(name, value));
     else if (required.includes(name)) throw new Error(`Required secret ${name} is not set`);
@@ -77,6 +89,7 @@ function main() {
   const { text, skipped } = buildEnvFile({
     vars: wranglerVars(readFileSync(values.wrangler, 'utf8')), env: process.env,
     required: names(process.env.REQUIRED_SECRETS), optional: names(process.env.OPTIONAL_SECRETS),
+    vmVars: names(process.env.VM_VARS),
   });
   writeFileSync(values.out, text, { mode: 0o600 });
   for (const name of skipped) console.log(`::warning::Optional secret ${name} is not set; the feature that needs it stays disabled`);

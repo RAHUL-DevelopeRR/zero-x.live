@@ -1,0 +1,21 @@
+# Cloudflare Tunnel client for tunnel zerox-aws, installed by host-setup.sh. The tunnel is
+# managed from the Cloudflare dashboard (its public hostnames and their origin settings are
+# there, deploy/aws/README.md "Cloudflare Tunnel"); the VM holds only its token, in
+# /etc/cloudflared/token (root, 0600). --token-file keeps the token off the command line, the
+# process list and the journal, which the deploy user can read. cloudflared only dials out (QUIC
+# on UDP 7844, HTTP/2 on TCP 7844 as fallback); /ready on the metrics port answers 200 while at
+# least one connection to Cloudflare is up (loopback only).
+[Unit]
+Description=Cloudflare Tunnel client (zerox-aws)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+TimeoutStartSec=15
+ExecStart=/usr/bin/cloudflared --no-autoupdate tunnel --metrics 127.0.0.1:20241 run --token-file /etc/cloudflared/token
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target

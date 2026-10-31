@@ -3,8 +3,8 @@
 // (server.js, the code being deployed) against a fake upstream on loopback. Reports the gateway's
 // CPU per request and per token, and the most streams it carried within the limits below.
 //
-//   cd neuroncli/auth-server && npm ci        # a checkout of the release, not /opt/zerox/gateway
-//   node ../../deploy/oracle/loadtest.mjs --streams 25,50,100,200 --tokens 300 --body-kb 100 --rate 50
+//   cd neuroncli/auth-server && npm ci        # a checkout of the commit, not /opt/zerox/current (README.md, "Load test on the VM")
+//   node ../../deploy/aws/loadtest.mjs --streams 25,50,100,200 --tokens 300 --body-kb 100 --rate 50
 //
 // --body-kb pads each request with earlier turns (code and tool output, JSON-escaped like a
 // coding agent's history) to about that size; the per-request cost (parsing, routing, the
@@ -13,7 +13,7 @@
 // memory, development plan limits), the code catalog and a fake Groq key, with
 // e2e-upstream-shim.mjs sending its upstream calls to the fake upstream served here, so nothing
 // leaves the machine and the production service is not touched (it does share the CPU: run
-// before go-live or with zerox-gateway stopped for clean numbers). Not measured, all of which
+// before go-live or at a quiet hour for clean numbers). Not measured, all of which
 // add CPU per request in production: TLS to the upstream provider (here plain HTTP on loopback)
 // and the Supabase RPCs over TLS (reservation, renewals, settlement, session reads).
 //

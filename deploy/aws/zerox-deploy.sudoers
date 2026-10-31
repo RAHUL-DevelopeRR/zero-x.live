@@ -1,0 +1,20 @@
+# /etc/sudoers.d/zerox-deploy (root, 0440), installed by host-setup.sh after visudo has checked it.
+#
+# The deploy user (CI, and push-release.sh through `sudo -u deploy`) owns the releases and the
+# environment file, and may run as root exactly these commands on the two gateway instances
+# and nothing else: no wildcard (a * in a sudoers argument also matches spaces, so further units
+# and options), no daemon-reload, no edit, no other unit, no cron timer. status runs with
+# --no-pager, since a pager running as root can open a shell. activate-release.sh starts and
+# stops instances; is-active and status are for the operator (both also work without sudo).
+Cmnd_Alias ZEROX_GATEWAY = \
+    /usr/bin/systemctl start zerox-gateway@0.service, \
+    /usr/bin/systemctl start zerox-gateway@1.service, \
+    /usr/bin/systemctl stop zerox-gateway@0.service, \
+    /usr/bin/systemctl stop zerox-gateway@1.service, \
+    /usr/bin/systemctl restart zerox-gateway@0.service, \
+    /usr/bin/systemctl restart zerox-gateway@1.service, \
+    /usr/bin/systemctl is-active zerox-gateway@0.service, \
+    /usr/bin/systemctl is-active zerox-gateway@1.service, \
+    /usr/bin/systemctl status --no-pager zerox-gateway@0.service, \
+    /usr/bin/systemctl status --no-pager zerox-gateway@1.service
+deploy ALL=(root) NOPASSWD: ZEROX_GATEWAY

@@ -3,7 +3,7 @@
 // same app.scheduled (src/index.js) with the env server.js builds from process.env. It runs
 // scheduled maintenance (zerox_release_stale_reservations, subscription expiry, device grant
 // purge), the provider discovery tick and the models.dev facts refresh (KV only, so skipped on
-// Node). deploy/oracle/zerox-cron.timer starts it every 10 minutes with the gateway's
+// Node). deploy/aws/zerox-cron.timer starts it every 10 minutes with the gateway's
 // environment file. Exits 1 when maintenance failed (discovery records its own failures).
 // Running it beside the Worker's own cron is safe: the release is idempotent and discovery jobs
 // are claimed in Postgres (zerox_discovery_claim), so each runs once.

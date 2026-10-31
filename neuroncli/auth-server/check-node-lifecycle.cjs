@@ -1,4 +1,4 @@
-// The Node server behind Cloudflare Tunnel (deploy/oracle): the visitor address for per-IP
+// The Node server behind Cloudflare Tunnel (deploy/aws): the visitor address for per-IP
 // limits (TRUST_CLOUDFLARE, spoof attempts included), SSE keep-alive comments while a stream is
 // quiet, the dev identity refused behind the tunnel, and the graceful stop on SIGTERM (in-flight
 // streams finish and settle, bounded by the grace; a longer tail after cut streams; a response not
