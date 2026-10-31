@@ -3,7 +3,7 @@
 // no way back into an ignored directory, wrangler's own ignored files), exact file paths only
 // (html_handling "none"; clean URLs and the 404 page are src/index.js's), cross-checked against
 // git's own matcher on this checkout; the release's REVISION file is never served. Then the caching
-// the Worker leaves to Cloudflare: a week for /Assets/, revalidation for the rest, a content ETag
+// the Worker leaves to Cloudflare: an hour for /Assets/, revalidation for the rest, no-store refusals, a content ETag
 // with 304s (one hash for simultaneous first requests), and byte ranges for the videos. An
 // ASSETS_DIR reached through a link (the instance's /opt/zerox/instance-N) stays the release it named at start.
 const assert = require('node:assert/strict');
@@ -97,7 +97,17 @@ function tree(files) {
     assert.equal(await home.text(), '<h1>home</h1>');
     assert.equal(home.headers.get('accept-ranges'), null, 'ranges are for the videos');
     assert.equal(await status(files, '/index.html', { headers: { 'If-None-Match': '*' } }), 200, 'never a 304 for HTML');
-    assert.equal((await get(files, '/Assets/logo.png')).headers.get('cache-control'), 'public, max-age=604800', '/Assets/ are cached for a week');
+    // /Assets/ names carry no content hash: an hour in caches, then served once more while revalidated.
+    assert.equal((await get(files, '/Assets/logo.png')).headers.get('cache-control'), 'public, max-age=3600, stale-while-revalidate=86400',
+      '/Assets/ are cached for an hour');
+    // Refusals are never stored: an edge-cached 404 (one cache key for every host) would outlive a
+    // swap in which the old instance did not have the new release's file yet.
+    for (const [pathname, init, code] of [['/Assets/new-hero.webp', {}, 404], ['/x.secret', {}, 404], ['/%E0%A4%A', {}, 400],
+      ['/Assets/logo.png', { method: 'POST', body: 'x' }, 405]]) {
+      const refused = await get(files, pathname, init);
+      assert.equal(refused.status, code, pathname);
+      assert.equal(refused.headers.get('cache-control'), 'no-store', `${code} ${pathname} is never stored`);
+    }
     assert.equal((await get(files, '/CNAME')).headers.get('content-type'), 'application/octet-stream', 'any file the Worker serves is served');
 
     // The ETag and conditional GET.
@@ -169,6 +179,7 @@ function tree(files) {
       const refused = await range(value);
       assert.equal(refused.status, 416, value);
       assert.equal(refused.headers.get('content-range'), 'bytes */1000', value);
+      assert.equal(refused.headers.get('cache-control'), 'no-store', value);
     }
     for (const value of ['bytes=50-10', 'bytes=0-1,5-6', 'items=0-5', 'bytes=-']) {
       const ignored = await range(value);
@@ -287,7 +298,7 @@ function tree(files) {
     assert.equal((await fetch(base + '/Assets/Pasted%20text.txt')).status, 404);
     assert.equal((await fetch(base + '/neuroncli/auth-server/package.json')).status, 404);
     assert.equal((await fetch(base + '/neuroncli/login/')).status, 200, 'src/index.js maps the sign-in page');
-    assert.equal((await fetch(base + '/Assets/zerox-share.png')).headers.get('cache-control'), 'public, max-age=604800');
+    assert.equal((await fetch(base + '/Assets/zerox-share.png')).headers.get('cache-control'), 'public, max-age=3600, stale-while-revalidate=86400');
   } finally { await new Promise(resolve => real.close(resolve)); }
-  console.log('PASS: Node static files = the Worker\'s .assetsignore allow-list (gitignore rules, exact paths, git cross-check), week-long /Assets/ cache, ETag/304, mp4 ranges 206/416');
+  console.log('PASS: Node static files = the Worker\'s .assetsignore allow-list (gitignore rules, exact paths, git cross-check), an hour for /Assets/ (then stale-while-revalidate), refusals never stored, ETag/304, mp4 ranges 206/416');
 })().catch(error => { console.error(error); process.exitCode = 1; });

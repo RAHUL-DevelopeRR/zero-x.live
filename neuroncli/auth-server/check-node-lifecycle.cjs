@@ -5,8 +5,11 @@
 // started when the drain begins closes its connection). Then the zero-downtime restart (C6): the
 // loopback readiness listener (READY_PORT) draining with the main one, and two instances as their
 // own processes handing over one port (AUTH_REUSE_PORT, Linux; elsewhere the same handover on two
-// ports) while a stream on the old one runs to its end; and the release's commit (C9: REVISION,
-// GIT_COMMIT wins). Upstream calls go to a fake Groq server through e2e-upstream-shim.mjs.
+// ports) while a stream on the old one runs to its end, and an instance that is not ready never
+// taking a connection on the shared port (it exits instead); the keep-alive that outlasts
+// cloudflared's; and the release's commit (C9: REVISION, GIT_COMMIT wins). Upstream calls go to a
+// fake Groq server through e2e-upstream-shim.mjs; instances that must be ready use an in-memory
+// PGlite database.
 const assert = require('node:assert/strict');
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
@@ -16,11 +19,12 @@ const os = require('node:os');
 const path = require('node:path');
 const { once } = require('node:events');
 const { pathToFileURL } = require('node:url');
-const { drain, start, requestHeaders, runtimeEnv, stopOnSignals, supportsReusePort } = require('./server.js');
+const { KEEP_ALIVE_MS, drain, gatewayServer, originSettings, start, requestHeaders, runtimeEnv, stopOnSignals, supportsReusePort,
+  untilReady } = require('./server.js');
 
 // server.js loads a developer .env: nothing here may reach a real database or provider.
 for (const name of Object.keys(process.env)) {
-  if (/^(SUPABASE_|DATABASE_|PGLITE_|DEV_AUTH)|_API_KEY$|_HOSTED$|_MODELS$|^(TRUST_CLOUDFLARE|TRUST_CF_IPCOUNTRY|SSE_HEARTBEAT_MS|SHUTDOWN_GRACE_MS|NODE_ENV|EC2_PROXY_SECRET|EXTRA_WEB_HOSTS|ASSETS_DIR|READY_PORT|AUTH_REUSE_PORT|GIT_COMMIT)$/.test(name)) {
+  if (/^(SUPABASE_|DATABASE_|PGLITE_|DEV_AUTH)|_API_KEY$|_HOSTED$|_MODELS$|^(TRUST_CLOUDFLARE|TRUST_CF_IPCOUNTRY|SSE_HEARTBEAT_MS|SHUTDOWN_GRACE_MS|NODE_ENV|EC2_PROXY_SECRET|EC2_PROXY_SECRET_ROTATION|EXTRA_WEB_HOSTS|ASSETS_DIR|READY_PORT|READY_TIMEOUT_MS|AUTH_REUSE_PORT|GIT_COMMIT)$/.test(name)) {
     delete process.env[name];
   }
 }
@@ -197,6 +201,45 @@ const terminate = instance => (process.platform === 'win32' ? instance.child.sen
   delete process.env.DEV_AUTH_ENABLED;
   if (nodeEnv !== undefined) process.env.NODE_ENV = nodeEnv;
 
+  // ── The readiness gate (C6): with a shared port an instance binds it only once the app's own
+  // /ready answers 200, asked in process; not ready in time, start() rejects (the process exits 1) ──
+  {
+    let asked = 0;
+    const turnsReady = { fetch: async request => {
+      asked++;
+      assert.equal(new URL(request.url).pathname, '/ready');
+      return new Response('{}', { status: asked < 3 ? 503 : 200 });
+    } };
+    await untilReady(turnsReady, {}, { timeoutMs: 5000, intervalMs: 1, sleep: async () => {} });
+    assert.equal(asked, 3, 'asked again until it answered 200');
+    await assert.rejects(untilReady({ fetch: async () => new Response('', { status: 503 }) }, {}, { timeoutMs: 40, intervalMs: 10 }),
+      /Not ready after 0 s \(the app's \/ready: HTTP 503\); the shared port was never bound/);
+    await assert.rejects(untilReady({ fetch: async () => { throw new TypeError('fetch failed'); } }, {}, { timeoutMs: 40, intervalMs: 10 }),
+      /the app's \/ready: TypeError/);
+
+    // The readiness listener says 503 until the public listener is bound, whatever the app says,
+    // so a 200 there means ready and serving; /health is the app's all along.
+    let serving = false;
+    const app = { fetch: async request => new Response(JSON.stringify({ path: new URL(request.url).pathname }), { status: 200 }) };
+    const readiness = gatewayServer(app, {}, { settings: originSettings({}), heartbeatMs: 1000, readyOnly: true, serving: () => serving });
+    const base = await listening(readiness.listen(0, '127.0.0.1'));
+    try {
+      const notYet = await fetch(base + '/ready');
+      assert.deepEqual([notYet.status, await notYet.json()], [503, { ready: false, serving: false }]);
+      assert.equal(notYet.headers.get('cache-control'), 'no-store');
+      assert.deepEqual(await (await fetch(base + '/health')).json(), { path: '/health' });
+      serving = true;
+      const now = await fetch(base + '/ready');
+      assert.deepEqual([now.status, await now.json()], [200, { path: '/ready' }], 'then the app answers');
+    } finally { await closeServer(readiness); }
+
+    // cloudflared keeps an idle origin connection for 90 s; the public listener keeps it longer, so
+    // the proxy always closes first and never sends a request on a connection being closed.
+    const main = gatewayServer(app, {}, { settings: originSettings({}), heartbeatMs: 1000 });
+    assert.ok(KEEP_ALIVE_MS > 90000 && main.keepAliveTimeout === KEEP_ALIVE_MS, `keep-alive ${main.keepAliveTimeout} ms`);
+    assert.ok(main.headersTimeout > main.keepAliveTimeout, 'headersTimeout above the keep-alive');
+  }
+
   const upstreamBase = await listening(upstream.listen(0, '127.0.0.1'));
   process.env.E2E_UPSTREAM_BASE = upstreamBase;
   await import('./e2e-upstream-shim.mjs');
@@ -227,6 +270,7 @@ const terminate = instance => (process.platform === 'win32' ? instance.child.sen
     const tunnelPort = await freePort();
     Object.assign(process.env, { TRUST_CLOUDFLARE: 'true', AUTH_PORT: String(tunnelPort), EXTRA_WEB_HOSTS: `127.0.0.1:${tunnelPort}` });
     const tunnel = await startServer();
+    assert.equal(tunnel.server.keepAliveTimeout, KEEP_ALIVE_MS, 'the server start() returns keeps idle connections longer than cloudflared');
     Object.assign(process.env, { AUTH_PORT: '0' });
     delete process.env.EXTRA_WEB_HOSTS;
     for (let i = 1; i <= 10; i++) assert.notEqual(await pkceStart(tunnel.base, { 'CF-Connecting-IP': '203.0.113.7' }), 429);
@@ -374,22 +418,33 @@ const terminate = instance => (process.platform === 'win32' ? instance.child.sen
     }
     const sharing = process.platform === 'linux';
     if (!sharing) {
-      Object.assign(process.env, { AUTH_PORT: String(await freePort()), AUTH_REUSE_PORT: 'true' });
+      // Ready first (the gate), on an in-memory database: only then does it try the shared port.
+      Object.assign(process.env, { AUTH_PORT: String(await freePort()), AUTH_REUSE_PORT: 'true', DATABASE_DRIVER: 'pglite' });
       const refused = await start();
       servers.push(refused);
       await assert.rejects(bound(refused), { code: 'ENOTSUP' }, 'libuv refuses SO_REUSEPORT where it cannot balance (Windows, macOS)');
       Object.assign(process.env, { AUTH_PORT: '0' });
       delete process.env.AUTH_REUSE_PORT;
+      delete process.env.DATABASE_DRIVER;
       console.log(`NOTE: reusePort is not supported on ${process.platform}; the handover below runs on two ports (one shared port on Linux only)`);
     }
     const ports = [await freePort(), await freePort()];
     while (ports[1] === ports[0]) ports[1] = await freePort();
     const [oldPort, nextPort] = sharing ? [ports[0], ports[0]] : ports;
-    const readyPorts = [await freePort(), await freePort()];
-    while (readyPorts[1] === readyPorts[0]) readyPorts[1] = await freePort();
+    const readyPorts = [await freePort(), await freePort(), await freePort()];
+    while (new Set(readyPorts).size < 3) readyPorts[2] = await freePort();
+    // Each instance has its own in-memory database, so its /ready can pass (with a shared port it
+    // binds only then).
     const launch = (name, port, readyPort) => spawnInstance(name, { AUTH_PORT: String(port), READY_PORT: String(readyPort),
-      AUTH_REUSE_PORT: sharing ? 'true' : '' });
+      AUTH_REUSE_PORT: sharing ? 'true' : '', DATABASE_DRIVER: 'pglite' });
     const instances = [];
+    // The status of GET <path> on a fresh connection.
+    const fresh = (port, pathname) => new Promise(resolve => {
+      http.get({ host: '127.0.0.1', port, path: pathname, agent: false }, response => {
+        response.resume();
+        resolve(response.statusCode);
+      }).on('error', error => resolve(error.code));
+    });
     try {
       const old = launch('old', oldPort, readyPorts[0]);
       instances.push(old);
@@ -397,6 +452,27 @@ const terminate = instance => (process.platform === 'win32' ? instance.child.sen
       await untilLogged(old, /readiness checks on 127\.0\.0\.1:\d+/);
       if (sharing) assert.match(old.log, /\(shared port\)/);
       assert.equal(await freshConnection(readyPorts[0]), 200, 'the deploy checks one instance on its READY_PORT');
+      assert.equal(await fresh(readyPorts[0], '/ready'), 200, 'ready and serving');
+      const healthChecks = (each, port) => each.served.filter(entry => entry.path === '/health' && entry.port === port).length;
+
+      // A release that is not ready (here: no database) started next to it with the shared port,
+      // as activate-release.sh starts one: it never binds the port, so not one of the connections
+      // that arrive meanwhile reaches it; its READY_PORT says 503; after READY_TIMEOUT_MS it exits 1
+      // (systemd would start it again until the deploy stops it).
+      const unready = spawnInstance('unready', { AUTH_PORT: String(oldPort), READY_PORT: String(readyPorts[2]), AUTH_REUSE_PORT: 'true',
+        READY_TIMEOUT_MS: '2000', DATABASE_DRIVER: '' });
+      instances.push(unready);
+      await untilLogged(unready, /readiness checks on 127\.0\.0\.1:\d+/);
+      assert.equal(await fresh(readyPorts[2], '/ready'), 503, 'not ready: its READY_PORT says so');
+      const oldBefore = healthChecks(old, oldPort);
+      for (let i = 0; i < 24; i++) assert.equal(await freshConnection(oldPort), 200, 'every connection is served');
+      await waitFor(() => healthChecks(old, oldPort) === oldBefore + 24, 3000);
+      assert.equal(healthChecks(unready, oldPort), 0, 'none reached the instance that is not ready');
+      const unreadyExit = await unready.exited;
+      assert.equal(unreadyExit.code, 1, `it exits 1:\n${unready.log}`);
+      assert.match(unready.log, /Not ready after 2 s \(the app's \/ready: HTTP 503\); the shared port was never bound/);
+      assert.ok(!/listening on/.test(unready.log), 'it never listened on the shared port');
+      assert.equal(await fresh(readyPorts[2], '/ready'), 'ECONNREFUSED', 'its readiness listener went with it');
       // A stream that starts on the old release and outlives it: the upstream holds it after its first chunk.
       const oldBase = `http://127.0.0.1:${oldPort}`;
       const handover = await openStream(oldBase, await session(oldBase), 'lifecycle:3:10:gate=handover');
@@ -407,18 +483,19 @@ const terminate = instance => (process.platform === 'win32' ? instance.child.sen
       await untilLogged(next, /listening on 127\.0\.0\.1:\d+/);
       await untilLogged(next, /readiness checks on 127\.0\.0\.1:\d+/);
       assert.equal(await freshConnection(readyPorts[1]), 200);
-      const healthChecks = (each, port) => each.served.filter(entry => entry.path === '/health' && entry.port === port).length;
+      assert.equal(await fresh(readyPorts[1], '/ready'), 200);
+      const oldAlone = healthChecks(old, oldPort);
       if (sharing) {
         // The kernel spreads new connections over both listeners (by address and port): 24 fresh
         // connections all reaching one of them would be a 1-in-8-million chance.
         for (let i = 0; i < 24; i++) assert.equal(await freshConnection(oldPort), 200, 'both instances accept on the shared port');
-        await waitFor(() => healthChecks(old, oldPort) + healthChecks(next, oldPort) === 24, 3000);
-        assert.ok(healthChecks(old, oldPort) > 0 && healthChecks(next, oldPort) > 0,
-          `both pids served (old ${healthChecks(old, oldPort)}, next ${healthChecks(next, oldPort)})`);
+        await waitFor(() => healthChecks(old, oldPort) - oldAlone + healthChecks(next, oldPort) === 24, 3000);
+        assert.ok(healthChecks(old, oldPort) > oldAlone && healthChecks(next, oldPort) > 0,
+          `both pids served (old ${healthChecks(old, oldPort) - oldAlone}, next ${healthChecks(next, oldPort)})`);
       } else {
         assert.equal(await freshConnection(oldPort), 200);
         assert.equal(await freshConnection(nextPort), 200);
-        await waitFor(() => healthChecks(old, oldPort) === 1 && healthChecks(next, nextPort) === 1, 3000);
+        await waitFor(() => healthChecks(old, oldPort) === oldAlone + 1 && healthChecks(next, nextPort) === 1, 3000);
       }
 
       // The deploy stops the old instance: its listeners close, its stream goes on.
@@ -474,6 +551,8 @@ const terminate = instance => (process.platform === 'win32' ? instance.child.sen
     }
   } finally {
     await Promise.all([...servers, upstream].map(closeServer));
+    // The in-memory database the reusePort case opened in this process (off Linux).
+    if (process.platform !== 'linux') await (await import('./src/db/pglite.js')).closeAllPglite();
     fs.rmSync(instanceDir, { recursive: true, force: true });
   }
   console.log('PASS: Node server trusts CF-Connecting-IP only from loopback with TRUST_CLOUDFLARE (and then refuses the dev identity), keeps quiet streams alive, drains on SIGTERM (readiness listener included; responses not yet started close their connection), hands over to the next release\'s process (one shared port on Linux) while a stream on the old one finishes, and reports the release commit');

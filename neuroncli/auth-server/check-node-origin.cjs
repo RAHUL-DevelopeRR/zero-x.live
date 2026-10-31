@@ -10,11 +10,11 @@
 const assert = require('node:assert/strict');
 const http = require('node:http');
 const { once } = require('node:events');
-const { originSettings, requestHeaders, resolveOrigin, runtimeEnv, start } = require('./server.js');
+const { mismatchLog, originSettings, requestHeaders, resolveOrigin, runtimeEnv, start } = require('./server.js');
 
 // server.js loads a developer .env: nothing here may reach a real database or provider.
 for (const name of Object.keys(process.env)) {
-  if (/^(SUPABASE_|DATABASE_|PGLITE_|DEV_AUTH)|_API_KEY$|_HOSTED$|_MODELS$|^(TRUST_CLOUDFLARE|TRUST_CF_IPCOUNTRY|NODE_ENV|NEURON_API_ONLY|EC2_PROXY_SECRET|EC2_PROXY_PREFIXES|EXTRA_WEB_HOSTS|ASSETS_DIR|READY_PORT|AUTH_REUSE_PORT|GIT_COMMIT|ALLOW_UNKNOWN_COUNTRY|SSE_HEARTBEAT_MS|SHUTDOWN_GRACE_MS)$/.test(name)) {
+  if (/^(SUPABASE_|DATABASE_|PGLITE_|DEV_AUTH)|_API_KEY$|_HOSTED$|_MODELS$|^(TRUST_CLOUDFLARE|TRUST_CF_IPCOUNTRY|NODE_ENV|NEURON_API_ONLY|EC2_PROXY_SECRET|EC2_PROXY_SECRET_ROTATION|EC2_PROXY_PREFIXES|EXTRA_WEB_HOSTS|ASSETS_DIR|READY_PORT|AUTH_REUSE_PORT|GIT_COMMIT|ALLOW_UNKNOWN_COUNTRY|SSE_HEARTBEAT_MS|SHUTDOWN_GRACE_MS)$/.test(name)) {
     delete process.env[name];
   }
 }
@@ -43,7 +43,7 @@ const geminiAvailable = async (port, headers) => {
   return response.json().data.find(model => model.id === 'gemini/gemini-3.5-flash').available;
 };
 
-// Collects what console.error / console.warn print while fn runs (the once-only mismatch log, the
+// Collects what console.error / console.warn print while fn runs (the mismatch log, the
 // start-up warning), so the check can read them and its own output stays clean.
 async function capture(fn, logs = []) {
   const { error, warn } = console;
@@ -77,6 +77,11 @@ async function serverWith(settings, logs = []) {
     assert.throws(() => originSettings({ EC2_PROXY_SECRET: weak }), /EC2_PROXY_SECRET must be at least 32 characters/);
   }
   assert.equal(originSettings({ EC2_PROXY_SECRET: 'a'.repeat(32) }).secret.length, 32);
+  // The second value accepted during a rotation: as long as the secret, and never alone.
+  assert.throws(() => originSettings({ EC2_PROXY_SECRET: SECRET, EC2_PROXY_SECRET_ROTATION: 'b'.repeat(31) }),
+    /EC2_PROXY_SECRET_ROTATION must be at least 32 characters/);
+  assert.throws(() => originSettings({ EC2_PROXY_SECRET_ROTATION: 'b'.repeat(40) }), /EC2_PROXY_SECRET_ROTATION is set without EC2_PROXY_SECRET/);
+  assert.deepEqual(originSettings({ EC2_PROXY_SECRET: SECRET, EC2_PROXY_SECRET_ROTATION: '' }).secrets, [SECRET]);
   assert.deepEqual(originSettings({ EXTRA_WEB_HOSTS: ' AWS.zero-x.live , ,qa.example.test' }).extraHosts, ['aws.zero-x.live', 'qa.example.test']);
   // Hostnames as src/web-hosts.js reads them, plus host:port (a Host header behind a proxy on another
   // port; src gives those no origin), and never a production host, which the app keeps routing as
@@ -107,6 +112,26 @@ async function serverWith(settings, logs = []) {
     assert.equal(resolveOrigin(fakeRequest(proxied('zero-x.live', { 'x-zerox-proto': proto })), production).status, 400, proto);
   }
 
+  // ── A rotation: EC2_PROXY_SECRET_ROTATION is accepted next to EC2_PROXY_SECRET, so the VM accepts
+  // both the value the Worker sends before its deploy and the one it sends after ──
+  const NEXT = 'next-proxy-secret-for-the-rotation-0123456789';
+  for (const [secret, rotation] of [[SECRET, NEXT], [NEXT, SECRET]]) {
+    const rotating = originSettings({ EC2_PROXY_SECRET: secret, EC2_PROXY_SECRET_ROTATION: rotation, TRUST_CLOUDFLARE: 'true', NODE_ENV: 'production' });
+    for (const presented of [SECRET, NEXT]) {
+      assert.equal(resolveOrigin(fakeRequest(proxied('zero-x.live', { 'x-zerox-proxy-secret': presented })), rotating).host, 'zero-x.live',
+        'either value is accepted during the rotation');
+    }
+    await capture(async () => {
+      for (const presented of ['third-value-that-neither-runtime-holds-0123', `${SECRET}${NEXT}`, NEXT.slice(0, -1)]) {
+        assert.equal(resolveOrigin(fakeRequest(proxied('zero-x.live', { 'x-zerox-proxy-secret': presented })), rotating).code, 'proxy_secret_mismatch');
+      }
+    });
+  }
+  await capture(async () => {
+    assert.equal(resolveOrigin(fakeRequest(proxied('zero-x.live', { 'x-zerox-proxy-secret': NEXT })), originSettings({ EC2_PROXY_SECRET: SECRET })).code,
+      'proxy_secret_mismatch', 'without the rotation value, only EC2_PROXY_SECRET');
+  });
+
   // ── A wrong secret (empty, wrong, a prefix, the secret with more, twice): a forward from a Worker
   // that does not hold this server's secret is refused on every host and path, the test host and
   // the health checks included, so a mismatch is a visible 403 rather than visitors served as
@@ -132,13 +157,28 @@ async function serverWith(settings, logs = []) {
       }
     }
   }, mismatchLogs);
-  // Logged once per server (journald shows it), never with the value presented.
+  // Logged at most once a minute per server (journald shows it), never with the value presented:
+  // the refusals above are one line for each of the four servers.
   assert.deepEqual(mismatchLogs.map(([level]) => level), ['error', 'error', 'error', 'error'], 'one line for each of the four servers');
   for (const [, line] of mismatchLogs) {
-    assert.match(line, /x-zerox-proxy-secret does not match EC2_PROXY_SECRET.*403 proxy_secret_mismatch/);
+    assert.match(line, /x-zerox-proxy-secret matches neither EC2_PROXY_SECRET nor EC2_PROXY_SECRET_ROTATION.*403 proxy_secret_mismatch/);
     assert.ok(!line.includes(SECRET), 'the presented value is never logged');
   }
   assert.match(mismatchLogs[2][1], /EC2_PROXY_SECRET is not set here/);
+  // Anyone can send a wrong secret to the tunnel's public host. One stranger's request after a
+  // deploy must not use up the line a real Worker/VM mismatch needs later: a line a minute, with the
+  // count of refusals since the previous one.
+  const limited = originSettings({ EC2_PROXY_SECRET: SECRET });
+  const limitedLogs = await capture(async logs => {
+    mismatchLog(limited, 1000);                                      // the stranger, right after a deploy
+    for (let t = 2000; t < 60000; t += 1000) mismatchLog(limited, t); // a flood within the minute: silent
+    mismatchLog(limited, 61000);                                     // the real mismatch, a minute on
+    mismatchLog(limited, 62000);
+    mismatchLog(limited, 30 * 60000);                                // much later
+    return logs;
+  });
+  assert.deepEqual(limitedLogs.map(([, line]) => /^Refused (\d+) /.exec(line)?.[1]), ['1', '59', '2'],
+    'the first refusal at once, then at most one line a minute counting what came since');
 
   // ── No secret header: a request straight to the test host, served under the tunnel rules (the
   // spoofed x-zerox-* mean nothing); anywhere else in production a 403 ──
@@ -305,7 +345,7 @@ async function serverWith(settings, logs = []) {
       }
     }, unsetLogs);
     assert.deepEqual(forwarded.map(response => [response.status, response.json().error.code]), Array(3).fill([403, 'proxy_secret_mismatch']));
-    assert.equal(unsetLogs.filter(([level]) => level === 'error').length, 1, 'logged once');
+    assert.equal(unsetLogs.filter(([level]) => level === 'error').length, 1, 'one line within the minute');
     assert.equal((await call(unsetPort, { path: '/index.html', headers: { host: 'aws.zero-x.live' } })).status, 301, 'the test host itself is served');
     // Production with the secret missing: the warning lists what is still answered.
     const bareLogs = [];
@@ -328,5 +368,5 @@ async function serverWith(settings, logs = []) {
   } finally {
     await Promise.all(servers.map(server => new Promise(resolve => server.close(() => resolve()))));
   }
-  console.log('PASS: Node origin trusts x-zerox-* only with EC2_PROXY_SECRET (host, scheme, address, request.cf; 32+ characters), refuses a forward with a wrong secret on every host (logged once), refuses unproxied requests in production except /health, /ready and the relay paths of the relay host, serves EXTRA_WEB_HOSTS under the tunnel rules, strips x-zerox-*');
+  console.log('PASS: Node origin trusts x-zerox-* only with EC2_PROXY_SECRET (host, scheme, address, request.cf; 32+ characters), accepts EC2_PROXY_SECRET_ROTATION next to it during a rotation, refuses a forward with any other secret on every host (logged at most once a minute), refuses unproxied requests in production except /health, /ready and the relay paths of the relay host, serves EXTRA_WEB_HOSTS under the tunnel rules, strips x-zerox-*');
 })().catch(error => { console.error(error); process.exitCode = 1; });

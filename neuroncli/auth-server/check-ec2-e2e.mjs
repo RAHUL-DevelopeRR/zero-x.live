@@ -233,7 +233,7 @@ try {
   // ── The release's site files through the forward (C4) ──
   const logo = await visit('https://zero-x.live/Assets/logo.png');
   assert.equal(logo.status, 200);
-  assert.equal(logo.headers.get('cache-control'), 'public, max-age=604800');
+  assert.equal(logo.headers.get('cache-control'), 'public, max-age=3600, stale-while-revalidate=86400');
   const etag = logo.headers.get('etag');
   assert.match(etag, /^"[0-9a-f]{32}"$/);
   assert.equal((await visit('https://zero-x.live/Assets/logo.png', { headers: { 'If-None-Match': `W/${etag}` } })).status, 304,

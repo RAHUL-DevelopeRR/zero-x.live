@@ -103,11 +103,17 @@ function assetIndex(dir) {
   return files;
 }
 
-// /Assets/ files keep their names from release to release (no content hash in the name), so their
-// long lifetime is a week rather than a year. Everything else, HTML included, revalidates every
-// time like the Worker's own assets; the ETag makes that a 304 without a body.
-const ASSET_CACHE = 'public, max-age=604800';
+// /Assets/ files keep their names from release to release (no content hash in the name), and
+// Cloudflare and browsers cannot be told when one is replaced: an hour bounds how long the old
+// image or video stays in their caches, and stale-while-revalidate lets them serve it once more
+// while they revalidate (a 304 thanks to the ETag) instead of waiting on the VM. Everything else,
+// HTML included, revalidates every time like the Worker's own assets.
+const ASSET_CACHE = 'public, max-age=3600, stale-while-revalidate=86400';
 const REVALIDATE = 'public, max-age=0, must-revalidate';
+// Refusals are never cached. Cloudflare keeps a 404 for a cacheable extension for minutes, under
+// the one aws.zero-x.live cache key every host shares: during a swap, a new release's image asked
+// of the old instance would stay broken for every visitor.
+const NOT_STORED = { 'Cache-Control': 'no-store' };
 const UNSATISFIABLE = Symbol('unsatisfiable');
 
 // If-None-Match compares weakly (a W/ prefix, which Cloudflare adds when it compresses, is
@@ -158,14 +164,14 @@ function assetServer(dir) {
   async function fetchAsset(request) {
     let pathname;
     try { pathname = decodeURIComponent(new URL(request.url).pathname); }
-    catch { return new Response('Invalid path', { status: 400 }); }
+    catch { return new Response('Invalid path', { status: 400, headers: NOT_STORED }); }
     const file = load().get(pathname);
-    if (!file) return new Response('Not found', { status: 404 });
+    if (!file) return new Response('Not found', { status: 404, headers: NOT_STORED });
     if (!['GET', 'HEAD'].includes(request.method)) {
-      return new Response('Method not allowed', { status: 405, headers: { Allow: 'GET, HEAD' } });
+      return new Response('Method not allowed', { status: 405, headers: { Allow: 'GET, HEAD', ...NOT_STORED } });
     }
     let info;
-    try { info = await fs.promises.stat(file); } catch { return new Response('Not found', { status: 404 }); }
+    try { info = await fs.promises.stat(file); } catch { return new Response('Not found', { status: 404, headers: NOT_STORED }); }
     const type = mime[path.extname(file).toLowerCase()] || 'application/octet-stream';
     const cache = pathname.startsWith('/Assets/') ? ASSET_CACHE : REVALIDATE;
     // HTML gets no validator: where src/index.js maps a clean URL (/about -> /about.html) or the
@@ -173,7 +179,7 @@ function assetServer(dir) {
     // 404 page. The Worker's pages reach browsers without an ETag today as well.
     let etag = null;
     if (!type.startsWith('text/html')) {
-      try { etag = await entityTag(file, info); } catch { return new Response('Not found', { status: 404 }); }
+      try { etag = await entityTag(file, info); } catch { return new Response('Not found', { status: 404, headers: NOT_STORED }); }
     }
     if (etag && etagMatches(request.headers.get('if-none-match'), etag)) {
       return new Response(null, { status: 304, headers: { ETag: etag, 'Cache-Control': cache } });
@@ -186,7 +192,7 @@ function assetServer(dir) {
     const range = video && request.method === 'GET' && request.headers.has('range') && (!ifRange || ifRange.trim() === etag)
       ? byteRange(request.headers.get('range'), info.size) : null;
     if (range === UNSATISFIABLE) {
-      return new Response(null, { status: 416, headers: { 'Content-Range': `bytes */${info.size}`, 'Cache-Control': cache, ETag: etag } });
+      return new Response(null, { status: 416, headers: { 'Content-Range': `bytes */${info.size}`, ...NOT_STORED, ETag: etag } });
     }
     if (range) {
       headers['Content-Range'] = `bytes ${range.start}-${range.end}/${info.size}`;
@@ -327,28 +333,59 @@ function extraHostList(value) {
 // http://127.0.0.1 as before, so src/ treats it as local. The EC2 origin (the proxy secret, a test
 // host, the tunnel or NODE_ENV=production): the rules in resolveOrigin, which answer only the
 // Worker's proxy, the test hosts, the relay on the relay host and the health checks.
+//
+// EC2_PROXY_SECRET_ROTATION is a second value accepted alongside EC2_PROXY_SECRET while the secret
+// is rotated (deploy/aws/README.md, "Rotating the proxy secret"): both runtimes take their value
+// from one GitHub secret, and one approval deploys both, the Worker usually a minute or two before
+// the VM. Holding the new value there before the Worker switches to it, the VM accepts whatever
+// the Worker sends at every moment of the rotation, so no forward is refused.
 function originSettings(source = process.env) {
   const extraHosts = extraHostList(source.EXTRA_WEB_HOSTS);
   const secret = String(source.EC2_PROXY_SECRET || '');
-  if (secret && secret.length < MIN_SECRET_LENGTH) {
-    throw new Error(`EC2_PROXY_SECRET must be at least ${MIN_SECRET_LENGTH} characters (openssl rand -hex 32); the server did not start`);
+  const rotation = String(source.EC2_PROXY_SECRET_ROTATION || '');
+  for (const [name, value] of [['EC2_PROXY_SECRET', secret], ['EC2_PROXY_SECRET_ROTATION', rotation]]) {
+    if (value && value.length < MIN_SECRET_LENGTH) {
+      throw new Error(`${name} must be at least ${MIN_SECRET_LENGTH} characters (openssl rand -hex 32); the server did not start`);
+    }
   }
+  if (rotation && !secret) throw new Error('EC2_PROXY_SECRET_ROTATION is set without EC2_PROXY_SECRET; the server did not start');
   const trustCloudflare = source.TRUST_CLOUDFLARE === 'true';
   return {
     origin: !!secret || extraHosts.length > 0 || trustCloudflare || String(source.NODE_ENV || '').trim().toLowerCase() === 'production',
-    secret, extraHosts, knownHosts: new Set([...WEB_HOSTS, ...extraHosts]),
+    secret, secrets: [secret, rotation].filter(Boolean), extraHosts, knownHosts: new Set([...WEB_HOSTS, ...extraHosts]),
     trustCloudflare, trustCountry: source.TRUST_CF_IPCOUNTRY === 'true',
-    // Whether a forward with the wrong secret has been logged yet (once per server).
-    mismatchLogged: false,
+    // Forwards refused for a wrong secret: when the last line about them was logged, and how many
+    // came since (mismatchLog).
+    mismatch: { loggedAt: -Infinity, since: 0 },
   };
 }
 
-// Both values are hashed first, so the comparison takes the same time whatever the length or the
-// matching prefix of what a client sent.
-function secretMatches(presented, secret) {
-  if (!presented || !secret) return false;
+// Every accepted value is compared, and each comparison hashes both sides first, so the time
+// taken says nothing about which value matched, its length or the matching prefix of what a
+// client sent.
+function secretMatches(presented, secrets) {
+  if (!presented) return false;
   const digest = value => crypto.createHash('sha256').update(String(value)).digest();
-  return crypto.timingSafeEqual(digest(presented), digest(secret));
+  const sent = digest(presented);
+  let matched = false;
+  for (const secret of secrets) if (secret && crypto.timingSafeEqual(sent, digest(secret))) matched = true;
+  return matched;
+}
+
+// The Worker sends the header with every forward, so refusals come in floods when the two
+// runtimes hold different secrets, while anyone can send a wrong value to the tunnel's public
+// host. One line a minute at most, with the count since the last one: a single stranger's request
+// cannot use up the line a real mismatch later needs, and a flood stays one line a minute.
+const MISMATCH_LOG_MS = 60000;
+function mismatchLog(settings, now = Date.now()) {
+  const state = settings.mismatch;
+  state.since += 1;
+  if (now - state.loggedAt < MISMATCH_LOG_MS) return;
+  console.error(`Refused ${state.since} forwarded request(s) since the last line: their x-zerox-proxy-secret matches neither EC2_PROXY_SECRET ` +
+    `nor EC2_PROXY_SECRET_ROTATION${settings.secret ? '' : ' (EC2_PROXY_SECRET is not set here)'}. Each one gets 403 ` +
+    'proxy_secret_mismatch until the Worker and this server hold the same secret (logged at most once a minute).');
+  state.loggedAt = now;
+  state.since = 0;
 }
 
 const countryCode = value => {
@@ -384,7 +421,7 @@ function resolveOrigin(req, settings) {
   if (!settings.origin) return { base: 'http://127.0.0.1', address: clientAddress(req, settings.trustCloudflare) };
   const presented = header('x-zerox-proxy-secret');
   if (presented !== undefined) {
-    if (secretMatches(presented, settings.secret)) {
+    if (secretMatches(presented, settings.secrets)) {
       const host = String(header('x-zerox-host') || '').trim().toLowerCase();
       const proto = String(header('x-zerox-proto') || '').trim().toLowerCase();
       if (!settings.knownHosts.has(host)) return { status: 421, code: 'misdirected_request', message: 'This server does not serve that host.' };
@@ -398,12 +435,7 @@ function resolveOrigin(req, settings) {
     // forwards arrive on the tunnel's own host, which may be a test host: served as that host they
     // would redirect visitors to it, lose the dashboard and neuron hosts and take the hop's country,
     // all without an error. A refusal on every host and path makes the mismatch visible instead.
-    if (!settings.mismatchLogged) {
-      settings.mismatchLogged = true;
-      console.error('Refused a request the Worker forwarded: its x-zerox-proxy-secret does not match EC2_PROXY_SECRET' +
-        (settings.secret ? '' : ' (EC2_PROXY_SECRET is not set here)') +
-        '. Every forward gets 403 proxy_secret_mismatch until the Worker and this server hold the same secret (logged once).');
-    }
+    mismatchLog(settings);
     return { status: 403, code: 'proxy_secret_mismatch', message: 'The forwarded request was refused: its proxy secret does not match this server\'s.' };
   }
   const host = String(header('host') || '').trim().toLowerCase();
@@ -467,10 +499,19 @@ const sendJson = (res, status, body, headers = {}) => {
   res.end(JSON.stringify(body));
 };
 
+// cloudflared keeps an idle connection to the origin for 90 s (originRequest keepAliveTimeout) and
+// sends the next request on it; Node's default closes it after 5 s. A POST sent on a connection at
+// the moment the server closes it fails with no retry (its body is gone), and the edge answers 502.
+// The server therefore waits longer than cloudflared: the proxy always closes an idle connection
+// first. headersTimeout stays above it, as Node expects.
+const KEEP_ALIVE_MS = 95000;
+const HEADERS_TIMEOUT_MS = 96000;
+
 // One HTTP listener in front of the app. The readiness listener (readyOnly) answers GET /ready
 // and GET /health only, on loopback, so a deploy can ask one instance whether it is ready while
-// both share the public port.
-function gatewayServer(app, env, { settings, heartbeatMs, readyOnly = false }) {
+// both share the public port. Its /ready answers 503 until serving() says the public port is bound
+// (start), so a 200 there means this instance is ready and taking connections.
+function gatewayServer(app, env, { settings, heartbeatMs, readyOnly = false, serving = () => true }) {
   const inFlight = new Set();
   const server = http.createServer(async (req, res) => {
     // A request that reaches a draining server (on a kept-alive connection) is turned away, so
@@ -486,6 +527,10 @@ function gatewayServer(app, env, { settings, heartbeatMs, readyOnly = false }) {
     let origin;
     if (!readyOnly) origin = resolveOrigin(req, settings);
     else if (['GET', 'HEAD'].includes(req.method) && OPEN_PATHS.includes(req.url.split('?')[0])) {
+      if (req.url.split('?')[0] === '/ready' && !serving()) {
+        sendJson(res, 503, { ready: false, serving: false }, { 'Cache-Control': 'no-store' });
+        return;
+      }
       origin = { base: 'http://127.0.0.1', address: req.socket.remoteAddress };
     } else {
       sendJson(res, 404, { error: 'Not found' });
@@ -501,8 +546,9 @@ function gatewayServer(app, env, { settings, heartbeatMs, readyOnly = false }) {
     res.on('close', () => {
       if (!res.writableEnded) controller.abort();
       inFlight.delete(res);
-      // While draining, a connection whose response is done is closed, so server.close can finish.
-      if (server[DRAINING]) setImmediate(() => server.closeIdleConnections());
+      // While draining, or once closed by any other way, a connection whose response is done is
+      // closed, so server.close can finish (idle connections are otherwise kept for KEEP_ALIVE_MS).
+      if (server[DRAINING] || !server.listening) setImmediate(() => server.closeIdleConnections());
     });
     try {
       const chunks = [];
@@ -538,7 +584,33 @@ function gatewayServer(app, env, { settings, heartbeatMs, readyOnly = false }) {
     }
   });
   server[IN_FLIGHT] = inFlight;
+  if (!readyOnly) {
+    server.keepAliveTimeout = KEEP_ALIVE_MS;
+    server.headersTimeout = HEADERS_TIMEOUT_MS;
+  }
   return server;
+}
+
+// The app's own GET /ready, asked in process (no listener involved) every intervalMs until it
+// answers 200. Rejects after timeoutMs with the last answer, so the caller can exit and let
+// systemd start a fresh process.
+async function untilReady(app, env, { timeoutMs, intervalMs = 1000, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) }) {
+  const until = Date.now() + timeoutMs;
+  let last = 'no answer';
+  for (;;) {
+    try {
+      const response = await app.fetch(new Request('http://127.0.0.1/ready', { headers: { 'x-neuron-client-ip': '127.0.0.1' } }), env);
+      await response.body?.cancel();
+      if (response.status === 200) return;
+      last = `HTTP ${response.status}`;
+    } catch (error) {
+      last = error?.name || 'an error';
+    }
+    if (Date.now() + intervalMs > until) {
+      throw new Error(`Not ready after ${Math.round(timeoutMs / 1000)} s (the app's /ready: ${last}); the shared port was never bound`);
+    }
+    await sleep(intervalMs);
+  }
 }
 
 // listen()'s reusePort arrived in Node 23.1 and 22.12; an older Node ignores it without a word, and
@@ -568,18 +640,33 @@ async function start() {
   }
   const heartbeatMs = positiveMs(process.env.SSE_HEARTBEAT_MS, 30000);
   const server = gatewayServer(app, env, { settings, heartbeatMs });
-  // Zero-downtime restarts (C6): the next release's instance binds the same port before the old
-  // one drains (SO_REUSEPORT: Linux, Node 22.12+), and the kernel spreads new connections over both.
-  // Logs the bound port, so AUTH_PORT=0 (any free port) can be discovered from stdout.
-  server.listen({ port, host, ...(reusePort ? { reusePort } : {}) },
-    () => console.log(`Neuron gateway listening on ${host}:${server.address().port}${reusePort ? ' (shared port)' : ''}`));
+  let ready = null;
   if (process.env.READY_PORT) {
-    const ready = gatewayServer(app, env, { settings, heartbeatMs, readyOnly: true });
+    ready = gatewayServer(app, env, { settings, heartbeatMs, readyOnly: true, serving: () => server.listening });
     ready.listen(Number(process.env.READY_PORT), '127.0.0.1',
       () => console.log(`Neuron gateway readiness checks on 127.0.0.1:${ready.address().port}`));
     server[COMPANIONS] = [ready];
     server.on('close', () => ready.listening && ready.close());
   }
+  // Zero-downtime restarts (C6): the next release's instance binds the same port before the old
+  // one drains (SO_REUSEPORT: Linux, Node 22.12+), and the kernel spreads new connections over both.
+  // Bound before this instance is ready, it would take its share of cloudflared's new connections
+  // while activate-release.sh still waits for its /ready (up to 150 s), and answer them 503 or 401
+  // (no database, a wrong key, a missing RPC), or reset them when it crashes. So with a shared port
+  // it binds only once the app's own /ready has answered 200; READY_PORT says 503 until then. Not
+  // ready within READY_TIMEOUT_MS (30 s): the process exits 1 and systemd starts a fresh one, until
+  // the deploy gives up and stops it. A port of its own takes nothing from anyone and binds at once.
+  if (reusePort) {
+    try {
+      await untilReady(app, env, { timeoutMs: positiveMs(process.env.READY_TIMEOUT_MS, 30000) });
+    } catch (error) {
+      if (ready?.listening) ready.close();
+      throw error;
+    }
+  }
+  // Logs the bound port, so AUTH_PORT=0 (any free port) can be discovered from stdout.
+  server.listen({ port, host, ...(reusePort ? { reusePort } : {}) },
+    () => console.log(`Neuron gateway listening on ${host}:${server.address().port}${reusePort ? ' (shared port)' : ''}`));
   return server;
 }
 
@@ -641,9 +728,15 @@ function stopOnSignals(server, { graceMs = positiveMs(process.env.SHUTDOWN_GRACE
 }
 
 if (require.main === module) {
-  start().then(server => stopOnSignals(server)).catch(error => { console.error(error.message); process.exitCode = 1; });
+  start().then(server => stopOnSignals(server)).catch(error => {
+    console.error(error.message);
+    process.exitCode = 1;
+    // Whatever the app left open (a pooled upstream connection) must not keep a server that never
+    // started alive; the delay lets the message reach the journal first.
+    setTimeout(() => process.exit(1), 1000).unref();
+  });
 }
 module.exports = {
   start, asset, assetServer, ignoreRule, runtimeEnv, requestHeaders, resolveOrigin, originSettings, releaseRevision, drain, stopOnSignals,
-  supportsReusePort,
+  supportsReusePort, untilReady, gatewayServer, mismatchLog, KEEP_ALIVE_MS,
 };
