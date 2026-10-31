@@ -78,10 +78,11 @@ async function serverWith(settings, logs = []) {
   }
   assert.equal(originSettings({ EC2_PROXY_SECRET: 'a'.repeat(32) }).secret.length, 32);
   assert.deepEqual(originSettings({ EXTRA_WEB_HOSTS: ' AWS.zero-x.live , ,qa.example.test' }).extraHosts, ['aws.zero-x.live', 'qa.example.test']);
-  // Parsed as src/web-hosts.js parses it: plain hostnames only, and never a production host, which
-  // the app keeps routing as itself (it must not become a host served here without the secret).
-  assert.deepEqual(originSettings({ EXTRA_WEB_HOSTS: 'zero-x.live,Dashboard.zero-x.live,aws.zero-x.live:443,https://qa.example.test,a b,aws.zero-x.live' }).extraHosts,
-    ['aws.zero-x.live']);
+  // Hostnames as src/web-hosts.js reads them, plus host:port (a Host header behind a proxy on another
+  // port; src gives those no origin), and never a production host, which the app keeps routing as
+  // itself: it must not become a host served here without the secret.
+  assert.deepEqual(originSettings({ EXTRA_WEB_HOSTS: 'zero-x.live,Dashboard.zero-x.live,zero-x.live:443,https://qa.example.test,a b,aws.zero-x.live,localhost:8787,x.test:99999' }).extraHosts,
+    ['aws.zero-x.live', 'localhost:8787']);
   const production = originSettings({ EC2_PROXY_SECRET: SECRET, TRUST_CLOUDFLARE: 'true', TRUST_CF_IPCOUNTRY: 'true', NODE_ENV: 'production' });
   const testWindow = originSettings({ EC2_PROXY_SECRET: SECRET, EXTRA_WEB_HOSTS: 'aws.zero-x.live', TRUST_CLOUDFLARE: 'true', TRUST_CF_IPCOUNTRY: 'true' });
 

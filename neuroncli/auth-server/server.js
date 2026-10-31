@@ -310,11 +310,17 @@ const isRelayPath = pathname => pathname === '/v1/relay' || pathname.startsWith(
 // The secret is the only gate on the public tunnel host; anything shorter than this (openssl rand
 // -hex 32 gives 64 characters) is refused at start.
 const MIN_SECRET_LENGTH = 32;
-// EXTRA_WEB_HOSTS as src/web-hosts.js reads it (check-ec2-e2e.mjs compares the two): plain
-// hostnames only, and never a production host. Listed by mistake, a production host keeps its own
-// routing in the app, so here it must not become a host served without the secret either.
+// EXTRA_WEB_HOSTS, matched against the Host header: the plain hostnames src/web-hosts.js reads
+// (check-ec2-e2e.mjs compares the two), plus host:port for a server behind a proxy on another port
+// (src gives those no origin), and never a production host. Listed by mistake, a production host
+// keeps its own routing in the app, so here it must not become a host served without the secret.
 const HOSTNAME = /^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$/;
-const extraHostList = value => hostList(value).filter(host => HOSTNAME.test(host) && !WEB_HOSTS.includes(host));
+function extraHostList(value) {
+  return hostList(value).filter(entry => {
+    const [, name, port] = /^([^:]+)(?::(\d{1,5}))?$/.exec(entry) || [];
+    return !!name && HOSTNAME.test(name) && !WEB_HOSTS.includes(name) && (port === undefined || Number(port) <= 65535);
+  });
+}
 
 // The posture, read once at start. Development (none of these set): every request URL stays
 // http://127.0.0.1 as before, so src/ treats it as local. The EC2 origin (the proxy secret, a test

@@ -14,7 +14,8 @@
 //   - the release's site files through the forward (allow-list, cache headers, 304, mp4 ranges);
 //   - /health reports the same commit from the Worker (GIT_COMMIT) and from EC2 (REVISION), on
 //     the public path and on READY_PORT in the form activate-release.sh matches;
-//   - EXTRA_WEB_HOSTS reads the same in server.js and src/web-hosts.js.
+//   - EXTRA_WEB_HOSTS names the same test hostnames in server.js and src/web-hosts.js, and never a
+//     production host.
 // Nothing leaves this machine: the Worker's fetch reaches only the stand-in, and the server runs
 // with e2e-upstream-shim.mjs (fake Groq and Gemini on loopback) in an empty directory (no .env).
 //   node check-ec2-e2e.mjs
@@ -276,16 +277,18 @@ try {
   assert.notEqual((await toServer(readyPort, { path: '/ready', headers: { host: `127.0.0.1:${readyPort}` } })).status, 404, 'READY_PORT answers /ready');
   assert.equal((await toServer(readyPort, { path: '/v1/models', headers: { host: `127.0.0.1:${readyPort}` } })).status, 404, 'and nothing else');
 
-  // ── EXTRA_WEB_HOSTS: server.js and src/ name the same test hosts ──
+  // ── EXTRA_WEB_HOSTS: server.js and src/ name the same test hostnames (server.js also matches a
+  // host:port Host header, which src gives no origin), and neither takes a production host ──
   const require = createRequire(import.meta.url);
   const previousCwd = process.cwd();
   process.chdir(cwd); // server.js loads ./.env with dotenv: an empty directory has none.
   const { originSettings } = require('./server.js');
   process.chdir(previousCwd);
   for (const value of [undefined, '', 'aws.zero-x.live', ' AWS.zero-x.live , ,qa.example.test', 'zero-x.live,www.zero-x.live,aws.zero-x.live',
-    'aws.zero-x.live:443,https://qa.example.test,a b,-bad.example,aws.zero-x.live', 'relay.zero-x.live,Neuron.Zero-X.live']) {
-    assert.deepEqual(originSettings({ EXTRA_WEB_HOSTS: value }).extraHosts, extraWebHosts({ EXTRA_WEB_HOSTS: value }),
-      `EXTRA_WEB_HOSTS=${JSON.stringify(value)}`);
+    'aws.zero-x.live:443,https://qa.example.test,a b,-bad.example,aws.zero-x.live', 'relay.zero-x.live,Neuron.Zero-X.live,zero-x.live:443']) {
+    const served = originSettings({ EXTRA_WEB_HOSTS: value }).extraHosts;
+    assert.deepEqual(served.filter(host => !host.includes(':')), extraWebHosts({ EXTRA_WEB_HOSTS: value }), `EXTRA_WEB_HOSTS=${JSON.stringify(value)}`);
+    assert.ok(!served.some(host => /^(?:(?:www|dashboard|neuron|relay)\.)?zero-x\.live(?::|$)/.test(host)), `no production host: ${JSON.stringify(value)}`);
   }
 
   assert.ok(!/outbound request to aws\.zero-x\.live/.test(log), 'EC2 never forwarded to itself');
