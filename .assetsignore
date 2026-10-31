@@ -18,6 +18,9 @@ neuroncli/auth-server/package*
 neuroncli/auth-server/.env
 .git/
 .gitignore
+# The VM deploy kit (scripts, units, sudoers, CloudFormation): a release carries it next to the
+# site files, and neither runtime serves it
+deploy/
 **/*.md
 **/*.toml
 **/*.cjs
