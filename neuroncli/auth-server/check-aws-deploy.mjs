@@ -1,12 +1,14 @@
-// The EC2 VM kit (deploy/aws, job ec2 of .github/workflows/deploy.yml, the zerox-ci stack) stays in
-// step with the gateway: the environment file builder (wrangler.toml [vars], VM-only values and
-// secrets, systemd quoting, the VM's own settings refused), job ec2 (gated, after the Worker,
-// OIDC, the Worker's secret set with the parity secrets required, pinned actions, the commit
-// check), the CI role's least privilege, every variable the gateway reads listed in
-// gateway.env.example, the two-instance units and the exact deploy sudoers; then runs, against
-// temporary trees with stub commands: activate-release.sh (swap, rollback, prune), host-setup.sh,
-// package-release.sh on a fixture repository and on HEAD, and push-release.sh with the VM side
-// run locally. Values from wrangler.toml are never printed.
+// The EC2 VM kit (deploy/aws, .github/workflows/deploy.yml, the zerox-ci stack) stays in step with
+// the gateway: the environment file builder (wrangler.toml [vars], VM-only values and secrets,
+// systemd quoting, the VM's own settings refused), the workflow (job verify with this check before
+// both deploys, the Worker and job ec2 approved together, OIDC only in job ec2, the Worker's secret
+// set with the parity secrets required, pinned actions), the CI role's least privilege, every
+// variable the gateway reads listed in gateway.env.example, the two-instance units, the upgrade
+// handling and the exact deploy sudoers; then runs, against temporary trees with stub commands:
+// job same-commit's script, activate-release.sh (swap, rollback, prune), zerox-gateway-refresh,
+// host-setup.sh, package-release.sh on a fixture repository and on HEAD, and push-release.sh with
+// the VM side run locally. CI runs it on Linux in job verify. Values from wrangler.toml are never
+// printed.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync, statSync, writeFileSync } from 'node:fs';
@@ -17,7 +19,8 @@ import { buildEnvFile, envLine, wranglerVars } from '../../deploy/aws/gateway-en
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 const repo = join(here, '../..');
-const read = path => readFileSync(join(repo, path), 'utf8');
+// As committed: a Windows checkout with core.autocrlf writes CRLF where .gitattributes does not pin LF.
+const read = path => readFileSync(join(repo, path), 'utf8').replace(/\r\n/g, '\n');
 
 // ── Environment file ──
 // systemd's EnvironmentFile reading of KEY="value": \ " ` $ are unescaped inside double quotes.
@@ -957,4 +960,4 @@ if (ran && headHasKit) {
   }
 }
 
-console.log(`PASS: EC2 kit: env file from [vars], VM-only values and the Worker's secrets (systemd quoting, VM settings refused), job ec2 gated after the Worker with OIDC, pinned actions, parity secrets required and the commit checked, CI role limited to the tunnel, the deploy key and two lookups, complete env template, two gateway instances on one port with their own readiness ports, cron in the same sandbox and never enabled by setup, exact deploy sudoers, /v1 base URLs${ran ? ', activation run (new instance ready before the old one stops, rollback without a gap, commit check, prune), host setup run (sudoers checked, cloud-init rule removed, idempotent)' : ''}${packaged ? ', release tarball (.assetsignore as wrangler reads it, gateway without tests, kit, REVISION, tracked secrets and working files refused), push and install through stub endpoint and ssh (CI with its env file, the same commit again, the laptop without secrets, host key required)' : ''}${packagedHead ? ', HEAD packaged' : ''}`);
+console.log(`PASS: EC2 kit: env file from [vars], VM-only values and the Worker's secrets (systemd quoting, VM settings refused), job verify (kit included) before both deploys, the Worker and job ec2 approved together in production, OIDC only in job ec2, a read-only workflow token, pinned actions, parity secrets required, CI role limited to the tunnel, the deploy key and two lookups, complete env template, two gateway instances on one port with their own readiness ports and release links, cron in the same sandbox and never enabled by setup, needrestart leaving the gateway to the refresh, exact deploy sudoers, /v1 base URLs${commitChecked ? ', the commit check run (another commit or none fails)' : ''}${ran ? ', activation run (new instance ready before the old one stops, current flipped only after the checks, a crash meanwhile restarts on the old release, rollback without a gap, commit check, environment only with --env, never-activated releases pruned first), refresh run (only for a replaced /usr file), host setup run (sudoers checked, cloud-init rule removed, other rules for deploy refused, upgrade files installed, idempotent)' : ''}${packaged ? ', release tarball (.assetsignore as wrangler reads it, case included, gateway without tests, kit, REVISION, tracked secrets and working files refused), push and install through stub endpoint and ssh (CI with its env file under the lock, a failed install leaving none, the same commit again, the laptop without secrets, --env-next, host key required)' : ''}${packagedHead ? ', HEAD packaged' : ''}`);

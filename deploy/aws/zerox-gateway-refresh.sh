@@ -22,8 +22,8 @@ for n in 0 1; do
   if grep -qE ' /usr/[^ ]+ \(deleted\)$' "$proc/$pid/maps" 2>/dev/null; then stale="$stale zerox-gateway@$n"; fi
 done
 if [ -z "$stale" ]; then echo "zerox-gateway: no replaced file in use"; exit 0; fi
-[ -e "$root/current" ] || { echo "zerox-gateway:$stale use a replaced file, but there is no current release"; exit 1; }
+[ -e "$root/current" ] || { echo "replaced file in use by$stale, but there is no current release"; exit 1; }
 dir="$(cd "$root/current" && pwd -P)"
 release="$(cat "$dir/REVISION")"
-echo "zerox-gateway:$stale use a replaced file; activating release $release again"
+echo "replaced file in use by$stale; activating release $release again"
 exec runuser -u deploy -- bash "$dir/deploy/aws/activate-release.sh" "$release"

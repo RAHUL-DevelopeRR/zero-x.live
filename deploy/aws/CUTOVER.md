@@ -29,11 +29,17 @@ VM-side commands below run on the VM as `ubuntu`:
 `aws ec2-instance-connect ssh --instance-id <id> --connection-type eice --os-user ubuntu $P`
 (README.md, "Connecting"). `$P` is `--profile zerox --region ap-south-1`.
 
+Every push to `main` runs job `verify` first, then waits for one approval in the environment
+`production`, which starts the Worker deploy and job `ec2` together (README.md, "Deploys"); job
+`same-commit` then compares the commits. Nothing ships before that approval, so a push that waits
+leaves both runtimes on the previous commit. From step 2 until the close-out, approve each run
+promptly or not at all (reject it), and keep `main` frozen during a window.
+
 ## Pre-flight: all of these hold before step 1
 
 | | Check | How |
 |---|---|---|
-| a | **One commit on both runtimes**, both deployed by `deploy.yml` (job `ec2` on), and production's database has every migration | Job `ec2` green on the latest push to `main` (it compares the commits); `node scripts/apply-migrations.mjs --status` lists nothing pending. The relay decision is applied: `wrangler.toml` has no `RELAY` binding, relay routes answer 503 `relay_unavailable`. |
+| a | **One commit on both runtimes**, both deployed by `deploy.yml` (job `ec2` on), and production's database has every migration | Jobs `ec2` and `same-commit` green on the latest push to `main` (`same-commit` compares the commits); `node scripts/apply-migrations.mjs --status` lists nothing pending. The relay decision is applied: `wrangler.toml` has no `RELAY` binding, relay routes answer 503 `relay_unavailable`. |
 | b | **The models.dev facts are in Postgres** on both runtimes (C5), or you accept `/v1/models` without them after step 1 | `/v1/models` on the Worker and on `aws.zero-x.live` show the same extra facts. |
 | c | **Secrets reconciled**: `SESSION_ENCRYPTION_KEY`, `DEVICE_APPROVAL_SECRET`, `PROVIDER_KEYS_KEK` and `EC2_PROXY_SECRET` come from GitHub for both runtimes (job `ec2` requires them); the VM has its own `SUPABASE_SECRET_KEY_EC2` | Feature flags equal (below). Otherwise sealed sessions, device approvals and vault keys written by one runtime fail on the other. |
 | d | **24 h healthy on `https://aws.zero-x.live`** | CLI streams of 30-90 s complete with `NEURON_API_BASE=https://aws.zero-x.live/v1`; `/v1/models` and `/health` answer; error rate flat in the journal; `loadtest.mjs` passes on the VM at low concurrency; memory under 60 % (`free -m`); **a deploy during a stream drops nothing**: start a 90 s stream, run `push-release.sh` for the same commit, the stream completes and `/health` never fails. |
@@ -64,7 +70,8 @@ rolling back then takes one CI run (2-3 minutes) instead of waiting for a review
 
 Pushing the branch itself deploys nothing (`deploy.yml` runs on `main` only). To roll back:
 `git push origin rollback/<name>:main` (a fast-forward while nothing else was merged; keep `main`
-frozen during the window), then approve job `ec2` of that run. Delete the branch after the window.
+frozen during the window), then approve that run (one approval: the Worker and job `ec2`). Delete
+the branch after the window.
 
 ## Steps (one per quiet window, across 3-4 days)
 
@@ -72,7 +79,7 @@ Each step lists what you approve, what to run, what to check and how to undo it.
 
 ### 1. Sessions from KV to Postgres (about 15 minutes, [SESSIONS.md](SESSIONS.md))
 
-- **You approve**: merging and pushing the unbind commit, job `ec2` of that run, and the copy.
+- **You approve**: merging and pushing the unbind commit, that run (the Worker and job `ec2`), and the copy.
 - Dry run, from `neuroncli/auth-server`, with `SUPABASE_URL` and `SUPABASE_SECRET_KEY` in the
   environment: `node scripts/kv-sessions-to-postgres.mjs --wrangler "npx wrangler@4.147.0"`.
   Expect `failed: 0` and `invalid: 0`; note the namespace id (`npx wrangler@4.147.0 kv namespace list`).
@@ -109,7 +116,7 @@ Each step lists what you approve, what to run, what to check and how to undo it.
   Razorpay checkout, and the next real webhook in the VM's journal; Google, GitHub, Microsoft and
   email sign-in and the CLI loopback login; `/releases/*/latest.json`, `/oiop/keys.json`,
   `sitemap.xml`, `robots.txt` and the IndexNow key file. From now on `https://zero-x.live/health`
-  answers from the VM, so job `ec2`'s commit check reads the VM there.
+  answers from the VM, so job `same-commit` reads the VM there.
 - **Undo**: put back `zero-x.live/v1/` (step 2), or delete the secret.
 
 ### 4. The other hostnames, one at a time
@@ -125,7 +132,7 @@ Each step lists what you approve, what to run, what to check and how to undo it.
 
 ### 5. Cron switch, in one window
 
-- **You approve**: merging and pushing the cron commit and job `ec2` of that run; enabling the timer.
+- **You approve**: merging and pushing the cron commit and that run (the Worker and job `ec2`); enabling the timer.
 - Commit the removal of `[triggers] crons` from `wrangler.toml`, merge and push. Stage
   `rollback/cron-trigger`.
 - After the run finishes, on the VM: `sudo systemctl enable --now zerox-cron.timer`.
@@ -145,7 +152,7 @@ relay has no Worker fallback.
 
 ### 7. Close out the test host
 
-- **You approve**: the variable change and the next run of job `ec2`.
+- **You approve**: the variable change and the next run (the Worker and job `ec2`).
 - Delete the repository variable `EXTRA_WEB_HOSTS` (`gh variable delete EXTRA_WEB_HOSTS`) and
   re-run the latest deploy (or wait for the next push). The VM then serves `aws.zero-x.live` only to
   the Worker (requests carrying the proxy secret), plus `/health` and `/ready`; everything else
@@ -168,6 +175,7 @@ relay has no Worker fallback.
 | One path or host misbehaves on the VM | `secret put EC2_PROXY_PREFIXES` without that entry | seconds |
 | The VM is down | `secret delete EC2_PROXY_PREFIXES`; in-flight streams are cut, their leases expire and the next cron frees them | seconds |
 | A bad release on the VM | Re-run the workflow for the previous commit, `push-release.sh --ref <commit>`, or activate a release still on the VM (README.md, "Rollback"); the Worker: `wrangler rollback` | 1-3 minutes |
+| One of the two deploy jobs failed (`same-commit` did not run: the runtimes may be on different commits) | Re-run the failed job once its cause is fixed. If the VM job failed, its activation already put the previous release back, so the Worker is ahead: from step 2, `wrangler rollback` the Worker, or take the forwarded prefixes off the VM (`secret put`/`secret delete EC2_PROXY_PREFIXES`) until both match | minutes |
 | Cron | `sudo systemctl disable --now zerox-cron.timer`, push `rollback/cron-trigger` | about 3 minutes |
 | Session store | Push `rollback/kv-rebind` (only if the Postgres store itself fails) | about 3 minutes |
 | Razorpay webhook | Nothing: both runtimes dedupe through `zerox_webhook_claim`, Razorpay retries 5xx | - |

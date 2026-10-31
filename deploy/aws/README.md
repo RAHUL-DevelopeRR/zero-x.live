@@ -11,8 +11,9 @@ reach it only through an EC2 Instance Connect Endpoint, so no port faces the int
 | `gateway-vm.yaml` | CloudFormation stack `zerox-gateway`: key pair, two security groups, the endpoint, the launch template (cloud-init) and the instance. No IAM resources. |
 | `stack-policy.json` | Denies replacing or deleting the instance, the endpoint and the key pair, until lifted for a planned change. |
 | `ci-role.yaml` | Stack `zerox-ci`: the GitHub OIDC provider and the role `zerox-github-deploy` for job `ec2` of `deploy.yml` ("CI role" below). |
-| `host-setup.sh` | Run once as `ubuntu` after the first boot, and again after kit changes: units, deploy sudoers, kernel setting, cloudflared. Never enables the cron timer. |
-| `zerox-gateway@.service` | The gateway, instances `@0` and `@1`: both on `127.0.0.1:8787` (`reusePort`), each with its own loopback `/ready` on `8790`/`8791`, sandboxed, 110 s drain on stop. |
+| `host-setup.sh` | Run once as `ubuntu` after the first boot, and again after kit changes: units, deploy sudoers, kernel setting, upgrade handling, cloudflared. Never enables the cron timer. |
+| `zerox-gateway@.service` | The gateway, instances `@0` and `@1`: both on `127.0.0.1:8787` (`reusePort`), each with its own loopback `/ready` on `8790`/`8791` and its own release link `/opt/zerox/instance-N`, sandboxed, 110 s drain on stop. |
+| `zerox-needrestart.conf`, `zerox-apt-refresh.conf`, `zerox-gateway-refresh.service`, `zerox-gateway-refresh.sh` | Upgrades without a gap: needrestart never restarts the gateway; after each apt run, the refresh swaps the instances when node or a library they use was replaced. |
 | `zerox-cron.service`, `zerox-cron.timer` | `scripts/cron.mjs` every 10 minutes; installed, enabled only at the cutover's cron step. |
 | `cloudflared.service` | The tunnel client, reading its token from `/etc/cloudflared/token`. |
 | `zerox-deploy.sudoers` | All `deploy` may run as root: start, stop, restart, is-active and status of the two instances. |
@@ -186,8 +187,8 @@ sudo cloud-init schema --system --annotate
 
 ## Host setup
 
-Once after the first boot, and again whenever a unit, `zerox-deploy.sudoers` or `zerox-sysctl.conf`
-changes. Either from the laptop, which also ships a release (next sections need the tunnel token
+Once after the first boot, and again whenever a unit, `zerox-deploy.sudoers`, `zerox-sysctl.conf` or
+one of the upgrade files changes. Either from the laptop, which also ships a release (next sections need the tunnel token
 and the environment file first, so the first time ships nothing useful yet; that is fine):
 
 ```bash
@@ -196,8 +197,12 @@ deploy/aws/push-release.sh --profile zerox --setup
 
 or on the VM, from a copy of `deploy/aws`: `sudo bash host-setup.sh`. It:
 
-- installs `zerox-gateway@.service`, `zerox-cron.service` and `.timer`, `cloudflared.service`
-  and `/etc/sysctl.d/60-zerox.conf`, and checks the units with `systemd-analyze verify`;
+- installs `zerox-gateway@.service`, `zerox-cron.service` and `.timer`, `cloudflared.service`,
+  `zerox-gateway-refresh.service` and `/etc/sysctl.d/60-zerox.conf`, and checks the units with
+  `systemd-analyze verify`;
+- installs the upgrade handling ("Timeouts, upgrades and restarts" below):
+  `/etc/needrestart/conf.d/60-zerox-gateway.conf`, `/usr/local/sbin/zerox-gateway-refresh` (root's
+  own copy) and the apt hook `/etc/apt/apt.conf.d/80zerox-gateway-refresh`;
 - installs `/etc/sudoers.d/zerox-deploy` (checked with `visudo` before and after), removes
   cloud-init's older rule for `deploy`, and fails if any other sudo rule or an administrators group
   names `deploy`. Check: `sudo -l -U deploy` lists the ten `systemctl` commands and nothing else;
@@ -247,19 +252,27 @@ If a token was ever typed on a command line, rotate it in the dashboard.
 as root, and the gateway user `zerox` cannot read it. Once job `ec2` deploys, it writes the whole
 file on every run (`gateway-env.mjs`: `wrangler.toml` `[vars]`, the Worker's secrets, the VM's own
 `SUPABASE_SECRET_KEY` from the GitHub secret `SUPABASE_SECRET_KEY_EC2`, `EC2_PROXY_SECRET`, and
-`EXTRA_WEB_HOSTS` from the repository variable). Hand edits are replaced then.
+`EXTRA_WEB_HOSTS` from the repository variable). Hand edits are replaced then. A new file only
+ever goes live through an activation, which keeps the previous one as `gateway.env.prev` and puts
+it back if the release then fails `/ready`.
 
 For the smoke test, before CI deploys, write a minimal one by hand on the VM: `SUPABASE_URL`, a
 **separate Supabase secret key created for EC2**, one free provider key, and
-`EXTRA_WEB_HOSTS="aws.zero-x.live"`. Type the values on the VM, never in chat or the repository,
-then Ctrl-D (syntax: `KEY="value"`, one per line, see `gateway.env.example`):
+`EXTRA_WEB_HOSTS="aws.zero-x.live"`. Write it as `gateway.env.next`, never straight over
+`gateway.env`: a typo then fails the activation and the previous file stays live, instead of
+waiting for the next restart to take the gateway down. Type the values on the VM, never in chat
+or the repository, then Ctrl-D (syntax: `KEY="value"`, one per line, see `gateway.env.example`):
 
 ```bash
-sudo -u deploy install -m 0600 /dev/stdin /etc/zerox/gateway.env
+sudo -u deploy install -m 0600 /dev/stdin /etc/zerox/gateway.env.next
 ```
 
-A changed file takes effect when an instance starts: push the same commit again
-(`push-release.sh` reuses the installed release and swaps the instances).
+Then, from the laptop, push the commit with it (`push-release.sh` reuses an installed release and
+swaps the instances; the file is removed once it is live, and kept if the activation fails):
+
+```bash
+deploy/aws/push-release.sh --profile zerox --env-next
+```
 
 ## Host key
 
@@ -282,13 +295,17 @@ A replaced instance has a new host key: update both places.
 
 A release is `git archive` of one commit (`package-release.sh`): never a working tree, which may
 hold untracked `output/`, `tmp/` or secrets. On the VM it lives in `/opt/zerox/releases/<commit>`
-(7 hex digits) with its own `node_modules` (`npm ci --omit=dev --ignore-scripts`, as `deploy`), and
-`/opt/zerox/current` points at the live one. Activation starts the idle instance on the new
-release, requires `/ready` (database, plan limits, session store and catalog load) and the commit
-in `/health` on that instance's own loopback port, then stops the old instance, which drains its
-streams for up to 110 s while the new one takes every new connection. A failed check stops the new
-instance and puts the previous release and environment back; the old instance never stopped. The
-current release and the three most recently activated others are kept.
+(7 hex digits) with its own `node_modules` (`npm ci --omit=dev --ignore-scripts`, as `deploy`).
+Each instance runs the release its own link names, `/opt/zerox/instance-0` or `instance-1`, and
+`/opt/zerox/current` (the cron, operators) points at the live one. Activation points the idle
+instance's link at the new release, starts it, requires `/ready` (database, plan limits, session
+store and catalog load) and the commit in `/health` on that instance's own loopback port, then
+flips `current` and stops the old instance, which drains its streams for up to 110 s while the new
+one takes every new connection; then the old instance's link follows, so either instance (and `@0`
+at boot) starts on the live release. A failed check stops the new instance and puts its link and
+the environment back; the old instance and `current` were never touched, and even a crash and
+restart of the old instance meanwhile brings it back on its own release. The current release and
+the three most recently activated others are kept; a release that never went live goes first.
 
 **From the laptop** (smoke test, or by hand), as `ubuntu`, which installs as `deploy` through sudo.
 It never sends a secret:
@@ -298,9 +315,14 @@ deploy/aws/push-release.sh --profile zerox                 # HEAD
 deploy/aws/push-release.sh --profile zerox --ref <commit>  # another commit
 ```
 
-**From CI**: job `ec2` of `.github/workflows/deploy.yml`, after the Worker deploy of the same push,
-once the repository variable `EC2_DEPLOY` is `true` and the run is approved in the environment
-`production`. It needs, besides the Worker's secrets:
+**From CI**: job `ec2` of `.github/workflows/deploy.yml`, once the repository variable `EC2_DEPLOY`
+is `true`. Every push first runs job `verify` (the checks, `check-aws-deploy.mjs` included, with no
+secret): nothing ships unless it passes. Then the Worker (job `deploy`) and job `ec2` both wait for
+approval in the environment `production`, at the same time: one approval in the run's "Review
+deployments" starts both, so the two runtimes change within the same couple of minutes and
+neither ships ahead of the other's approval. Job `same-commit` then requires both to report the
+commit. With `EC2_DEPLOY` off, only the Worker waits for that approval. It needs, besides the
+Worker's secrets:
 
 | Where | Name | Value |
 |---|---|---|
@@ -312,10 +334,13 @@ once the repository variable `EC2_DEPLOY` is `true` and the run is approved in t
 | Variable | `EXTRA_WEB_HOSTS` | `aws.zero-x.live` during the smoke test and the cutover; delete it at the cutover's close-out. |
 | Variable | `EC2_DEPLOY` | `true` to turn the job on. |
 
-The job checks the kit (`check-aws-deploy.mjs`), builds the environment file (a missing required
-secret fails here, before AWS or the VM), assumes the role for 30 minutes, runs
-`push-release.sh --os-user deploy`, and finally requires `https://zero-x.live/health` (and
-`https://aws.zero-x.live/health` while `EXTRA_WEB_HOSTS` is set) to report the commit.
+Job `ec2` builds the environment file (a missing required secret fails here, before AWS or the
+VM), assumes the role for 30 minutes and runs `push-release.sh --os-user deploy`, which hands the
+file to the activation under the deploy lock (a failed install leaves no environment behind).
+Job `same-commit` then requires `https://zero-x.live/health` (and `https://aws.zero-x.live/health`
+while `EXTRA_WEB_HOSTS` is set) to report the commit. If one deploy job fails, `same-commit` does
+not run and the runtimes may be on different commits: re-run the failed job, or see
+[CUTOVER.md](CUTOVER.md), "Rollback summary".
 
 Before each deploy: production's database has every migration of the commit
 (`node scripts/apply-migrations.mjs --status`), since both runtimes share it.
@@ -351,12 +376,14 @@ the endpoint id `UsePreviousValue=true`), or CI's key push is refused.
   ([CUTOVER.md](CUTOVER.md)); no deploy needed.
 - **Release**: run the workflow for the previous commit, push it from the laptop
   (`push-release.sh --ref <commit>`), or activate an older release already on the VM (no
-  download, no npm), on the VM as `ubuntu`:
+  download, no npm), on the VM as `ubuntu` (`/opt/zerox` is readable by `deploy` and `zerox` only):
   ```bash
-  ls -1t /opt/zerox/releases                                         # newest activation first
-  sudo -u deploy cp -p /etc/zerox/gateway.env.prev /etc/zerox/gateway.env.next   # only if the environment changed
+  sudo -u deploy bash -c 'cd /opt/zerox/releases && ls -1t */.activated'   # newest activation first
   sudo -u deploy bash /opt/zerox/releases/<commit>/deploy/aws/activate-release.sh <commit>
+  # the same, also putting the previous environment back (only if the environment changed):
+  sudo -u deploy bash /opt/zerox/releases/<commit>/deploy/aws/activate-release.sh <commit> --env /etc/zerox/gateway.env.prev
   ```
+  Without `--env` the environment stays as it is; nothing else in `/etc/zerox` is picked up.
 
 ## Health checks and logs
 
@@ -365,7 +392,9 @@ On the VM:
 ```bash
 systemctl status 'zerox-gateway@*' cloudflared --no-pager
 for port in 8790 8791; do curl -s --max-time 3 http://127.0.0.1:$port/health; echo; done   # the running instance answers
-readlink /opt/zerox/current; cat /opt/zerox/current/REVISION
+sudo -u deploy readlink /opt/zerox/current /opt/zerox/instance-0 /opt/zerox/instance-1   # live release, each instance's
+sudo -u deploy cat /opt/zerox/current/REVISION
+journalctl -u zerox-gateway-refresh --since -1d        # after the night's upgrades
 journalctl -u 'zerox-gateway@*' -f                     # ubuntu, or deploy (systemd-journal group)
 journalctl -u zerox-cron --since -1h                   # after the cutover's cron step
 systemctl is-enabled zerox-cron.timer                  # disabled until then
@@ -397,8 +426,16 @@ and its p99 delay stays under 100 ms.
   keep-alive comment after 30 s of silence; non-streaming calls are capped at about 90 s with a
   JSON 504 (`upstream_timeout`).
 - unattended-upgrades installs security updates and new `nodejs` and `cloudflared` packages
-  between 20:45 and 20:55 UTC (02:15 IST); needrestart then restarts the running gateway instance,
-  which drains for up to 110 s (cloudflared answers 502 for new requests meanwhile), and
-  `cloudflared`, which cuts open streams. A kernel update waits for a reboot by hand
-  (`ls /var/run/reboot-required`): `sudo reboot` at a quiet hour; `zerox-gateway@0` starts on the
-  current release at boot.
+  between 20:45 and 20:55 UTC (02:15 IST). needrestart then restarts the services whose binary or
+  libraries changed, `cloudflared` included (that cuts open streams), but never a gateway instance
+  (`60-zerox-gateway.conf`): restarting the only running instance would close the listener for
+  the whole drain, and cloudflared would answer 502 meanwhile. Instead apt starts
+  `zerox-gateway-refresh.service` after each run (`80zerox-gateway-refresh`): when a running
+  instance maps a file the upgrade replaced (`/usr/bin/node`, libc, libstdc++), it activates the
+  current release again as `deploy`, so the idle instance starts on the new files and passes
+  `/ready` before the old one drains, like a deploy. If a deploy holds the lock at that moment, the
+  refresh fails (`journalctl -u zerox-gateway-refresh`) and the deploy's new instance runs on the
+  new files anyway. (The cloud-init comment on needrestart in `gateway-vm.yaml` predates this; it
+  is left as it is, since any edit to the cloud-init replaces the instance.)
+- A kernel update waits for a reboot by hand (`ls /var/run/reboot-required`): `sudo reboot` at a
+  quiet hour; `zerox-gateway@0` starts on the live release at boot.
