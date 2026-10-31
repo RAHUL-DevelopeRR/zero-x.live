@@ -176,9 +176,12 @@ jobs:
   # which may only open a tunnel to SSH through the Instance Connect Endpoint and push a one-time
   # key for the deploy user: no AWS keys and no SSH key are stored in GitHub. The environment file
   # is built here, before anything reaches the VM, and travels over that SSH connection only.
-  # Repository variables: EC2_DEPLOY, AWS_DEPLOY_ROLE_ARN (the stack's RoleArn output),
-  # EC2_KNOWN_HOSTS (the VM's host key under the name zerox-gateway; public), EXTRA_WEB_HOSTS
-  # (test host names the VM also serves, e.g. aws.zero-x.live; empty in production).
+  # Repository variables (read before the job's environment applies): EC2_DEPLOY, EXTRA_WEB_HOSTS
+  # (test host names the VM also serves, e.g. aws.zero-x.live; empty in production). In the
+  # environment "production", as the EC2 smoke test set them: the variables EC2_INSTANCE_ID and
+  # EC2_HOST_KEY (the VM's ED25519 host key line "<instance id> ssh-ed25519 ...", from its serial
+  # console; public), and the secret AWS_DEPLOY_ROLE_ARN (stack zerox-ci's RoleArn output: a secret
+  # because this repository's run logs are public, with the account id masked as well).
   ec2:
     name: Deploy EC2
     needs: verify
@@ -192,6 +195,9 @@ jobs:
     concurrency:
       group: deploy-ec2
       cancel-in-progress: false
+    env:
+      EC2_INSTANCE_ID: ${{ vars.EC2_INSTANCE_ID }}
+      EC2_HOST_KEY: ${{ vars.EC2_HOST_KEY }}
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -235,21 +241,26 @@ jobs:
           umask 077
           node deploy/aws/gateway-env.mjs --wrangler neuroncli/auth-server/wrangler.toml --out "$RUNNER_TEMP/gateway.env"
 
-      - name: Host key of the VM
-        env:
-          EC2_KNOWN_HOSTS: ${{ vars.EC2_KNOWN_HOSTS }}
+      # The instance id is checked before anything uses it, and the host key line must name that
+      # instance. push-release.sh checks the key under the name zerox-gateway (as on the laptop),
+      # so it is written under that name: never trusted on first use.
+      - name: Instance and host key of the VM
         run: |
-          # "zerox-gateway ssh-ed25519 AAAA...", or the same line as ssh hashes it (|1|...).
-          if ! printf '%s\n' "$EC2_KNOWN_HOSTS" | grep -qE '^(zerox-gateway|[|]1[|][^ ]+) (ssh-|ecdsa-)'; then
-            echo '::error::Repository variable EC2_KNOWN_HOSTS must hold the VM host key as "zerox-gateway ssh-ed25519 ..." (deploy/aws/README.md, "Host key")'
+          if [[ ! $EC2_INSTANCE_ID =~ ^i-[0-9a-f]{8,17}$ ]]; then
+            echo '::error::Environment variable EC2_INSTANCE_ID is not an instance id (deploy/aws/README.md, "Host key")'
             exit 1
           fi
-          printf '%s\n' "$EC2_KNOWN_HOSTS" > "$RUNNER_TEMP/known_hosts"
+          read -r name type key _ <<< "$EC2_HOST_KEY"
+          if [ "$name" != "$EC2_INSTANCE_ID" ] || [[ ! $type =~ ^(ssh-ed25519|ecdsa-sha2-nistp(256|384|521))$ ]] || [[ ! $key =~ ^[A-Za-z0-9+/]+={0,3}$ ]]; then
+            echo '::error::Environment variable EC2_HOST_KEY must be "<EC2_INSTANCE_ID> ssh-ed25519 AAAA..." (deploy/aws/README.md, "Host key")'
+            exit 1
+          fi
+          printf 'zerox-gateway %s %s\n' "$type" "$key" > "$RUNNER_TEMP/known_hosts"
 
       - name: AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
-          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           role-session-name: zerox-deploy-${{ github.run_id }}
           role-duration-seconds: 1800
           aws-region: ap-south-1
@@ -262,7 +273,7 @@ jobs:
       # before the old instance stops. A failure puts the previous release back and fails here.
       - name: Ship and activate the release
         run: |
-          deploy/aws/push-release.sh --os-user deploy --lookup tags \
+          deploy/aws/push-release.sh --os-user deploy --instance-id "$EC2_INSTANCE_ID" \
             --env-file "$RUNNER_TEMP/gateway.env" --known-hosts "$RUNNER_TEMP/known_hosts"
 
       - name: Remove the environment file

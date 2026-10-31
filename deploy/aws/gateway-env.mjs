@@ -49,13 +49,19 @@ const names = list => String(list || '').split(/\s+/).filter(Boolean);
 // comes from the release's REVISION file on the VM, so an environment file kept across a rollback
 // can never report the wrong commit. EC2_PROXY_PREFIXES and EC2_PROXY_ORIGIN steer the Worker's
 // forward to the VM; on the VM they could only make it forward to itself. They are refused instead.
+// NODE_OPTIONS and LD_PRELOAD would load code into the gateway before server.js runs, and every
+// TRUST_* name is a decision about which headers to believe, which belongs to the unit (the
+// EC2 smoke test's environment workflow refused the same names).
 const UNIT_SETTINGS = new Set(['NODE_ENV', 'AUTH_HOST', 'AUTH_PORT', 'AUTH_REUSE_PORT', 'READY_PORT', 'ASSETS_DIR',
-  'NEURON_API_ONLY', 'TRUST_CLOUDFLARE', 'TRUST_CF_IPCOUNTRY', 'SHUTDOWN_GRACE_MS', 'GIT_COMMIT']);
+  'NEURON_API_ONLY', 'TRUST_CLOUDFLARE', 'TRUST_CF_IPCOUNTRY', 'SHUTDOWN_GRACE_MS', 'GIT_COMMIT', 'NODE_OPTIONS', 'LD_PRELOAD']);
 const WORKER_ONLY = new Set(['EC2_PROXY_PREFIXES', 'EC2_PROXY_ORIGIN']);
 const DEVELOPMENT_ONLY = new Set(['DEV_AUTH_ENABLED', 'ALLOW_ANONYMOUS_SESSIONS', 'ALLOW_UNKNOWN_COUNTRY',
   'DATABASE_DRIVER', 'PGLITE_DATA_DIR', 'ALLOW_LOCAL_DATABASE', 'RAZORPAY_API_BASE', 'NEURON_RUNTIME']);
+// server.js refuses to start with a shorter proxy secret (the only gate on the tunnel's public
+// host); failing here keeps such a deploy from reaching the VM at all.
+const MIN_LENGTH = { EC2_PROXY_SECRET: 32 };
 function allowed(name) {
-  if (UNIT_SETTINGS.has(name) || WORKER_ONLY.has(name) || DEVELOPMENT_ONLY.has(name) || name.startsWith('E2E_')) {
+  if (UNIT_SETTINGS.has(name) || WORKER_ONLY.has(name) || DEVELOPMENT_ONLY.has(name) || name.startsWith('E2E_') || name.startsWith('TRUST_')) {
     throw new Error(`${name} is not allowed in the VM environment (zerox-gateway@.service or the release sets it, ` +
       'or it is Worker-only or development-only)');
   }
@@ -63,8 +69,11 @@ function allowed(name) {
 }
 
 // { text, skipped }: vars first, then the VM-only values and the secrets that are set. A
-// required secret that is not set, a value that would replace a var, or a refused name (above)
-// fails.
+// required secret that is not set, a value that would replace a var, a refused name (above), a
+// secret with a character other than printable ASCII (systemd refuses some Unicode in an
+// EnvironmentFile and then logs the value to the journal; a space would also be trimmed on one
+// runtime and not the other) or a proxy secret shorter than server.js accepts fails. Only names
+// are ever reported, never values.
 export function buildEnvFile({ vars, env, required, optional, vmVars = [] }) {
   const lines = ['# Written by job ec2 of .github/workflows/deploy.yml; local edits are replaced on the next deploy.'];
   for (const [name, value] of Object.entries(vars)) lines.push(envLine(allowed(name), value));
@@ -76,8 +85,11 @@ export function buildEnvFile({ vars, env, required, optional, vmVars = [] }) {
   for (const name of [...required, ...optional].map(allowed)) {
     if (Object.hasOwn(vars, name) || vmVars.includes(name)) throw new Error(`${name} is both a plain value and a secret`);
     const value = env[name];
-    if (typeof value === 'string' && value !== '') lines.push(envLine(name, value));
-    else if (required.includes(name)) throw new Error(`Required secret ${name} is not set`);
+    if (typeof value === 'string' && value !== '') {
+      if (!/^[\x21-\x7e]+$/.test(value)) throw new Error(`Secret ${name} has characters other than printable ASCII (or a space)`);
+      if (value.length < (MIN_LENGTH[name] || 0)) throw new Error(`Secret ${name} must be at least ${MIN_LENGTH[name]} characters`);
+      lines.push(envLine(name, value));
+    } else if (required.includes(name)) throw new Error(`Required secret ${name} is not set`);
     else skipped.push(name);
   }
   return { text: `${lines.join('\n')}\n`, skipped };

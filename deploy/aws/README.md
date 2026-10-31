@@ -279,17 +279,20 @@ deploy/aws/push-release.sh --profile zerox --env-next
 ssh checks the VM's host key under the name `zerox-gateway`, wherever the instance is. On the
 laptop, `push-release.sh` asks on the first connection and shows the fingerprints from the
 instance's console next to the question; compare them, answer within a minute. It keeps the key
-in `~/.ssh/zerox_known_hosts`. For CI, put the same key in the repository variable
-`EC2_KNOWN_HOSTS` (a host key is public):
+in `~/.ssh/zerox_known_hosts`. For CI, the environment `production` holds the instance and its
+key as variables (both public), as the EC2 smoke test set them: `EC2_INSTANCE_ID` and
+`EC2_HOST_KEY`, the ED25519 line from the console prefixed with the instance id. Job `ec2` refuses
+a key line that names another instance and writes it under `zerox-gateway` for `push-release.sh`:
 
 ```bash
-ssh-keygen -F zerox-gateway -f ~/.ssh/zerox_known_hosts | grep -v '^#'   # the hashed line, as is
-# or, unhashed, from the console of a first boot:
-aws ec2 get-console-output --instance-id <id> --output text $P | sed -n '/BEGIN SSH HOST KEY KEYS/,/END/p' | grep ed25519 | sed 's/^/zerox-gateway /'
-gh variable set EC2_KNOWN_HOSTS --body '<that line>'
+ID=<instance id>
+aws ec2 get-console-output --instance-id $ID --output text $P | sed -n '/BEGIN SSH HOST KEY KEYS/,/END/p' | grep ed25519 | sed "s/^/$ID /"
+gh variable set EC2_INSTANCE_ID --env production --body "$ID"
+gh variable set EC2_HOST_KEY --env production --body '<that line>'
 ```
 
-A replaced instance has a new host key: update both places.
+A replaced instance has a new id and host key: update the laptop's file, both variables and
+stack `zerox-ci` ("CI role" below).
 
 ## Deploys
 
@@ -327,10 +330,10 @@ Worker's secrets:
 | Where | Name | Value |
 |---|---|---|
 | Environment `production`, secret | `SUPABASE_SECRET_KEY_EC2` | The VM's own Supabase secret key. |
-| Secret | `EC2_PROXY_SECRET` | Random, 32 bytes or more (`openssl rand -base64 48`); the Worker gets it too. |
+| Secret | `EC2_PROXY_SECRET` | Random printable ASCII, 32 characters or more (`openssl rand -hex 32`); the Worker gets it too. |
 | Secret (already there) | `SESSION_ENCRYPTION_KEY`, `PROVIDER_KEYS_KEK`, `DEVICE_APPROVAL_SECRET` | The Worker's values: required for the VM. |
-| Variable | `AWS_DEPLOY_ROLE_ARN` | Output `RoleArn` of stack `zerox-ci`. |
-| Variable | `EC2_KNOWN_HOSTS` | "Host key" above. |
+| Environment `production`, secret (already there) | `AWS_DEPLOY_ROLE_ARN` | Output `RoleArn` of stack `zerox-ci`. A secret because run logs are public; the job also masks the account id. |
+| Environment `production`, variables (already there) | `EC2_INSTANCE_ID`, `EC2_HOST_KEY` | "Host key" above. |
 | Variable | `EXTRA_WEB_HOSTS` | `aws.zero-x.live` during the smoke test and the cutover; delete it at the cutover's close-out. |
 | Variable | `EC2_DEPLOY` | `true` to turn the job on. |
 

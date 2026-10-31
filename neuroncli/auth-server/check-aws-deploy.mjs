@@ -61,11 +61,21 @@ assert.throws(() => buildEnvFile({ vars: {}, env: {}, required: [], optional: []
 for (const name of ['NODE_ENV', 'AUTH_HOST', 'AUTH_PORT', 'AUTH_REUSE_PORT', 'READY_PORT', 'ASSETS_DIR', 'NEURON_API_ONLY',
   'TRUST_CLOUDFLARE', 'TRUST_CF_IPCOUNTRY', 'SHUTDOWN_GRACE_MS', 'GIT_COMMIT', 'EC2_PROXY_PREFIXES', 'EC2_PROXY_ORIGIN',
   'DEV_AUTH_ENABLED', 'ALLOW_ANONYMOUS_SESSIONS', 'ALLOW_UNKNOWN_COUNTRY', 'DATABASE_DRIVER', 'PGLITE_DATA_DIR',
-  'ALLOW_LOCAL_DATABASE', 'RAZORPAY_API_BASE', 'NEURON_RUNTIME', 'E2E_UPSTREAM_BASE']) {
+  'ALLOW_LOCAL_DATABASE', 'RAZORPAY_API_BASE', 'NEURON_RUNTIME', 'E2E_UPSTREAM_BASE', 'NODE_OPTIONS', 'LD_PRELOAD', 'TRUST_PROXY']) {
   assert.throws(() => buildEnvFile({ vars: { [name]: 'x' }, env: {}, required: [], optional: [] }), /not allowed in the VM environment/, `${name} as a var`);
   assert.throws(() => buildEnvFile({ vars: {}, env: { [name]: 'x' }, required: [], optional: [name] }), /not allowed in the VM environment/, `${name} as a secret`);
 }
 assert.ok(buildEnvFile({ vars, env: {}, required: [], optional: [] }).text, 'the real [vars] hold none of them');
+// Secret values: printable ASCII only (what the smoke test's workflow allowed), and a proxy secret
+// server.js accepts. The error names the secret, never its value.
+for (const value of ['with space', 'tab\there', 'café', 'line sep', ' lead']) {
+  assert.throws(() => buildEnvFile({ vars: {}, env: { SECRET_A: value }, required: ['SECRET_A'], optional: [] }),
+    error => /Secret SECRET_A has characters other than printable ASCII/.test(error.message) && !error.message.includes(value), JSON.stringify(value));
+}
+assert.throws(() => buildEnvFile({ vars: {}, env: { EC2_PROXY_SECRET: 'a'.repeat(31) }, required: ['EC2_PROXY_SECRET'], optional: [] }),
+  /Secret EC2_PROXY_SECRET must be at least 32 characters/);
+assert.match(buildEnvFile({ vars: {}, env: { EC2_PROXY_SECRET: 'a'.repeat(32) }, required: ['EC2_PROXY_SECRET'], optional: [] }).text,
+  /^EC2_PROXY_SECRET="a{32}"$/m);
 
 // ── deploy.yml: job verify, then the Worker (job deploy) and job ec2 for the same commit, approved
 // together, then job same-commit ──
@@ -119,9 +129,11 @@ assert.match(ec2Job, /^ {4}environment: production$/m, 'approved in the producti
 assert.match(ec2Job, /^ {4}permissions:\n {6}contents: read\n {6}id-token: write$/m);
 assert.match(ec2Job, /^ {6}cancel-in-progress: false$/m, 'a deploy is never cancelled half way');
 assert.match(ec2Job, /uses: aws-actions\/configure-aws-credentials@[0-9a-f]{40} # v\d/);
-assert.match(ec2Job, /^ {10}role-to-assume: \$\{\{ vars\.AWS_DEPLOY_ROLE_ARN \}\}$/m);
+// The role ARN is an environment secret (the run logs are public), and the account id is masked.
+assert.match(ec2Job, /^ {10}role-to-assume: \$\{\{ secrets\.AWS_DEPLOY_ROLE_ARN \}\}$/m);
+assert.match(ec2Job, /^ {10}mask-aws-account-id: true$/m);
 assert.match(ec2Job, /^ {10}aws-region: ap-south-1$/m);
-assert.ok(!/aws-access-key-id|aws-secret-access-key|secrets\.AWS_/.test(deploy), 'no stored AWS keys');
+assert.ok(!/aws-access-key-id|aws-secret-access-key|secrets\.AWS_(?!DEPLOY_ROLE_ARN\b)/.test(deploy), 'no stored AWS keys');
 // The Worker reports its commit in /health.
 assert.match(workerJob, /run: echo "short=\$\{GITHUB_SHA::7\}" >> "\$GITHUB_OUTPUT"/);
 assert.match(workerJob, /^ {10}command: deploy --var GIT_COMMIT:\$\{\{ steps\.commit\.outputs\.short \}\}$/m);
@@ -146,15 +158,19 @@ for (const name of [...list(ec2Job, 'REQUIRED_SECRETS'), ...list(ec2Job, 'OPTION
 }
 const ec2Secrets = new Set([...ec2Job.matchAll(/secrets\.([A-Z0-9_]+)/g)].map(match => match[1]));
 for (const name of ec2Secrets) {
-  assert.ok([...list(ec2Job, 'REQUIRED_SECRETS'), ...list(ec2Job, 'OPTIONAL_SECRETS'), ...Object.values(vmSecretSource)].includes(name),
+  assert.ok([...list(ec2Job, 'REQUIRED_SECRETS'), ...list(ec2Job, 'OPTIONAL_SECRETS'), ...Object.values(vmSecretSource), 'AWS_DEPLOY_ROLE_ARN'].includes(name),
     `${name} is not one of the gateway secrets`);
 }
 assert.ok(!ec2Secrets.has('CLOUDFLARE_API_TOKEN') && !ec2Secrets.has('SUPABASE_SECRET_KEY'), 'no Worker deploy token or Worker database key on the VM');
 const step = text => ec2Job.indexOf(text);
 assert.ok(step('gateway-env.mjs') > 0 && step('gateway-env.mjs') < step('configure-aws-credentials') &&
-  step('configure-aws-credentials') < step('push-release.sh'), 'a missing secret fails before AWS or the VM is touched');
-assert.match(ec2Job, /deploy\/aws\/push-release\.sh --os-user deploy --lookup tags \\\n\s+--env-file "\$RUNNER_TEMP\/gateway\.env" --known-hosts "\$RUNNER_TEMP\/known_hosts"/);
-assert.match(ec2Job, /^ {10}EC2_KNOWN_HOSTS: \$\{\{ vars\.EC2_KNOWN_HOSTS \}\}$/m, 'the host key is checked, never trusted on first use');
+  step('configure-aws-credentials') < step('deploy/aws/push-release.sh --os-user'), 'a missing secret fails before AWS or the VM is touched');
+assert.match(ec2Job, /deploy\/aws\/push-release\.sh --os-user deploy --instance-id "\$EC2_INSTANCE_ID" \\\n\s+--env-file "\$RUNNER_TEMP\/gateway\.env" --known-hosts "\$RUNNER_TEMP\/known_hosts"/);
+// The VM's id and host key line: the environment's variables, under the names the smoke test set.
+assert.match(ec2Job, /^ {4}env:\n {6}EC2_INSTANCE_ID: \$\{\{ vars\.EC2_INSTANCE_ID \}\}\n {6}EC2_HOST_KEY: \$\{\{ vars\.EC2_HOST_KEY \}\}\n/m);
+assert.ok(step('Instance and host key of the VM') > 0 && step('Instance and host key of the VM') < step('configure-aws-credentials'),
+  'a wrong instance id or host key fails before AWS is touched');
+const hostKeyCheck = stepRun(ec2Job, 'Instance and host key of the VM');
 assert.match(ec2Job, /if: always\(\)\n\s+run: rm -f "\$RUNNER_TEMP\/gateway\.env"/, 'the environment file is removed');
 assert.ok(/https:\/\/\$1\/health/.test(commitCheck) && /hosts="zero-x\.live"/.test(commitCheck), 'zero-x.live (and the test host) must report this commit');
 
@@ -385,6 +401,41 @@ if (shell) {
     assert.notEqual(runCheck('9999999', 'abc1234', 'aws.zero-x.live').status, 0, 'the Worker on another commit fails the run');
     assert.notEqual(runCheck('', '', '').status, 0, 'no commit in /health fails the run');
     assert.equal(runCheck('abc1234', '9999999', '').status, 0, 'production (no test host): zero-x.live only');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// Job ec2's host key step, run: the environment's "<instance id> ssh-ed25519 ..." line becomes the
+// known_hosts line push-release.sh checks (name zerox-gateway); another instance's key, a malformed
+// id or key fails the job.
+let hostKeyChecked = false;
+if (shell) {
+  const dir = mkdtempSync(join(tmpdir(), 'zerox-hostkey-'));
+  try {
+    hostKeyChecked = true;
+    const id = 'i-04e44e4412d553639';
+    const key = 'AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl';
+    // As the runner runs a step: bash -e -o pipefail.
+    const runHostKey = (instance, line) => spawnSync(shell.bash, ['-eo', 'pipefail', '-c', hostKeyCheck], { encoding: 'utf8',
+      env: { ...process.env, ...shell.env, RUNNER_TEMP: posix(dir), EC2_INSTANCE_ID: instance, EC2_HOST_KEY: line } });
+    const good = runHostKey(id, `${id} ssh-ed25519 ${key}`);
+    assert.equal(good.status, 0, good.stdout + good.stderr);
+    assert.equal(readFileSync(join(dir, 'known_hosts'), 'utf8'), `zerox-gateway ssh-ed25519 ${key}\n`);
+    rmSync(join(dir, 'known_hosts'));
+    for (const [instance, line, why] of [
+      [id, `i-0aaaaaaaaaaaaaaaa ssh-ed25519 ${key}`, 'another instance\'s key'],
+      ['i-04e44e4412d553639; rm -rf /', `${id} ssh-ed25519 ${key}`, 'an instance id with more'],
+      ['', ` ssh-ed25519 ${key}`, 'no instance id'],
+      [id, `${id} ssh-rsa ${key}`, 'another key type'],
+      [id, `${id} ssh-ed25519 not/a/key!`, 'a malformed key'],
+      [id, '', 'no host key'],
+    ]) {
+      const refused = runHostKey(instance, line);
+      assert.notEqual(refused.status, 0, why);
+      assert.match(refused.stdout, /::error::Environment variable EC2_(INSTANCE_ID|HOST_KEY)/, why);
+      assert.ok(!existsSync(join(dir, 'known_hosts')), `${why}: no known_hosts written`);
+    }
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -684,6 +735,7 @@ try {
     assert.equal(extraRule.status, 1, 'another sudo rule names deploy');
     assert.match(extraRule.stderr, /other sudo rules name deploy: \S*99-extra/);
 
+
     // needrestart, reading conf.d as it does (Perl), never restarts a gateway instance and still restarts the rest.
     const perl = spawnSync(shell.bash, ['-c', 'command -v perl >/dev/null || exit 3; perl -e "$1" "$2" zerox-gateway@0.service zerox-gateway@1.service zerox-cron.service cloudflared.service',
       '_', 'our %nrconf; my $file = shift; defined(do $file) or die "$file: $@$!"; for my $unit (@ARGV) { my @hit = grep { $unit =~ /$_/ } keys %{$nrconf{override_rc}}; print "$unit=", (@hit ? $nrconf{override_rc}{$hit[0]} : "restart"), "\\n" }',
@@ -976,4 +1028,4 @@ if (ran && headHasKit) {
   }
 }
 
-console.log(`PASS: EC2 kit: env file from [vars], VM-only values and the Worker's secrets (systemd quoting, VM settings refused), job verify (kit included) before both deploys, the Worker and job ec2 approved together in production, OIDC only in job ec2, a read-only workflow token, pinned actions, parity secrets required, CI role limited to the tunnel, the deploy key and two lookups, complete env template, two gateway instances on one port with their own readiness ports and release links, cron in the same sandbox and never enabled by setup, needrestart leaving the gateway to the refresh, exact deploy sudoers, /v1 base URLs${commitChecked ? ', the commit check run (another commit or none fails)' : ''}${ran ? ', activation run (new instance ready before the old one stops, current flipped only after the checks, a crash meanwhile restarts on the old release, rollback without a gap, commit check, environment only with --env, never-activated releases pruned first), refresh run (only for a replaced /usr file), host setup run (sudoers checked, cloud-init rule removed, other rules for deploy refused, upgrade files installed, idempotent)' : ''}${packaged ? ', release tarball (.assetsignore as wrangler reads it, case included, gateway without tests, kit, REVISION, tracked secrets and working files refused), push and install through stub endpoint and ssh (CI with its env file under the lock, a failed install leaving none, the same commit again, the laptop without secrets, --env-next, host key required)' : ''}${packagedHead ? ', HEAD packaged' : ''}`);
+console.log(`PASS: EC2 kit: env file from [vars], VM-only values and the Worker's secrets (systemd quoting, VM settings refused), job verify (kit included) before both deploys, the Worker and job ec2 approved together in production, OIDC only in job ec2, a read-only workflow token, pinned actions, parity secrets required, CI role limited to the tunnel, the deploy key and two lookups, complete env template, two gateway instances on one port with their own readiness ports and release links, cron in the same sandbox and never enabled by setup, needrestart leaving the gateway to the refresh, exact deploy sudoers, /v1 base URLs${commitChecked ? ', the commit check run (another commit or none fails)' : ''}${hostKeyChecked ? ', the host key step run (only the configured instance\x27s key, written under zerox-gateway)' : ''}${ran ? ', activation run (new instance ready before the old one stops, current flipped only after the checks, a crash meanwhile restarts on the old release, rollback without a gap, commit check, environment only with --env, never-activated releases pruned first), refresh run (only for a replaced /usr file), host setup run (sudoers checked, cloud-init rule removed, other rules for deploy refused, upgrade files installed, idempotent)' : ''}${packaged ? ', release tarball (.assetsignore as wrangler reads it, case included, gateway without tests, kit, REVISION, tracked secrets and working files refused), push and install through stub endpoint and ssh (CI with its env file under the lock, a failed install leaving none, the same commit again, the laptop without secrets, --env-next, host key required)' : ''}${packagedHead ? ', HEAD packaged' : ''}`);

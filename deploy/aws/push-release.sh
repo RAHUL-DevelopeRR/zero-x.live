@@ -8,12 +8,12 @@
 # /etc/zerox/gateway.env.next (README.md, "Environment file"):
 #   deploy/aws/push-release.sh --profile zerox [--ref <commit>] [--setup] [--env-next]
 # From CI (.github/workflows/deploy.yml, job ec2), as deploy, with the environment file:
-#   deploy/aws/push-release.sh --os-user deploy --lookup tags --env-file <file> --known-hosts <file>
+#   deploy/aws/push-release.sh --os-user deploy --instance-id <id> --env-file <file> --known-hosts <file>
 #
 # 1. package-release.sh builds the tarball from the commit (git archive, never the working tree).
-# 2. The instance id comes from the zerox-gateway stack's outputs (laptop), or from the tags
-#    CloudFormation puts on the stack's instance (--lookup tags: CI's role may only describe
-#    instances), or from --instance-id.
+# 2. The instance id comes from --instance-id (CI: the environment variable EC2_INSTANCE_ID), from
+#    the zerox-gateway stack's outputs (laptop), or from the tags CloudFormation puts on the
+#    stack's instance (--lookup tags: CI's role may only describe instances).
 # 3. A key pair is made for this run only; `aws ec2-instance-connect send-ssh-public-key` pushes
 #    its public half for one OS user (ubuntu from the laptop, deploy from CI), valid for 60 s.
 # 4. One ssh connection, tunnelled by `aws ec2-instance-connect open-tunnel` (ProxyCommand),
