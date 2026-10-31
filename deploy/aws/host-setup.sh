@@ -15,9 +15,10 @@
 #     (/etc/needrestart/conf.d/60-zerox-gateway.conf); instead apt starts
 #     zerox-gateway-refresh.service after each dpkg run (/etc/apt/apt.conf.d/80zerox-gateway-refresh),
 #     which runs /usr/local/sbin/zerox-gateway-refresh, a root-owned copy of zerox-gateway-refresh.sh.
-# Then: removes the single-instance zerox-gateway.service of the smoke test (it drains first),
-# enables zerox-gateway@0 for boot (the unit starts nothing before the first release), and enables
-# cloudflared once /etc/cloudflared/token exists. It never enables or starts zerox-cron.timer:
+# Then: removes the single-instance zerox-gateway.service of the smoke test (it drains first) and
+# its /opt/zerox/gateway link, enables zerox-gateway@0 for boot (the unit starts nothing before
+# the first release), and enables cloudflared once /etc/cloudflared/token exists. It never
+# enables or starts zerox-cron.timer:
 # the Worker's cron owns that schedule until the cutover's cron step (CUTOVER.md, step 5). It
 # restarts nothing that runs: changed gateway units take effect at the next deploy, a changed
 # cloudflared unit at a restart by hand (it cuts the tunnel's streams). ZEROX_SYSROOT (tests only)
@@ -79,7 +80,9 @@ others="$(grep -rlE '^[[:space:]]*deploy[[:space:]]' "$sys/etc/sudoers" "$sys/et
 if id -nG deploy | tr ' ' '\n' | grep -qxE 'sudo|admin|wheel'; then fail "deploy is in an administrators group"; fi
 
 # ── Units ──
-if [ -f "$units/zerox-gateway.service" ]; then
+# The smoke test's single unit, by its file here or running from wherever it was installed:
+# activate-release.sh refuses to deploy while it runs or its /opt/zerox/gateway link is left.
+if [ -f "$units/zerox-gateway.service" ] || systemctl is-active --quiet zerox-gateway.service; then
   echo "removing the single-instance zerox-gateway.service (it drains first, up to 110 s)"
   systemctl disable --now zerox-gateway.service
   rm -f "$units/zerox-gateway.service"

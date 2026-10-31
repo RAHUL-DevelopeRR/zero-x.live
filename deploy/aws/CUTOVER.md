@@ -65,8 +65,9 @@ The EC2 smoke test left the VM on main's code (66f29a1) under the single unit
    the test host is affected: `aws.zero-x.live` is down from the stop until `@0` is ready (a
    minute or two), and then answers only `/health` and `/ready` until job `ec2` writes
    `EXTRA_WEB_HOSTS` and `EC2_PROXY_SECRET` (the smoke test's file has neither). Until this step
-   job `ec2` cannot deploy: the deploy user's old sudo rule covers `zerox-gateway.service` only, so
-   its activation fails and leaves the VM as it is. `/opt/zerox/releases/66f29a1` is pruned by
+   job `ec2` cannot deploy: `activate-release.sh` refuses while `zerox-gateway.service` runs or
+   `/opt/zerox/gateway` is left (that unit holds port 8787 without reusePort, and the deploy user's
+   old sudo rule covers it only), and changes nothing, the environment file included. `/opt/zerox/releases/66f29a1` is pruned by
    later activations.
 4. **Turn job `ec2` on**: `gh variable set EC2_DEPLOY --body true` (and `EXTRA_WEB_HOSTS` to
    `aws.zero-x.live` for the test window). The next approved push writes the whole environment

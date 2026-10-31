@@ -46,6 +46,14 @@ umask 077
 [ -f "$dir/neuroncli/auth-server/server.js" ] && [ -d "$dir/neuroncli/auth-server/node_modules" ] &&
   [ "$(cat "$dir/REVISION" 2>/dev/null)" = "$release" ] || { echo "release $release is incomplete"; exit 2; }
 if [ -n "$env_file" ] && [ ! -s "$env_file" ]; then echo "no environment file at $env_file"; exit 2; fi
+# The smoke test's layout (one zerox-gateway.service running /opt/zerox/gateway) holds port 8787
+# without reusePort, so an instance started next to it cannot bind, and the deploy user may not
+# stop it. host-setup.sh stops, disables and removes it (push-release.sh --setup, CUTOVER.md,
+# "Before this kit reaches main"); until then nothing is changed here, the environment included.
+if [ -L "$root/gateway" ] || systemctl is-active --quiet zerox-gateway.service; then
+  echo "the single-instance zerox-gateway.service (/opt/zerox/gateway) is still in place: run push-release.sh --setup first; nothing changed"
+  exit 2
+fi
 
 # One deploy at a time (CI, a laptop push and the upgrade refresh could overlap). install-release.sh
 # already holds it.

@@ -11,7 +11,7 @@
 // printed.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -468,6 +468,7 @@ try {
       'case "$1" in',
       '  start) readlink "$ZEROX_ROOT/instance-$n" > "$STUB_STATE/$unit" || true ;;',
       '  stop) rm -f "$STUB_STATE/$unit" ;;',
+      '  disable) if [ "$2" = --now ]; then rm -f "$STUB_STATE/$3"; fi ;;',
       '  is-active) [ "$2" = --quiet ] && shift; [ -e "$STUB_STATE/$2" ] ;;',
       '  show) if [ -e "$STUB_STATE/$unit" ]; then echo $((100 + n)); else echo 0; fi ;;',
       'esac',
@@ -612,6 +613,24 @@ try {
     assert.equal(activateRun('9999999', { args: ['--env', posix(join(etc, 'gateway.env.prev'))] }).status, 0);
     assert.deepEqual([envFile('gateway.env'), envFile('gateway.env.prev')], ['N="9999999"', 'N="operator"'], 'the previous environment back');
 
+    // The smoke test's single unit still in place (CI deploying before push-release.sh --setup):
+    // refused before anything changes, whether the unit runs or only its /opt/zerox/gateway link is left.
+    const untouched = () => [current(), link(0), link(1), envFile('gateway.env'), running()];
+    const settled = untouched();
+    writeFileSync(join(state, 'zerox-gateway.service'), '');
+    const legacyRun = activateRun('9999999');
+    assert.equal(legacyRun.status, 2, 'the single-instance unit running: refused');
+    assert.match(legacyRun.stdout, /push-release\.sh --setup/);
+    assert.ok(!calls().some(line => line.startsWith('sudo ')), 'no instance started or stopped');
+    rmSync(join(state, 'zerox-gateway.service'));
+    assert.deepEqual(untouched(), settled, 'nothing changed: links, environment, instances');
+    const legacyLink = spawnSync(shell.bash, ['-c', 'ln -s "$1" "$2"', '_', posix(join(root, 'releases/9999999/neuroncli/auth-server')),
+      posix(join(root, 'gateway'))], { env: { ...process.env, ...shell.env } });
+    assert.equal(legacyLink.status, 0, String(legacyLink.stderr));
+    assert.equal(activateRun('9999999').status, 2, 'only its /opt/zerox/gateway link left: refused too');
+    assert.deepEqual(untouched(), settled);
+    unlinkSync(join(root, 'gateway')); // the link only: rmSync refuses a directory link on Windows
+
     assert.equal(activateRun('not-a-sha').status, 2, 'a release id is a 7-character commit');
     const partial = release('bbbbbbb', { modules: false });
     assert.equal(activateRun(partial).status, 2, 'a release without its dependencies is refused');
@@ -665,6 +684,11 @@ try {
       writeFileSync(sysPath('etc/sudoers'), 'root ALL=(ALL:ALL) ALL\n%sudo ALL=(ALL:ALL) ALL\n@includedir /etc/sudoers.d\n');
       writeFileSync(sysPath('etc/sudoers.d/90-cloud-init-users'), cloudInitSudo);
       writeFileSync(sysPath('etc/systemd/system/zerox-gateway.service'), '[Service]\nExecStart=/usr/bin/node /opt/zerox/gateway/server.js\n');
+      // and the smoke test's release link that unit runs.
+      mkdirSync(sysPath('opt/zerox/releases/66f29a1/neuroncli/auth-server'), { recursive: true });
+      const legacyLink = spawnSync(shell.bash, ['-c', 'ln -s "$1" "$2"', '_', posix(sysPath('opt/zerox/releases/66f29a1/neuroncli/auth-server')),
+        posix(sysPath('opt/zerox/gateway'))], { env: { ...process.env, ...shell.env } });
+      assert.equal(legacyLink.status, 0, String(legacyLink.stderr));
     };
     stub('id', 'case "$1" in -u) echo 0 ;; -nG) echo "$2 systemd-journal" ;; *) exit 0 ;; esac');
     stub('chown', 'echo "chown $*" >> "$STUB_LOG"');
@@ -698,6 +722,8 @@ try {
     assert.ok(!existsSync(sysPath('etc/systemd/system/zerox-gateway.service')), 'the single-instance unit is removed');
     let setupCalls = calls();
     assert.ok(setupCalls.includes('systemctl disable --now zerox-gateway.service'), 'and stopped (it drains first)');
+    assert.ok(!readdirSync(sysPath('opt/zerox')).includes('gateway') && existsSync(sysPath('opt/zerox/releases/66f29a1/neuroncli/auth-server')),
+      'its /opt/zerox/gateway link is removed, the release it named stays');
     assert.ok(setupCalls.some(line => /^visudo -cqf .*zerox-deploy\.sudoers$/.test(line)), 'the kit\'s sudoers checked before installing');
     assert.ok(setupCalls.some(line => /^visudo -cqf .*90-cloud-init-users\.zerox$/.test(line)), 'the edited cloud-init rules checked before replacing them');
     assert.ok(setupCalls.includes('visudo -cq'), 'the whole sudo configuration checked after');
@@ -720,6 +746,16 @@ try {
     assert.ok(!setupCalls.some(line => /disable --now/.test(line)));
     assert.ok(!setupCalls.some(line => /zerox-cron\.timer/.test(line) && /\b(enable|start|restart)\b/.test(line)));
     assert.ok(!`${setup2.stdout}${setup2.stderr}`.includes('eyJ0ZXN0'), 'the token is never printed');
+
+    // The single unit running from a file installed elsewhere (not /etc/systemd/system): stopped
+    // and disabled all the same, or every activation after this setup would refuse.
+    freshSystem();
+    rmSync(sysPath('etc/systemd/system/zerox-gateway.service'));
+    writeFileSync(join(state, 'zerox-gateway.service'), '');
+    const elsewhere = setupRun();
+    assert.equal(elsewhere.status, 0, `host setup with the single unit installed elsewhere: ${elsewhere.stdout}${elsewhere.stderr}`);
+    assert.ok(calls().includes('systemctl disable --now zerox-gateway.service'), 'a running single unit is stopped and disabled wherever its file is');
+    assert.ok(!existsSync(join(state, 'zerox-gateway.service')));
 
     // A sudoers file visudo refuses is never installed, and cloud-init's rules stay as they were.
     freshSystem();

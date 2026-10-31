@@ -208,7 +208,9 @@ or on the VM, from a copy of `deploy/aws`: `sudo bash host-setup.sh`. It:
 - installs `/etc/sudoers.d/zerox-deploy` (checked with `visudo` before and after), removes
   cloud-init's older rule for `deploy`, and fails if any other sudo rule or an administrators group
   names `deploy`. Check: `sudo -l -U deploy` lists the ten `systemctl` commands and nothing else;
-- removes the smoke test's single-instance `zerox-gateway.service` if there is one (it drains first);
+- removes the smoke test's single-instance `zerox-gateway.service` if there is one (it drains
+  first) and its `/opt/zerox/gateway` link. `activate-release.sh` refuses to deploy while either
+  is left;
 - enables `zerox-gateway@0` for boot (it starts nothing before the first release) and, once the
   token file exists, `cloudflared`;
 - **never enables `zerox-cron.timer`**: the Worker's cron owns that schedule until the cutover's
