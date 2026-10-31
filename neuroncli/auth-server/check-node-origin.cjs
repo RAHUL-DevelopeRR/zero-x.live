@@ -78,14 +78,21 @@ async function serverWith(settings, logs = []) {
   }
   assert.equal(originSettings({ EC2_PROXY_SECRET: 'a'.repeat(32) }).secret.length, 32);
   assert.deepEqual(originSettings({ EXTRA_WEB_HOSTS: ' AWS.zero-x.live , ,qa.example.test' }).extraHosts, ['aws.zero-x.live', 'qa.example.test']);
+  // Parsed as src/web-hosts.js parses it: plain hostnames only, and never a production host, which
+  // the app keeps routing as itself (it must not become a host served here without the secret).
+  assert.deepEqual(originSettings({ EXTRA_WEB_HOSTS: 'zero-x.live,Dashboard.zero-x.live,aws.zero-x.live:443,https://qa.example.test,a b,aws.zero-x.live' }).extraHosts,
+    ['aws.zero-x.live']);
   const production = originSettings({ EC2_PROXY_SECRET: SECRET, TRUST_CLOUDFLARE: 'true', TRUST_CF_IPCOUNTRY: 'true', NODE_ENV: 'production' });
   const testWindow = originSettings({ EC2_PROXY_SECRET: SECRET, EXTRA_WEB_HOSTS: 'aws.zero-x.live', TRUST_CLOUDFLARE: 'true', TRUST_CF_IPCOUNTRY: 'true' });
 
   // ── With the secret: host, scheme, address and location from the proxy ──
+  // The Worker also sends the region and the network's name (percent-encoded like the city), which
+  // the device sign-in shows the approver (src/routes/device.js reads cf.region and cf.asOrganization).
   const trusted = resolveOrigin(fakeRequest(proxied('Dashboard.Zero-X.live', { 'x-zerox-client-ip': ' 203.0.113.7 ', 'x-zerox-country': 'in',
-    'x-zerox-city': 'S%C3%A3o%20Paulo', 'x-zerox-asn': '13335' })), production);
+    'x-zerox-city': 'S%C3%A3o%20Paulo', 'x-zerox-region': 'S%C3%A3o%20Paulo%20State', 'x-zerox-asn': '13335',
+    'x-zerox-as-org': 'Bharti%20Airtel%20Ltd.' })), production);
   assert.deepEqual(trusted, { base: 'https://dashboard.zero-x.live', host: 'dashboard.zero-x.live', proxied: true, address: '203.0.113.7',
-    cf: { country: 'IN', city: 'São Paulo', asn: 13335 } });
+    cf: { country: 'IN', city: 'São Paulo', region: 'São Paulo State', asn: 13335, asOrganization: 'Bharti Airtel Ltd.' } });
   for (const host of WEB_HOSTS) assert.equal(resolveOrigin(fakeRequest(proxied(host)), production).host, host);
   assert.equal(resolveOrigin(fakeRequest(proxied('zero-x.live', { 'x-zerox-proto': 'http' })), production).base, 'http://zero-x.live');
   assert.deepEqual(resolveOrigin(fakeRequest(proxied('zero-x.live', { 'x-zerox-city': '%E0%A4%A', 'x-zerox-asn': 'AS13335',

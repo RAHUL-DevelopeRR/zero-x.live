@@ -310,13 +310,18 @@ const isRelayPath = pathname => pathname === '/v1/relay' || pathname.startsWith(
 // The secret is the only gate on the public tunnel host; anything shorter than this (openssl rand
 // -hex 32 gives 64 characters) is refused at start.
 const MIN_SECRET_LENGTH = 32;
+// EXTRA_WEB_HOSTS as src/web-hosts.js reads it (check-ec2-e2e.mjs compares the two): plain
+// hostnames only, and never a production host. Listed by mistake, a production host keeps its own
+// routing in the app, so here it must not become a host served without the secret either.
+const HOSTNAME = /^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$/;
+const extraHostList = value => hostList(value).filter(host => HOSTNAME.test(host) && !WEB_HOSTS.includes(host));
 
 // The posture, read once at start. Development (none of these set): every request URL stays
 // http://127.0.0.1 as before, so src/ treats it as local. The EC2 origin (the proxy secret, a test
 // host, the tunnel or NODE_ENV=production): the rules in resolveOrigin, which answer only the
 // Worker's proxy, the test hosts, the relay on the relay host and the health checks.
 function originSettings(source = process.env) {
-  const extraHosts = hostList(source.EXTRA_WEB_HOSTS);
+  const extraHosts = extraHostList(source.EXTRA_WEB_HOSTS);
   const secret = String(source.EC2_PROXY_SECRET || '');
   if (secret && secret.length < MIN_SECRET_LENGTH) {
     throw new Error(`EC2_PROXY_SECRET must be at least ${MIN_SECRET_LENGTH} characters (openssl rand -hex 32); the server did not start`);
@@ -344,15 +349,19 @@ const countryCode = value => {
   return /^[A-Z0-9]{2}$/.test(code) ? code : null;
 };
 
-// The request.cf the Worker saw ({country, city, asn}), from the proxy's headers. The city may
-// arrive percent-encoded (a header value cannot carry every character of every city name).
+// The request.cf the Worker saw ({country, city, region, asn, asOrganization}), from the proxy's
+// headers: the geo rules read the country, the device sign-in shows the approver the rest. The free
+// text arrives percent-encoded (a header value cannot carry every character of every place name).
+const PROXY_TEXT = [['x-zerox-city', 'city'], ['x-zerox-region', 'region'], ['x-zerox-as-org', 'asOrganization']];
 function proxyGeo(header) {
   const cf = {};
   const country = countryCode(header('x-zerox-country'));
   if (country) cf.country = country;
-  let city = String(header('x-zerox-city') || '');
-  try { city = decodeURIComponent(city); } catch { /* sent as it is */ }
-  if (city.trim()) cf.city = city.trim().slice(0, 128);
+  for (const [name, key] of PROXY_TEXT) {
+    let text = String(header(name) || '');
+    try { text = decodeURIComponent(text); } catch { /* sent as it is */ }
+    if (text.trim()) cf[key] = text.trim().slice(0, 128);
+  }
   const asn = String(header('x-zerox-asn') || '').trim();
   if (/^\d{1,10}$/.test(asn)) cf.asn = Number(asn);
   return cf;
