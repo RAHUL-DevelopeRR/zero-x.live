@@ -790,6 +790,22 @@ try {
     assert.equal(activateRun('9999999', { args: ['--force'] }).status, 2, 'an unknown argument is refused');
     assert.equal(current(), '9999999');
 
+    // A release deploy cannot remove (a file another user owns, like the smoke test's hand-installed
+    // 66f29a1 before host-setup.sh made it deploy's): the release is live by the time pruning runs,
+    // so the activation still succeeds and the leftover is reported. Here rm fails for the prune
+    // (bbbbbbb never went live) and works for everything else.
+    const realRm = spawnSync(shell.bash, ['-c', 'command -v rm'], { encoding: 'utf8', env }).stdout.trim();
+    stub('rm', `if [ "$1" = -rf ]; then echo "rm: cannot remove: Permission denied" >&2; exit 1; fi\nexec "${realRm}" "$@"`);
+    const prunedBefore = readdirSync(join(root, 'releases')).sort();
+    let unpruned;
+    try { unpruned = activateRun('9999999', { args: [] }); } finally { unlinkSync(join(stubs, 'rm')); }
+    assert.equal(unpruned.status, 0, `${unpruned.stdout}${unpruned.stderr}`);
+    assert.match(unpruned.stdout, /release 9999999 is live/);
+    assert.match(unpruned.stdout, /warning: an old release in \S+ could not be removed/);
+    assert.ok(prunedBefore.includes('bbbbbbb'), prunedBefore.join());
+    assert.deepEqual(readdirSync(join(root, 'releases')).sort(), prunedBefore, 'nothing was removed');
+    assert.equal(current(), '9999999');
+
     // zerox-gateway-refresh, which apt starts after every dpkg run: the current release is
     // activated again (as deploy) only when a running instance maps a system file an upgrade
     // replaced, so the idle instance takes the new node or library before the old one drains.
