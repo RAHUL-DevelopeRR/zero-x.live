@@ -1,4 +1,5 @@
-// Operator endpoints (/admin/*, /v1/providers/health, full /health) use GATEWAY_ADMIN_TOKEN.
+// Operator endpoints (/admin/*, /v1/providers/health, full /health) use GATEWAY_ADMIN_TOKEN; all
+// but full /health also call passedAccess (src/access-auth.js) when Cloudflare Access is configured.
 // Both values are hashed before a constant-time comparison so length and content never leak.
 export async function isOperator(c) {
   const expected = c.env.GATEWAY_ADMIN_TOKEN;

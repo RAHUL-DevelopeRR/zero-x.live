@@ -25,7 +25,7 @@ import { closeAllPglite, getPgliteHandle } from './src/db/pglite.js';
 import { bootstrapPlans, planSql } from './scripts/razorpay-bootstrap.mjs';
 import { devToken, devUserId } from './src/auth-context.js';
 import { catalogEntry } from './src/catalog.js';
-import { costMicrousd } from './src/pricing.js';
+import { costMicrousd, estimatePromptTokens, reserveCostMicrousd } from './src/pricing.js';
 
 const LIVE = process.argv.includes('--live');
 const MAX_REAL_CALLS = 10;
@@ -43,7 +43,10 @@ const RAZORPAY_KEY_SECRET = random();
 const RAZORPAY_WEBHOOK_SECRET = random();
 const ADMIN = random(36);
 const FAKE_KEYS = { GROQ_API_KEY: 'e2e-groq-free', GEMINI_API_KEY: 'e2e-gemini-free',
-  GROQ_PAID_API_KEY: 'e2e-groq-paid', GEMINI_PAID_API_KEY: 'e2e-gemini-paid' };
+  GROQ_PAID_API_KEY: 'e2e-groq-paid', GEMINI_PAID_API_KEY: 'e2e-gemini-paid', ANTHROPIC_API_KEY: 'e2e-anthropic-paid' };
+// Provider key vault keys (fake even with --live: the shim sends e2e- keys to the fake upstream).
+const VAULT_KEY = 'e2e-groq-vault-key-0001';
+const REJECTED_VAULT_KEY = 'e2e-groq-rejected-0001';
 
 // Real free-pool keys for --live, parsed from .dev.vars and never printed.
 function liveKeys() {
@@ -70,11 +73,39 @@ const listen = async server => { server.listen(0, '127.0.0.1'); await once(serve
 // ── Fake OpenAI-compatible upstream (Groq and Gemini paths) ──
 const upstream = { calls: [] };
 const USAGE = { prompt_tokens: 120, completion_tokens: 30, total_tokens: 150 };
+const CLAUDE_USAGE = { input_tokens: 800, cache_creation_input_tokens: 4000, cache_read_input_tokens: 16000 };
 const upstreamServer = createServer(async (request, response) => {
   const body = JSON.parse((await readBody(request)) || '{}');
+  // Claude Messages API (the SDK always streams): one text block, then usage with cache counts.
+  if (request.method === 'POST' && request.url.startsWith('/v1/messages')) {
+    upstream.calls.push({ provider: 'anthropic', key: String(request.headers['x-api-key'] || ''), model: body.model, stream: body.stream === true,
+      body, redirect: null });
+    response.writeHead(200, { 'Content-Type': 'text/event-stream', 'request-id': 'req_e2e_claude' });
+    const event = value => response.write(`event: ${value.type}\ndata: ${JSON.stringify(value)}\n\n`);
+    event({ type: 'message_start', message: { id: 'msg_e2e', type: 'message', role: 'assistant', model: body.model, content: [],
+      stop_reason: null, stop_sequence: null, usage: { ...CLAUDE_USAGE, output_tokens: 1 } } });
+    event({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } });
+    event({ type: 'ping' });
+    // A slow turn keeps its credit hold in flight while a concurrent request reserves (step 11d).
+    if (JSON.stringify(body.messages || []).includes('E2E_SLOW_CLAUDE')) await new Promise(done => setTimeout(done, 600));
+    event({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'pong from Claude' } });
+    event({ type: 'content_block_stop', index: 0 });
+    event({ type: 'message_delta', delta: { stop_reason: 'end_turn', stop_sequence: null }, usage: { output_tokens: 800 } });
+    event({ type: 'message_stop' });
+    response.end();
+    return;
+  }
   const provider = request.url.startsWith('/openai/v1/') ? 'groq' : request.url.startsWith('/v1beta/openai/') ? 'gemini' : null;
   upstream.calls.push({ provider, key: String(request.headers.authorization || '').replace(/^Bearer /, ''), model: body.model,
     stream: body.stream === true, tools: Array.isArray(body.tools) ? body.tools.length : 0, streamOptions: body.stream_options ?? null });
+  // Groq's model list: how the provider key vault checks a key before saving it.
+  if (request.method === 'GET' && request.url === '/openai/v1/models') {
+    const rejected = request.headers.authorization === `Bearer ${REJECTED_VAULT_KEY}`;
+    response.writeHead(rejected ? 401 : 200, { 'Content-Type': 'application/json' });
+    response.end(JSON.stringify(rejected ? { error: { message: 'Invalid API Key', code: 'invalid_api_key' } }
+      : { data: [{ id: 'openai/gpt-oss-120b' }, { id: 'openai/gpt-oss-20b' }, { id: 'qwen/qwen3.8-27b' }] }));
+    return;
+  }
   if (!provider || !request.url.endsWith('/chat/completions')) { response.writeHead(404).end(); return; }
   if (JSON.stringify(body.messages || []).includes('E2E_TOOL_USE_FAILED')) {
     // Groq's answer when the generated tool call does not match the schema (after generation).
@@ -214,8 +245,10 @@ async function startGateway(env) {
   return { child, base: `http://127.0.0.1:${port}` };
 }
 
+// A child killed by a signal keeps exitCode null (signalCode is set), so both are checked: a
+// second call must not wait for an 'exit' event that already fired.
 async function stopGateway() {
-  if (!server || server.child.exitCode !== null) return;
+  if (!server || server.child.exitCode !== null || server.child.signalCode !== null) return;
   const exited = once(server.child, 'exit');
   server.child.kill();
   await exited;
@@ -253,6 +286,10 @@ const messages = [{ role: 'user', content: 'Use the read_file tool to read a.js 
 const tools = [{ type: 'function', function: { name: 'read_file', description: 'Read a file from the workspace',
   parameters: { type: 'object', properties: { path: { type: 'string', description: 'File path' } }, required: ['path'] } } }];
 
+const CREDITS_EMAIL = 'e2e.credits@example.test';
+const CREDITS_START = 300000; // $0.30
+const creditsUserId = await devUserId(CREDITS_EMAIL);
+
 let failed = null;
 try {
   dataRoot = await mkdtemp(join(tmpdir(), 'zerox-e2e-'));
@@ -270,6 +307,11 @@ try {
   // Cap fixture: a small free-plan token allocation so the daily cap is reached without
   // spending upstream calls (a 60K-token prompt exceeds it).
   await handle.db.query("UPDATE public.zerox_plan_policy SET daily_tokens = 50000 WHERE plan = 'free'");
+  // Credit-hold fixture (step 11d): a Pro account (granted by the operator) holding $0.30.
+  await handle.db.query('INSERT INTO auth.users (id, email) VALUES ($1, $2) ON CONFLICT DO NOTHING', [creditsUserId, CREDITS_EMAIL]);
+  await handle.db.query('SELECT * FROM public.zerox_sync_account($1, $2::jsonb)', [creditsUserId, JSON.stringify({ email: CREDITS_EMAIL, name: 'e2e.credits' })]);
+  await handle.db.query(`UPDATE public.zerox_accounts SET plan = 'pro', plan_source = 'manual', credit_balance_microusd = $2
+    WHERE clerk_id = $1`, [creditsUserId, CREDITS_START]);
   await closeAllPglite();
   step('database prepared', `${handle.applied.length} migrations applied in a fresh PGlite directory; scripts/razorpay-bootstrap.mjs created 4 plans on the fake Razorpay and their ids were stored`);
 
@@ -277,9 +319,11 @@ try {
     PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, TEMP: process.env.TEMP, TMP: process.env.TMP,
     AUTH_HOST: '127.0.0.1', AUTH_PORT: '0', DATABASE_DRIVER: 'pglite', PGLITE_DATA_DIR: dataDir,
     DEV_AUTH_ENABLED: 'true', ALLOW_UNKNOWN_COUNTRY: 'true', GATEWAY_ADMIN_TOKEN: ADMIN,
-    SESSION_ENCRYPTION_KEY: random(36), RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET, RAZORPAY_WEBHOOK_SECRET, RAZORPAY_API_BASE: razorpayBase,
+    SESSION_ENCRYPTION_KEY: random(36), PROVIDER_KEYS_KEK: randomBytes(32).toString('base64'), RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET, RAZORPAY_WEBHOOK_SECRET, RAZORPAY_API_BASE: razorpayBase,
     ...upstreamKeys, E2E_UPSTREAM_BASE: upstreamBase, E2E_LIVE: LIVE ? 'true' : 'false', E2E_REAL_CALLS_FILE: realCallsFile(),
     ...(LIVE ? { ROUTER_MAX_ATTEMPTS: '2' } : {}),
+    // The fake Claude key must not start the weekly research jobs.
+    DISCOVERY_RESEARCH: 'false',
   };
   for (const key of Object.keys(env)) if (env[key] === undefined) delete env[key];
   server = await startGateway(env);
@@ -308,8 +352,8 @@ try {
 
   // ── 3. /v1/models with plan-aware availability ──
   const modelKeys = ['available', 'available_again_at', 'capabilities', 'checked_at', 'context_length', 'context_window',
-    'created', 'display_name', 'id', 'max_output_tokens', 'object', 'owned_by', 'pricing', 'reasoning_efforts', 'status',
-    'tiers', 'unavailable_reason'];
+    'created', 'display_name', 'facts', 'id', 'max_output_tokens', 'models_dev_id', 'object', 'offers', 'owned_by', 'pricing',
+    'provider', 'reasoning_efforts', 'status', 'tiers', 'unavailable_reason'];
   const models = async token => {
     const listed = await call('/v1/models', { token });
     assert.equal(listed.status, 200);
@@ -637,6 +681,99 @@ try {
   assert.equal(billingState.payments.find(payment => payment.id === topupPayment.id).status, 'refunded');
   step('refund webhook', `refund.processed for ${topupPayment.id}: payment refunded, $5 credits taken back once (balance ${account.credits.balance_usd} USD)`);
 
+  // ── 11c. Claude through the native adapter: held at the worst case, settled cache-aware ──
+  const claudeModels = await models(ses);
+  assert.equal(claudeModels['anthropic/claude-sonnet-5-5'].available, true, 'Pro sees Claude');
+  assert.deepEqual(claudeModels['anthropic/claude-sonnet-5-5'].pricing, { input_per_mtok_usd: 2.5, output_per_mtok_usd: 12.5,
+    cache_read_per_mtok_usd: 0.25, cache_write_per_mtok_usd: 3.125 });
+  const claudeMessages = [{ role: 'user', content: 'Reply with pong.' }];
+  const claude = await call('/v1/chat/completions', { method: 'POST', token: ses,
+    body: { model: 'claude-sonnet-5-5', messages: claudeMessages, stream: true, temperature: 0.4 } });
+  assert.equal(claude.status, 200, redact(claude.text).slice(0, 400));
+  assert.deepEqual([claude.headers.get('x-neuron-model'), claude.headers.get('x-oiop-offer')], ['anthropic/claude-sonnet-5-5', 'anthropic.paid']);
+  const claudeEvents = sseEvents(claude.text);
+  assert.ok(claudeEvents.some(event => event?.choices?.[0]?.delta?.content === 'pong from Claude'));
+  assert.equal(claudeEvents.filter(event => event === '[DONE]').length, 1);
+  const claudeUsage = claudeEvents.find(event => event?.usage)?.usage;
+  assert.deepEqual([claudeUsage.prompt_tokens, claudeUsage.prompt_tokens_details.cached_tokens, claudeUsage.prompt_tokens_details.cache_write_tokens],
+    [20800, 16000, 4000], 'usage: prompt = input + cache writes + cache reads');
+  const sentToClaude = upstream.calls.at(-1);
+  assert.deepEqual([sentToClaude.provider, sentToClaude.key, sentToClaude.body.model, sentToClaude.body.max_tokens],
+    ['anthropic', 'e2e-anthropic-paid', 'claude-sonnet-5-5', 16000], 'the model default max_tokens, the anthropic.paid key');
+  assert.ok(!('temperature' in sentToClaude.body) && /^[0-9a-f]{32}$/.test(sentToClaude.body.metadata.user_id));
+  const sonnetPrice = catalogEntry('anthropic/claude-sonnet-5-5').pools[0].price;
+  const claudeCost = costMicrousd(sonnetPrice, 20800, 800, { cache_read_tokens: 16000, cache_write_tokens: 4000 });
+  assert.equal(claudeCost, 28500);
+  assert.ok(reserveCostMicrousd(sonnetPrice, 1, 16000) > claudeCost, 'the hold covered the worst case');
+  const claudeEvent = (await call('/api/usage/events?limit=1', { token: ses })).body.events[0];
+  assert.deepEqual([claudeEvent.request_id, claudeEvent.model, claudeEvent.tier, claudeEvent.prompt_tokens, claudeEvent.cache_read_tokens,
+    claudeEvent.cache_write_tokens, claudeEvent.completion_tokens, claudeEvent.cost_usd],
+  [claude.headers.get('x-request-id'), 'anthropic/claude-sonnet-5-5', 'paid', 20800, 16000, 4000, 800, claudeCost / 1e6],
+  'settled by the 11-argument zerox_settle_v2 with the cache split');
+  const claudeByModel = (await call('/api/usage', { token: ses })).body.by_model.find(row => row.model === 'anthropic/claude-sonnet-5-5');
+  assert.deepEqual([claudeByModel.requests, claudeByModel.cache_read_tokens, claudeByModel.cache_write_tokens], [1, 16000, 4000]);
+  account = (await call('/api/account', { token: ses })).body;
+  assert.equal(Math.round(account.credits.balance_usd * 1e6), 8000000 - cost - claudeCost, 'billed exactly the cache-aware cost');
+  const sonnetPool = (await call('/admin/overview', { token: ADMIN })).body.pools
+    .find(pool => pool.model === 'anthropic/claude-sonnet-5-5' && pool.tier === 'paid');
+  assert.deepEqual([sonnetPool.requests_today, sonnetPool.cost_today_microusd, sonnetPool.spend_cap_microusd], [1, claudeCost, 12500000],
+    'the daily spend cap bucket holds the settled cost; the cap is $10 a day, billed');
+  step('Claude (native adapter)', `claude-sonnet-5-5 streamed through @anthropic-ai/sdk to the fake Messages API: 16,000 default max_tokens, no sampling parameters, hashed user id; settled ${claudeCost} micro-USD for 16K cache reads, 4K cache writes, 800 plain and 800 output tokens; the pool's spend today = the settled cost`);
+
+  // ── 11d. Credit holds for Claude Opus 5.5: the worst case is held before any upstream call ──
+  const creditsSession = await call('/auth/cli/session', { method: 'POST', token: devToken(CREDITS_EMAIL),
+    body: { machine_fingerprint: 'e2e-credits', version: 'e2e' } });
+  assert.equal(creditsSession.status, 200, redact(creditsSession.text));
+  const poor = creditsSession.body.session_token;
+  const creditsBalance = async () => Math.round((await call('/api/account', { token: poor })).body.credits.balance_usd * 1e6);
+  assert.equal((await call('/api/account', { token: poor })).body.plan.id, 'pro');
+  assert.equal(await creditsBalance(), CREDITS_START);
+  const opusPrice = catalogEntry('anthropic/claude-opus-5-5').pools[0].price;
+  const opusMessages = [{ role: 'user', content: 'Reply with pong.' }];
+  const claudeCalls = () => upstream.calls.filter(item => item.provider === 'anthropic').length;
+  // (a) max_tokens 32,000: the hold (32,000 x $25 per Mtok = $0.80, plus the prompt) is more than $0.30.
+  const callsBeforeHold = claudeCalls();
+  const tooBig = await call('/v1/chat/completions', { method: 'POST', token: poor,
+    body: { model: 'claude-opus-5-5', messages: opusMessages, max_tokens: 32000, stream: true } });
+  assert.match(expectError(tooBig, 402, 'insufficient_credits').message, /most a request can cost/);
+  assert.equal(claudeCalls(), callsBeforeHold, 'no upstream call without the credit hold');
+  assert.ok(reserveCostMicrousd(opusPrice, estimatePromptTokens(opusMessages), 32000) > CREDITS_START);
+  // max_tokens 4,096 fits: served, then billed exactly the cache-aware cost of what Claude reported.
+  const fits = await call('/v1/chat/completions', { method: 'POST', token: poor,
+    body: { model: 'claude-opus-5-5', messages: opusMessages, max_tokens: 4096, stream: true } });
+  assert.equal(fits.status, 200, redact(fits.text).slice(0, 400));
+  assert.equal(sseEvents(fits.text).filter(event => event === '[DONE]').length, 1);
+  assert.deepEqual([upstream.calls.at(-1).body.model, upstream.calls.at(-1).body.max_tokens], ['claude-opus-5-5', 4096]);
+  const opusCost = costMicrousd(opusPrice, 20800, 800, { cache_read_tokens: 16000, cache_write_tokens: 4000 });
+  assert.equal(opusCost, 53000, '16K cache reads at $0.25, 4K cache writes at $6.25, 800 input at $5 and 800 output at $25 per Mtok');
+  assert.equal(await creditsBalance(), CREDITS_START - opusCost, 'the balance drops by exactly the cache-aware cost');
+  const fitsEvent = (await call('/api/usage/events?limit=1', { token: poor })).body.events[0];
+  assert.deepEqual([fitsEvent.request_id, fitsEvent.model, fitsEvent.cost_usd], [fits.headers.get('x-request-id'), 'anthropic/claude-opus-5-5', opusCost / 1e6]);
+  // (b) Two concurrent requests whose holds (max_tokens 8,000: about $0.20 each) exceed the $0.247 left.
+  // In either order exactly one hold fits: one is served in full, the other refused before Claude.
+  const slowMessages = [{ role: 'user', content: 'Reply with pong. E2E_SLOW_CLAUDE' }];
+  const hold = reserveCostMicrousd(opusPrice, estimatePromptTokens(slowMessages), 8000);
+  const left = CREDITS_START - opusCost;
+  assert.ok(hold <= left && 2 * hold > left && left - opusCost < hold, `hold ${hold} against ${left} left`);
+  const callsBeforeRace = claudeCalls();
+  const race = await Promise.all([1, 2].map(() => call('/v1/chat/completions', { method: 'POST', token: poor,
+    body: { model: 'claude-opus-5-5', messages: slowMessages, max_tokens: 8000, stream: true } })));
+  const raceServed = race.filter(result => result.status === 200);
+  const raceRefused = race.filter(result => result.status === 402);
+  assert.deepEqual([raceServed.length, raceRefused.length], [1, 1], `statuses ${race.map(result => result.status).join(', ')}`);
+  expectError(raceRefused[0], 402, 'insufficient_credits');
+  const raceEvents = sseEvents(raceServed[0].text);
+  assert.ok(raceEvents.some(event => event?.choices?.[0]?.delta?.content === 'pong from Claude'));
+  assert.ok(raceEvents.some(event => event?.choices?.[0]?.finish_reason === 'stop'));
+  assert.ok(raceEvents.some(event => event?.usage?.completion_tokens === 800));
+  assert.equal(raceEvents.filter(event => event === '[DONE]').length, 1, 'the served stream completes in full');
+  assert.ok(!raceEvents.some(event => event?.error), 'credits never run out mid-stream');
+  assert.equal(claudeCalls(), callsBeforeRace + 1, 'the refused request never reached Claude');
+  assert.equal(await creditsBalance(), CREDITS_START - 2 * opusCost);
+  const creditRequests = { fits: fits.headers.get('x-request-id'), race: raceServed[0].headers.get('x-request-id'),
+    refused: [tooBig.body.error.request_id, raceRefused[0].body.error.request_id] };
+  step('Claude credit holds', `Pro account with $0.30: Opus max_tokens 32,000 -> 402 insufficient_credits, no upstream call; max_tokens 4,096 served and billed ${opusCost} micro-USD; two concurrent requests holding ${hold} each against ${left} -> one 200 streamed in full, one 402 before Claude`);
+
   // ── 12. Cancel → cancel_at_period_end ──
   const cancelled = await call('/api/billing/cancel', { method: 'POST', token: ses, body: {} });
   assert.equal(cancelled.status, 200, redact(cancelled.text));
@@ -673,9 +810,47 @@ try {
   const paidPro = overview.body.pools.find(pool => pool.model === 'gemini/gemini-2.5-pro' && pool.tier === 'paid');
   assert.equal(paidPro.requests_today, 1);
   assert.equal(paidPro.limits, null);
-  assert.deepEqual(Object.keys((await call('/health')).body).sort(), ['service', 'status', 'version']);
+  assert.deepEqual(Object.keys((await call('/health')).body).sort(), ['commit', 'service', 'status', 'version']);
   assert.equal((await call('/health', { token: ADMIN })).body.database_configured, true);
   step('GET /admin/overview', `users ${overview.body.users.total}, active subscriptions 1, MRR $10, ${overview.body.pools.length} pools with limits and health`);
+
+  // ── 14b. Provider key vault: a key added on the admin page serves first; disabling it falls back ──
+  const keysPage = await call('/admin/keys');
+  assert.equal(keysPage.status, 200);
+  assert.match(keysPage.headers.get('content-security-policy'), /script-src 'self';/);
+  assert.ok(!keysPage.headers.get('content-security-policy').includes('unsafe-inline'));
+  assert.equal(keysPage.headers.get('content-security-policy-report-only'), null, 'enforced');
+  assert.ok(keysPage.text.includes('src="/admin/keys/keys.js"') && !/<script>/.test(keysPage.text));
+  assert.equal((await call('/admin/keys/keys.js')).status, 200);
+  assert.equal((await call('/neuroncli/admin/keys/index.html')).status, 404, 'only reachable as /admin/keys');
+  expectError(await call('/admin/providers/keys'), 401, 'invalid_session');
+  expectError(await call('/admin/providers/keys', { method: 'POST', token: ADMIN,
+    body: { provider: 'groq', label: 'revoked org', key: REJECTED_VAULT_KEY } }), 422, 'invalid_provider_key');
+  const vaultAdd = await call('/admin/providers/keys', { method: 'POST', token: ADMIN,
+    body: { provider: 'groq', label: 'groq-org-2', key: VAULT_KEY } });
+  assert.equal(vaultAdd.status, 201, redact(vaultAdd.text));
+  assert.ok(!vaultAdd.text.includes(VAULT_KEY), 'the key is never echoed');
+  const pong = { model: 'groq/openai/gpt-oss-20b', messages: [{ role: 'user', content: 'Reply with the single word pong.' }], max_tokens: 64 };
+  const vaultChat = await call('/v1/chat/completions', { method: 'POST', token: apiKey, body: pong });
+  assert.equal(vaultChat.status, 200, redact(vaultChat.text).slice(0, 400));
+  assert.equal(upstream.calls.at(-1).key, VAULT_KEY, 'the vault key serves before the Worker secret');
+  const vaultList = await call('/admin/providers/keys', { token: ADMIN });
+  assert.equal(vaultList.status, 200);
+  assert.ok(!vaultList.text.includes(VAULT_KEY));
+  const listedVaultKey = vaultList.body.keys.find(key => key.id === vaultAdd.body.key.id);
+  assert.equal(listedVaultKey.last4, '0001');
+  assert.ok(listedVaultKey.last_used_at, 'last_used_at is recorded');
+  const vaultPools = (await call('/admin/overview', { token: ADMIN })).body.pools.find(pool => pool.model === pong.model && pool.tier === 'free');
+  assert.deepEqual(vaultPools.keys.map(key => key.source), ['vault', 'env']);
+  const vaultOff = await call(`/admin/providers/keys/${vaultAdd.body.key.id}`, { method: 'DELETE', token: ADMIN });
+  assert.equal(vaultOff.status, 200);
+  assert.equal(vaultOff.body.key.status, 'disabled');
+  if (!LIVE) {
+    const fallbackChat = await call('/v1/chat/completions', { method: 'POST', token: apiKey, body: pong });
+    assert.equal(fallbackChat.status, 200, redact(fallbackChat.text).slice(0, 400));
+    assert.equal(upstream.calls.at(-1).key, 'e2e-groq-free', 'the Worker secret is the fallback');
+  }
+  step('provider key vault', `/admin/keys served with an enforced CSP and no inline script; rejected key -> 422; ••••0001 added, served ${pong.model} first and shows last_used_at; disabled -> the Worker secret serves`);
 
   if (LIVE) {
     // One more real call: a streamed Groq tool call, to check its deltas too.
@@ -771,6 +946,26 @@ try {
   assert.match(missing.headers.get('content-type'), /text\/html/);
   assert.equal(missing.text, readFileSync(join(siteRoot, '404.html'), 'utf8'), 'the branded 404.html is the body');
   step('static website smoke', `10 pages 200 with CSP origins allowed (${pageChecks.join(', ')}); /dashboard.html -> 301 /dashboard; /404-test -> branded 404`);
+
+  // ── 16. The credit-hold steps in the ledger (the gateway is stopped so PGlite can be opened) ──
+  await stopGateway();
+  const ledgerDb = (await getPgliteHandle(dbEnv)).db;
+  const ledger = (await ledgerDb.query(`SELECT r.request_id, l.ref, 'usage:' || r.id::text AS reservation_ref, l.reason,
+      l.delta_microusd::bigint AS delta, l.balance_after_microusd::bigint AS after, l.shortfall_microusd::bigint AS shortfall
+    FROM public.zerox_credit_ledger AS l JOIN public.zerox_reservations AS r ON l.ref = 'usage:' || r.id::text
+    WHERE l.user_id = $1 ORDER BY l.id`, [creditsUserId])).rows;
+  assert.deepEqual(ledger.map(row => [row.request_id, row.ref === row.reservation_ref, row.reason, Number(row.delta), Number(row.after), Number(row.shortfall)]), [
+    [creditRequests.fits, true, 'usage', -53000, CREDITS_START - 53000, 0],
+    [creditRequests.race, true, 'usage', -53000, CREDITS_START - 106000, 0],
+  ], 'one usage:<reservation id> row per served request, nothing else');
+  const refusedHolds = (await ledgerDb.query(`SELECT count(*)::int AS n FROM public.zerox_reservations
+    WHERE user_id = $1 AND split_part(request_id, '.', 1) = ANY($2::text[])`, [creditsUserId, creditRequests.refused])).rows[0].n;
+  assert.equal(refusedHolds, 0, 'a refused hold leaves no reservation');
+  const [held] = (await ledgerDb.query(`SELECT count(*) FILTER (WHERE status = 'active')::int AS active,
+      coalesce(sum(cost_microusd), 0)::bigint AS charged FROM public.zerox_reservations WHERE user_id = $1`, [creditsUserId])).rows;
+  assert.deepEqual([held.active, Number(held.charged)], [0, 106000], 'every hold settled to its real cost');
+  await closeAllPglite();
+  step('credit ledger', `${ledger.length} usage:<reservation id> rows (-53,000 micro-USD each, balance ${CREDITS_START} -> ${CREDITS_START - 106000}); the two refused requests left no reservation`);
 } catch (error) {
   failed = error;
 } finally {
@@ -790,4 +985,6 @@ if (failed) {
 await writeFile(join(tmpdir(), `zerox-e2e-${LIVE ? 'live' : 'offline'}-steps.json`), JSON.stringify(steps, null, 2)).catch(() => {});
 console.log(`PASS: end-to-end ${LIVE ? '(live Groq/Gemini free pools)' : '(offline)'}: ${steps.length} steps — dev sign-in, CLI session, plan-aware ` +
   'models, streamed tool calls, usage, API keys, daily cap, pool-kept model failures, Pro checkout (reused across tabs), charged webhook once, ' +
-  'duplicate subscription cancelled and refunded, paid-pool credits, top-up, refund clawback, cancel, revoke-all, admin overview, static site and CSP');
+  'duplicate subscription cancelled and refunded, paid-pool credits, top-up, refund clawback, Claude billed cache-aware, Claude credit holds ' +
+  '(402 before any upstream call, one of two concurrent holds), cancel, revoke-all, admin overview, provider key vault, ' +
+  'static site and CSP, credit ledger');

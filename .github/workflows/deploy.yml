@@ -1,34 +1,81 @@
-name: Deploy to Cloudflare Workers
+name: Deploy to Cloudflare Workers and EC2
 
+# On every push to main: job verify runs the checks, the deploy kit's included, with no secret and
+# no environment. Then job deploy ships the Worker and, when the repository variable EC2_DEPLOY is
+# "true", job ec2 ships the same commit to the gateway VM on EC2 (deploy/aws). Both deploy jobs need
+# only job verify and run in the GitHub environment "production", so they wait for its approval
+# together: one approval starts both, nothing ships before the checks pass or ahead of that
+# approval, and both read the environment's secrets. Job same-commit then requires both runtimes
+# to report the commit in /health. Actions are pinned by commit. Every `npm ci` runs without
+# install scripts (no dependency has one today), and no checkout keeps the token in .git/config:
+# a later step of job deploy holds the Cloudflare token and every runtime secret, and a package
+# script that could write to $GITHUB_ENV (NODE_OPTIONS=--require ...) would reach them.
 on:
   push:
     branches:
       - main  # Change to master if your default branch is named master
 
+permissions:
+  contents: read
+
 jobs:
-  deploy:
+  verify:
     runs-on: ubuntu-latest
-    name: Deploy
+    name: Verify
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
+          persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '22'
           cache: npm
           cache-dependency-path: neuroncli/auth-server/package-lock.json
 
+      # check-aws-deploy.mjs also runs the VM kit's scripts (activation, host setup, packaging, the
+      # push) against stubs, on Linux like the VM: a kit that breaks fails here, before either
+      # runtime changes, on every push and not only once job ec2 is on.
       - name: Verify production code
         working-directory: neuroncli/auth-server
         run: |
-          npm ci
+          npm ci --ignore-scripts
           node build-sitemap.mjs
           npm run check:production
           npm run check:database
+          node check-aws-deploy.mjs
           npm audit --omit=dev
+
+  # The Worker. In the environment "production" like job ec2, so the same approval starts both
+  # (and, once the runtime secrets live in that environment, it can read them).
+  deploy:
+    runs-on: ubuntu-latest
+    name: Deploy
+    needs: verify
+    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: neuroncli/auth-server/package-lock.json
+
+      # wrangler bundles the Worker from node_modules (esbuild, which wrangler-action installs with
+      # wrangler, needs none of the gateway's install scripts). The sitemap ships as an asset; its
+      # lastmod dates come from the history (fetch-depth: 0).
+      - name: Install dependencies and build the sitemap
+        working-directory: neuroncli/auth-server
+        run: |
+          npm ci --ignore-scripts
+          node build-sitemap.mjs
 
       # MANUAL STEP: this workflow never touches the database. Before merging a change that adds
       # files under neuroncli/auth-server/migrations/, apply them to the production Supabase
@@ -37,14 +84,25 @@ jobs:
       - name: Database migrations (manual)
         run: echo "::notice title=Database migrations::Migrations are applied manually before merge. This workflow does not run them."
 
-      # The original provider secrets stay required. Billing, admin, paid-pool and session
-      # encryption secrets are optional: a missing one is skipped (its feature stays disabled)
-      # instead of failing the deploy. Only secret names are printed, never values.
+      # Only the database secret is required. Provider keys can live in the provider key vault
+      # (dashboard.zero-x.live/admin/keys, encrypted under PROVIDER_KEYS_KEK) instead of GitHub
+      # secrets; the provider secrets below then only serve as the fallback pool. Every optional
+      # secret that is missing is skipped (its feature stays disabled) instead of failing the
+      # deploy. Only secret names are printed, never values. ANTHROPIC_API_KEY serves Claude
+      # Sonnet 5.5 and Opus 5.5 (paid pools, Pro and Max) and the weekly discovery research jobs;
+      # GLM_API_KEY serves Z.ai's free GLM-4.7-Flash and GLM-4.5-Flash; EC2_PROXY_SECRET is
+      # what the Worker sends with every request it forwards to the VM (without it the Worker
+      # forwards nothing), a secret of the environment "production", never of the repository,
+      # which a workflow pushed on any branch could read (deploy/aws/README.md, "Deploys"). The
+      # Worker secret EC2_PROXY_PREFIXES, the forward switch, is not listed on purpose:
+      # `wrangler secret put` changes it in seconds and a deploy keeps it.
+      # A new secret must be listed in OPTIONAL_SECRETS and in both env blocks to reach the
+      # Worker, and in job ec2 to reach the VM (check-aws-deploy.mjs keeps them in step).
       - name: Select configured Worker secrets
         id: worker-secrets
         env:
-          REQUIRED_SECRETS: SUPABASE_SECRET_KEY GROQ_API_KEY OPENROUTER_API_KEY GEMINI_API_KEY NVIDIA_API_KEY
-          OPTIONAL_SECRETS: RAZORPAY_KEY_SECRET RAZORPAY_WEBHOOK_SECRET GATEWAY_ADMIN_TOKEN GROQ_PAID_API_KEY GEMINI_PAID_API_KEY SESSION_ENCRYPTION_KEY DEVICE_APPROVAL_SECRET
+          REQUIRED_SECRETS: SUPABASE_SECRET_KEY
+          OPTIONAL_SECRETS: GROQ_API_KEY OPENROUTER_API_KEY GEMINI_API_KEY NVIDIA_API_KEY RAZORPAY_KEY_SECRET RAZORPAY_WEBHOOK_SECRET GATEWAY_ADMIN_TOKEN GROQ_PAID_API_KEY GEMINI_PAID_API_KEY SESSION_ENCRYPTION_KEY DEVICE_APPROVAL_SECRET PROVIDER_KEYS_KEK ANTHROPIC_API_KEY GLM_API_KEY EC2_PROXY_SECRET
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
@@ -57,6 +115,10 @@ jobs:
           GEMINI_PAID_API_KEY: ${{ secrets.GEMINI_PAID_API_KEY }}
           SESSION_ENCRYPTION_KEY: ${{ secrets.SESSION_ENCRYPTION_KEY }}
           DEVICE_APPROVAL_SECRET: ${{ secrets.DEVICE_APPROVAL_SECRET }}
+          PROVIDER_KEYS_KEK: ${{ secrets.PROVIDER_KEYS_KEK }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
+          EC2_PROXY_SECRET: ${{ secrets.EC2_PROXY_SECRET }}
         run: |
           names=""
           for name in $REQUIRED_SECRETS; do
@@ -73,13 +135,20 @@ jobs:
             echo 'ZX_SECRET_NAMES'
           } >> "$GITHUB_OUTPUT"
 
+      # /health reports the commit (GIT_COMMIT), so a check can tell that the Worker and the VM
+      # run the same one.
+      - name: Commit for /health
+        id: commit
+        run: echo "short=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
       - name: Deploy Worker
-        uses: cloudflare/wrangler-action@v3
+        uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd # v3.15.0
         with:
           wranglerVersion: '4.147.0'
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: 'neuroncli/auth-server'
+          command: deploy --var GIT_COMMIT:${{ steps.commit.outputs.short }}
           secrets: ${{ steps.worker-secrets.outputs.names }}
         env:
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
@@ -94,6 +163,10 @@ jobs:
           GEMINI_PAID_API_KEY: ${{ secrets.GEMINI_PAID_API_KEY }}
           SESSION_ENCRYPTION_KEY: ${{ secrets.SESSION_ENCRYPTION_KEY }}
           DEVICE_APPROVAL_SECRET: ${{ secrets.DEVICE_APPROVAL_SECRET }}
+          PROVIDER_KEYS_KEK: ${{ secrets.PROVIDER_KEYS_KEK }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
+          EC2_PROXY_SECRET: ${{ secrets.EC2_PROXY_SECRET }}
 
       # Ask Bing and the other IndexNow engines to recrawl the public pages this push changed.
       # The key file at the site root is public by design. A failed ping never fails the deploy.
@@ -103,3 +176,150 @@ jobs:
         env:
           BEFORE_SHA: ${{ github.event.before }}
         run: node submit-indexnow.mjs --since "$BEFORE_SHA"
+
+  # The same commit on the gateway VM (deploy/aws/README.md, "Deploys"). Off until the repository
+  # variable EC2_DEPLOY is "true"; then it waits for approval in the environment "production"
+  # alongside job deploy. AWS access is GitHub OIDC into the role zerox-github-deploy (deploy/aws/ci-role.yaml),
+  # which may only open a tunnel to SSH through the Instance Connect Endpoint and push a one-time
+  # key for the deploy user: no AWS keys and no SSH key are stored in GitHub. The environment file
+  # is built here, before anything reaches the VM, and travels over that SSH connection only.
+  # Repository variables (read before the job's environment applies): EC2_DEPLOY, EXTRA_WEB_HOSTS
+  # (test host names the VM also serves, e.g. aws.zero-x.live; empty in production). In the
+  # environment "production", as the EC2 smoke test set them: the variables EC2_INSTANCE_ID and
+  # EC2_HOST_KEY (the VM's ED25519 host key line "<instance id> ssh-ed25519 ...", from its serial
+  # console; public), and the secret AWS_DEPLOY_ROLE_ARN (stack zerox-ci's RoleArn output: a secret
+  # because this repository's run logs are public, with the account id masked as well).
+  ec2:
+    name: Deploy EC2
+    needs: verify
+    if: vars.EC2_DEPLOY == 'true'
+    runs-on: ubuntu-24.04
+    environment: production
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    concurrency:
+      group: deploy-ec2
+      cancel-in-progress: false
+    env:
+      EC2_INSTANCE_ID: ${{ vars.EC2_INSTANCE_ID }}
+      EC2_HOST_KEY: ${{ vars.EC2_HOST_KEY }}
+    steps:
+      # The history too: package-release.sh builds the release's sitemap.xml as job deploy does,
+      # with each page's lastmod from git.
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+
+      # The Worker job's secret set (REQUIRED_SECRETS, OPTIONAL_SECRETS, one env entry per name),
+      # except: the secrets the VM must share with the Worker to behave like it (users' sealed
+      # OpenRouter keys, the provider key vault, device approvals, the proxy secret the Worker
+      # sends) are required here, and SUPABASE_SECRET_KEY comes from SUPABASE_SECRET_KEY_EC2, the
+      # VM's own Supabase key, so either runtime's key can be revoked alone. EC2_PROXY_SECRET_ROTATION
+      # is the VM's alone: the second proxy secret it accepts while EC2_PROXY_SECRET is rotated
+      # (deploy/aws/README.md, "Rotating the proxy secret"). EXTRA_WEB_HOSTS is a plain VM-only
+      # value from the repository variable. CLOUDFLARE_API_TOKEN, the Worker deploy token, never
+      # reaches the VM.
+      - name: Build the gateway environment
+        env:
+          REQUIRED_SECRETS: SUPABASE_SECRET_KEY SESSION_ENCRYPTION_KEY PROVIDER_KEYS_KEK DEVICE_APPROVAL_SECRET EC2_PROXY_SECRET
+          OPTIONAL_SECRETS: GROQ_API_KEY OPENROUTER_API_KEY GEMINI_API_KEY NVIDIA_API_KEY RAZORPAY_KEY_SECRET RAZORPAY_WEBHOOK_SECRET GATEWAY_ADMIN_TOKEN GROQ_PAID_API_KEY GEMINI_PAID_API_KEY ANTHROPIC_API_KEY GLM_API_KEY EC2_PROXY_SECRET_ROTATION
+          VM_VARS: EXTRA_WEB_HOSTS
+          EXTRA_WEB_HOSTS: ${{ vars.EXTRA_WEB_HOSTS }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY_EC2 }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          RAZORPAY_KEY_SECRET: ${{ secrets.RAZORPAY_KEY_SECRET }}
+          RAZORPAY_WEBHOOK_SECRET: ${{ secrets.RAZORPAY_WEBHOOK_SECRET }}
+          GATEWAY_ADMIN_TOKEN: ${{ secrets.GATEWAY_ADMIN_TOKEN }}
+          GROQ_PAID_API_KEY: ${{ secrets.GROQ_PAID_API_KEY }}
+          GEMINI_PAID_API_KEY: ${{ secrets.GEMINI_PAID_API_KEY }}
+          SESSION_ENCRYPTION_KEY: ${{ secrets.SESSION_ENCRYPTION_KEY }}
+          DEVICE_APPROVAL_SECRET: ${{ secrets.DEVICE_APPROVAL_SECRET }}
+          PROVIDER_KEYS_KEK: ${{ secrets.PROVIDER_KEYS_KEK }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
+          EC2_PROXY_SECRET: ${{ secrets.EC2_PROXY_SECRET }}
+          EC2_PROXY_SECRET_ROTATION: ${{ secrets.EC2_PROXY_SECRET_ROTATION }}
+        run: |
+          umask 077
+          node deploy/aws/gateway-env.mjs --wrangler neuroncli/auth-server/wrangler.toml --out "$RUNNER_TEMP/gateway.env"
+
+      # The instance id is checked before anything uses it, and the host key line must name that
+      # instance. push-release.sh checks the key under the name zerox-gateway (as on the laptop),
+      # so it is written under that name: never trusted on first use.
+      - name: Instance and host key of the VM
+        run: |
+          if [[ ! $EC2_INSTANCE_ID =~ ^i-[0-9a-f]{8,17}$ ]]; then
+            echo '::error::Environment variable EC2_INSTANCE_ID is not an instance id (deploy/aws/README.md, "Host key")'
+            exit 1
+          fi
+          read -r name type key _ <<< "$EC2_HOST_KEY"
+          if [ "$name" != "$EC2_INSTANCE_ID" ] || [[ ! $type =~ ^(ssh-ed25519|ecdsa-sha2-nistp(256|384|521))$ ]] || [[ ! $key =~ ^[A-Za-z0-9+/]+={0,3}$ ]]; then
+            echo '::error::Environment variable EC2_HOST_KEY must be "<EC2_INSTANCE_ID> ssh-ed25519 AAAA..." (deploy/aws/README.md, "Host key")'
+            exit 1
+          fi
+          printf 'zerox-gateway %s %s\n' "$type" "$key" > "$RUNNER_TEMP/known_hosts"
+
+      - name: AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          role-session-name: zerox-deploy-${{ github.run_id }}
+          role-duration-seconds: 1800
+          aws-region: ap-south-1
+          mask-aws-account-id: true
+
+      # package-release.sh (git archive of this commit), a one-time key for deploy, one SSH
+      # connection through the endpoint carrying the tarball and the environment file, then
+      # install-release.sh and activate-release.sh on the VM: the idle instance starts on the
+      # new release and must pass /ready and report this commit in its /health on loopback
+      # before the old instance stops. A failure puts the previous release back and fails here.
+      - name: Ship and activate the release
+        run: |
+          deploy/aws/push-release.sh --os-user deploy --instance-id "$EC2_INSTANCE_ID" \
+            --env-file "$RUNNER_TEMP/gateway.env" --known-hosts "$RUNNER_TEMP/known_hosts"
+
+      - name: Remove the environment file
+        if: always()
+        run: rm -f "$RUNNER_TEMP/gateway.env" "$RUNNER_TEMP/known_hosts"
+
+  # Once both deploys succeeded. The VM's own /health reported this commit during the activation.
+  # The public side: the Worker answers zero-x.live (once the cutover forwards zero-x.live/ to the
+  # VM, this is the VM through the Worker), and the test host reaches the VM through the tunnel
+  # only. If one deploy job failed, this job does not run and the runtimes may be on different
+  # commits: re-run the failed job (deploy/aws/CUTOVER.md, "Rollback summary").
+  same-commit:
+    name: Same commit on both runtimes
+    needs: [deploy, ec2]
+    if: vars.EC2_DEPLOY == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Both runtimes report this commit
+        env:
+          EXTRA_WEB_HOSTS: ${{ vars.EXTRA_WEB_HOSTS }}
+        run: |
+          want="${GITHUB_SHA::7}"
+          commit() { curl -fsS --max-time 15 "https://$1/health" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{process.stdout.write(String(JSON.parse(s).commit||""))}catch{}})'; }
+          hosts="zero-x.live"
+          if [ -n "$EXTRA_WEB_HOSTS" ]; then hosts="$hosts ${EXTRA_WEB_HOSTS%%,*}"; fi
+          for host in $hosts; do
+            got=""
+            for _ in 1 2 3 4 5 6; do
+              got="$(commit "$host" || true)"
+              [ "$got" = "$want" ] && break
+              sleep 10
+            done
+            if [ "$got" != "$want" ]; then echo "::error::https://$host/health reports commit ${got:-none}, not $want"; exit 1; fi
+            echo "https://$host/health: commit $got"
+          done

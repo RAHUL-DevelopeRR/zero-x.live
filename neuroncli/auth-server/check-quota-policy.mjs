@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import { readFile, readdir } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
+import { DEV_BOOTSTRAP_SQL } from './src/db/bootstrap.js';
+import { listMigrations } from './src/db/migrations.js';
+import { migrate } from './src/db/pglite.js';
+import { reservationArgs } from './src/capacity.js';
+import { POOL_LIMITS, catalogEntry, poolKey } from './src/catalog.js';
 
 const entry = process.env.PGLITE_ENTRY;
 const { PGlite } = await import(entry ? pathToFileURL(entry).href : '@electric-sql/pglite');
@@ -54,3 +59,80 @@ try {
   }
   console.log('PASS: DB-authoritative plan edits, reservations, UTC reset, free fallback, fail-closed policy, metadata and RPC/table access controls');
 } finally { await db.close(); }
+
+// The shared Gemini free pool refuses the 21st request of the day itself: Google allows 20 per
+// model per day (E2E 2026-10-27: 429 GenerateRequestsPerDayPerProjectPerModel-FreeTier, value 20).
+const geminiDb = new PGlite();
+try {
+  await geminiDb.exec(DEV_BOOTSTRAP_SQL);
+  for (const migration of await listMigrations()) await geminiDb.exec(await readFile(migration.path, 'utf8'));
+  const [{ id: userId }] = (await geminiDb.query("INSERT INTO auth.users (email) VALUES ('rpd@example.test') RETURNING id")).rows;
+  await geminiDb.exec('SET ROLE service_role');
+  await geminiDb.query('SELECT * FROM public.zerox_sync_account($1, $2::jsonb)', [userId, JSON.stringify({ email: 'rpd@example.test' })]);
+  const entry = catalogEntry('gemini/gemini-2.5-flash');
+  const free = entry.pools.find(pool => pool.tier === 'free');
+  assert.equal(poolKey(entry, free), 'gemini:gemini-2.5-flash:free');
+  assert.equal(free.limits, POOL_LIMITS.gemini_free);
+  const reserve = async index => {
+    const args = reservationArgs({ session: { user_id: userId }, requestId: `gem_${index}`, entry, pool: free,
+      promptTokens: 100, maxTokens: 8 });
+    return (await geminiDb.query('SELECT * FROM public.zerox_reserve_v2($1, $2, $3, $4, $5, $6, $7::jsonb)', [args.p_user_id,
+      args.p_request_id, args.p_model, args.p_tier, args.p_tokens, args.p_cost_microusd, JSON.stringify(args.p_pool)])).rows[0];
+  };
+  for (let index = 1; index <= 20; index++) {
+    const row = await reserve(index);
+    assert.equal(row.status, 'ok', `request ${index} of the day`);
+    await geminiDb.query("SELECT * FROM public.zerox_settle_v2($1, 100, 1, 0, 'ok', 20, 'gemini', 'gemini-2.5-flash', NULL)",
+      [row.reservation_id]);
+    // Only the daily budget is under test: move the request out of the per-minute windows.
+    await geminiDb.query("UPDATE public.zerox_reservations SET created_at = created_at - interval '61 seconds' WHERE user_id = $1", [userId]);
+    await geminiDb.exec("DELETE FROM public.zerox_pool_usage WHERE bucket = 'minute'");
+  }
+  const refused = await reserve(21);
+  assert.equal(refused.status, 'pool_exhausted', 'the 21st request of the day is refused by the gateway, not by Google');
+  assert.ok(refused.retry_after_seconds >= 1 && refused.retry_after_seconds <= 86400, `rpd retry ${refused.retry_after_seconds}`);
+  console.log('PASS: Gemini free pool budget refuses the 21st request of the day (Google free tier: 20 per model)');
+} finally { await geminiDb.close(); }
+
+// zerox_reserve_v2 counts the plan's requests per minute in client requests. The chat handler
+// reserves once per upstream attempt and names failover attempts <request_id>.<n>
+// (src/chat-handler.js). E2E finding (2026-10-27): a request with 3 failovers used 4 of the Free
+// plan's 10 requests per minute, and a request was refused after only 9 client requests.
+const ledger = new PGlite();
+try {
+  await migrate(ledger);
+  const [{ id: userId }] = (await ledger.query("INSERT INTO auth.users (email) VALUES ('rpm@example.test') RETURNING id")).rows;
+  await ledger.exec('SET ROLE service_role');
+  await ledger.query('SELECT * FROM public.zerox_sync_account($1, $2::jsonb)', [userId, JSON.stringify({ email: 'rpm@example.test' })]);
+  assert.equal((await ledger.query("SELECT rpm_limit FROM public.zerox_plan_policies_v2() WHERE plan = 'free'")).rows[0].rpm_limit, 10);
+  const reserve = async requestId => (await ledger.query(
+    "SELECT * FROM public.zerox_reserve_v2($1, $2, 'test/model', 'free', 100, 0, NULL)", [userId, requestId])).rows[0];
+  // One reservation per attempt, settled before the next attempt, as the chat handler does.
+  const attempt = async (requestId, status = 'ok') => {
+    const row = await reserve(requestId);
+    if (row.status === 'ok') {
+      await ledger.query("SELECT * FROM public.zerox_settle_v2($1, 10, 5, 0, $2, 20, 'test', 'model', NULL)", [row.reservation_id, status]);
+    }
+    return row.status;
+  };
+  for (let index = 0; index < 9; index++) {
+    if (index === 4) {
+      // A request whose first three attempts failed over (429s, refunded) to a fourth pool.
+      for (const id of ['req_4', 'req_4.1', 'req_4.2']) assert.equal(await attempt(id, 'refunded'), 'ok', id);
+      assert.equal(await attempt('req_4.3'), 'ok', 'the third failover of a request');
+    } else {
+      assert.equal(await attempt(`req_${index}`), 'ok', `req_${index}`);
+    }
+  }
+  assert.equal((await ledger.query('SELECT count(*)::int AS n FROM public.zerox_reservations WHERE user_id = $1', [userId])).rows[0].n, 12);
+  assert.equal(await attempt('req_9'), 'ok', 'the tenth client request fits an rpm of 10 although 12 attempts were reserved');
+  assert.equal(await attempt('req_9.1'), 'ok', 'a failover of a request that is already counted is not refused');
+  const limited = await reserve('req_10');
+  assert.equal(limited.status, 'user_rpm', 'the eleventh client request is refused');
+  assert.ok(limited.retry_after_seconds >= 1 && limited.retry_after_seconds <= 60, `rpm retry ${limited.retry_after_seconds}`);
+  await ledger.query("UPDATE public.zerox_reservations SET created_at = created_at - interval '61 seconds' WHERE request_id IN ('req_4', 'req_4.1', 'req_4.2')");
+  assert.equal((await reserve('req_10')).status, 'user_rpm', 'a request stays in the window while any of its attempts does');
+  await ledger.query("UPDATE public.zerox_reservations SET created_at = created_at - interval '61 seconds' WHERE request_id = 'req_4.3'");
+  assert.equal(await attempt('req_10'), 'ok', 'and leaves it with its last attempt');
+  console.log('PASS: the per-minute request budget counts client requests, not failover attempts');
+} finally { await ledger.close(); }

@@ -38,7 +38,8 @@ export function failureKindForStatus(status) {
   if (status === 400 || status === 422) return FailureKind.INVALID;
   if (status === 404) return FailureKind.MODEL_UNAVAILABLE;
   if (status === 429) return FailureKind.RATE_LIMITED;
-  if (status === 401 || status === 403) return FailureKind.AUTH;
+  // 402: the upstream account is out of credit (Claude billing_error), like a revoked key.
+  if (status === 401 || status === 402 || status === 403) return FailureKind.AUTH;
   if (status === 408) return FailureKind.TIMEOUT;
   return FailureKind.SERVER;
 }
@@ -65,11 +66,20 @@ const REQUEST_SCOPED = new Set([FailureKind.CONTEXT, FailureKind.INVALID, Failur
  * responses open it after failureThreshold consecutive failures, so one transient 503 does not
  * park a shared pool either. After a cooldown the next failure of a still-failing pool re-opens
  * it immediately.
+ *
+ * Every first-byte or idle timeout also marks the pool slow (slow_until) for slowWindowMs, and a
+ * success clears the mark. A slow pool stays available; `auto` only tries it after the healthy
+ * pools of its tier (chat-handler.js), so the next caller does not wait through the same
+ * timeout while another pool can answer. Other failures (a 5xx, a slow non-streaming response)
+ * never mark it. A stream the failover budget cut after its whole share of it (phase 'budget',
+ * chat-handler.js; on any plan) marks the pool slow and changes nothing else: it sent no data
+ * event (SSE keep-alives at most) for as long as the request could wait, but it did not get its
+ * own timeout, so it is not counted as failed.
  */
 export class ProviderHealthTracker {
   constructor({ failureThreshold = 3, cooldownMs = 30000, modelUnavailableMs = 600000,
     authCooldownMs = 300000, timeoutCooldownMs = 30000, timeoutThreshold = 2, timeoutWindowMs = 60000,
-    maxCooldownMs = 86400000, rateLimitWindowMs = 600000, rateLimitMaxBackoffMs = 900000 } = {}) {
+    maxCooldownMs = 86400000, rateLimitWindowMs = 600000, rateLimitMaxBackoffMs = 900000, slowWindowMs = 300000 } = {}) {
     this.records = new Map();
     // Recent liveness timeouts per pool ({caller, at}); kept apart from the records so caller
     // identities never appear in health snapshots.
@@ -84,6 +94,7 @@ export class ProviderHealthTracker {
     this.maxCooldownMs = maxCooldownMs;
     this.rateLimitWindowMs = rateLimitWindowMs;
     this.rateLimitMaxBackoffMs = rateLimitMaxBackoffMs;
+    this.slowWindowMs = slowWindowMs;
   }
 
   getRecord(key) {
@@ -106,6 +117,8 @@ export class ProviderHealthTracker {
         last_rate_limited_at: null,
         // End of the latest rate-limit cooldown (0 = none yet).
         rate_limited_until: 0,
+        // End of the slow mark after the latest first-byte or idle timeout (0 = none).
+        slow_until: 0,
       };
       if (this.records.size >= 1000) this.records.delete(this.records.keys().next().value);
       this.records.set(key, rec);
@@ -145,17 +158,23 @@ export class ProviderHealthTracker {
     rec.last_latency_ms = latencyMs;
     rec.circuit_open_until = 0;
     rec.rate_limit_strikes = 0;
+    rec.slow_until = 0;
     rec.status = HealthState.HEALTHY;
     return rec;
   }
 
-  recordFailure(key, { kind = FailureKind.SERVER, latencyMs = 0, retryAfterSeconds = 0, phase = null, caller = null } = {}) {
+  recordFailure(key, { kind = FailureKind.SERVER, latencyMs = 0, retryAfterSeconds = 0, phase = null, caller = null,
+    dailyQuota = false } = {}) {
     if (kind === FailureKind.ABORTED) return this.records.get(key) || null;
     const rec = this.getRecord(key);
     const now = Date.now();
     rec.total_attempts++;
     rec.last_attempt_at = now;
     rec.last_latency_ms = latencyMs;
+    if (kind === FailureKind.TIMEOUT && phase === 'budget') {
+      rec.slow_until = now + this.slowWindowMs;
+      return rec;
+    }
     if (REQUEST_SCOPED.has(kind)) return rec;
     rec.failed_attempts++;
     rec.last_failure_at = now;
@@ -170,7 +189,9 @@ export class ProviderHealthTracker {
       if (!alreadyOpen) rec.rate_limit_strikes = recent ? Math.min(MAX_RATE_LIMIT_STRIKES, rec.rate_limit_strikes + 1) : 1;
       else rec.rate_limit_strikes = Math.max(1, rec.rate_limit_strikes);
       rec.last_rate_limited_at = now;
-      rec.status = HealthState.RATE_LIMITED;
+      // A spent daily quota (Gemini per-day quota, Workers AI's daily neurons; classified by
+      // providers.js classifyUpstreamFailure) is not a burst: the pool stays out until it resets.
+      rec.status = dailyQuota ? HealthState.QUOTA_EXHAUSTED : HealthState.RATE_LIMITED;
       const backoff = Math.min(this.rateLimitMaxBackoffMs, this.defaultCooldownMs * 2 ** (rec.rate_limit_strikes - 1));
       const hinted = retryAfterSeconds > 0 ? retryAfterSeconds * 1000 : 0;
       // The upstream's delay is honoured as given on the first strike; repeated strikes back off
@@ -184,6 +205,7 @@ export class ProviderHealthTracker {
       open(this.authCooldownMs);
     } else if (kind === FailureKind.TIMEOUT && LIVENESS_PHASES.has(phase)) {
       rec.consecutive_failures++;
+      rec.slow_until = now + this.slowWindowMs;
       if (this.timeoutCallers(key, caller, now) >= this.timeoutThreshold) {
         rec.status = HealthState.DOWN;
         open(this.timeoutCooldownMs);

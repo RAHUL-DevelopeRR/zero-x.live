@@ -98,9 +98,9 @@
 
         <section class="zx-card zx-card--flat zx-mt" aria-labelledby="qs-title">
           <h3 id="qs-title">Quick start</h3>
-          <p class="zx-muted">Install Neuron 7.0.0-alpha.1 (a GitHub pre-release), sign in once with <code>neuron login</code> and approve the short code it shows, then run <code>neuron</code> in any project.</p>
-          <div class="zx-code zx-code--copy"><span class="zx-code__label">Install on macOS or Linux</span><pre><code id="qs-install">curl -fsSL https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.1/install.sh | sh -s -- --version 7.0.0-alpha.1</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="qs-install" data-copy-label="macOS and Linux install command">Copy</button></div>
-          <div class="zx-code zx-code--copy"><span class="zx-code__label">Install on Windows (PowerShell)</span><pre><code id="qs-install-win">&amp; ([scriptblock]::Create((irm https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.1/install.ps1))) -Version 7.0.0-alpha.1</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="qs-install-win" data-copy-label="Windows install command">Copy</button></div>
+          <p class="zx-muted">Install Neuron 7.0.0-alpha.2 (a GitHub pre-release), sign in once with <code>neuron login</code> and approve the short code it shows, then run <code>neuron</code> in any project.</p>
+          <div class="zx-code zx-code--copy"><span class="zx-code__label">Install on macOS or Linux</span><pre><code id="qs-install">curl -fsSL https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.2/install.sh | sh -s -- --version 7.0.0-alpha.2</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="qs-install" data-copy-label="macOS and Linux install command">Copy</button></div>
+          <div class="zx-code zx-code--copy"><span class="zx-code__label">Install on Windows (PowerShell)</span><pre><code id="qs-install-win">&amp; ([scriptblock]::Create((irm https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.2/install.ps1))) -Version 7.0.0-alpha.2</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="qs-install-win" data-copy-label="Windows install command">Copy</button></div>
           <div class="zx-code zx-code--copy"><span class="zx-code__label">Sign in</span><pre><code id="qs-login">neuron login</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="qs-login" data-copy-label="Login command">Copy</button></div>
           <div class="zx-code zx-code--copy"><span class="zx-code__label">OpenAI-compatible base URL</span><pre><code id="qs-base">https://zero-x.live/v1</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="qs-base" data-copy-label="Base URL">Copy</button></div>
           <p class="zx-help">Need more? Read the <a href="https://zero-x.live/docs" data-site-path="/docs">documentation</a>.</p>
@@ -144,10 +144,11 @@
         <div class="zx-table-wrap">
           <table class="zx-table">
             <caption class="zx-visually-hidden">Usage by model, last 30 days</caption>
-            <thead><tr><th scope="col">Model</th><th scope="col" class="zx-num">Requests</th><th scope="col" class="zx-num">Prompt tokens</th><th scope="col" class="zx-num">Completion tokens</th><th scope="col" class="zx-num">Cost</th></tr></thead>
+            <thead><tr><th scope="col">Model</th><th scope="col" class="zx-num">Requests</th><th scope="col" class="zx-num">Prompt tokens</th><th scope="col" class="zx-num">Cached prompt tokens</th><th scope="col" class="zx-num">Completion tokens</th><th scope="col" class="zx-num">Cost</th></tr></thead>
             <tbody id="usage-models"></tbody>
           </table>
         </div>
+        <p class="zx-help">Cached prompt tokens are prompt tokens Anthropic served from its prompt cache; they are billed at $0.25 per million instead of the full input price.</p>
 
         <h3 class="zx-mt-lg">Recent requests</h3>
         <div id="events-error" class="zx-alert zx-alert--error zx-mb" role="alert"></div>
@@ -198,6 +199,7 @@
         </div>
         <div class="zx-code zx-mt"><span class="zx-code__label">Headless example</span><pre><code>export NEURON_TOKEN=nzx_your_key
 neuron -p "Run the tests and summarise failures"</code></pre></div>
+        <p class="zx-help">Without a terminal nobody can approve commands, so test and build commands are denied and <code>neuron</code> exits with code 2 unless <code>~/.neuron/settings.json</code> allows them. See <a href="https://zero-x.live/neuron-cli#first-run" data-site-path="/neuron-cli#first-run">headless runs</a>.</p>
       </section>
 
       <section class="zx-tabpanel" role="tabpanel" id="panel-billing" aria-labelledby="tab-billing" tabindex="0" hidden>
@@ -224,7 +226,7 @@ neuron -p "Run the tests and summarise failures"</code></pre></div>
           </article>
           <article class="zx-card" aria-labelledby="topup-title">
             <h3 id="topup-title">Add credits</h3>
-            <p class="zx-muted">Top-up credits pay for paid-capacity models on Pro and Max. Free-pool requests never use credits.</p>
+            <p class="zx-muted">Credits pay for Claude Sonnet 5.5, Claude Opus 5.5 and other paid capacity on Pro and Max. Free models never use credits.</p>
             <div class="zx-field zx-mb zx-field--short">
               <label for="topup-currency">Pay in</label>
               <select id="topup-currency" class="zx-select"><option value="USD">USD</option><option value="INR">INR</option></select>
@@ -249,8 +251,15 @@ neuron -p "Run the tests and summarise failures"</code></pre></div>
 
       <section class="zx-tabpanel" role="tabpanel" id="panel-sessions" aria-labelledby="tab-sessions" tabindex="0" hidden>
         <h2>CLI sessions</h2>
-        <p class="zx-muted">Each <code>neuron login</code> creates a CLI session that lasts up to 30 days. If a computer is lost or a session token was exposed, sign out every CLI session at once.</p>
+        <p class="zx-muted">Each <code>neuron login</code> signs in one device. A session stays signed in while you use it and ends after 30 days without use. Sign out a device you no longer use, or every device at once if a computer is lost or a session token was exposed.</p>
         <div id="sessions-error" class="zx-alert zx-alert--error zx-mb" role="alert"></div>
+        <div class="zx-table-wrap zx-mb">
+          <table class="zx-table">
+            <caption>Signed-in devices</caption>
+            <thead><tr><th scope="col">Device</th><th scope="col">App</th><th scope="col">Signed in</th><th scope="col">Last used</th><th scope="col">Expires</th><th scope="col"><span class="zx-visually-hidden">Actions</span></th></tr></thead>
+            <tbody id="sessions-list"><tr><td colspan="6" class="zx-empty">Loading devices…</td></tr></tbody>
+          </table>
+        </div>
         <p class="zx-mb"><input id="sessions-keys" type="checkbox"> <label for="sessions-keys">Also revoke every API key (do this if a session token may have leaked, since a session can create keys)</label></p>
         <div class="zx-row">
           <button id="sessions-revoke" class="zx-btn zx-btn--danger" type="button">Sign out all CLI sessions</button>

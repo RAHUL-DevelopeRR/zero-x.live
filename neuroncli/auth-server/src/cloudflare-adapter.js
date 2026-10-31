@@ -71,8 +71,16 @@ export class CloudflareWorkersAIAdapter extends ProviderAdapter {
       return Response.json(normalizeCompletion(result, entry.id, payload.messages, payload.tools));
     }
 
+    // Model ids can come from catalog rows: each path segment is encoded and dot segments are
+    // refused (the catalog guardrails already allow nothing but @cf/<org>/<model>), so no id can
+    // reach another API path.
+    const segments = String(model).split('/');
+    if (segments.some(segment => !segment || /^(?:\.|%2e){1,2}$/i.test(segment))) {
+      throw new Error('Refused a Workers AI model id that is not a plain model path');
+    }
+    const path = segments.map(segment => encodeURIComponent(segment).replace(/^%40/, '@')).join('/');
     const response = await fetch(
-      `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(env.CLOUDFLARE_ACCOUNT_ID)}/ai/run/${model}`,
+      `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(env.CLOUDFLARE_ACCOUNT_ID)}/ai/run/${path}`,
       {
         method: 'POST',
         headers: {

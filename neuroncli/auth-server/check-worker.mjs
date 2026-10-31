@@ -20,7 +20,8 @@ for (const [host, page] of [
   assert.equal(alias.headers.get('location'), `https://${host === 'www.zero-x.live' ? 'zero-x.live' : host}/?utm_source=test`);
 }
 // Hosts: neuron.zero-x.live is Neuron's (its home is the Neuron CLI page, /device is the sign-in
-// page) and NeuCockpit lives at https://zero-x.live/neucockpit.
+// page) and NeuCockpit lives at https://zero-x.live/neucockpit. /download and /docs/trust are site
+// pages (the apps link to them, A6 and A8), so only their aliases redirect.
 for (const [url, target] of [
   ['https://neuron.zero-x.live/', 'https://zero-x.live/neuron-cli'],
   ['https://neuron.zero-x.live/?utm_source=test', 'https://zero-x.live/neuron-cli?utm_source=test'],
@@ -44,11 +45,14 @@ for (const [url, target] of [
   ['https://neuron.zero-x.live/legacy', 'https://zero-x.live/neucockpit'],
   ['https://zero-x.live/features', 'https://zero-x.live/neucockpit#features'],
   ['https://neuron.zero-x.live/features', 'https://zero-x.live/neucockpit#features'],
-  ['https://zero-x.live/download?utm_source=test', 'https://zero-x.live/neuron-cli?utm_source=test#install'],
   ['https://zero-x.live/start', 'https://zero-x.live/neuron-cli#install'],
   ['https://zero-x.live/start.html', 'https://zero-x.live/neuron-cli#install'],
-  ['https://neuron.zero-x.live/download', 'https://zero-x.live/neuron-cli#install'],
   ['https://neuron.zero-x.live/start', 'https://zero-x.live/neuron-cli#install'],
+  ['https://zero-x.live/download.html', 'https://zero-x.live/download'],
+  ['https://zero-x.live/download/', 'https://zero-x.live/download'],
+  ['https://neuron.zero-x.live/download', 'https://zero-x.live/download'],
+  ['https://zero-x.live/docs/trust.html', 'https://zero-x.live/docs/trust'],
+  ['https://zero-x.live/docs/trust/', 'https://zero-x.live/docs/trust'],
   ['https://neuron.zero-x.live/find-files-by-content', 'https://zero-x.live/find-files-by-content'],
   ['https://zero-x.live/about/', 'https://zero-x.live/about'], ['https://zero-x.live/about.html', 'https://zero-x.live/about'],
   ['https://zero-x.live/ai-coding-agent.html', 'https://zero-x.live/ai-coding-agent'], ['https://www.zero-x.live/ai-coding-agent', 'https://zero-x.live/ai-coding-agent'],
@@ -59,6 +63,12 @@ for (const [url, target] of [
     assert.equal(response.status, 301, `${method} ${url}`);
     assert.equal(response.headers.get('location'), target, `${method} ${url}`);
   }
+}
+// The Neuron download page and the trust page the apps link to (A6, A8) are served, not redirected.
+for (const [path, file] of [['/download', '/download.html'], ['/docs/trust', '/docs/trust.html']]) {
+  const response = await app.request('https://zero-x.live' + path, {}, env);
+  assert.equal(response.status, 200, path);
+  assert.equal(await response.text(), file);
 }
 const neucockpit = await app.request('https://zero-x.live/neucockpit', {}, env);
 assert.equal(neucockpit.status, 200);
@@ -74,16 +84,27 @@ assert.equal(await (await app.request('https://neuron.zero-x.live/neuroncli/devi
 assert.equal(await (await app.request('https://neuron.zero-x.live/zx-tokens.css', {}, env)).text(), '/zx-tokens.css');
 assert.equal(await (await app.request('https://neuron.zero-x.live/favicon.ico', {}, env)).text(), '/favicon.ico');
 assert.equal(await (await app.request('https://zero-x.live/favicon.ico', {}, env)).text(), '/favicon.ico');
+// Operator pages (key vault, model catalog) are served only on the dashboard host, under /admin/.
+for (const [path, file] of [['/admin/keys', '/neuroncli/admin/keys/index.html'], ['/admin/models', '/neuroncli/admin/models/index.html'],
+  ['/admin/models/models.js', '/neuroncli/admin/models/models.js']]) {
+  const page = await app.request('https://dashboard.zero-x.live' + path, {}, env);
+  assert.equal(await page.text(), file, path);
+  assert.match(page.headers.get('content-security-policy'), /default-src 'none'/, path + ': strict admin CSP');
+  assert.notEqual((await app.request('https://zero-x.live' + path, {}, env)).status, 200, path + ': not on the main site');
+}
+assert.equal((await app.request('https://dashboard.zero-x.live/neuroncli/admin/models/index.html', {}, env)).status, 404);
 // The local Node server keeps every redirect on the loopback origin.
 for (const [path, target] of [
   ['/neuron', '/neuron-cli'], ['/neuron.html', '/neuron-cli'], ['/neucockpit.html', '/neucockpit'],
-  ['/legacy', '/neucockpit'], ['/download', '/neuron-cli#install'], ['/features', '/neucockpit#features'],
+  ['/legacy', '/neucockpit'], ['/start', '/neuron-cli#install'], ['/features', '/neucockpit#features'],
+  ['/download.html', '/download'],
 ]) {
   const response = await app.request('http://127.0.0.1:8787' + path, {}, env);
   assert.equal(response.status, 301, path);
   assert.equal(response.headers.get('location'), target, path);
 }
 assert.equal(await (await app.request('http://127.0.0.1:8787/neucockpit', {}, env)).text(), '/neucockpit.html');
+assert.equal(await (await app.request('http://127.0.0.1:8787/download', {}, env)).text(), '/download.html');
 assert.equal(await (await app.request('http://127.0.0.1:8787/device', {}, env)).text(), '/neuroncli/device/index.html');
 const https = await app.request('http://zero-x.live/auth/config?test=1', {}, env);
 assert.equal(https.status,308); assert.equal(https.headers.get('location'),'https://zero-x.live/auth/config?test=1');
@@ -161,8 +182,10 @@ try {
     assert.equal(options.headers.Authorization, undefined);
     if (url.endsWith('/zerox_plan_policies')) return Response.json([{ policies: DEVELOPMENT_PLANS }]);
     const args = JSON.parse(options.body);
+    // Session activity (last used, sliding expiry) runs after the response and is keyed by hash.
+    if (url.endsWith('/zerox_session_touch')) return Response.json([{ present: true, expires_at: null }]);
     assert.equal(args.p_user_id, userId);
-    if (url.endsWith('/zerox_session_index_add')) {
+    if (url.endsWith('/zerox_session_register') || url.endsWith('/zerox_session_index_add')) {
       assert.match(args.p_token_hash, /^[0-9a-f]{64}$/);
       return Response.json([{ token_hash: args.p_token_hash }]);
     }
@@ -190,7 +213,7 @@ try {
   assert.equal(usage.usage.requests, 8);
   assert.equal(usage.usage.tokens_used, 144);
   const publicHealth = await (await app.request('https://www.zero-x.live/health', {}, databaseEnv)).json();
-  assert.deepEqual(Object.keys(publicHealth).sort(), ['service', 'status', 'version'], 'Anonymous health exposes no configuration');
+  assert.deepEqual(Object.keys(publicHealth).sort(), ['commit', 'service', 'status', 'version'], 'Anonymous health exposes no configuration');
   const operatorToken = 'operator-token-'.padEnd(40, 'x');
   const health = await (await app.request('https://www.zero-x.live/health', {
     headers: { Authorization: `Bearer ${operatorToken}` },

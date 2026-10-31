@@ -32,6 +32,20 @@ ALLOW_ANONYMOUS_SESSIONS=false      # development only: account-less sessions an
 
 # ── Operator ──
 GATEWAY_ADMIN_TOKEN=                # SECRET: >= 32 chars; /admin/*, /v1/providers/health, full /health
+PROVIDER_KEYS_KEK=                  # SECRET: openssl rand -base64 32; encrypts the provider key vault
+CF_ACCESS_TEAM_DOMAIN=              # <team>.cloudflareaccess.com; with CF_ACCESS_AUD, /admin/keys needs an Access JWT
+CF_ACCESS_AUD=                      # audience tag of the Access application on dashboard.zero-x.live/admin
+
+# ── Moving to the Node server on EC2 ──
+# Worker only (src/ec2-proxy.js): requests whose host + path starts with an EC2_PROXY_PREFIXES
+# entry go to EC2_PROXY_ORIGIN with EC2_PROXY_SECRET; empty or unset forwards nothing.
+# EC2_PROXY_PREFIXES=zero-x.live/v1/ # SECRET (wrangler secret put only, never deploy.yml); comma list
+# EC2_PROXY_SECRET=                 # SECRET: the Node server's value, visible ASCII; without it nothing is forwarded
+# EC2_PROXY_ORIGIN=https://aws.zero-x.live
+# EC2 only, for the test window: hosts that serve the whole site (dashboard, device and admin pages
+# included) and sign in like the production ones.
+# EXTRA_WEB_HOSTS=aws.zero-x.live   # never on the Worker
+# GIT_COMMIT=                       # the commit /health reports (set by the deploy, not by hand)
 
 # ── Website and security headers ──
 PRICING_URL=https://zero-x.live/pricing   # upgrade_url in errors
@@ -46,7 +60,13 @@ RAZORPAY_WEBHOOK_SECRET=            # SECRET: webhook signing secret from the Ra
 # ── Upstream providers (free pools) ──
 # The verified catalog (src/catalog.js) decides which models are hosted. GROQ_MODELS,
 # GEMINI_MODELS, CLOUDFLARE_MODELS and NVIDIA_MODELS may only narrow it (comma-separated catalog
-# ids); leave them unset. *_TOOL_MODELS are no longer read.
+# ids); an empty list switches its provider off. *_TOOL_MODELS are no longer read.
+# Owner lineup (2026-10-29), as in wrangler.toml [vars]: Groq, Claude, OpenRouter, NVIDIA and Z.ai.
+# Gemini and Workers AI are switched off with empty lists; delete those two lines to serve them.
+GEMINI_MODELS=
+CLOUDFLARE_MODELS=
+# Z.ai free GLM-4.7-Flash and GLM-4.5-Flash (key slot zai.free).
+GLM_API_KEY=                        # SECRET
 GROQ_API_KEY=                       # SECRET
 GEMINI_API_KEY=                     # SECRET (free tier is geo-blocked for EEA/GB/CH callers)
 CLOUDFLARE_ACCOUNT_ID=              # Node only; the Worker uses its AI binding
@@ -58,18 +78,26 @@ CLOUDFLARE_API_TOKEN=               # SECRET, Node only
 # TRUST_CF_IPCOUNTRY=true
 # ALLOW_UNKNOWN_COUNTRY=true
 # UPSTREAM_TTFB_TIMEOUT_MS=45000    # first byte; UPSTREAM_IDLE_TIMEOUT_MS=90000 between bytes
+# UPSTREAM_RESPONSE_TIMEOUT_MS=90000  # a non-streaming completion is due this long after the request
 # ROUTER_MAX_ATTEMPTS=3             # upstream attempts per request (one is kept for paid pools)
+# RESERVATION_RENEW_MS=30000        # renew a running attempt's concurrency lease this often (at most a third of the lease)
+# RESERVATION_LEASE_SECONDS=90      # for this long (a killed request frees its slot when it lapses)
 
 # ── Upstream providers (paid pools, used by paid plans) ──
 GROQ_PAID_API_KEY=                  # SECRET: Groq Developer plan key
 GEMINI_PAID_API_KEY=                # SECRET: billing-linked Gemini project key
+ANTHROPIC_API_KEY=                  # SECRET: Claude Sonnet 5.5 and Opus 5.5 (Pro and Max, billed from credits)
+ANTHROPIC_MODELS=claude-sonnet-5-5,claude-opus-5-5
 
-# ── Not hosted by default (docs/PROVIDER_TERMS.md) ──
-NVIDIA_HOSTED=false                 # true only for internal evaluation (trial terms)
+# ── Hosted behind a flag (docs/PROVIDER_TERMS.md) ──
+# Owner decision (2026-10-19, kept in the 2026-10-29 lineup): the NVIDIA trial key and the
+# OpenRouter operator key also serve users' free models, as in wrangler.toml [vars]. false
+# offers NVIDIA not at all and OpenRouter only with the caller's own key (BYOK).
+NVIDIA_HOSTED=true
 NVIDIA_API_KEY=                     # SECRET
-OPENROUTER_HOSTED=false             # true re-enables the operator key (otherwise BYOK only)
+OPENROUTER_HOSTED=true
 OPENROUTER_API_KEY=                 # SECRET
-OPENROUTER_MODELS=cohere/north-mini-code:free
+OPENROUTER_MODELS=cohere/north-mini-code:free,minimax/minimax-m3.1-flash:free
 OPENROUTER_FREE_ONLY=
 OPENROUTER_CALLBACK_URL=https://zero-x.live/neuroncli/callback/
 

@@ -7,7 +7,7 @@ import { apiFetch } from './billing-checkout.js';
 
 export const PROVIDER_NAMES = Object.freeze({
   'zero-x': 'Zero-X', gemini: 'Google Gemini', groq: 'Groq', cloudflare: 'Cloudflare Workers AI',
-  nvidia: 'NVIDIA', openrouter: 'OpenRouter',
+  nvidia: 'NVIDIA', openrouter: 'OpenRouter', anthropic: 'Anthropic',
 });
 const MAX_MODELS = 60;
 const DEFAULT_POLL_SECONDS = 30;
@@ -139,7 +139,7 @@ function installTabs(doc) {
   select(0, false);
 }
 
-function copyButtons(doc, win) {
+export function copyButtons(doc, win) {
   const live = doc.getElementById('copy-status');
   for (const button of doc.querySelectorAll('[data-copy-target]')) {
     const target = doc.getElementById(button.dataset.copyTarget);

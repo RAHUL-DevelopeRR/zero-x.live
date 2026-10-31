@@ -1,26 +1,23 @@
 import { CloudflareWorkersAIAdapter } from './cloudflare-adapter.js';
-import { OpenAICompatibleAdapter } from './provider-adapter.js';
+import { OpenAICompatibleAdapter, partialUsageOf, setPartialUsage, usageNow } from './provider-adapter.js';
+import { AnthropicAdapter } from './anthropic-adapter.js';
+import { ZaiAdapter } from './zai-adapter.js';
 import { toolCallSignature } from './provider-request.js';
 import { FailureKind, failureKindForStatus } from './provider-health.js';
 import {
-  AUTO_MODEL_ID, catalogEntries, catalogEntry, catalogWarnings, isHosted, isEnabled, listModelsForCaller, loadCatalogDbModels,
-  offeredEntries, poolConfigured, planPolicy,
+  AUTO_MODEL_ID, catalogEntries, catalogEntry, catalogWarnings, entryPools, isHosted, isEnabled, listModelsForCaller,
+  loadCatalog, offeredEntries, poolConfigured, planPolicy,
 } from './catalog.js';
+import { PROVIDER_TYPES, baseUrlFor, providerType } from './catalog-types.js';
+import { vaultKeys } from './provider-keys.js';
 import { errorEvent } from './errors.js';
 import { sessionTiers } from './capacity.js';
 import { estimatePromptTokens, estimateOutputTokens, publicPricing, utf8Bytes } from './pricing.js';
 
 export { estimatePromptTokens };
 
-function omnirouteBaseResolver(env) {
-  if (!env.OMNIROUTE_BASE_URL) return null;
-  try {
-    const url = new URL(env.OMNIROUTE_BASE_URL);
-    if (url.username || url.password || url.search || url.hash ||
-        !(url.protocol === 'https:' || (url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)))) return null;
-    return url.toString().replace(/\/$/, '');
-  } catch { return null; }
-}
+// OMNIROUTE_BASE_URL as the provider-type registry validates it (https, or http on loopback).
+const omnirouteBaseResolver = env => baseUrlFor('omniroute', env);
 
 function bedrockBaseResolver(env) {
   const region = env.BEDROCK_REGION || env.AWS_REGION;
@@ -30,13 +27,16 @@ function bedrockBaseResolver(env) {
     : `https://bedrock-mantle.${region}.api.aws/v1`;
 }
 
+// Catalog providers call the base URL of their provider type (src/catalog-types.js), the only
+// place upstream hosts are defined: neither catalog rows nor OIOP offers (zerox_offers.base_url,
+// display only) can choose where a request or a key goes.
 export const ADAPTERS = {
   cloudflare: new CloudflareWorkersAIAdapter(),
   openrouter: new OpenAICompatibleAdapter({
     id: 'openrouter',
     keyVar: 'OPENROUTER_API_KEY',
     modelsVar: 'OPENROUTER_MODELS',
-    defaultBase: 'https://openrouter.ai/api/v1',
+    defaultBase: PROVIDER_TYPES.openrouter.base_url,
     defaultFallbackModels: ['openrouter/free'],
   }),
   groq: new OpenAICompatibleAdapter({
@@ -44,7 +44,7 @@ export const ADAPTERS = {
     keyVar: 'GROQ_API_KEY',
     modelsVar: 'GROQ_MODELS',
     toolModelsVar: 'GROQ_TOOL_MODELS',
-    defaultBase: 'https://api.groq.com/openai/v1',
+    defaultBase: PROVIDER_TYPES.groq.base_url,
     providerPrefix: true,
   }),
   gemini: new OpenAICompatibleAdapter({
@@ -52,7 +52,7 @@ export const ADAPTERS = {
     keyVar: 'GEMINI_API_KEY',
     modelsVar: 'GEMINI_MODELS',
     toolModelsVar: 'GEMINI_TOOL_MODELS',
-    defaultBase: 'https://generativelanguage.googleapis.com/v1beta/openai',
+    defaultBase: PROVIDER_TYPES.gemini.base_url,
     providerPrefix: true,
   }),
   nvidia: new OpenAICompatibleAdapter({
@@ -60,9 +60,14 @@ export const ADAPTERS = {
     keyVar: 'NVIDIA_API_KEY',
     modelsVar: 'NVIDIA_MODELS',
     toolModelsVar: 'NVIDIA_TOOL_MODELS',
-    defaultBase: 'https://integrate.api.nvidia.com/v1',
+    defaultBase: PROVIDER_TYPES.nvidia.base_url,
     providerPrefix: true,
   }),
+  // Claude Sonnet 5.5 and Opus 5.5 (Messages API through @anthropic-ai/sdk): api.anthropic.com
+  // only, never a followed redirect, key from the anthropic.paid slot (ANTHROPIC_API_KEY).
+  anthropic: new AnthropicAdapter(),
+  // GLM-4.7-Flash and GLM-4.5-Flash (free): api.z.ai only, key from the zai.free slot (GLM_API_KEY).
+  zai: new ZaiAdapter(),
   omniroute: new OpenAICompatibleAdapter({
     id: 'omniroute',
     keyVar: 'OMNIROUTE_API_KEY',
@@ -87,7 +92,7 @@ export const ADAPTERS = {
   }),
 };
 
-const HTTP_PROVIDER_KEYS = ['openrouter', 'groq', 'gemini', 'nvidia', 'omniroute', 'bedrock', 'azure'];
+const HTTP_PROVIDER_KEYS = ['openrouter', 'groq', 'gemini', 'nvidia', 'anthropic', 'zai', 'omniroute', 'bedrock', 'azure'];
 const HOSTED_FLAGS = { nvidia: 'NVIDIA_HOSTED', openrouter: 'OPENROUTER_HOSTED' };
 
 export function providerConfiguration(env, session = {}) {
@@ -97,7 +102,8 @@ export function providerConfiguration(env, session = {}) {
     const entries = catalogEntries(env).filter(entry => entry.provider === provider);
     return {
       provider,
-      configured: adapter ? adapter.isConfigured(env, session) : false,
+      configured: adapter ? adapter.isConfigured(env, session) || vaultKeys(env).some(key => key.provider === provider) : false,
+      vault_keys: vaultKeys(env).filter(key => key.provider === provider).length,
       catalog_source: adapter ? adapter.catalogSource(env) : 'discovery',
       hosted: HOSTED_FLAGS[provider] ? env[HOSTED_FLAGS[provider]] === 'true' : entries.length > 0,
       catalog_models: entries.filter(entry => isHosted(env, entry) && isEnabled(env, entry)).map(entry => entry.id),
@@ -154,7 +160,7 @@ export function modelCatalog(env, session = {}) {
   const tiers = sessionTiers(env, session, planPolicy(env, session.plan));
   const catalog = [];
   for (const entry of offeredEntries(env)) {
-    const pools = entry.pools.filter(pool => tiers.includes(pool.tier) && poolConfigured(env, entry, pool));
+    const pools = entryPools(env, entry).filter(pool => tiers.includes(pool.tier) && poolConfigured(env, entry, pool));
     if (pools.length) catalog.push(legacyEntry(entry, pools));
   }
   return catalog;
@@ -203,7 +209,7 @@ export async function ownedCatalog(env, session) {
 
 export async function resolveModelCatalog(env, session = {}) {
   if (isOwnedSession(session)) return ownedCatalog(env, session);
-  await loadCatalogDbModels(env);
+  await loadCatalog(env);
   return modelCatalog(env, session);
 }
 
@@ -270,6 +276,11 @@ export const PROVIDER_PARAMS = Object.freeze({
   nvidia: [...SHARED_PARAMS, 'presence_penalty', 'frequency_penalty'],
   openrouter: [...SHARED_PARAMS, 'parallel_tool_calls', 'presence_penalty', 'frequency_penalty', 'user', 'reasoning_effort'],
   cloudflare: ['tools', 'temperature', 'top_p', 'seed', 'presence_penalty', 'frequency_penalty'],
+  // Claude 5.5 rejects sampling parameters (temperature, top_p, top_k) and the adapter builds its
+  // body from a whitelist anyway (src/anthropic-request.js); this list is the first filter.
+  anthropic: ['tools', 'tool_choice', 'stop', 'response_format', 'parallel_tool_calls', 'reasoning_effort'],
+  // Z.ai documents no seed, user or penalties; reasoning_effort becomes its `thinking` switch.
+  zai: ['tools', 'tool_choice', 'stop', 'temperature', 'top_p', 'response_format', 'reasoning_effort'],
 });
 const STANDARD_EFFORTS = new Set(['low', 'medium', 'high']);
 
@@ -296,12 +307,27 @@ export function buildUpstreamPayload(entry, body, maxTokens) {
     const effort = mappedEffort(entry, payload.reasoning_effort);
     delete payload.reasoning_effort;
     if (effort && entry.provider === 'openrouter') payload.reasoning = { effort };
-    else if (effort) payload.reasoning_effort = effort;
+    // GLM thinks unless `thinking` says otherwise (docs.z.ai); only "none" needs sending.
+    else if (entry.provider === 'zai') {
+      if (effort === 'none') payload.thinking = { type: 'disabled' };
+    } else if (effort) payload.reasoning_effort = effort;
   }
   if (!Array.isArray(payload.tools) || !payload.tools.length) {
     delete payload.tools;
     delete payload.tool_choice;
     delete payload.parallel_tool_calls;
+  }
+  // Z.ai accepts tool_choice "auto" only (docs.z.ai; catalog-types.js tool_choice_auto_only).
+  // "none" sends no tools at all, so the model cannot call one the client forbade. "required" or a
+  // named function is left out instead of failing the request: the model then decides as by
+  // default, so a request to such a model by name no longer forces the call (auto never sends it
+  // one, router.js).
+  if (providerType(entry.provider)?.tool_choice_auto_only && payload.tool_choice !== undefined && payload.tool_choice !== 'auto') {
+    if (payload.tool_choice === 'none') {
+      delete payload.tools;
+      delete payload.parallel_tool_calls;
+    }
+    delete payload.tool_choice;
   }
   return payload;
 }
@@ -401,6 +427,12 @@ export function normalizeCompletion(result, model, messages, tools, { onToolSign
   };
 }
 
+// True when the entry's upstream reports usage before the model runs (Claude's message_start), so
+// a failed attempt that reported none never reached the model (chat-handler settlement).
+export function reportsUsageAtStart(entry) {
+  return ADAPTERS[entry?.provider]?.reportsUsageAtStart === true;
+}
+
 // `request` carries per-request shaping context for the adapter ({ signatureFor }).
 export async function requestCompletion(env, session, entry, body, signal, pool, request = {}) {
   const adapter = ADAPTERS[entry.provider];
@@ -438,6 +470,10 @@ const MODEL_GONE_CODES = new Set(['model_not_found', 'model_decommissioned', 'mo
 const MODEL_ERROR_CODES = new Set(['tool_use_failed', 'json_validate_failed']);
 const CONTEXT_CODES = new Set(['context_length_exceeded']);
 const RATE_LIMIT_CODES = new Set(['rate_limit_exceeded', 'rate_limited']);
+// Business codes that say the upstream account cannot serve at all until the operator acts,
+// whatever HTTP status carries them: Z.ai answers 1113 (no balance) with HTTP 429, next to 1302
+// (rate limit) and 1305 (overloaded), which stay rate limits (docs.z.ai error codes).
+const ACCOUNT_CODES = new Set(['1113']);
 // Workers AI internal error codes (developers.cloudflare.com/workers-ai/platform/errors).
 export const WORKERS_AI_ERRORS = Object.freeze({
   3003: 400, 5004: 400, 5007: 404, 3042: 404, 3006: 413, 3007: 408, 3023: 403, 3041: 403, 5016: 403, 5018: 403,
@@ -701,10 +737,15 @@ export function classifyUpstreamFailure(status, body = '', headers = null, fallb
     // Request-scoped only: the message may tell a context-length rejection apart.
     else if (CONTEXT_PATTERN.test(info.message.toLowerCase())) kind = FailureKind.CONTEXT;
   }
+  // Parks the pool for the auth cooldown, like a 402, instead of retrying it after a rate limit.
+  // Z.ai documents its codes as strings; a numeric code (parseUpstreamError numericCode) counts too.
+  if (ACCOUNT_CODES.has(info.code) || ACCOUNT_CODES.has(String(info.numericCode))) kind = FailureKind.AUTH;
   return {
     kind,
     status: effective,
     retryAfterSeconds: kind === FailureKind.RATE_LIMITED || effective === 413 ? retryDelay(headers, info) : null,
+    // The provider says a daily quota is spent (health: QUOTA_EXHAUSTED rather than RATE_LIMITED).
+    dailyQuota: kind === FailureKind.RATE_LIMITED && (info.workersCode === 3036 || info.dailyQuota === true),
   };
 }
 
@@ -728,6 +769,7 @@ export class UpstreamStreamError extends Error {
     const classified = classifyUpstreamFailure(Number.isInteger(status) ? status : null, body, null, fallbackKind);
     this.kind = classified.kind;
     this.retryAfterSeconds = classified.retryAfterSeconds;
+    this.dailyQuota = classified.dailyQuota;
     // Sanitized for operator logs (no raw provider text is kept on the error).
     this.summary = upstreamErrorSummary(Number.isInteger(status) ? status : null, body);
   }
@@ -760,7 +802,8 @@ function abortReason(signal) {
 
 // Resolves with `promise` unless the deadline passes (aborting the attempt) or the signal
 // aborts first. `deadline()` returns an absolute time and is re-read whenever the timer
-// fires, so byte progress (SSE comments and keep-alives included) can extend it.
+// fires, so byte progress (SSE comments and keep-alives included) can extend it. `phase()`
+// names the deadline that passed.
 function guarded(promise, { deadline, phase, signal, controller }) {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
@@ -784,7 +827,7 @@ function guarded(promise, { deadline, phase, signal, controller }) {
         timer = setTimeout(check, wait());
         return;
       }
-      const error = new UpstreamTimeoutError(phase);
+      const error = new UpstreamTimeoutError(phase());
       finish(reject, error);
       controller?.abort(error);
     };
@@ -821,6 +864,7 @@ export class SseEventReader {
     this.reader = body.getReader();
     this.decoder = new TextDecoder();
     this.buffer = '';
+    this.pendingCr = false;
     this.queue = [];
     this.ended = false;
     this.lastByteAt = null;
@@ -836,13 +880,18 @@ export class SseEventReader {
     while (!this.queue.length && !this.ended) {
       const { value, done } = await this.reader.read();
       if (value?.byteLength) this.lastByteAt = Date.now();
-      this.buffer += done ? this.decoder.decode() : this.decoder.decode(value, { stream: true });
-      this.buffer = this.buffer.replace(/\r\n/g, '\n');
+      // CRLF is folded in the newly decoded text only; a trailing CR waits for the next read.
+      let text = (this.pendingCr ? '\r' : '') + (done ? this.decoder.decode() : this.decoder.decode(value, { stream: true }));
+      this.pendingCr = !done && text.endsWith('\r');
+      if (this.pendingCr) text = text.slice(0, -1);
+      this.buffer += text.includes('\r') ? text.replace(/\r\n/g, '\n') : text;
+      let start = 0;
       let boundary;
-      while ((boundary = this.buffer.indexOf('\n\n')) >= 0) {
-        this.push(this.buffer.slice(0, boundary));
-        this.buffer = this.buffer.slice(boundary + 2);
+      while ((boundary = this.buffer.indexOf('\n\n', start)) >= 0) {
+        this.push(this.buffer.slice(start, boundary));
+        start = boundary + 2;
       }
+      if (start) this.buffer = this.buffer.slice(start);
       if (this.buffer.length > MAX_EVENT_BYTES) throw new UpstreamProtocolError('Provider SSE event exceeds size limit');
       if (done) {
         this.ended = true;
@@ -853,12 +902,31 @@ export class SseEventReader {
     return this.queue.length ? this.queue.shift() : null;
   }
 
+  // Events already parsed from the bytes read so far; never waits for the upstream.
+  drain() {
+    return this.queue.splice(0);
+  }
+
   cancel() {
     return this.reader.cancel().catch(() => {});
   }
 }
 
-function parseEvent(data) {
+// Finish reasons that report a failed generation instead of an error event, per provider, with
+// the kind of failure: Z.ai ends a stream that failed after it started (and a 200 answer) with
+// network_error, and a prompt its moderation refused with sensitive, which says nothing about
+// the pool (docs.z.ai). Either is a failed attempt, never a completed answer.
+const ERROR_FINISH_REASONS = Object.freeze({
+  zai: Object.freeze({ network_error: FailureKind.SERVER, sensitive: FailureKind.MODEL_ERROR }),
+});
+
+function finishReasonError(value, finishErrors) {
+  if (!finishErrors || !Array.isArray(value?.choices)) return null;
+  const reason = value.choices.map(choice => choice?.finish_reason).find(item => typeof item === 'string' && Object.hasOwn(finishErrors, item));
+  return reason ? new UpstreamStreamError({ code: reason, message: `finish_reason ${reason}` }, finishErrors[reason]) : null;
+}
+
+function parseEvent(data, finishErrors = null) {
   if (data === '[DONE]') return { done: true };
   let value;
   try {
@@ -868,6 +936,8 @@ function parseEvent(data) {
   }
   if (!value || typeof value !== 'object') throw new UpstreamProtocolError('Provider sent malformed SSE data');
   if (value.error) throw new UpstreamStreamError(value.error);
+  const failed = finishReasonError(value, finishErrors);
+  if (failed) throw failed;
   return { value };
 }
 
@@ -877,32 +947,55 @@ function parseEvent(data) {
  * deadlines: the first body byte within ttfbMs; after that, bytes (SSE comments and
  * keep-alives count) at most idleMs apart, with the first data event due within
  * ttfbMs + idleMs. Non-streaming calls get ttfbMs + idleMs in total.
- * Resolves { ok:false, status, headers, bodyText } for HTTP errors and
- * { ok:true, json | stream } on success; throws timeout/abort/protocol errors.
+ * commitBy (an absolute time) ends the request's failover budget: a stream is due by then, a
+ * non-streaming response (whose generation may outlast the budget) by commitBy + idleMs, and in
+ * any case by responseBy (the request's own deadline for a non-streaming answer, chat-handler.js).
+ * When one of those, not the attempt's own deadline, ends it, the timeout's phase is 'budget': the
+ * pool did not get its full time, so the cut is not a failure of the pool (chat-handler.js).
+ * Resolves { ok:false, status, headers, bodyText, usage } for HTTP errors and
+ * { ok:true, json | stream } on success; throws timeout/abort/protocol errors. `usage` (and
+ * partialUsageOf(error) on a throw) is what the upstream reported before it failed (Claude's
+ * message_start counts), or null.
  */
-export async function startCompletion(env, session, entry, pool, payload, { clientSignal, timeouts = streamTimeouts(env), request = {} } = {}) {
+export async function startCompletion(env, session, entry, pool, payload,
+  { clientSignal, timeouts = streamTimeouts(env), request = {}, commitBy = Infinity, responseBy = Infinity } = {}) {
   const controller = new AbortController();
   const signal = clientSignal ? AbortSignal.any([clientSignal, controller.signal]) : controller.signal;
   const started = Date.now();
   const total = started + timeouts.ttfbMs + timeouts.idleMs;
+  const cutoff = payload.stream ? commitBy : Math.min(commitBy + timeouts.idleMs, responseBy);
   let reader = null;
-  const deadline = () => {
+  const own = () => {
     if (!payload.stream) return total;
     const last = reader?.lastByteAt;
     return last ? Math.min(last + timeouts.idleMs, total) : started + timeouts.ttfbMs;
   };
-  const phase = payload.stream ? 'first_byte' : 'response';
+  const deadline = () => Math.min(own(), cutoff);
+  const phase = () => (cutoff < own() ? 'budget' : payload.stream ? 'first_byte' : 'response');
   const guard = promise => guarded(promise, { deadline, phase, signal, controller });
-  const response = await guard(requestCompletion(env, session, entry, payload, signal, pool, request));
+  // Usage the adapter registered for this attempt, carried out of a failure.
+  const reported = error => {
+    const usageSoFar = partialUsageOf(signal);
+    const usage = usageNow(usageSoFar);
+    if (usage && error && typeof error === 'object') setPartialUsage(error, () => usage);
+    return error;
+  };
+  const response = await guard(requestCompletion(env, session, entry, payload, signal, pool, request)).catch(error => {
+    throw reported(error);
+  });
+  const finishErrors = ERROR_FINISH_REASONS[entry.provider] ?? null;
   try {
     if (!response.ok) {
       const bodyText = await guard(readBounded(response)).catch(() => '');
-      return { ok: false, status: response.status, headers: response.headers, bodyText, latencyMs: Date.now() - started };
+      return { ok: false, status: response.status, headers: response.headers, bodyText, latencyMs: Date.now() - started,
+        usage: usageNow(partialUsageOf(signal)) };
     }
     if (!payload.stream) {
       const json = await guard(response.json().catch(() => {
         throw new UpstreamProtocolError('Provider returned malformed JSON');
       }));
+      const failed = finishReasonError(json, finishErrors);
+      if (failed) throw failed;
       return { ok: true, json, controller, latencyMs: Date.now() - started };
     }
     if (!response.body || !response.headers.get('content-type')?.includes('text/event-stream')) {
@@ -911,13 +1004,14 @@ export async function startCompletion(env, session, entry, pool, payload, { clie
     reader = new SseEventReader(response.body);
     const first = await guard(reader.next());
     if (first === null || first === '[DONE]') throw new UpstreamProtocolError('Provider stream ended before the first event');
-    parseEvent(first);
-    return { ok: true, stream: { reader, first }, controller, latencyMs: Date.now() - started };
+    parseEvent(first, finishErrors);
+    return { ok: true, stream: { reader, first, usageSoFar: partialUsageOf(response), finishErrors }, controller,
+      latencyMs: Date.now() - started };
   } catch (error) {
     controller.abort(error);
     if (reader) await reader.cancel();
     else response.body?.cancel?.().catch?.(() => {});
-    throw error;
+    throw reported(error);
   }
 }
 
@@ -984,12 +1078,45 @@ function chunkOf(state, choices, extra = {}) {
   return { id: state.id, object: 'chat.completion.chunk', created: state.created, model: state.model, choices, ...extra };
 }
 
+// UTF-8 length of JSON.stringify(text), counted without building either string.
+function jsonStringBytes(text) {
+  let bytes = 2;
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i);
+    if (code === 0x22 || code === 0x5c) bytes += 2;
+    else if (code < 0x20) bytes += code === 8 || code === 9 || code === 10 || code === 12 || code === 13 ? 2 : 6;
+    else if (code < 0x80) bytes += 1;
+    else if (code < 0x800) bytes += 2;
+    else if (code < 0xd800 || code > 0xdfff) bytes += 3;
+    else if (code < 0xdc00 && (text.charCodeAt(i + 1) & 0xfc00) === 0xdc00) {
+      bytes += 4;
+      i++;
+    } else bytes += 6; // a lone surrogate is escaped as \udxxx
+  }
+  return bytes;
+}
+
+// utf8Bytes(deltas) for normalizeToolDeltas output, the output estimate billed when the upstream
+// sends no usage, without serializing every streamed fragment:
+// [{"index":0,"id":"…","type":"function","function":{"name":"…","arguments":"…"}}, …]
+function toolDeltaBytes(deltas) {
+  let bytes = deltas.length ? deltas.length + 1 : 2;
+  for (const { index, id, function: fn } of deltas) {
+    bytes += 24 + String(index).length + (id === undefined ? 0 : 24 + jsonStringBytes(id));
+    if (fn.name !== undefined) bytes += 7 + (typeof fn.name === 'string' ? jsonStringBytes(fn.name) : utf8Bytes(fn.name));
+    if (fn.arguments !== undefined) bytes += 12 + jsonStringBytes(fn.arguments) + (fn.name !== undefined ? 1 : 0);
+  }
+  return bytes;
+}
+
 function normalizeStreamValue(value, state) {
   captureUsage(value, state);
   if (Array.isArray(value.choices)) {
     const choices = value.choices.filter(choice => choice && typeof choice === 'object').map((choice, position) => {
       const index = Number.isInteger(choice.index) ? choice.index : position;
-      const delta = normalizeReasoning({ ...(choice.delta || {}) });
+      // The parsed event is not shared, so its delta is normalized in place.
+      const raw = choice.delta;
+      const delta = normalizeReasoning(raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : { ...(raw || {}) });
       delete delta.extra_content;
       if (Array.isArray(delta.tool_calls) && delta.tool_calls.length) {
         delta.tool_calls = normalizeToolDeltas(delta.tool_calls, state, index);
@@ -998,7 +1125,7 @@ function normalizeStreamValue(value, state) {
         delete delta.tool_calls;
       }
       state.outputBytes += utf8Bytes(delta.content || '') + utf8Bytes(delta.reasoning_content || '') +
-        (delta.tool_calls ? utf8Bytes(delta.tool_calls) : 0);
+        (delta.tool_calls ? toolDeltaBytes(delta.tool_calls) : 0);
       let finish = choice.finish_reason ?? null;
       if (finish) state.sawFinish = true;
       if (finish === 'stop' && state.toolChoices.has(index)) finish = 'tool_calls';
@@ -1012,7 +1139,7 @@ function normalizeStreamValue(value, state) {
   const content = value.response ?? value.text ?? '';
   const calls = Array.isArray(value.tool_calls) && value.tool_calls.length
     ? normalizeToolDeltas(value.tool_calls, state, 0) : [];
-  state.outputBytes += utf8Bytes(content) + (calls.length ? utf8Bytes(calls) : 0);
+  state.outputBytes += utf8Bytes(content) + (calls.length ? toolDeltaBytes(calls) : 0);
   const chunks = [];
   if (content || calls.length) {
     chunks.push(chunkOf(state, [{ index: 0, delta: { ...(content ? { content } : {}), ...(calls.length ? { tool_calls: calls } : {}) }, finish_reason: null }]));
@@ -1028,9 +1155,15 @@ function normalizeStreamValue(value, state) {
  * Client-facing SSE stream for a committed upstream attempt. Applies the idle timeout
  * between upstream chunks, normalizes chunks and calls onFinish exactly once with
  * { status:'ok'|'error', usage, outputBytes, errorCode, kind } before the final event.
+ * `usageSoFar(outputBytes)` (provider-adapter.js setPartialUsage) supplies the usage when the
+ * stream ends without a usage chunk (a client abort or a mid-stream error before Claude's
+ * message_delta): the input and cache counts the provider already reported, instead of the
+ * byte estimate settlement would otherwise bill.
+ * `finishErrors` (startCompletion, ERROR_FINISH_REASONS) are finish reasons that end the stream
+ * as a failure.
  */
 export function createCompletionStream({ reader, first, model, controller, clientSignal, timeouts, onFinish, requestId, env,
-  onToolSignature = null }) {
+  onToolSignature = null, restorer = null, usageSoFar = null, finishErrors = null }) {
   const encoder = new TextEncoder();
   const state = {
     id: `chatcmpl-${crypto.randomUUID()}`, created: Math.floor(Date.now() / 1000), model,
@@ -1041,74 +1174,141 @@ export function createCompletionStream({ reader, first, model, controller, clien
   let done = false;
   let cancelled = false;
   let finished = false;
+  // One idle watchdog and one client abort listener per stream (not per event): either sets
+  // `failure` and cancels the upstream reader, which settles the read in flight.
+  let failure = null;
+  let reading = false;
+  let timer = null;
+  // Releases the upstream connection. A cancel that rejects (the connection is already gone)
+  // must never skip settlement: onFinish settles the reservation and frees its slot.
+  const cancelUpstream = async () => {
+    try {
+      await reader.cancel();
+    } catch { /* already closed or reset */ }
+  };
+  const interrupt = error => {
+    if (failure || done) return;
+    failure = error;
+    controller.abort(error);
+    void cancelUpstream();
+  };
+  const onAbort = () => interrupt(abortReason(clientSignal));
+  const reportedUsage = () => state.usage ?? usageNow(usageSoFar, state.outputBytes);
   const finish = async outcome => {
     if (finished) return;
     finished = true;
+    clearTimeout(timer);
+    clientSignal?.removeEventListener('abort', onAbort);
     try {
-      await onFinish({ usage: state.usage, outputBytes: state.outputBytes, ...outcome });
+      await onFinish({ usage: reportedUsage(), outputBytes: state.outputBytes, ...outcome });
     } catch (error) {
       console.error('Neuron stream settlement failed', { name: error?.name });
     }
   };
   const handle = data => {
-    const event = parseEvent(data);
+    const event = parseEvent(data, finishErrors);
     if (event.done) {
       state.sawDone = true;
       return [];
     }
-    return normalizeStreamValue(event.value, state);
+    const chunks = normalizeStreamValue(event.value, state);
+    // Secrets withheld from the upstream go back into the client's stream (src/oiop/scrub.js).
+    return restorer?.active ? chunks.map(chunk => restorer.chunk(chunk)) : chunks;
   };
   const finalize = async () => {
     if (!state.sawDone && !state.sawFinish && !state.pendingToolFinish) {
       throw new UpstreamProtocolError('Provider stream ended before completion');
     }
     const tail = [];
+    const held = restorer?.active ? restorer.finalChunk(chunkOf(state, [])) : null;
+    if (held) tail.push(held);
     if (!state.sawFinish) tail.push(chunkOf(state, [{ index: 0, delta: {}, finish_reason: state.pendingToolFinish ? 'tool_calls' : 'stop' }]));
     if (state.usage && !state.usageForwarded) tail.push(chunkOf(state, [], { usage: state.usage }));
     await finish({ status: 'ok' });
     tail.push('[DONE]');
     return tail;
   };
-  const encode = item => encoder.encode(`data: ${typeof item === 'string' ? item : JSON.stringify(item)}\n\n`);
+  // One client chunk for all the events handled in a pull.
+  const encode = items => {
+    let text = '';
+    for (const item of items) text += `data: ${typeof item === 'string' ? item : JSON.stringify(item)}\n\n`;
+    return encoder.encode(text);
+  };
   // Idle budget: measured from the last body bytes (SSE comments and keep-alives included),
-  // re-read whenever the timer fires so progress inside one event extends it.
+  // re-read whenever the timer fires so progress inside one event extends it. It only runs out
+  // while a read is in flight; a timer that fires between reads is re-armed by the next read.
   const streamStarted = Date.now();
   const idleDeadline = () => (reader.lastByteAt ?? streamStarted) + timeouts.idleMs;
+  const watch = () => {
+    timer = null;
+    if (!reading || done || failure) return;
+    const wait = idleDeadline() - Date.now();
+    if (wait > 0) timer = setTimeout(watch, wait);
+    else interrupt(new UpstreamTimeoutError('idle'));
+  };
   // [DONE] completes the attempt even when the upstream keeps its connection open.
   const complete = async () => {
     queue.push(...await finalize());
     done = true;
-    void reader.cancel();
+    void cancelUpstream();
+  };
+  // Events already parsed from the last upstream read go out in the same client chunk (a reader
+  // without drain(), such as a test double, gets one chunk per event).
+  const handleParsed = () => {
+    for (const data of reader.drain?.() ?? []) {
+      if (state.sawDone) break;
+      queue.push(...handle(data));
+    }
   };
   queue = handle(first);
+  if (clientSignal?.aborted) onAbort();
+  else clientSignal?.addEventListener('abort', onAbort, { once: true });
 
   return new ReadableStream({
     async pull(stream) {
       try {
+        // The first pull also takes the events that arrived with `first`.
+        if (!done) handleParsed();
         if (state.sawDone && !done) await complete();
         while (!queue.length && !done) {
-          const data = await guarded(reader.next(), { deadline: idleDeadline, phase: 'idle', signal: clientSignal, controller });
+          if (failure) throw failure;
+          reading = true;
+          // Always a macrotask, so a read that settles at once wins over an expired deadline.
+          if (!timer) timer = setTimeout(watch, Math.max(0, idleDeadline() - Date.now()));
+          const data = await reader.next();
+          reading = false;
           if (cancelled) return;
+          if (failure) throw failure;
           if (data === null) {
             queue.push(...await finalize());
             done = true;
           } else {
             queue.push(...handle(data));
+            handleParsed();
             if (state.sawDone) await complete();
           }
         }
-        if (queue.length) stream.enqueue(encode(queue.shift()));
-        else stream.close();
-      } catch (error) {
+        if (queue.length) {
+          const items = queue;
+          queue = [];
+          stream.enqueue(encode(items));
+        }
+        if (done) stream.close();
+      } catch (caught) {
         if (cancelled) return;
+        const error = failure ?? caught;
         done = true;
+        reading = false;
+        // Chunks handled before a malformed event still reach the client ahead of the error.
+        const pending = queue;
         queue = [];
         const client = Boolean(clientSignal?.aborted);
         const timeout = error instanceof UpstreamTimeoutError;
         controller.abort(error);
-        await reader.cancel();
+        await cancelUpstream();
         await finish({ status: 'error', kind: client ? FailureKind.ABORTED : error.kind || FailureKind.SERVER,
           phase: timeout ? error.phase : null, retryAfterSeconds: error.retryAfterSeconds ?? null,
+          dailyQuota: error.dailyQuota === true,
           errorCode: client ? 'client_disconnected' : timeout ? 'upstream_timeout' : 'upstream_error',
           upstream: error.summary ?? null });
         if (client) {
@@ -1118,7 +1318,7 @@ export function createCompletionStream({ reader, first, model, controller, clien
         const code = timeout ? 'upstream_timeout' : 'upstream_error';
         const message = timeout ? 'The model stopped responding. Retry your request.' : 'Generation interrupted. Retry your request.';
         try {
-          stream.enqueue(encode(errorEvent(code, { message, requestId, env })));
+          stream.enqueue(encode([...pending, errorEvent(code, { message, requestId, env })]));
           stream.close();
         } catch { /* consumer already closed */ }
       }
@@ -1126,7 +1326,7 @@ export function createCompletionStream({ reader, first, model, controller, clien
     async cancel() {
       cancelled = true;
       controller.abort(new DOMException('Client closed the stream', 'AbortError'));
-      await reader.cancel();
+      await cancelUpstream();
       await finish({ status: 'error', kind: FailureKind.ABORTED, errorCode: 'client_disconnected' });
     },
   });

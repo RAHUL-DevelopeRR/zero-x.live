@@ -10,6 +10,7 @@ import { devToken, devUserId, resolveCaller } from './src/auth-context.js';
 import { openSession, rearmRecord, sealSession } from './src/session-store.js';
 import { runScheduledMaintenance } from './src/routes/admin.js';
 import { v1ModelsPayload } from './src/routes/plans.js';
+import { credentialExpiresAt, displayName, initials } from './src/routes/account.js';
 import { overviewPools } from './src/routes/admin.js';
 import { ProviderHealthTracker, FailureKind } from './src/provider-health.js';
 import { B1_KEY_PREFIX, planPolicyRows } from './contract-rows.mjs';
@@ -232,9 +233,16 @@ try {
   assert.equal(account.status, 200);
   await request('/api/account', { token: 'supabase-token-user-a' });
   assert.equal(identity.calls - callsBefore, 1, 'Supabase verification is cached for 60 s');
-  assert.deepEqual(account.body.user, { id: userA.id, email: 'alice@example.test', name: 'Alice Example', image_url: 'https://img.example.test/a.png' });
+  assert.deepEqual(account.body.user, { id: userA.id, email: 'alice@example.test', name: 'Alice Example', display_name: 'Alice Example',
+    initials: 'AE', image_url: 'https://img.example.test/a.png' });
+  assert.equal(account.body.session_expires_at, null, 'a website token without a readable exp claim has no expiry');
   assert.equal(db.calls.filter(call => call.name === 'zerox_sync_account' && call.args.p_user_id === userA.id).length, 1,
     'the account is synced once per cached credential');
+  // A website access token (a JWT) reports its exp claim, for "sign in again" warnings (A3).
+  const jwtExp = Math.floor(Date.now() / 1000) + 3600;
+  const jwtToken = ['eyJhbGciOiJIUzI1NiJ9', Buffer.from(JSON.stringify({ sub: userA.id, exp: jwtExp })).toString('base64url'), 'c2lnbmF0dXJl'].join('.');
+  addUser(jwtToken, userA);
+  assert.equal((await json(await request('/api/account', { token: jwtToken }))).body.session_expires_at, new Date(jwtExp * 1000).toISOString());
 
   identity.down = true;
   assertOpenAIError(await json(await request('/api/account', { token: 'supabase-token-unknown-while-down' })), 503, 'service_unavailable');
@@ -333,16 +341,26 @@ try {
   assert.deepEqual(Object.keys(listed.body.keys[0]).sort(), ['created_at', 'id', 'last_used_at', 'name', 'prefix', 'revoked_at']);
   assert.ok(!JSON.stringify(listed.body).includes(apiKey) && !JSON.stringify(listed.body).includes(storedKey.hash), 'secret shown once');
 
-  assert.equal((await request('/api/account', { token: apiKey })).status, 200, 'nzx_ keys read the account');
+  const keyAccount = await json(await request('/api/account', { token: apiKey }));
+  assert.equal(keyAccount.status, 200, 'nzx_ keys read the account');
+  assert.equal(keyAccount.body.session_expires_at, null, 'API keys do not expire');
   assert.equal((await request('/api/usage', { token: apiKey })).status, 200, 'nzx_ keys read usage');
   assert.equal((await request('/api/usage/events', { token: apiKey })).status, 200);
   for (const [method, path, body] of [['GET', '/api/keys'], ['POST', '/api/keys', { name: 'x' }], ['DELETE', `/api/keys/${storedKey.id}`],
-    ['POST', '/api/sessions/revoke-all'], ['GET', '/api/billing'], ['POST', '/api/billing/checkout', { plan: 'pro', currency: 'INR' }],
+    ['POST', '/api/sessions/revoke-all'], ['GET', '/api/sessions'], ['DELETE', `/api/sessions/${'a'.repeat(24)}`], ['GET', '/api/billing'], ['POST', '/api/billing/checkout', { plan: 'pro', currency: 'INR' }],
     ['POST', '/api/billing/topup', { pack: 'credits_5', currency: 'INR' }], ['POST', '/api/billing/verify', {}], ['POST', '/api/billing/cancel']]) {
     const denied = await json(await request(path, { method, token: apiKey, body }));
     assertOpenAIError(denied, 403, 'api_key_not_allowed');
     assert.equal(denied.body.error.type, 'permission_error');
   }
+  // Linked devices on a database without the session_devices migration: the list falls back to
+  // the plain session index (no device details) and sign-in still works (A9).
+  const fallbackList = await json(await request('/api/sessions', { token: sessionToken }));
+  assert.equal(fallbackList.status, 200);
+  const fallbackCurrent = fallbackList.body.sessions.find(session => session.current);
+  assert.ok(fallbackCurrent, 'the calling session is marked current');
+  assert.deepEqual([fallbackCurrent.device_name, fallbackCurrent.os, fallbackCurrent.client], [null, null, { name: null, version: null }]);
+  assert.ok(db.calls.some(call => call.name === 'zerox_session_register'), 'sign-in tries the device-aware registration first');
   assertOpenAIError(await json(await request('/auth/cli/session', { method: 'POST', token: apiKey, body: {} })), 401, 'invalid_session');
   assertOpenAIError(await json(await request('/auth/session', { token: apiKey })), 401, 'invalid_session');
   assert.equal((await request('/v1/models', { token: apiKey, bindings: { ...env, ALLOW_ANONYMOUS_SESSIONS: 'true' } })).status, 200,
@@ -385,6 +403,7 @@ try {
   assert.equal(devAccount.status, 200);
   assert.equal(devAccount.body.user.id, devId);
   assert.equal(devAccount.body.user.email, devEmail);
+  assert.deepEqual([devAccount.body.user.display_name, devAccount.body.user.initials, devAccount.body.session_expires_at], ['dev.user', 'DU', null]);
   assert.ok(db.calls.some(call => call.name === 'zerox_sync_account' && call.args.p_user_id === devId && call.args.p_plan === 'free'),
     'the dev account is created through zerox_sync_account');
   assert.equal((await request('/api/account', { ...local, base: 'http://localhost:8787', token: dev })).status, 200);
@@ -462,6 +481,20 @@ try {
   assert.equal((await preflight('/api/account', 'http://localhost:3000', devEnv)).headers.get('access-control-allow-origin'), 'http://localhost:3000');
   assert.equal((await preflight('/api/account', 'http://127.0.0.1:5173', { ...env, DEV_AUTH_ENABLED: 'true' })).headers.get('access-control-allow-origin'), null,
     'loopback origins need the Node dev runtime');
+  // EXTRA_WEB_HOSTS (EC2 only: a test host such as aws.zero-x.live, C10) joins the identity origins
+  // over https; unset (the Worker, and EC2 after the test window) nothing else does.
+  const testHosts = { ...env, EXTRA_WEB_HOSTS: ' aws.zero-x.live , ,Staging.Example.test,not a host,ports.example:8443' };
+  for (const origin of ['https://aws.zero-x.live', 'https://staging.example.test', 'https://zero-x.live']) {
+    for (const path of ['/api/account', '/auth/cli/session']) {
+      assert.equal((await preflight(path, origin, testHosts)).headers.get('access-control-allow-origin'), origin, `${origin} ${path}`);
+    }
+  }
+  for (const origin of ['http://aws.zero-x.live', 'https://aws.zero-x.live.evil.example', 'https://ports.example:8443', 'https://not a host']) {
+    assert.equal((await preflight('/api/account', origin, testHosts)).headers.get('access-control-allow-origin'), null, origin);
+  }
+  for (const bindings of [env, { ...env, EXTRA_WEB_HOSTS: '' }]) {
+    assert.equal((await preflight('/api/account', 'https://aws.zero-x.live', bindings)).headers.get('access-control-allow-origin'), null);
+  }
   assert.equal((await preflight('/v1/chat/completions', 'https://any.example')).headers.get('access-control-allow-origin'), '*');
   const openModels = await request('/v1/models', { headers: { Origin: 'https://any.example' }, bindings: { ...env, ALLOW_ANONYMOUS_SESSIONS: 'true' } });
   assert.equal(openModels.headers.get('access-control-allow-origin'), '*');
@@ -514,7 +547,9 @@ try {
   Object.assign(db.accounts.get(userA.id), { credit_balance_microusd: 1234567, daily_requests: 7, daily_tokens_used: 7000 });
   account = await json(await request('/api/account', { token: sessionToken }));
   assert.deepEqual(account.body, {
-    user: { id: userA.id, email: 'alice@example.test', name: 'Alice Example', image_url: 'https://img.example.test/a.png' },
+    user: { id: userA.id, email: 'alice@example.test', name: 'Alice Example', display_name: 'Alice Example', initials: 'AE',
+      image_url: 'https://img.example.test/a.png' },
+    session_expires_at: minted.body.expires_at,
     plan: { id: 'free', name: 'Free' },
     limits: { daily_requests: 100, daily_tokens: 500000, rpm: 10, concurrency: 2 },
     usage_today: { requests: 7, tokens: 7000, resets_at: `${dayOffset(1)}T00:00:00.000Z` },
@@ -541,6 +576,25 @@ try {
   db.fail.add('zerox_account_overview');
   assertOpenAIError(await json(await request('/api/account', { token: sessionToken })), 503, 'service_unavailable');
   db.fail.delete('zerox_account_overview');
+  // display_name and initials fall back from the profile name to the email (A3).
+  addUser('supabase-token-nameless', { id: '33333333-3333-4333-8333-333333333333', email: 'rahul.s@example.test', user_metadata: {}, app_metadata: {} });
+  const namelessAccount = (await json(await request('/api/account', { token: 'supabase-token-nameless' }))).body;
+  assert.deepEqual([namelessAccount.user.name, namelessAccount.user.display_name, namelessAccount.user.initials], ['', 'rahul.s', 'RS']);
+  assert.equal(displayName({ name: '  Rahul\u0000  S​ ' }), 'Rahul S', 'control and format characters are removed');
+  assert.equal(displayName({ first_name: 'Ada', last_name: 'Lovelace' }), 'Ada Lovelace');
+  assert.equal(displayName({ username: 'octocat' }), 'octocat');
+  assert.equal(displayName({}, { email: 'x@example.test' }), 'x');
+  assert.equal(displayName({}), 'Zero-X user');
+  assert.equal(Array.from(displayName({ name: '\u{1F600}'.repeat(200) })).length, 80, 'display names are capped');
+  assert.deepEqual(['Alice Example', 'bob', 'Mary Ann Smith', 'rahul_s', 'élodie durand', '李 小龙', '\u{1F600}', '', '42 Labs'].map(initials),
+    ['AE', 'B', 'MS', 'RS', 'ÉD', '李小', '?', '?', '4L']);
+  assert.equal(credentialExpiresAt({}, { kind: 'session', session: { created: 0, expires: 86400000 } }), '1970-01-02T00:00:00.000Z');
+  assert.equal(credentialExpiresAt({ SESSION_TTL_HOURS: '24' }, { kind: 'session', session: { created: 0 } }), '1970-01-02T00:00:00.000Z',
+    'sessions created before hashed storage keep their 24 h lifetime');
+  for (const token of ['', 'opaque', 'a.b.c', 'a.' + Buffer.from('{"exp":"soon"}').toString('base64url') + '.c']) {
+    assert.equal(credentialExpiresAt({}, { kind: 'supabase' }, token), null, token);
+  }
+  assert.equal(credentialExpiresAt({}, { kind: 'api_key' }, jwtToken), null);
 
   // ── 6. GET /api/usage ──
   db.usage.series = [
@@ -551,6 +605,8 @@ try {
   db.usage.byModel = [
     { model: 'groq/openai/gpt-oss-20b', requests: 1, prompt_tokens: 100, completion_tokens: 10, cost_microusd: 0 },
     { model: 'gemini/gemini-2.5-flash', requests: 4, prompt_tokens: 400, completion_tokens: 40, cost_microusd: 1234572 },
+    { model: 'anthropic/claude-sonnet-5-5', requests: 1, prompt_tokens: 20800, cache_read_tokens: 16000, cache_write_tokens: 4000,
+      completion_tokens: 800, cost_microusd: 26500 },
   ];
   let usage = await json(await request('/api/usage', { token: sessionToken }));
   assert.equal(usage.status, 200);
@@ -561,8 +617,11 @@ try {
   assert.deepEqual(usage.body.series.at(-1), { day: today, requests: 2, prompt_tokens: 200, completion_tokens: 20, cost_usd: 0.000005 });
   assert.deepEqual(usage.body.series[0], { day: dayOffset(-29), requests: 0, prompt_tokens: 0, completion_tokens: 0, cost_usd: 0 });
   assert.deepEqual(usage.body.totals, { requests: 5, prompt_tokens: 500, completion_tokens: 50, cost_usd: 1.234572 });
-  assert.deepEqual(usage.body.by_model.map(row => row.model), ['gemini/gemini-2.5-flash', 'groq/openai/gpt-oss-20b']);
+  assert.deepEqual(usage.body.by_model.map(row => row.model), ['gemini/gemini-2.5-flash', 'anthropic/claude-sonnet-5-5', 'groq/openai/gpt-oss-20b']);
   assert.equal(usage.body.by_model[0].cost_usd, 1.234572);
+  assert.deepEqual(usage.body.by_model[1], { model: 'anthropic/claude-sonnet-5-5', requests: 1, prompt_tokens: 20800, completion_tokens: 800,
+    cost_usd: 0.0265, cache_read_tokens: 16000, cache_write_tokens: 4000 }, 'by model: prompt-cache reads and writes (part of prompt_tokens)');
+  assert.deepEqual([usage.body.by_model[0].cache_read_tokens, usage.body.by_model[0].cache_write_tokens], [0, 0]);
   assert.deepEqual(db.calls.filter(call => call.name === 'zerox_usage_series').at(-1).args, { p_user_id: userA.id, p_from: dayOffset(-29), p_to: today });
   usage = await json(await request(`/api/usage?from=${dayOffset(-91)}&to=${today}`, { token: sessionToken }));
   assert.equal(usage.status, 200);
@@ -580,12 +639,14 @@ try {
   db.usage.events = Array.from({ length: 5 }, (_, index) => ({
     id: index + 1, created_at: `${today}T00:0${index}:00Z`, model: 'groq/openai/gpt-oss-20b', provider: 'groq', tier: 'free',
     status: 'ok', prompt_tokens: 10, completion_tokens: 2, cost_microusd: index * 1000, latency_ms: 120, request_id: `req_${index}`, user_id: userA.id,
+    cache_read_tokens: index === 4 ? 6 : 0, cache_write_tokens: index === 4 ? 2 : 0,
   }));
   let page = await json(await request('/api/usage/events?limit=2', { token: sessionToken }));
   assert.deepEqual(page.body.events.map(event => event.id), [5, 4]);
   assert.equal(page.body.next_before, 4);
-  assert.deepEqual(Object.keys(page.body.events[0]).sort(), ['completion_tokens', 'cost_usd', 'created_at', 'id', 'latency_ms', 'model',
-    'prompt_tokens', 'provider', 'request_id', 'status', 'tier']);
+  assert.deepEqual(Object.keys(page.body.events[0]).sort(), ['cache_read_tokens', 'cache_write_tokens', 'completion_tokens', 'cost_usd',
+    'created_at', 'id', 'latency_ms', 'model', 'prompt_tokens', 'provider', 'request_id', 'status', 'tier']);
+  assert.deepEqual([page.body.events[0].cache_read_tokens, page.body.events[0].cache_write_tokens, page.body.events[1].cache_read_tokens], [6, 2, 0]);
   assert.equal(page.body.events[0].cost_usd, 0.004);
   assert.deepEqual(db.calls.filter(call => call.name === 'zerox_usage_events').at(-1).args, { p_user_id: userA.id, p_limit: 3, p_before: null });
   page = await json(await request(`/api/usage/events?limit=2&before=${page.body.next_before}`, { token: sessionToken }));
@@ -678,10 +739,19 @@ try {
 
   // ── 9. /health trimming, admin overview, scheduled maintenance ──
   const operatorEnv = { ...env, GATEWAY_ADMIN_TOKEN: OPERATOR };
-  assert.deepEqual((await json(await request('/health', { bindings: operatorEnv }))).body, { status: 'ok', service: 'neuroncli-gateway-worker', version: '2.0.0' });
+  assert.deepEqual((await json(await request('/health', { bindings: operatorEnv }))).body,
+    { status: 'ok', service: 'neuroncli-gateway-worker', version: '2.0.0', commit: null });
   assert.deepEqual(Object.keys((await json(await request('/health', { bindings: operatorEnv, token: 'wrong-operator-token-value' }))).body).sort(),
-    ['service', 'status', 'version']);
+    ['commit', 'service', 'status', 'version']);
+  // The deployed commit (C9: deploy.yml's --var GIT_COMMIT on the Worker, the release's REVISION on
+  // EC2), so a deploy can tell both runtimes run the same code.
+  assert.deepEqual((await json(await request('/health', { bindings: { ...operatorEnv, GIT_COMMIT: '1d4c444' } }))).body,
+    { status: 'ok', service: 'neuroncli-gateway-worker', version: '2.0.0', commit: '1d4c444' });
+  assert.equal((await json(await request('/health', { bindings: { ...operatorEnv, GIT_COMMIT: '' } }))).body.commit, null);
   const fullHealth = await json(await request('/health', { bindings: operatorEnv, token: OPERATOR }));
+  assert.equal(fullHealth.body.commit, null);
+  assert.equal((await json(await request('/health', { bindings: { ...operatorEnv, GIT_COMMIT: '1d4c444' }, token: OPERATOR }))).body.commit,
+    '1d4c444', 'the operator view reports it too');
   assert.equal(fullHealth.body.database_configured, true);
   assert.equal(fullHealth.body.billing_configured, false);
   assert.equal(fullHealth.body.session_encryption, false);
@@ -705,7 +775,11 @@ try {
   assert.equal(groqFree.health.circuit_open, true);
   assert.equal(pools.find(pool => pool.model === 'groq/openai/gpt-oss-120b' && pool.tier === 'paid').limits, null, 'paid pools have no shared budget');
   assert.equal(pools.find(pool => pool.model === 'gemini/gemini-2.5-flash' && pool.tier === 'free').health.status, 'HEALTHY');
-  assert.ok(pools.every(pool => ['model', 'tier', 'requests_today', 'tokens_today', 'limits', 'health'].every(key => key in pool)));
+  assert.ok(pools.every(pool => ['model', 'tier', 'requests_today', 'tokens_today', 'cost_today_microusd', 'limits', 'health'].every(key => key in pool)));
+  const spend = overviewPools({ GROQ_API_KEY: 'g', GROQ_PAID_API_KEY: 'p' }, [{ model: 'groq/openai/gpt-oss-120b', tier: 'paid', requests_today: 3,
+    cost_today_microusd: 4200 }], tracker).find(pool => pool.model === 'groq/openai/gpt-oss-120b' && pool.tier === 'paid');
+  assert.deepEqual([spend.cost_today_microusd, spend.spend_cap_microusd], [4200, 6250000], 'paid pools: spend today against the billed daily cap');
+  assert.ok(!('spend_cap_microusd' in groqFree), 'free pools have no spend cap');
   assert.equal(pools.find(pool => pool.model === 'retired/model').requests_today, 2, 'counters of pools no longer offered stay visible');
   assert.ok(Array.isArray(overview.body.pools) && overview.body.pools.some(pool => pool.limits), 'the route returns the merged pools');
   db.fail.add('zerox_admin_overview');

@@ -1,0 +1,20 @@
+{
+  "Statement": [
+    {
+      "Effect": "Deny",
+      "Action": ["Update:Replace", "Update:Delete"],
+      "Principal": "*",
+      "Resource": [
+        "LogicalResourceId/Instance",
+        "LogicalResourceId/InstanceConnectEndpoint",
+        "LogicalResourceId/KeyPair"
+      ]
+    },
+    {
+      "Effect": "Allow",
+      "Action": "Update:*",
+      "Principal": "*",
+      "Resource": "*"
+    }
+  ]
+}

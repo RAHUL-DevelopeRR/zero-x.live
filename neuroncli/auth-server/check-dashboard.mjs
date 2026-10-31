@@ -270,11 +270,11 @@ function dashboardRoutes(state) {
     'GET /api/usage': {from: '2026-09-17', to: '2026-10-16', series: [
       {day: '2026-10-01', requests: 12, prompt_tokens: 9000, completion_tokens: 1000, cost_usd: 0.01},
       {day: '2026-10-16', requests: 40, prompt_tokens: 30000, completion_tokens: 4000, cost_usd: 0.02}],
-    by_model: [{model: '<b>groq/openai/gpt-oss-120b</b>', requests: 52, prompt_tokens: 39000, completion_tokens: 5000, cost_usd: 0.03}],
+    by_model: [{model: '<b>groq/openai/gpt-oss-120b</b>', requests: 52, prompt_tokens: 39000, cache_read_tokens: 30000, cache_write_tokens: 4000, completion_tokens: 5000, cost_usd: 0.03}],
     totals: {requests: 52, prompt_tokens: 39000, completion_tokens: 5000, cost_usd: 0.03}},
     'GET /api/usage/events': call => call.path.includes('before=123')
       ? {events: [{id: 100, created_at: '2026-10-15T09:00:00Z', model: 'gemini/gemini-2.5-flash', provider: 'gemini', tier: 'free', status: 'ok', prompt_tokens: 10, completion_tokens: 5, cost_usd: 0, latency_ms: 800, request_id: 'req_old'}], next_before: null}
-      : {events: [{id: 124, created_at: '2026-10-16T17:00:00Z', model: XSS, provider: 'groq', tier: 'paid', status: 'error', prompt_tokens: 100, completion_tokens: 20, cost_usd: 0.0012, latency_ms: 1200, request_id: 'req_new'}], next_before: 123},
+      : {events: [{id: 124, created_at: '2026-10-16T17:00:00Z', model: XSS, provider: 'groq', tier: 'paid', status: 'error', prompt_tokens: 100, cache_read_tokens: 80, cache_write_tokens: 15, completion_tokens: 20, cost_usd: 0.0012, latency_ms: 1200, request_id: 'req_new'}], next_before: 123},
     'GET /api/keys': () => ({keys: state.keys}),
     'POST /api/keys': call => { state.keys.unshift({id: 'k-new', name: call.body.name, prefix: 'nzx_A1b2', created_at: '2026-10-16T18:00:00Z', last_used_at: null, revoked_at: null}); return json(201, {key: state.keys[0], secret: SECRET}); },
     'DELETE /api/keys/*': call => { const id = call.path.split('/').pop(); state.keys = state.keys.map(k => k.id === id ? {...k, revoked_at: '2026-10-16T18:01:00Z'} : k); return {status: 'revoked'}; },
@@ -285,7 +285,9 @@ function dashboardRoutes(state) {
     'POST /api/billing/cancel': () => { state.cancelled = true; return {status: 'cancel_scheduled', current_period_end: '2026-11-01T00:00:00Z'}; },
     'POST /api/billing/topup': call => ({provider: 'razorpay', key_id: 'rzp_test_AbCdEf123456', order_id: 'order_TEST123456', amount_minor: call.body.currency === 'INR' ? 44900 : 500, currency: call.body.currency, name: 'Zero-X', description: 'Credits', prefill: {email: 'owner@example.com', name: 'Owner'}}),
     'POST /api/billing/verify': {status: 'ok', account: {}},
-    'POST /api/sessions/revoke-all': call => (call.body && call.body.api_keys ? {revoked: 3, api_keys_revoked: 2} : {revoked: 3}),
+    'POST /api/sessions/revoke-all': call => { state.sessions = []; return call.body && call.body.api_keys ? {revoked: 3, api_keys_revoked: 2} : {revoked: 3}; },
+    'GET /api/sessions': () => ({sessions: state.sessions}),
+    'DELETE /api/sessions/*': call => { const id = call.path.split('/').pop(); state.sessions = state.sessions.filter(s => s.id !== id); return {status: 'revoked', current: false}; },
   };
 }
 
@@ -298,6 +300,14 @@ async function mountDashboard({profile = PROFILE, hash = '', state = {}, routes 
   const shared = {keys: [
     {id: 'k-1', name: 'Laptop', prefix: 'nzx_Qw12', created_at: '2026-10-01T00:00:00Z', last_used_at: '2026-10-15T00:00:00Z', revoked_at: null},
     {id: 'k-0', name: 'Old CI', prefix: 'nzx_Zz99', created_at: '2026-09-01T00:00:00Z', last_used_at: null, revoked_at: '2026-09-10T00:00:00Z'}],
+  sessions: [
+    {id: 'aaaaaaaaaaaaaaaaaaaaaaaa', device_name: XSS, os: 'Windows 11', client: {name: 'neuron-cli', version: '6.3.0'}, created_at: '2026-10-01T00:00:00Z',
+      last_used_at: '2026-10-16T17:00:00Z', expires_at: '2026-11-15T17:00:00Z', current: true},
+    {id: 'bbbbbbbbbbbbbbbbbbbbbbbb', device_name: 'studio', os: 'macOS 15', client: {name: 'neuron-desktop', version: '0.2.0'}, created_at: '2026-10-02T00:00:00Z',
+      last_used_at: null, expires_at: '2026-11-01T00:00:00Z', current: false},
+    {id: 'cccccccccccccccccccccccc', device_name: null, os: null, client: {name: null, version: null}, created_at: '2026-10-03T00:00:00Z',
+      last_used_at: null, expires_at: '2026-11-02T00:00:00Z', current: false},
+    {id: '../../admin', device_name: 'forged'}],
   cancelled: false, account: () => accountPayload(), ...state};
   const doc = parseDocument(DASHBOARD_HTML);
   const auth = makeAuth(profile);
@@ -350,10 +360,10 @@ async function mountDashboard({profile = PROFILE, hash = '', state = {}, routes 
   // Copy quick-start command.
   doc.querySelector('[data-copy-target="qs-install"]').click();
   await settle();
-  assert.equal(win.copied, 'curl -fsSL https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.1/install.sh | sh -s -- --version 7.0.0-alpha.1');
+  assert.equal(win.copied, 'curl -fsSL https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.2/install.sh | sh -s -- --version 7.0.0-alpha.2');
   doc.querySelector('[data-copy-target="qs-install-win"]').click();
   await settle();
-  assert.equal(win.copied, '& ([scriptblock]::Create((irm https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.1/install.ps1))) -Version 7.0.0-alpha.1');
+  assert.equal(win.copied, '& ([scriptblock]::Create((irm https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.2/install.ps1))) -Version 7.0.0-alpha.2');
 
   // Hash routing to Usage.
   win.location.hash = '#usage';
@@ -373,6 +383,8 @@ async function mountDashboard({profile = PROFILE, hash = '', state = {}, routes 
   assert.equal(Number(chart.querySelectorAll('rect')[1].getAttribute('height')), 160, 'Bars scale to the nice maximum (40 of 50)');
   assert.equal($('usage-days').querySelectorAll('tr').length, 30, 'Table fallback lists every day');
   assert.equal($('usage-models').querySelector('code').textContent, '<b>groq/openai/gpt-oss-120b</b>');
+  assert.deepEqual($('usage-models').querySelector('tr').querySelectorAll('td').map(cell => cell.textContent), ['52', '39,000', '30,000', '5,000', '$0.03'],
+    'By model shows cached prompt tokens after prompt tokens');
   assert.equal($('usage-total-requests').textContent, '52');
   assert.equal($('usage-total-cost').textContent, '$0.03');
   doc.querySelector('[data-metric="tokens"]').click();
@@ -380,12 +392,18 @@ async function mountDashboard({profile = PROFILE, hash = '', state = {}, routes 
   assert.match($('usage-chart-caption').textContent, /^Tokens per day/);
   // Events pagination with next_before cursors.
   assert.equal($('usage-events').querySelector('code').textContent, XSS);
+  const cachedTokens = $('usage-events').querySelector('tr').querySelectorAll('td')[4];
+  assert.equal(cachedTokens.textContent, '120 (80 cached)');
+  assert.equal(cachedTokens.getAttribute('title'), '80 read from the prompt cache, 15 written to it');
   assert.equal($('events-newer').disabled, true);
   assert.equal($('events-older').disabled, false);
   $('events-older').click();
   await settle();
   assert.ok(calls.some(call => call.path === '/api/usage/events?limit=25&before=123'));
   assert.equal($('events-page').textContent, 'Page 2');
+  const plainTokens = $('usage-events').querySelector('tr').querySelectorAll('td')[4];
+  assert.equal(plainTokens.textContent, '15', 'no cache note without cached prompt tokens');
+  assert.equal(plainTokens.getAttribute('title'), null);
   assert.equal($('events-older').disabled, true);
   assert.equal($('events-newer').disabled, false);
   $('events-newer').click();
@@ -499,9 +517,30 @@ async function mountDashboard({profile = PROFILE, hash = '', state = {}, routes 
   assert.equal($('billing-status').textContent, 'Checkout closed. You have not been charged.');
   assert.equal($('billing-error').textContent, '');
 
-  // Sessions.
+  // Sessions: the signed-in devices list (A9), signing out one device, then all of them.
   win.location.hash = '#sessions';
   await settle();
+  assert.ok(calls.some(call => call.method === 'GET' && call.path === '/api/sessions'));
+  const deviceRows = () => [...$('sessions-list').querySelectorAll('tr')];
+  assert.equal(deviceRows().length, 3, 'one row per signed-in device');
+  assert.ok(deviceRows()[0].textContent.includes(XSS), 'device names are shown as text');
+  assert.ok(deviceRows()[0].textContent.includes('This device'));
+  assert.ok(deviceRows()[1].textContent.includes('neuron-desktop 0.2.0'));
+  assert.ok(deviceRows()[2].textContent.includes('Unnamed device'), 'a session without a reported device still lists');
+  const signOutDevice = () => $('sessions-list').querySelector('button[data-session-id="bbbbbbbbbbbbbbbbbbbbbbbb"]');
+  signOutDevice().click();
+  await settle();
+  assert.match($('confirm-body').textContent, /"studio" is signed out of Zero-X/);
+  $('confirm-cancel').click();
+  await settle();
+  assert.ok(!calls.some(call => call.method === 'DELETE' && call.path.startsWith('/api/sessions/')), 'cancelling keeps the device signed in');
+  signOutDevice().click();
+  await settle();
+  $('confirm-ok').click();
+  await settle();
+  assert.ok(calls.some(call => call.method === 'DELETE' && call.path === '/api/sessions/bbbbbbbbbbbbbbbbbbbbbbbb'));
+  assert.equal(signOutDevice(), null, 'the list reloads without the signed-out device');
+  assert.equal(deviceRows().length, 2);
   $('sessions-revoke').click();
   await settle();
   $('confirm-ok').click();
@@ -509,6 +548,7 @@ async function mountDashboard({profile = PROFILE, hash = '', state = {}, routes 
   assert.ok(calls.some(call => call.method === 'POST' && call.path === '/api/sessions/revoke-all'));
   assert.match($('sessions-status').textContent, /Signed out 3 CLI sessions\./);
   assert.deepEqual(calls.filter(call => call.path === '/api/sessions/revoke-all').at(-1).body, {});
+  assert.match($('sessions-list').textContent, /No device is signed in/, 'the list reloads after signing out everywhere');
   // Review P3 (integration): revoke-all can also revoke every API key (a leaked session can mint keys).
   $('sessions-keys').checked = true;
   $('sessions-revoke').click();
@@ -669,7 +709,7 @@ async function mountPricing({profile = null, routes = {}, hostname = 'zero-x.liv
   const freeFeatures = doc.querySelector('[data-plan-features="free"]').querySelectorAll('li');
   assert.equal(freeFeatures[1].textContent, XSS, 'API feature strings render as text');
   assert.equal(freeFeatures[1].querySelectorAll('img').length, 0);
-  assert.equal(doc.querySelector('[data-plan-features="pro"]').querySelectorAll('li').length, 3, 'Empty API features keep the static list');
+  assert.equal(doc.querySelector('[data-plan-features="pro"]').querySelectorAll('li').length, 5, 'Empty API features keep the static list');
   assert.equal(doc.querySelector('[data-currency="USD"]').getAttribute('aria-pressed'), 'true');
   doc.querySelector('[data-currency="INR"]').click();
   assert.equal(doc.querySelector('[data-plan-price="pro"]').textContent, '₹899');
@@ -786,7 +826,10 @@ for (const scenario of ['live', 'offline']) {
     assert.equal(rows[2].querySelectorAll('td')[4].textContent, 'Pro and Max');
     assert.match(doc.getElementById('models-status').textContent, /Live catalog from the Zero-X gateway: 3 models/);
   } else {
-    assert.equal(rows.length, 13, 'The static catalog (12 models plus auto) stays when /v1/models is unreachable');
+    assert.equal(rows.length, 15, 'The static catalog (14 models plus auto) stays when /v1/models is unreachable');
+    assert.deepEqual(rows.slice(-2).map(row => [...row.querySelectorAll('td')].map(cell => cell.textContent)), [
+      ['anthropic/claude-sonnet-5-5', 'Anthropic', '200,000', 'Yes', 'Pro and Max'],
+      ['anthropic/claude-opus-5-5', 'Anthropic', '200,000', 'Yes', 'Pro and Max']], 'the static catalog lists Claude for Pro and Max');
     assert.match(doc.getElementById('models-status').textContent, /Default catalog shown/);
   }
 }

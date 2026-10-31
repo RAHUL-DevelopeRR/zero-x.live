@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import app from './src/index.js';
-import { ADAPTERS, classifyUpstreamFailure, modelCatalog, providerConfiguration, providerHealth, requestCompletion,
-  resolveModelCatalog, startCompletion } from './src/providers.js';
+import { ADAPTERS, PROVIDER_PARAMS, buildUpstreamPayload, classifyUpstreamFailure, createCompletionStream, modelCatalog,
+  providerConfiguration, providerHealth, requestCompletion, resolveModelCatalog, startCompletion } from './src/providers.js';
 import { CATALOG } from './src/catalog.js';
+import { KEY_SLOTS, PROVIDER_TYPES, baseUrlFor } from './src/catalog-types.js';
+import { BUILTIN_OFFERS, loadOffers, offerById } from './src/oiop/offers.js';
 
 const originalFetch = globalThis.fetch;
 const providers = {
@@ -179,14 +181,175 @@ try {
   assert.equal((await probe('/v1/providers/health', null)).status, 401);
   assert.equal((await probe('/v1/providers/health', null, probeEnv.GATEWAY_ADMIN_TOKEN)).status, 200);
   assert.equal((await probe('/v1/models/health', 'auto', 'bad')).status, 401);
-  const response = await probe('/v1/models/health', 'auto');
+  const response = await probe('/v1/models/health', 'llama-3.3-70b');
   assert.equal(response.status, 200);
   assert.equal((await response.json()).status, 'healthy');
   assert.equal(JSON.parse(sessions.get('ses_probe')).tokens_used, 3);
   assert.equal(JSON.parse(sessions.get('ses_probe')).requests, 1);
+  // Workers AI llama-3.3 is explicit-only, so a gateway with only the AI binding has no auto model.
+  assert.equal((await probe('/v1/models/health', 'auto')).status, 503);
   probeEnv.AI.run = async () => ({ response: '' });
-  assert.equal((await probe('/v1/models/health', 'auto')).status, 502);
+  assert.equal((await probe('/v1/models/health', 'llama-3.3-70b')).status, 502);
   sessions.set('ses_probe', JSON.stringify({ ...JSON.parse(sessions.get('ses_probe')), tokens_used: 256000 }));
-  assert.equal((await probe('/v1/models/health', 'auto')).status, 429);
+  assert.equal((await probe('/v1/models/health', 'llama-3.3-70b')).status, 429);
+  // onFinish settles the attempt's reservation (and frees its concurrency slot), so a committed
+  // stream calls it exactly once even when releasing the upstream reader fails: on an upstream
+  // error, on a client cancel, when the stream's idle watchdog fires and after [DONE].
+  for (const scenario of ['upstream_error', 'client_cancel', 'idle_timeout', 'done']) {
+    const finishes = [];
+    const unhandled = [];
+    const onUnhandled = reason => unhandled.push(reason);
+    process.on('unhandledRejection', onUnhandled);
+    const pending = [JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] }), '[DONE]'];
+    // Like a ReadableStream reader, a cancel ends the read in flight even when it rejects.
+    let endRead = () => {};
+    const reader = {
+      lastByteAt: Date.now(),
+      next: scenario === 'upstream_error' ? async () => { throw new Error('connection reset'); }
+        : scenario === 'done' ? async () => pending.shift() ?? new Promise(() => {})
+          : () => new Promise(resolve => { endRead = () => resolve(null); }),
+      cancel: async () => {
+        endRead();
+        throw new Error('cancel failed');
+      },
+    };
+    const stream = createCompletionStream({ reader, first: JSON.stringify({ choices: [{ index: 0, delta: { content: 'hi' } }] }),
+      model: 'groq/chat-model', controller: new AbortController(), clientSignal: null,
+      timeouts: { idleMs: scenario === 'idle_timeout' ? 30 : 60000 },
+      onFinish: async outcome => { finishes.push(outcome); }, requestId: 'req_cancel', env: {} });
+    const client = stream.getReader();
+    let text = new TextDecoder().decode((await client.read()).value);
+    if (scenario === 'client_cancel') await client.cancel();
+    else for (let read = await client.read(); !read.done; read = await client.read()) text += new TextDecoder().decode(read.value);
+    await new Promise(resolve => setTimeout(resolve, 20));
+    process.off('unhandledRejection', onUnhandled);
+    assert.equal(finishes.length, 1, `${scenario}: onFinish runs exactly once`);
+    assert.equal(finishes[0].status, scenario === 'done' ? 'ok' : 'error', scenario);
+    const errorCode = { upstream_error: 'upstream_error', client_cancel: 'client_disconnected', idle_timeout: 'upstream_timeout' }[scenario];
+    if (scenario !== 'done') assert.equal(finishes[0].errorCode, errorCode);
+    if (scenario === 'upstream_error' || scenario === 'idle_timeout') assert.match(text, new RegExp(errorCode), 'the client still gets the error event');
+    if (scenario === 'done') assert.match(text, /\[DONE\]/);
+    assert.deepEqual(unhandled, [], `${scenario}: a failed cancel is not an unhandled rejection`);
+  }
+  // Upstream hosts come from the provider-type registry (src/catalog-types.js) only.
+  for (const type of ['gemini', 'groq', 'nvidia', 'openrouter', 'zai']) {
+    assert.equal(ADAPTERS[type].getBaseUrl({}), PROVIDER_TYPES[type].base_url, `${type}: the adapter calls the registry's base URL`);
+  }
+  const omniEnv = { OMNIROUTE_BASE_URL: 'https://router.example/v1/' };
+  assert.equal(ADAPTERS.omniroute.getBaseUrl(omniEnv), baseUrlFor('omniroute', omniEnv));
+  assert.equal(ADAPTERS.omniroute.getBaseUrl({ OMNIROUTE_BASE_URL: 'http://router.example/v1' }), null, 'plain http only on loopback');
+  // An offer's base_url is display only: a database offer naming another host never moves a request.
+  const offerEnv = { SUPABASE_URL: 'https://db.example.invalid', SUPABASE_SECRET_KEY: 'sb_secret_check', GEMINI_API_KEY: 'gemini-key' };
+  const fetched = [];
+  globalThis.fetch = async (url, options) => {
+    if (String(url).endsWith('/rpc/zerox_offers_list')) {
+      return Response.json(BUILTIN_OFFERS.map(offer => ({ ...offer, base_url: 'https://evil.example/v1' })));
+    }
+    fetched.push(String(url));
+    assert.equal(options.headers.Authorization, 'Bearer gemini-key');
+    return Response.json({ choices: [{ message: { content: 'OK' } }] });
+  };
+  await loadOffers(offerEnv);
+  assert.equal(offerById(offerEnv, 'gemini.free').base_url, 'https://evil.example/v1');
+  const flash = CATALOG.find(entry => entry.id === 'gemini/gemini-2.5-flash');
+  assert.equal((await requestCompletion(offerEnv, {}, flash, { messages: [{ role: 'user', content: 'Hi' }], max_tokens: 8 }, undefined,
+    flash.pools[0])).status, 200);
+  assert.deepEqual(fetched, ['https://generativelanguage.googleapis.com/v1beta/openai/chat/completions']);
+
+  // Workers AI REST fallback: model ids are encoded per path segment and dot segments are refused.
+  const restEnv = { CLOUDFLARE_ACCOUNT_ID: 'acct/1', CLOUDFLARE_API_TOKEN: 'cf-token' };
+  const llama = CATALOG.find(entry => entry.id === '@cf/meta/llama-3.3-70b-instruct-fp8-fast');
+  const restUrls = [];
+  globalThis.fetch = async (url, options) => {
+    restUrls.push(url);
+    assert.equal(options.redirect, 'manual');
+    assert.equal(options.headers.Authorization, 'Bearer cf-token');
+    return Response.json({ success: true, result: { response: 'OK' } });
+  };
+  const hello = { messages: [{ role: 'user', content: 'Hi' }], max_tokens: 8 };
+  assert.equal((await requestCompletion(restEnv, {}, llama, hello)).status, 200);
+  assert.equal((await requestCompletion(restEnv, {}, { ...llama, upstream_model: '@cf/acme/model?x=1#y' }, hello)).status, 200);
+  assert.deepEqual(restUrls, ['https://api.cloudflare.com/client/v4/accounts/acct%2F1/ai/run/@cf/meta/llama-3.3-70b-instruct-fp8-fast',
+    'https://api.cloudflare.com/client/v4/accounts/acct%2F1/ai/run/@cf/acme/model%3Fx%3D1%23y']);
+  for (const model of ['@cf/../../accounts/x', '@cf/meta/..', '@cf/%2e%2E/x', '@cf//x', '@cf/meta/.']) {
+    await assert.rejects(requestCompletion(restEnv, {}, { ...llama, upstream_model: model }, hello), /not a plain model path/, model);
+  }
+  assert.equal(restUrls.length, 2, 'a refused id never reaches the network');
+
+  // Claude: registered with the catalog's key slot, sampling parameters filtered, only
+  // api.anthropic.com, never a followed redirect.
+  const sonnet = CATALOG.find(entry => entry.id === 'anthropic/claude-sonnet-5-5');
+  assert.equal(ADAPTERS.anthropic.id, 'anthropic');
+  assert.equal(ADAPTERS.anthropic.getBaseUrl(), 'https://api.anthropic.com/v1');
+  assert.equal(ADAPTERS.anthropic.getBaseUrl(), `${PROVIDER_TYPES.anthropic.base_url}/v1`);
+  assert.deepEqual(sonnet.pools.map(pool => [pool.tier, pool.key_slot, pool.key_var]), [['paid', 'anthropic.paid', 'ANTHROPIC_API_KEY']]);
+  assert.deepEqual(PROVIDER_PARAMS.anthropic, ['tools', 'tool_choice', 'stop', 'response_format', 'parallel_tool_calls', 'reasoning_effort']);
+  const claudePayload = buildUpstreamPayload(sonnet, { messages: [{ role: 'user', content: 'Hi' }], temperature: 0.3, top_p: 0.9, seed: 1,
+    user: 'u', presence_penalty: 1, frequency_penalty: 1, reasoning_effort: 'high' }, 1024);
+  assert.ok(!['temperature', 'top_p', 'seed', 'user', 'presence_penalty', 'frequency_penalty'].some(name => name in claudePayload));
+  assert.equal(claudePayload.reasoning_effort, 'high');
+  const claudeEnv = { ANTHROPIC_API_KEY: 'sk-ant-api03-providers-check' };
+  const claudeCalls = [];
+  globalThis.fetch = async (url, options) => {
+    claudeCalls.push(String(url));
+    assert.equal(options.redirect, 'manual', 'x-api-key must never follow a redirect');
+    assert.equal(new Headers(options.headers).get('x-api-key'), claudeEnv.ANTHROPIC_API_KEY);
+    const body = JSON.parse(options.body);
+    assert.ok(!('temperature' in body) && !('top_p' in body) && !('top_k' in body));
+    return new Response('moved', { status: 302, headers: { Location: 'https://evil.example/v1/messages' } });
+  };
+  const claudeRedirect = await startCompletion(claudeEnv, {}, sonnet, sonnet.pools[0], claudePayload);
+  assert.deepEqual([claudeRedirect.ok, claudeRedirect.status], [false, 302]);
+  assert.equal(classifyUpstreamFailure(claudeRedirect.status, claudeRedirect.bodyText).kind, 'server');
+  assert.ok(!claudeRedirect.bodyText.includes('evil.example'), 'a redirect body is never forwarded');
+  assert.deepEqual(claudeCalls, ['https://api.anthropic.com/v1/messages?beta=true']);
+  const claudeConfig = providerConfiguration(claudeEnv).find(item => item.provider === 'anthropic');
+  assert.deepEqual([claudeConfig.configured, claudeConfig.catalog_source, claudeConfig.catalog_models],
+    [true, 'allowlist', ['anthropic/claude-sonnet-5-5', 'anthropic/claude-opus-5-5']]);
+  assert.equal(providerConfiguration({}).find(item => item.provider === 'anthropic').configured, false);
+  const claudeHealth = (await providerHealth(claudeEnv)).find(item => item.provider === 'anthropic');
+  assert.deepEqual([claudeHealth.status, claudeHealth.model_count, claudeHealth.inference_checked], ['configured', 2, false],
+    'operator health lists the Claude rows without a paid call');
+  assert.equal(claudeCalls.length, 1);
+
+  // Z.ai: key slot zai.free (GLM_API_KEY), api.z.ai only; operator health lists its catalog rows
+  // without a call (one request at a time on the free models).
+  const glm = CATALOG.find(entry => entry.id === 'zai/glm-4.7-flash');
+  assert.equal(ADAPTERS.zai.getBaseUrl({}), 'https://api.z.ai/api/paas/v4');
+  assert.deepEqual(glm.pools.map(pool => [pool.tier, pool.key_slot, pool.key_var]), [['free', 'zai.free', 'GLM_API_KEY']]);
+  assert.deepEqual(PROVIDER_PARAMS.zai, ['tools', 'tool_choice', 'stop', 'temperature', 'top_p', 'response_format',
+    'reasoning_effort']);
+  const zaiEnv = { GLM_API_KEY: 'zai-providers-check' };
+  const zaiCalls = [];
+  globalThis.fetch = async (url, options) => {
+    zaiCalls.push(String(url));
+    assert.equal(options.redirect, 'manual', 'the key never follows a redirect');
+    assert.equal(options.headers.Authorization, 'Bearer zai-providers-check');
+    return Response.json({ choices: [{ message: { content: 'OK' } }] });
+  };
+  assert.equal((await requestCompletion(zaiEnv, {}, glm, { messages: [{ role: 'user', content: 'Hi' }], max_tokens: 8 }, undefined,
+    glm.pools[0])).status, 200);
+  assert.deepEqual(zaiCalls, ['https://api.z.ai/api/paas/v4/chat/completions']);
+  const zaiConfig = providerConfiguration(zaiEnv).find(item => item.provider === 'zai');
+  assert.deepEqual([zaiConfig.configured, zaiConfig.catalog_models], [true, ['zai/glm-4.7-flash', 'zai/glm-4.5-flash']]);
+  const zaiHealth = (await providerHealth(zaiEnv)).find(item => item.provider === 'zai');
+  assert.deepEqual([zaiHealth.status, zaiHealth.model_count, zaiHealth.inference_checked], ['configured', 2, false]);
+  assert.equal(zaiCalls.length, 1, 'operator health makes no Z.ai call');
+
+  // deploy.yml pushes every provider key the hosted catalog reads: a secret missing from
+  // OPTIONAL_SECRETS or from either env block never reaches the Worker. Only the Worker's job is
+  // read here; job ec2 (the VM) is kept in step with it by check-aws-deploy.mjs.
+  const workflow = readFileSync(new URL('../../.github/workflows/deploy.yml', import.meta.url), 'utf8').replace(/\r\n/g, '\n')
+    .split(/^ {2}ec2:\n/m)[0];
+  const optional = workflow.match(/OPTIONAL_SECRETS: ([^\n]+)/)[1].trim().split(/\s+/);
+  const catalogKeys = [...new Set(CATALOG.flatMap(entry => entry.pools.map(pool => pool.key_var)).filter(Boolean))].sort();
+  assert.deepEqual(catalogKeys, ['ANTHROPIC_API_KEY', 'GEMINI_API_KEY', 'GEMINI_PAID_API_KEY', 'GLM_API_KEY', 'GROQ_API_KEY',
+    'GROQ_PAID_API_KEY', 'NVIDIA_API_KEY', 'OPENROUTER_API_KEY']);
+  for (const name of catalogKeys) {
+    assert.ok(Object.values(KEY_SLOTS).some(slot => slot.env === name), `${name} is a key slot`);
+    assert.ok(optional.includes(name), `${name} is in deploy.yml OPTIONAL_SECRETS`);
+    assert.equal(workflow.split(`          ${name}: \${{ secrets.${name} }}\n`).length - 1, 2, `${name} is in both deploy.yml env blocks`);
+  }
   console.log('Provider discovery health, verified catalog, per-pool credentials, credential isolation and quota-backed inference probes passed');
+  console.log('Registry base URLs (offers never move a request), Workers AI path encoding, the Claude adapter (slot, filtered params, api.anthropic.com only, redirect manual) and deploy.yml provider secrets passed');
 } finally { globalThis.fetch = originalFetch; }

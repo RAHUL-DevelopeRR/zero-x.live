@@ -29,7 +29,9 @@ environment/secret reference and the launch checklist are in [GATEWAY_SETUP.md](
   "Request compatibility".
 - **Quota and credits** (`migrations/2026101600*`). Every upstream attempt is reserved with
   `zerox_reserve_v2` (per-user daily caps, rpm, concurrency, credits and the shared pool budget,
-  atomically) and settled with `zerox_settle_v2` (real usage). Provider failures the upstream
+  atomically) and settled with `zerox_settle_v2` (real usage). A concurrency slot is a 90 s lease
+  the attempt renews while it runs, so a request whose isolate is killed frees its slot on its
+  own (docs/PLATFORM_CONTRACT.md section 8.5). Provider failures the upstream
   did not count (429, 5xx, network) are refunded to the caller and the pool; model errors and
   timeouts keep their pool share and are refunded to the caller within a daily allowance.
 - **Billing** (`src/routes/billing.js`, `src/routes/webhooks.js`). Razorpay subscriptions
@@ -86,6 +88,10 @@ Nothing below needs Supabase, Razorpay or provider accounts.
    npm run check:e2e        # end-to-end journey against the real server.js, fully offline
    npm run check:e2e:live   # same journey; chat steps use the real Groq/Gemini free pools
                             # (keys from .dev.vars, at most 10 calls)
+   npm run check:vault      # provider key vault: crypto, RPCs, admin API and page, per-key pools
+   npm run check:oiop       # OIOP offers, lifecycle, manifests, routing policy, scrubber, catalog, health
+   RACE_DATABASE_URL=postgresql://... npm run check:race   # 100 parallel reservations on a real,
+                            # disposable Postgres (npm i --no-save pg); skips without one
    node check-worker.mjs && node check-node-server.cjs && node check-auth-storage.mjs \
      && node check-callback.mjs && node check-cli-login.mjs && node check-dashboard.mjs && node check-seo.mjs
    ```
@@ -94,18 +100,31 @@ Nothing below needs Supabase, Razorpay or provider accounts.
    `os.tmpdir()` (set `TMP`/`TEMP` to move it), a fake OpenAI-compatible upstream and a fake
    Razorpay, and walks sign-in, models, streamed tool calls, usage, API keys, the daily cap,
    checkout, the charged webhook, paid-pool credits, a top-up, cancellation, revoke-all, the
-   admin overview and a static-site/CSP smoke test. `e2e-upstream-shim.mjs` (preloaded only by
+   admin overview, the provider key vault (add a key, serve with it, disable it) and a
+   static-site/CSP smoke test. `e2e-upstream-shim.mjs` (preloaded only by
    that test) refuses every non-loopback request. `check-seo.mjs --live` and
    `npm run check:production` contact the live site.
 
 ## Operations
 
-- `GET /health` answers `{status, service, version}`; with `Authorization: Bearer
+- `GET /health` answers `{status, service, version, commit}` (`commit`: `GIT_COMMIT`, the
+  deployed short SHA, or null); with `Authorization: Bearer
   $GATEWAY_ADMIN_TOKEN` it adds the configuration flags. `GET /ready` checks plan policies,
   session storage and the catalog.
-- `GET /admin/overview` (operator token) returns users, revenue, today's usage and every pool
-  with its counters, shared budget and circuit state. `GET /v1/providers/health` adds upstream
+- `GET /admin/overview` (operator token, plus Cloudflare Access when configured, like every
+  operator API) returns users, revenue, today's usage and every pool
+  with its counters, shared budget and circuit state.
+- `https://dashboard.zero-x.live/admin/keys` (Cloudflare Access + operator token) adds, lists and
+  disables free-tier provider keys (`/admin/providers/keys`, contract §11.1). Keys are stored
+  AES-GCM-encrypted under `PROVIDER_KEYS_KEK`, become one pool each, and never leave the server. `GET /v1/providers/health` adds upstream
   discovery, per-pool health and ignored `*_MODELS` entries.
+- Free credit programs (contract §12.6): `GET /admin/credits` lists what the weekly discovery
+  found, with quoted evidence and the next step for each; record applications and grants with
+  `POST /admin/credits/:id/transition`.
+- OIOP offers (`docs/OIOP.md`, contract §12): `GET /admin/offers` lists the offers behind every
+  pool with their terms, trust tier and lifecycle; `POST /admin/offers/:id/transition` suspends,
+  approves or retires one (audited in `zerox_offer_events`); `POST /admin/offers/:id/manifest`
+  signs its manifest with `OIOP_SIGNING_JWK`.
 - Upstream rejections are logged as `Neuron upstream rejected request` (error) plus `Neuron
   upstream error detail` (warn): a sanitized summary with the provider's error code/status,
   quota violations, retry delay and a redacted excerpt of its message (GATEWAY_SETUP.md,
@@ -120,8 +139,11 @@ Nothing below needs Supabase, Razorpay or provider accounts.
   `concurrency_limit`, `allowed_tiers`, `monthly_credit_microusd`, prices and Razorpay plan
   ids). Edits apply to enforcement immediately and to the gateway's cached view within 60 s.
 - Containers: `docker build -t neuron-server .` then `docker run --env-file .env -p 8787:8787
-  neuron-server`. Put a TLS proxy in front; never enable `DEV_AUTH_ENABLED` or the PGlite driver
-  there (both are refused outside loopback and under `NODE_ENV=production`, and dev tokens are
-  also refused on browser requests from a non-loopback `Origin`).
+  neuron-server`. Put a TLS proxy in front, and set `EXTRA_WEB_HOSTS` to the public host it
+  serves: the image sets `NODE_ENV=production`, under which the server answers only the hosts
+  listed there (plus `GET /health` and `/ready`) and refuses everything else with a 403
+  (GATEWAY_SETUP.md, `NODE_ENV`). Never enable `DEV_AUTH_ENABLED` or the PGlite driver there
+  (both are refused outside loopback and under `NODE_ENV=production`, and dev tokens are also
+  refused on browser requests from a non-loopback `Origin`).
 
 See [PROVIDERS.md](PROVIDERS.md) for upstream adapters and operator health probes.

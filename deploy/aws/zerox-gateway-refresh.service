@@ -1,0 +1,16 @@
+# The gateway after an upgrade: apt starts this after every dpkg run (zerox-apt-refresh.conf),
+# never at boot. /usr/local/sbin/zerox-gateway-refresh (from zerox-gateway-refresh.sh) activates
+# the current release again, as deploy, when a running instance maps a file the upgrade replaced;
+# otherwise it does nothing. host-setup.sh installs this file.
+#
+# Root runs only its own copy of the script (root-owned, under /usr/local/sbin), never a file in
+# a release, which the deploy user can write; the swap itself runs as deploy.
+[Unit]
+Description=Zero-X gateway: swap instances onto upgraded node or libraries
+Documentation=https://github.com/RAHUL-DevelopeRR/zero-x.live/tree/main/deploy/aws
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/zerox-gateway-refresh
+# The swap waits up to 150 s for /ready and up to 120 s for the old instance to drain.
+TimeoutStartSec=330
