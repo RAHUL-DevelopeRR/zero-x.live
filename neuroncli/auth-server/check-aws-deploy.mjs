@@ -64,17 +64,54 @@ for (const name of ['NODE_ENV', 'AUTH_HOST', 'AUTH_PORT', 'AUTH_REUSE_PORT', 'RE
 }
 assert.ok(buildEnvFile({ vars, env: {}, required: [], optional: [] }).text, 'the real [vars] hold none of them');
 
-// ── deploy.yml: the Worker job, then job ec2 for the same commit ──
+// ── deploy.yml: job verify, then the Worker (job deploy) and job ec2 for the same commit, approved
+// together, then job same-commit ──
 const deploy = read('.github/workflows/deploy.yml');
 assert.ok(!existsSync(join(repo, '.github/workflows/deploy-oracle.yml')), 'the manual Oracle workflow is retired');
 for (const [, action] of deploy.matchAll(/uses:\s*(\S+)/g)) assert.match(action, /@[0-9a-f]{40}$/, `${action} is pinned by commit`);
-assert.match(deploy, /^permissions:\n {2}contents: read$/m, 'the workflow token reads only');
-const jobs = deploy.split(/^jobs:\n/m)[1];
-const [workerJob, ec2Job] = jobs.split(/^ {2}ec2:\n/m);
-assert.ok(ec2Job, 'job ec2');
-assert.ok(!/id-token/.test(workerJob), 'only job ec2 may request an OIDC token');
-assert.match(ec2Job, /^ {4}needs: deploy$/m, 'after the Worker deploy of the same run (the same commit)');
+// Every job without its own permissions inherits this block, so it holds exactly one line.
+assert.deepEqual(/^permissions:\n((?: {2}.*\n)+)/m.exec(deploy)?.[1].trimEnd().split('\n'), ['  contents: read'], 'the workflow token reads only');
+const jobs = Object.fromEntries(deploy.split(/^jobs:\n/m)[1].split(/^(?= {2}[a-z][a-z0-9-]*:\n)/m).filter(text => text.trim())
+  .map(text => [/^ {2}([a-z][a-z0-9-]*):\n/.exec(text)[1], text]));
+assert.deepEqual(Object.keys(jobs), ['verify', 'deploy', 'ec2', 'same-commit']);
+const { verify: verifyJob, deploy: workerJob, ec2: ec2Job, 'same-commit': sameCommitJob } = jobs;
+for (const [name, text] of Object.entries(jobs)) {
+  if (name !== 'ec2') assert.ok(!/id-token|^ {4}permissions:/m.test(text), `job ${name} has the read-only token: only job ec2 may request an OIDC token`);
+}
+// The body of a step's `run: |` block, as the runner gets it.
+function stepRun(job, name) {
+  assert.ok(job.includes(`- name: ${name}\n`), `step "${name}"`);
+  const lines = job.slice(job.indexOf(`- name: ${name}\n`)).split('\n');
+  const start = lines.findIndex(line => /^\s+run: \|$/.test(line)) + 1;
+  const indent = /^\s*/.exec(lines[start])[0].length;
+  const end = lines.findIndex((line, i) => i >= start && line.trim() && /^\s*/.exec(line)[0].length < indent);
+  return lines.slice(start, end).map(line => line.slice(indent)).join('\n').trimEnd();
+}
+// Job verify runs on every push, before anything ships, without an environment or a secret: the
+// deploy kit included, so a kit that breaks (on Linux too: its scripts run here against stubs)
+// stops both runtimes on the commit they have.
+assert.ok(!/^ {4}(needs|environment|if):/m.test(verifyJob) && !/secrets\./.test(verifyJob), 'job verify: every push, no environment, no secret');
+const checks = stepRun(verifyJob, 'Verify production code').split('\n');
+for (const command of ['npm ci', 'npm run check:production', 'npm run check:database', 'node check-aws-deploy.mjs', 'npm audit --omit=dev']) {
+  assert.ok(checks.includes(command), `job verify runs ${command}`);
+}
+// Both deploy jobs need only job verify and run in the environment "production": they wait for
+// its approval at the same time, so one approval starts both (GitHub reviews a run's pending
+// deployments per environment), the Worker never ships ahead of an approval the VM still waits
+// for, and both read the environment's secrets.
+for (const [name, text] of [['deploy', workerJob], ['ec2', ec2Job]]) {
+  assert.match(text, /^ {4}needs: verify$/m, `job ${name} needs only job verify`);
+  assert.match(text, /^ {4}environment: production$/m, `job ${name} is approved in the environment "production"`);
+}
+assert.ok(!/^ {4}if:/m.test(workerJob), 'the Worker ships on every approved push');
+assert.ok(stepRun(workerJob, 'Install dependencies and build the sitemap').split('\n').includes('node build-sitemap.mjs') &&
+  workerJob.indexOf('build-sitemap.mjs') < workerJob.indexOf('- name: Deploy Worker'), 'the sitemap the Worker uploads is built in its job');
 assert.match(ec2Job, /^ {4}if: vars\.EC2_DEPLOY == 'true'$/m, 'off until the repository variable says so');
+// Then both runtimes must report the commit; no secret, no environment.
+assert.match(sameCommitJob, /^ {4}needs: \[deploy, ec2\]$/m);
+assert.match(sameCommitJob, /^ {4}if: vars\.EC2_DEPLOY == 'true'$/m);
+assert.ok(!/secrets\.|^ {4}environment:/m.test(sameCommitJob), 'job same-commit reads no secret');
+const commitCheck = stepRun(sameCommitJob, 'Both runtimes report this commit');
 assert.match(ec2Job, /^ {4}environment: production$/m, 'approved in the production environment');
 assert.match(ec2Job, /^ {4}permissions:\n {6}contents: read\n {6}id-token: write$/m);
 assert.match(ec2Job, /^ {6}cancel-in-progress: false$/m, 'a deploy is never cancelled half way');
@@ -115,9 +152,8 @@ assert.ok(step('gateway-env.mjs') > 0 && step('gateway-env.mjs') < step('configu
   step('configure-aws-credentials') < step('push-release.sh'), 'a missing secret fails before AWS or the VM is touched');
 assert.match(ec2Job, /deploy\/aws\/push-release\.sh --os-user deploy --lookup tags \\\n\s+--env-file "\$RUNNER_TEMP\/gateway\.env" --known-hosts "\$RUNNER_TEMP\/known_hosts"/);
 assert.match(ec2Job, /^ {10}EC2_KNOWN_HOSTS: \$\{\{ vars\.EC2_KNOWN_HOSTS \}\}$/m, 'the host key is checked, never trusted on first use');
-assert.ok(step('push-release.sh') < step('want="${GITHUB_SHA::7}"') && /https:\/\/\$1\/health/.test(ec2Job) && /hosts="zero-x\.live"/.test(ec2Job),
-  'then zero-x.live (and the test host) must report this commit');
 assert.match(ec2Job, /if: always\(\)\n\s+run: rm -f "\$RUNNER_TEMP\/gateway\.env"/, 'the environment file is removed');
+assert.ok(/https:\/\/\$1\/health/.test(commitCheck) && /hosts="zero-x\.live"/.test(commitCheck), 'zero-x.live (and the test host) must report this commit');
 
 // ── ci-role.yaml (stack zerox-ci): trust only production of this repository; three permissions ──
 const ciRole = read('deploy/aws/ci-role.yaml');
@@ -280,9 +316,45 @@ function posixBash() {
   return bash && existsSync(bash) ? { bash, env: { MSYS: 'winsymlinks:nativestrict' } } : null;
 }
 const shell = posixBash();
-const work = mkdtempSync(join(tmpdir(), 'zerox-activate-'));
 const posix = path => path.replace(/\\/g, '/');
 const pathKey = Object.keys(process.env).find(key => key.toUpperCase() === 'PATH');
+
+// Job same-commit's script, run with a stub curl that answers each host's /health: it passes only
+// when every host reports the commit.
+let commitChecked = false;
+if (shell) {
+  const dir = mkdtempSync(join(tmpdir(), 'zerox-commit-'));
+  try {
+    commitChecked = true;
+    writeFileSync(join(dir, 'curl'), [
+      '#!/bin/sh',
+      'for a in "$@"; do url="$a"; done',
+      'case "$url" in',
+      '  https://zero-x.live/health) printf \'{"status":"ok","commit":"%s"}\' "$STUB_WORKER" ;;',
+      '  https://aws.zero-x.live/health) printf \'{"status":"ok","commit":"%s"}\' "$STUB_VM" ;;',
+      '  *) exit 22 ;;',
+      'esac',
+    ].join('\n'), { mode: 0o755 });
+    writeFileSync(join(dir, 'sleep'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    const sha = 'abc1234def5678abc1234def5678abc1234def56';
+    const runCheck = (worker, vm, hosts) => spawnSync(shell.bash, ['-c', commitCheck], { encoding: 'utf8',
+      env: { ...process.env, ...shell.env, [pathKey]: `${dir}${delimiter}${process.env[pathKey]}`, GITHUB_SHA: sha,
+        EXTRA_WEB_HOSTS: hosts, STUB_WORKER: worker, STUB_VM: vm } });
+    const same = runCheck('abc1234', 'abc1234', 'aws.zero-x.live,other.zero-x.live');
+    assert.equal(same.status, 0, `both runtimes on the commit: ${same.stdout}${same.stderr}`);
+    assert.match(same.stdout, /https:\/\/aws\.zero-x\.live\/health: commit abc1234/, 'the first test host is checked');
+    const vmBehind = runCheck('abc1234', '9999999', 'aws.zero-x.live');
+    assert.notEqual(vmBehind.status, 0, 'the VM on another commit fails the run');
+    assert.match(vmBehind.stdout, /aws\.zero-x\.live\/health reports commit 9999999, not abc1234/);
+    assert.notEqual(runCheck('9999999', 'abc1234', 'aws.zero-x.live').status, 0, 'the Worker on another commit fails the run');
+    assert.notEqual(runCheck('', '', '').status, 0, 'no commit in /health fails the run');
+    assert.equal(runCheck('abc1234', '9999999', '').status, 0, 'production (no test host): zero-x.live only');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+const work = mkdtempSync(join(tmpdir(), 'zerox-activate-'));
 let ran = false;
 try {
   const probe = shell && spawnSync(shell.bash, ['-c', 'mkdir "$1/target" && ln -s "$1/target" "$1/probe" && [ -L "$1/probe" ]', '_', posix(work)],
