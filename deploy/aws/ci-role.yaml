@@ -1,15 +1,9 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >-
-  Zero-X CI access to the gateway VM - the GitHub Actions OIDC provider and the role
-  zerox-github-deploy, which job ec2 of deploy.yml assumes only from the production environment of
-  RAHUL-DevelopeRR/zero-x.live. It may open a tunnel to port 22 through the gateway's EC2 Instance
-  Connect Endpoint and push a one-time SSH key for the OS user deploy on the gateway instance, and
-  nothing else. No AWS keys or SSH keys are stored in GitHub. See deploy/aws/README.md.
-
-# Applied by the owner through a change set (IAM, so --capabilities CAPABILITY_NAMED_IAM),
-# README.md "CI role". The instance and endpoint ids are parameters rather than imports from stack
-# zerox-gateway: an exported value cannot change while another stack imports it, and replacing
-# the instance changes its id. After an instance replacement, update this stack with the new id.
+  Zero-X CI access to the gateway VM - GitHub Actions jobs of RAHUL-DevelopeRR/zero-x.live that run
+  in the protected "production" environment assume this role through GitHub OIDC (no AWS keys in
+  GitHub). It can only open SSH (port 22) to the gateway VM through the Instance Connect Endpoint
+  and push one-time keys for the deploy user. See deploy/aws/README.md.
 
 Metadata:
   AWSToolsMetrics:
@@ -18,109 +12,90 @@ Metadata:
 Parameters:
   InstanceId:
     Type: AWS::EC2::Instance::Id
-    Description: The gateway instance (stack zerox-gateway, output InstanceId).
-  InstanceConnectEndpointId:
+    Description: The gateway VM (stack zerox-gateway, output InstanceId).
+  InstancePrivateIp:
     Type: String
-    AllowedPattern: '^eice-[0-9a-f]{17}$'
-    Description: The gateway's EC2 Instance Connect Endpoint (stack zerox-gateway, output InstanceConnectEndpointId).
-  # IAM allows one OIDC provider per URL in an account. Leave empty to create it here; if the
-  # account already has one for token.actions.githubusercontent.com, pass its ARN instead.
-  ExistingGitHubOidcProviderArn:
+    Description: The VM's private IPv4 (OpenTunnel is limited to it).
+    AllowedPattern: '^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$'
+  EndpointId:
     Type: String
-    Default: ''
-    AllowedPattern: '^(arn:aws[a-z-]*:iam::[0-9]{12}:oidc-provider/token\.actions\.githubusercontent\.com)?$'
-
-Conditions:
-  CreateOidcProvider: !Equals [!Ref ExistingGitHubOidcProviderArn, '']
+    Description: The Instance Connect Endpoint (stack zerox-gateway, output InstanceConnectEndpointId).
+    AllowedPattern: '^eice-[0-9a-f]+$'
+  Repository:
+    Type: String
+    Default: RAHUL-DevelopeRR/zero-x.live
+  Environment:
+    Type: String
+    Default: production
 
 Resources:
-  # No ThumbprintList: the property is optional, and for GitHub's issuer IAM verifies the token
-  # with its own library of trusted root certificate authorities, so a pinned thumbprint would
-  # only break when GitHub rotates its certificate chain.
+  # One per account for this URL. AWS validates GitHub's token signatures against its own trusted
+  # certificate authorities, so no thumbprint is pinned here.
   GitHubOidcProvider:
     Type: AWS::IAM::OIDCProvider
-    Condition: CreateOidcProvider
-    Metadata:
-      com.aws.cloudformation.Context:
-        why: GitHub Actions jobs present a signed OIDC token instead of stored AWS keys.
-        must: Audience sts.amazonaws.com only; one provider per URL per account.
     Properties:
       Url: https://token.actions.githubusercontent.com
       ClientIdList: [sts.amazonaws.com]
       Tags:
         - { Key: Project, Value: zerox-gateway }
 
-  # Trust: only a job that runs in the GitHub environment "production" of this repository (which
-  # has the owner as required reviewer), and only for STS. Permissions (DeployPolicy): exactly
-  # what push-release.sh needs to reach the VM; installing and activating happen over that SSH
-  # connection, as the deploy user, under its sudoers file (zerox-deploy.sudoers).
+  # A customer-managed policy (not inline), so it can be reviewed and audited on its own.
+  GatewaySshPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: zerox-github-deploy-gateway-ssh
+      Description: SSH to the Zero-X gateway VM through its Instance Connect Endpoint, as deploy only
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: TunnelToTheVmSshOnly
+            Effect: Allow
+            Action: ec2-instance-connect:OpenTunnel
+            Resource: !Sub arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance-connect-endpoint/${EndpointId}
+            Condition:
+              NumericEquals:
+                ec2-instance-connect:remotePort: 22
+              IpAddress:
+                ec2-instance-connect:privateIpAddress: !Sub ${InstancePrivateIp}/32
+          - Sid: OneTimeKeyForDeployOnly
+            Effect: Allow
+            Action: ec2-instance-connect:SendSSHPublicKey
+            Resource: !Sub arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/${InstanceId}
+            Condition:
+              StringEquals:
+                ec2:osuser: deploy
+          # open-tunnel looks up the instance and its endpoint; these actions take no resource.
+          - Sid: LookUpTheVmAndEndpoint
+            Effect: Allow
+            Action:
+              - ec2:DescribeInstances
+              - ec2:DescribeInstanceConnectEndpoints
+            Resource: '*'
+
+  # Trusted only from jobs that declare the protected environment (its required reviewer gates
+  # every run), so a workflow on any other branch or job cannot assume it.
   DeployRole:
     Type: AWS::IAM::Role
-    Metadata:
-      com.aws.cloudformation.Context:
-        why: Job ec2 of deploy.yml ships the release over SSH through the Instance Connect Endpoint.
-        must: >-
-          Trust only repo:RAHUL-DevelopeRR/zero-x.live:environment:production with audience
-          sts.amazonaws.com. OpenTunnel only on the gateway endpoint to port 22; SendSSHPublicKey only
-          on the gateway instance for OS user deploy; the two Describe actions support no resource
-          scoping. Sessions last at most one hour.
     Properties:
       RoleName: zerox-github-deploy
-      Description: GitHub Actions deploy.yml job ec2 (environment production) - SSH to the gateway VM as deploy through the endpoint
+      Description: GitHub Actions production jobs - SSH to the Zero-X gateway VM through the Instance Connect Endpoint, as deploy only
       MaxSessionDuration: 3600
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
-          - Sid: GitHubProductionEnvironment
-            Effect: Allow
+          - Effect: Allow
             Principal:
-              Federated: !If [CreateOidcProvider, !GetAtt GitHubOidcProvider.Arn, !Ref ExistingGitHubOidcProviderArn]
+              Federated: !Ref GitHubOidcProvider
             Action: sts:AssumeRoleWithWebIdentity
             Condition:
               StringEquals:
-                'token.actions.githubusercontent.com:aud': sts.amazonaws.com
-                'token.actions.githubusercontent.com:sub': 'repo:RAHUL-DevelopeRR/zero-x.live:environment:production'
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                token.actions.githubusercontent.com:sub: !Sub repo:${Repository}:environment:${Environment}
+      ManagedPolicyArns:
+        - !Ref GatewaySshPolicy
       Tags:
         - { Key: Project, Value: zerox-gateway }
 
-  # A customer managed policy rather than an inline one, attached to this role only.
-  DeployPolicy:
-    Type: AWS::IAM::ManagedPolicy
-    Metadata:
-      com.aws.cloudformation.Context:
-        why: Exactly what push-release.sh needs to reach the VM through the endpoint.
-        must: No other action; no wildcard resource except the two Describe actions.
-    Properties:
-      ManagedPolicyName: zerox-github-deploy-ssh
-      Description: SSH to the gateway VM as deploy through its Instance Connect Endpoint
-      Roles: [!Ref DeployRole]
-      PolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Sid: TunnelToSshOnly
-            Effect: Allow
-            Action: ec2-instance-connect:OpenTunnel
-            Resource: !Sub 'arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance-connect-endpoint/${InstanceConnectEndpointId}'
-            Condition:
-              NumericEquals:
-                'ec2-instance-connect:remotePort': '22'
-          - Sid: OneTimeKeyForDeployOnly
-            Effect: Allow
-            Action: ec2-instance-connect:SendSSHPublicKey
-            Resource: !Sub 'arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/${InstanceId}'
-            Condition:
-              StringEquals:
-                'ec2:osuser': deploy
-          # open-tunnel and the tag lookup in push-release.sh find the instance's address and
-          # its endpoint; these Describe actions support no resource-level permissions.
-          - Sid: FindInstanceAndEndpoint
-            Effect: Allow
-            Action: [ec2:DescribeInstances, ec2:DescribeInstanceConnectEndpoints]
-            Resource: '*'
-
 Outputs:
   RoleArn:
-    Description: Set as the repository variable AWS_DEPLOY_ROLE_ARN.
     Value: !GetAtt DeployRole.Arn
-  OidcProviderArn:
-    Value: !If [CreateOidcProvider, !GetAtt GitHubOidcProvider.Arn, !Ref ExistingGitHubOidcProviderArn]

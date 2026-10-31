@@ -158,27 +158,43 @@ assert.match(ec2Job, /^ {10}EC2_KNOWN_HOSTS: \$\{\{ vars\.EC2_KNOWN_HOSTS \}\}$/
 assert.match(ec2Job, /if: always\(\)\n\s+run: rm -f "\$RUNNER_TEMP\/gateway\.env"/, 'the environment file is removed');
 assert.ok(/https:\/\/\$1\/health/.test(commitCheck) && /hosts="zero-x\.live"/.test(commitCheck), 'zero-x.live (and the test host) must report this commit');
 
-// ── ci-role.yaml (stack zerox-ci): trust only production of this repository; three permissions ──
+// ── ci-role.yaml: the template stack zerox-ci runs (applied 2026-10-30). Its logical ids, names and
+// parameters stay those of the live stack: an update that renamed GitHubOidcProvider would delete
+// and recreate the account's only OIDC provider for GitHub, and with it every role's trust. Trust:
+// only production of this repository. Permissions: the tunnel, the one-time key, two lookups. ──
 const ciRole = read('deploy/aws/ci-role.yaml');
 const ciCode = ciRole.replace(/^\s*#.*$/gm, '');
-assert.match(ciCode, /Url: https:\/\/token\.actions\.githubusercontent\.com\n\s+ClientIdList: \[sts\.amazonaws\.com\]/);
+const ciSection = name => ciCode.split(new RegExp(`^${name}:\n`, 'm'))[1]?.split(/^[A-Z][A-Za-z]*:/m)[0] || '';
+const ciBlocks = text => Object.fromEntries(text.split(/^(?= {2}[A-Za-z][A-Za-z0-9]*:\n)/m).filter(block => block.trim())
+  .map(block => [/^ {2}([A-Za-z][A-Za-z0-9]*):\n/.exec(block)[1], block]));
+const ciResources = ciBlocks(ciSection('Resources'));
+const ciParameters = ciBlocks(ciSection('Parameters'));
+assert.deepEqual(Object.keys(ciResources), ['GitHubOidcProvider', 'GatewaySshPolicy', 'DeployRole'], 'the live stack\'s logical ids');
+assert.deepEqual(Object.keys(ciParameters), ['InstanceId', 'InstancePrivateIp', 'EndpointId', 'Repository', 'Environment'], 'the live stack\'s parameters');
+assert.match(ciParameters.Repository, /^ {4}Default: RAHUL-DevelopeRR\/zero-x\.live$/m);
+assert.match(ciParameters.Environment, /^ {4}Default: production$/m);
+assert.ok(!/^Conditions:/m.test(ciCode) && !/^ {4}Condition:/m.test(ciCode), 'every resource always exists: none of them is conditional');
+assert.match(ciResources.GitHubOidcProvider, /Type: AWS::IAM::OIDCProvider\n\s+Properties:\n\s+Url: https:\/\/token\.actions\.githubusercontent\.com\n\s+ClientIdList: \[sts\.amazonaws\.com\]\n/);
 assert.ok(!/ThumbprintList/.test(ciCode), 'IAM verifies the GitHub certificate chain itself; no pinned thumbprint');
-assert.match(ciCode, /RoleName: zerox-github-deploy\n/);
-assert.match(ciCode, /MaxSessionDuration: 3600\n/);
-assert.match(ciCode, /Action: sts:AssumeRoleWithWebIdentity\n\s+Condition:\n\s+StringEquals:\n\s+'token\.actions\.githubusercontent\.com:aud': sts\.amazonaws\.com\n\s+'token\.actions\.githubusercontent\.com:sub': 'repo:RAHUL-DevelopeRR\/zero-x\.live:environment:production'\n/,
+assert.match(ciResources.GatewaySshPolicy, /Type: AWS::IAM::ManagedPolicy\n\s+Properties:\n\s+ManagedPolicyName: zerox-github-deploy-gateway-ssh\n/);
+assert.match(ciResources.DeployRole, /Type: AWS::IAM::Role\n\s+Properties:\n\s+RoleName: zerox-github-deploy\n/);
+assert.match(ciResources.DeployRole, /MaxSessionDuration: 3600\n/);
+assert.match(ciResources.DeployRole, /Principal:\n\s+Federated: !Ref GitHubOidcProvider\n\s+Action: sts:AssumeRoleWithWebIdentity\n\s+Condition:\n\s+StringEquals:\n\s+token\.actions\.githubusercontent\.com:aud: sts\.amazonaws\.com\n\s+token\.actions\.githubusercontent\.com:sub: !Sub repo:\$\{Repository\}:environment:\$\{Environment\}\n/,
   'exact audience and subject: only jobs in the production environment of this repository');
-const actions = [...ciCode.matchAll(/^\s*Action: (.+)$/gm)].flatMap(([, value]) => value.replace(/^\[|\]$/g, '').split(',').map(item => item.trim()));
+assert.match(ciResources.DeployRole, /ManagedPolicyArns:\n\s+- !Ref GatewaySshPolicy\n(?!\s+- )/, 'its own customer-managed policy only, no AWS managed one');
+const actions = [...ciCode.matchAll(/^\s*Action:(?: (\S+)\n|\n((?:\s+- \S+\n)+))/gm)]
+  .flatMap(([, one, many]) => one ? [one] : many.trim().split('\n').map(line => line.trim().replace(/^- /, '')));
 assert.deepEqual(actions.sort(), ['ec2-instance-connect:OpenTunnel', 'ec2-instance-connect:SendSSHPublicKey', 'ec2:DescribeInstanceConnectEndpoints',
   'ec2:DescribeInstances', 'sts:AssumeRoleWithWebIdentity'].sort(), 'nothing but the trust, the tunnel, the one-time key and the two lookups');
-assert.ok(!/ManagedPolicyArns|NotAction|NotResource|Action: .*\*/.test(ciCode), 'no AWS managed policy, no negation, no wildcard action');
-const statements = ciCode.split(/^\s*- Sid: /m).slice(1);
-const statement = sid => statements.find(text => text.startsWith(sid)) || '';
-assert.equal(statements.length, 4, 'one trust statement and three permission statements');
-assert.match(statement('TunnelToSshOnly'), /Resource: !Sub 'arn:\$\{AWS::Partition\}:ec2:\$\{AWS::Region\}:\$\{AWS::AccountId\}:instance-connect-endpoint\/\$\{InstanceConnectEndpointId\}'\n\s+Condition:\n\s+NumericEquals:\n\s+'ec2-instance-connect:remotePort': '22'\n/);
-assert.match(statement('OneTimeKeyForDeployOnly'), /Resource: !Sub 'arn:\$\{AWS::Partition\}:ec2:\$\{AWS::Region\}:\$\{AWS::AccountId\}:instance\/\$\{InstanceId\}'\n\s+Condition:\n\s+StringEquals:\n\s+'ec2:osuser': deploy\n/);
-assert.match(statement('FindInstanceAndEndpoint'), /Action: \[ec2:DescribeInstances, ec2:DescribeInstanceConnectEndpoints\]\n\s+Resource: '\*'/);
+assert.ok(!/NotAction|NotResource|NotPrincipal|Effect: Deny|Action: .*\*/.test(ciCode), 'no negation, no wildcard action');
+const statements = ciResources.GatewaySshPolicy.split(/^\s*- Sid: /m).slice(1);
+const statement = sid => statements.find(text => text.startsWith(`${sid}\n`)) || '';
+assert.deepEqual(statements.map(text => text.split('\n')[0]), ['TunnelToTheVmSshOnly', 'OneTimeKeyForDeployOnly', 'LookUpTheVmAndEndpoint']);
+assert.match(statement('TunnelToTheVmSshOnly'), /Action: ec2-instance-connect:OpenTunnel\n\s+Resource: !Sub arn:\$\{AWS::Partition\}:ec2:\$\{AWS::Region\}:\$\{AWS::AccountId\}:instance-connect-endpoint\/\$\{EndpointId\}\n\s+Condition:\n\s+NumericEquals:\n\s+ec2-instance-connect:remotePort: 22\n\s+IpAddress:\n\s+ec2-instance-connect:privateIpAddress: !Sub \$\{InstancePrivateIp\}\/32\n/,
+  'a tunnel to port 22 of the VM\'s address only');
+assert.match(statement('OneTimeKeyForDeployOnly'), /Action: ec2-instance-connect:SendSSHPublicKey\n\s+Resource: !Sub arn:\$\{AWS::Partition\}:ec2:\$\{AWS::Region\}:\$\{AWS::AccountId\}:instance\/\$\{InstanceId\}\n\s+Condition:\n\s+StringEquals:\n\s+ec2:osuser: deploy\n/);
+assert.match(statement('LookUpTheVmAndEndpoint'), /Action:\n\s+- ec2:DescribeInstances\n\s+- ec2:DescribeInstanceConnectEndpoints\n\s+Resource: '\*'/);
 assert.equal([...ciCode.matchAll(/Resource: '\*'/g)].length, 1, 'a wildcard resource only for the Describe actions');
-assert.match(ciCode, /Roles: \[!Ref DeployRole\]/, 'the policy is attached to this role only');
 assert.ok(!/\b\d{12}\b/.test(ciCode), 'no account id in the template');
 
 // ── gateway.env.example names every variable the gateway reads ──

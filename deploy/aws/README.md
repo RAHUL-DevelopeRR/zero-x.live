@@ -347,28 +347,39 @@ Before each deploy: production's database has every migration of the commit
 
 ## CI role (stack zerox-ci)
 
-`ci-role.yaml` creates the GitHub OIDC provider and the role `zerox-github-deploy`, which only jobs
-in the environment `production` of this repository can assume, for at most an hour. It may open a
-tunnel to port 22 through the gateway's endpoint, push a one-time key for `deploy` on the gateway
-instance, and describe instances and endpoints (needed to find them), nothing else. If the account
-already has an OIDC provider for `token.actions.githubusercontent.com`, pass its ARN as
-`ExistingGitHubOidcProviderArn`. Through a change set, like the gateway stack:
+`ci-role.yaml` is the template stack `zerox-ci` runs (applied 2026-10-30): the GitHub OIDC provider
+(`GitHubOidcProvider`), the customer-managed policy `zerox-github-deploy-gateway-ssh`
+(`GatewaySshPolicy`) and the role `zerox-github-deploy` (`DeployRole`), which only jobs in the
+environment `production` of this repository can assume, for at most an hour. It may open a tunnel
+through the gateway's endpoint to port 22 of the VM's private address, push a one-time key for
+`deploy` on the gateway instance, and describe instances and endpoints (needed to find them),
+nothing else. Parameters: `InstanceId`, `InstancePrivateIp`, `EndpointId` (and `Repository`,
+`Environment`, whose defaults name this repository and `production`).
+
+Keep the logical ids, the names and the parameters as they are (`check-aws-deploy.mjs` holds them):
+IAM allows one OIDC provider per URL in an account, and renaming `GitHubOidcProvider` would make
+CloudFormation delete it and create another, which breaks every role that trusts it.
+
+The stack exists, so a change is an UPDATE change set. After the instance is replaced (new id and
+private address), for example:
 
 ```bash
 ID=$(aws cloudformation describe-stacks --stack-name zerox-gateway --query "Stacks[0].Outputs[?OutputKey=='InstanceId'].OutputValue" --output text $P)
-EICE=$(aws cloudformation describe-stacks --stack-name zerox-gateway --query "Stacks[0].Outputs[?OutputKey=='InstanceConnectEndpointId'].OutputValue" --output text $P)
-aws cloudformation create-change-set --stack-name zerox-ci --change-set-name create --change-set-type CREATE \
+IP=$(aws ec2 describe-instances --instance-ids "$ID" --query 'Reservations[0].Instances[0].PrivateIpAddress' --output text $P)
+aws cloudformation create-change-set --stack-name zerox-ci --change-set-name new-instance --change-set-type UPDATE \
   --template-body file://deploy/aws/ci-role.yaml --capabilities CAPABILITY_NAMED_IAM \
-  --parameters ParameterKey=InstanceId,ParameterValue=$ID ParameterKey=InstanceConnectEndpointId,ParameterValue=$EICE $P
-aws cloudformation wait change-set-create-complete --stack-name zerox-ci --change-set-name create $P
-aws cloudformation describe-change-set --stack-name zerox-ci --change-set-name create \
-  --query 'Changes[].ResourceChange.[Action,LogicalResourceId,ResourceType]' --output table $P
-aws cloudformation execute-change-set --stack-name zerox-ci --change-set-name create $P
-aws cloudformation describe-stacks --stack-name zerox-ci --query "Stacks[0].Outputs" --output table $P
+  --parameters ParameterKey=InstanceId,ParameterValue=$ID ParameterKey=InstancePrivateIp,ParameterValue=$IP \
+    ParameterKey=EndpointId,UsePreviousValue=true ParameterKey=Repository,UsePreviousValue=true \
+    ParameterKey=Environment,UsePreviousValue=true $P
+aws cloudformation wait change-set-create-complete --stack-name zerox-ci --change-set-name new-instance $P
+aws cloudformation describe-change-set --stack-name zerox-ci --change-set-name new-instance \
+  --query 'Changes[].ResourceChange.[Action,LogicalResourceId,Replacement]' --output table $P
+# Expect only GatewaySshPolicy, Modify. Never execute a change set that replaces or removes GitHubOidcProvider.
+aws cloudformation execute-change-set --stack-name zerox-ci --change-set-name new-instance $P
 ```
 
-After the instance is replaced, update the stack with the new `InstanceId` (an UPDATE change set,
-the endpoint id `UsePreviousValue=true`), or CI's key push is refused.
+Then update the environment variables `EC2_INSTANCE_ID` and `EC2_HOST_KEY` ("Host key" above), or
+CI's key push is refused.
 
 ## Rollback
 
