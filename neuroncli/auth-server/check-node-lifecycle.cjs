@@ -1,19 +1,22 @@
 // The Node server behind Cloudflare Tunnel (deploy/oracle): the visitor address for per-IP
 // limits (TRUST_CLOUDFLARE, spoof attempts included), SSE keep-alive comments while a stream is
 // quiet, the dev identity refused behind the tunnel, and the graceful stop on SIGTERM (in-flight
-// streams finish and settle, bounded by the grace; a longer tail after cut streams). Then the
-// zero-downtime restart (C6): two instances on one port (AUTH_REUSE_PORT, Linux only), the
-// loopback readiness listener (READY_PORT) draining with the main one, and the release's commit
-// (C9: REVISION, GIT_COMMIT wins). Upstream calls go to a fake Groq server through
-// e2e-upstream-shim.mjs.
+// streams finish and settle, bounded by the grace; a longer tail after cut streams; a response not
+// started when the drain begins closes its connection). Then the zero-downtime restart (C6): the
+// loopback readiness listener (READY_PORT) draining with the main one, and two instances as their
+// own processes handing over one port (AUTH_REUSE_PORT, Linux; elsewhere the same handover on two
+// ports) while a stream on the old one runs to its end; and the release's commit (C9: REVISION,
+// GIT_COMMIT wins). Upstream calls go to a fake Groq server through e2e-upstream-shim.mjs.
 const assert = require('node:assert/strict');
+const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const http = require('node:http');
 const net = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
 const { once } = require('node:events');
-const { drain, start, requestHeaders, runtimeEnv, stopOnSignals } = require('./server.js');
+const { pathToFileURL } = require('node:url');
+const { drain, start, requestHeaders, runtimeEnv, stopOnSignals, supportsReusePort } = require('./server.js');
 
 // server.js loads a developer .env: nothing here may reach a real database or provider.
 for (const name of Object.keys(process.env)) {
@@ -25,20 +28,32 @@ for (const name of Object.keys(process.env)) {
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const USAGE = { prompt_tokens: 20, completion_tokens: 12, total_tokens: 32 };
 
-// Fake Groq: `lifecycle:<chunks>:<delay ms>[:pause=<ms>]` in the prompt shapes the stream (the
-// pause replaces the delay before the second content chunk).
+// Responses the fake upstream holds until the check releases them by name.
+const held = new Map();
+const holdUntilReleased = name => new Promise(resolve => held.set(name, resolve));
+const releaseHold = name => {
+  held.get(name)();
+  held.delete(name);
+};
+
+// Fake Groq: `lifecycle:<chunks>:<delay ms>[:pause=<ms>][:hold=<name>][:gate=<name>]` in the prompt
+// shapes the stream (the pause replaces the delay before the second content chunk; hold keeps the
+// response before its headers, gate after its first content chunk, until releaseHold(name)).
 const upstream = http.createServer(async (req, res) => {
   let raw = '';
   for await (const chunk of req) raw += chunk;
-  const [, count, delay, pause] = /lifecycle:(\d+):(\d+)(?::pause=(\d+))?/.exec(raw) || [, '1', '0'];
+  const [, count, delay, pause, hold, gate] =
+    /lifecycle:(\d+):(\d+)(?::pause=(\d+))?(?::hold=(\w+))?(?::gate=(\w+))?/.exec(raw) || [, '1', '0'];
   let closed = false;
   res.on('close', () => { closed = true; });
+  if (hold) await holdUntilReleased(hold);
+  if (closed) return;
   res.writeHead(200, { 'Content-Type': 'text/event-stream' });
   const send = value => res.write(`data: ${typeof value === 'string' ? value : JSON.stringify(value)}\n\n`);
   const chunk = (delta, finish = null) => ({ id: 'up', object: 'chat.completion.chunk', choices: [{ index: 0, delta, finish_reason: finish }] });
   send(chunk({ role: 'assistant', content: '' }));
   for (let i = 0; i < Number(count); i++) {
-    await sleep(i === 1 && pause ? Number(pause) : Number(delay));
+    await (i === 1 && gate ? holdUntilReleased(gate) : sleep(i === 1 && pause ? Number(pause) : Number(delay)));
     if (closed) return;
     send(chunk({ content: `t${i} ` }));
   }
@@ -113,6 +128,48 @@ async function waitFor(check, ms) {
     await sleep(10);
   }
 }
+
+// A streamed completion on a keep-alive agent, read raw so the Connection header is visible.
+const rawStream = (port, token, prompt, agent) => new Promise((resolve, reject) => {
+  const body = JSON.stringify({ model: 'groq/openai/gpt-oss-120b', stream: true, max_tokens: 64, messages: [{ role: 'user', content: prompt }] });
+  const req = http.request({ host: '127.0.0.1', port, method: 'POST', path: '/v1/chat/completions', agent,
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } }, res => {
+    let text = '';
+    res.setEncoding('utf8');
+    res.on('data', chunk => { text += chunk; });
+    res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, text }));
+  });
+  req.on('error', reject);
+  req.end(body);
+});
+
+// One gateway instance as its own process, as systemd runs zerox-gateway@0 and @1: the real
+// server.js (its own SIGTERM handling and exit) with the upstream shim and e2e-instance-probe.cjs
+// preloaded, started in an empty directory so no developer .env is read.
+const instanceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'zerox-instance-'));
+function spawnInstance(name, settings) {
+  const child = spawn(process.execPath, ['--require', path.join(__dirname, 'e2e-instance-probe.cjs'),
+    '--import', pathToFileURL(path.join(__dirname, 'e2e-upstream-shim.mjs')).href, path.join(__dirname, 'server.js')], {
+    cwd: instanceDir, env: { ...process.env, ...settings }, stdio: ['ignore', 'pipe', 'pipe', 'ipc'], windowsHide: true,
+  });
+  const instance = { name, child, log: '', served: [] };
+  child.stdout.on('data', chunk => { instance.log += chunk; });
+  child.stderr.on('data', chunk => { instance.log += chunk; });
+  child.on('message', message => { if (message?.served) instance.served.push(message); });
+  instance.exited = once(child, 'exit').then(([code, signal]) => ({ code, signal, at: Date.now() }));
+  return instance;
+}
+const running = instance => instance.child.exitCode === null && instance.child.signalCode === null;
+async function untilLogged(instance, pattern, ms = 60000) {
+  const until = Date.now() + ms;
+  while (!pattern.test(instance.log)) {
+    assert.ok(running(instance), `${instance.name} exited:\n${instance.log}`);
+    assert.ok(Date.now() < until, `${instance.name} did not log ${pattern}:\n${instance.log}`);
+    await sleep(20);
+  }
+}
+// systemd's stop. Windows has no SIGTERM to send, so the probe raises it from an IPC message there.
+const terminate = instance => (process.platform === 'win32' ? instance.child.send('SIGTERM') : instance.child.kill('SIGTERM'));
 
 (async () => {
   // ── Visitor address: unit cases ──
@@ -256,6 +313,25 @@ async function waitFor(check, ms) {
       process.removeListener('SIGINT', stopBounded);
     }
 
+    // ── A response that has not started when the drain begins (its upstream has not answered yet)
+    // says Connection: close, so the proxy in front (cloudflared pools keep-alive connections) never
+    // sends its next request on a connection the old instance is closing: that request would get
+    // the draining 503, or a reset that a POST is not retried after ──
+    const late = await startServer();
+    const lateToken = await session(late.base);
+    const keepAliveAgent = new http.Agent({ keepAlive: true });
+    try {
+      const pending = rawStream(Number(new URL(late.base).port), lateToken, 'lifecycle:2:10:hold=late', keepAliveAgent);
+      await waitFor(() => held.has('late'), 5000);
+      const lateDrain = drain(late.server, 5000);
+      releaseHold('late');
+      const answer = await pending;
+      assert.equal(answer.status, 200);
+      assert.match(answer.text, /data: \[DONE\]/, 'it is still served in full');
+      assert.equal(answer.headers.connection, 'close', 'a response that starts during the drain closes its connection');
+      assert.equal(await lateDrain, true);
+    } finally { keepAliveAgent.destroy(); }
+
     // ── The readiness listener: GET /ready and /health of one instance on its own loopback port,
     // answered by the app as on the main port (which, as the EC2 origin, refuses the rest without
     // the proxy secret); nothing else; it closes with the main listener on SIGTERM ──
@@ -287,32 +363,94 @@ async function waitFor(check, ms) {
     assert.equal(await freshConnection(readyPort), 'ECONNREFUSED', 'the readiness listener drains with the instance');
     assert.equal(await freshConnection(Number(new URL(instance.base).port)), 'ECONNREFUSED');
 
-    // ── Two instances on one port (AUTH_REUSE_PORT): the old one drains, the new one answers ──
-    const sharedPort = await freePort();
-    Object.assign(process.env, { AUTH_PORT: String(sharedPort), AUTH_REUSE_PORT: 'true' });
-    const old = await start();
-    servers.push(old);
-    let shared = true;
-    try { await bound(old); } catch (error) {
-      // reusePort reached listen(): libuv refuses SO_REUSEPORT where it cannot balance (Windows, macOS).
-      assert.equal(error.code, 'ENOTSUP');
-      assert.notEqual(process.platform, 'linux', 'Linux (the VM) supports reusePort');
-      shared = false;
-      console.log(`SKIP: reusePort is not supported on ${process.platform}; two instances on one port are checked on Linux only`);
+    // ── Two instances, each its own process as on the VM (C6): the next release starts on the port
+    // the old one listens on (SO_REUSEPORT, Linux and Node 22.12+), both accept, then the old one
+    // gets SIGTERM and drains a stream that began on it to its end while every new connection
+    // reaches the new one. Off Linux libuv refuses SO_REUSEPORT (ENOTSUP), so there the same
+    // handover runs on two ports: everything but the port sharing is still checked ──
+    for (const [version, supported] of [['v22.11.0', false], ['v22.12.0', true], ['v23.0.0', false], ['v23.1.0', true], ['v24.12.0', true],
+      ['v20.18.1', false], ['v25.0.0', true]]) {
+      assert.equal(supportsReusePort(version), supported, version);
     }
-    if (shared) {
-      const next = await start();
-      servers.push(next);
-      await bound(next);
-      assert.equal(next.address().port, sharedPort, 'both bound the same port');
-      for (let i = 0; i < 6; i++) assert.equal(await freshConnection(sharedPort), 200, 'both instances accept');
-      const draining = drain(old, 2000);
-      for (let i = 0; i < 20; i++) assert.equal(await freshConnection(sharedPort), 200, 'no connection refused while the old one drains');
-      assert.equal(await draining, true);
-      assert.equal(await freshConnection(sharedPort), 200, 'the new instance carries on alone');
+    const sharing = process.platform === 'linux';
+    if (!sharing) {
+      Object.assign(process.env, { AUTH_PORT: String(await freePort()), AUTH_REUSE_PORT: 'true' });
+      const refused = await start();
+      servers.push(refused);
+      await assert.rejects(bound(refused), { code: 'ENOTSUP' }, 'libuv refuses SO_REUSEPORT where it cannot balance (Windows, macOS)');
+      Object.assign(process.env, { AUTH_PORT: '0' });
+      delete process.env.AUTH_REUSE_PORT;
+      console.log(`NOTE: reusePort is not supported on ${process.platform}; the handover below runs on two ports (one shared port on Linux only)`);
     }
-    Object.assign(process.env, { AUTH_PORT: '0' });
-    delete process.env.AUTH_REUSE_PORT;
+    const ports = [await freePort(), await freePort()];
+    while (ports[1] === ports[0]) ports[1] = await freePort();
+    const [oldPort, nextPort] = sharing ? [ports[0], ports[0]] : ports;
+    const readyPorts = [await freePort(), await freePort()];
+    while (readyPorts[1] === readyPorts[0]) readyPorts[1] = await freePort();
+    const launch = (name, port, readyPort) => spawnInstance(name, { AUTH_PORT: String(port), READY_PORT: String(readyPort),
+      AUTH_REUSE_PORT: sharing ? 'true' : '' });
+    const instances = [];
+    try {
+      const old = launch('old', oldPort, readyPorts[0]);
+      instances.push(old);
+      await untilLogged(old, /listening on 127\.0\.0\.1:\d+/);
+      await untilLogged(old, /readiness checks on 127\.0\.0\.1:\d+/);
+      if (sharing) assert.match(old.log, /\(shared port\)/);
+      assert.equal(await freshConnection(readyPorts[0]), 200, 'the deploy checks one instance on its READY_PORT');
+      // A stream that starts on the old release and outlives it: the upstream holds it after its first chunk.
+      const oldBase = `http://127.0.0.1:${oldPort}`;
+      const handover = await openStream(oldBase, await session(oldBase), 'lifecycle:3:10:gate=handover');
+      await waitFor(() => old.served.some(entry => entry.path === '/v1/chat/completions'), 3000);
+
+      const next = launch('next', nextPort, readyPorts[1]);
+      instances.push(next);
+      await untilLogged(next, /listening on 127\.0\.0\.1:\d+/);
+      await untilLogged(next, /readiness checks on 127\.0\.0\.1:\d+/);
+      assert.equal(await freshConnection(readyPorts[1]), 200);
+      const healthChecks = (each, port) => each.served.filter(entry => entry.path === '/health' && entry.port === port).length;
+      if (sharing) {
+        // The kernel spreads new connections over both listeners (by address and port): 24 fresh
+        // connections all reaching one of them would be a 1-in-8-million chance.
+        for (let i = 0; i < 24; i++) assert.equal(await freshConnection(oldPort), 200, 'both instances accept on the shared port');
+        await waitFor(() => healthChecks(old, oldPort) + healthChecks(next, oldPort) === 24, 3000);
+        assert.ok(healthChecks(old, oldPort) > 0 && healthChecks(next, oldPort) > 0,
+          `both pids served (old ${healthChecks(old, oldPort)}, next ${healthChecks(next, oldPort)})`);
+      } else {
+        assert.equal(await freshConnection(oldPort), 200);
+        assert.equal(await freshConnection(nextPort), 200);
+        await waitFor(() => healthChecks(old, oldPort) === 1 && healthChecks(next, nextPort) === 1, 3000);
+      }
+
+      // The deploy stops the old instance: its listeners close, its stream goes on.
+      const oldServed = healthChecks(old, oldPort);
+      const nextServed = healthChecks(next, nextPort);
+      terminate(old);
+      await untilLogged(old, /draining 1 request\(s\)/);
+      for (let i = 0; i < 12; i++) assert.equal(await freshConnection(nextPort), 200, 'no connection refused while the old one drains');
+      if (!sharing) assert.equal(await freshConnection(oldPort), 'ECONNREFUSED', 'the old instance accepts nothing new');
+      await waitFor(() => healthChecks(next, nextPort) === nextServed + 12, 3000);
+      assert.equal(healthChecks(old, oldPort), oldServed, 'every new connection reached the new instance');
+      assert.ok(running(old), 'the old instance is still draining its stream');
+
+      releaseHold('handover');
+      const finished = await handover.rest();
+      const finishedAt = Date.now();
+      assert.ok(finished.complete && finished.text.includes('data: [DONE]'), 'the stream that began on the old release ended on it');
+      const content = finished.text.split('\n\n').filter(part => part.startsWith('data: {')).map(part => JSON.parse(part.slice(6)))
+        .map(event => event.choices?.[0]?.delta?.content || '').join('');
+      assert.equal(content, 't0 t1 t2 ', 'nothing lost across the handover');
+      const oldExit = await old.exited;
+      assert.deepEqual([oldExit.code, oldExit.signal], [0, null], `the old instance exits cleanly:\n${old.log}`);
+      assert.ok(oldExit.at >= finishedAt, 'only after its stream finished');
+      assert.equal(await freshConnection(nextPort), 200, 'the new instance carries on alone');
+      assert.equal(await freshConnection(readyPorts[0]), 'ECONNREFUSED', 'the old readiness listener is gone');
+      terminate(next);
+      const nextExit = await next.exited;
+      assert.deepEqual([nextExit.code, nextExit.signal], [0, null], `the new instance stops the same way:\n${next.log}`);
+    } finally {
+      for (const each of instances) if (running(each)) each.child.kill();
+      await Promise.all(instances.map(each => each.exited));
+    }
 
     // ── The release's commit (C9): REVISION at the release root, GIT_COMMIT from the environment wins ──
     const release = fs.mkdtempSync(path.join(os.tmpdir(), 'zerox-release-'));
@@ -326,8 +464,16 @@ async function waitFor(check, ms) {
       delete process.env.GIT_COMMIT;
       const withRevision = await startServer();
       const health = await (await fetch(withRevision.base + '/health')).json();
-      // /health names the commit once src/index.js reports env.GIT_COMMIT (the Worker lane's C9).
-      if ('commit' in health) assert.equal(health.commit, 'ab12cd3');
+      // /health names the commit through the app (the Worker lane's half of C9). The assertion arms
+      // itself once src/ reads GIT_COMMIT, so the merged branch cannot pass without the commit.
+      const appSources = dir => fs.readdirSync(dir, { withFileTypes: true }).flatMap(entry => entry.isDirectory()
+        ? appSources(path.join(dir, entry.name)) : entry.name.endsWith('.js') ? [fs.readFileSync(path.join(dir, entry.name), 'utf8')] : []);
+      if (appSources(path.join(__dirname, 'src')).some(source => /\bGIT_COMMIT\b/.test(source))) {
+        assert.equal(health.commit, 'ab12cd3', '/health reports the release\'s commit');
+      } else {
+        assert.ok(!('commit' in health));
+        console.log('NOTE: src/ does not read GIT_COMMIT yet (the Worker lane adds it): /health is checked for the commit once it does');
+      }
       fs.writeFileSync(path.join(release, 'REVISION'), 'not a commit\n');
       assert.equal(runtimeEnv('127.0.0.1').GIT_COMMIT, undefined, 'anything but a SHA is ignored');
     } finally {
@@ -336,6 +482,7 @@ async function waitFor(check, ms) {
     }
   } finally {
     await Promise.all([...servers, upstream].map(closeServer));
+    fs.rmSync(instanceDir, { recursive: true, force: true });
   }
-  console.log('PASS: Node server trusts CF-Connecting-IP only from loopback with TRUST_CLOUDFLARE (and then refuses the dev identity), keeps quiet streams alive, drains on SIGTERM (readiness listener included), shares its port with the next release (Linux) and reports the release commit');
+  console.log('PASS: Node server trusts CF-Connecting-IP only from loopback with TRUST_CLOUDFLARE (and then refuses the dev identity), keeps quiet streams alive, drains on SIGTERM (readiness listener included; responses not yet started close their connection), hands over to the next release\'s process (one shared port on Linux) while a stream on the old one finishes, and reports the release commit');
 })().catch(error => { console.error(error); process.exitCode = 1; });

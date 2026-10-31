@@ -2,15 +2,17 @@
 // else: an allow-list from .assetsignore (gitignore rules: anchors, directory-only, **, negation,
 // no way back into an ignored directory, wrangler's own ignored files), exact file paths only
 // (html_handling "none"; clean URLs and the 404 page are src/index.js's), cross-checked against
-// git's own matcher on this checkout. Then the caching the Worker leaves to Cloudflare: a week for
-// /Assets/, revalidation for the rest, a content ETag with 304s, and byte ranges for the videos.
+// git's own matcher on this checkout; the release's REVISION file is never served. Then the caching
+// the Worker leaves to Cloudflare: a week for /Assets/, revalidation for the rest, a content ETag
+// with 304s (one hash for simultaneous first requests), and byte ranges for the videos. An
+// ASSETS_DIR reached through the deploy's /opt/zerox/current link stays the release it named at start.
 const assert = require('node:assert/strict');
 const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { once } = require('node:events');
-const { asset, assetServer, ignoreRule, start } = require('./server.js');
+const { asset, assetServer, ignoreRule, runtimeEnv, start } = require('./server.js');
 
 // server.js loads a developer .env: nothing here may reach a real database or provider.
 for (const name of Object.keys(process.env)) {
@@ -52,7 +54,9 @@ function tree(files) {
   // ── The allow-list over a tree ──
   const dir = tree({
     '.assetsignore': ['# comment', '*.secret', '!keep.secret', '/root-only.txt', 'docs/', '!docs/page.html', 'build/**',
-      '**/deep.txt', 'notes', '[ab]x.txt', 'Assets/private*', ''].join('\r\n'),
+      '**/deep.txt', 'notes', '[ab]x.txt', 'Assets/private*', '!REVISION', ''].join('\r\n'),
+    // The deploy's own file at the release root: the Worker never uploads it, so it is never served.
+    'REVISION': 'abc1234\n', 'sub/REVISION': 'served like any file the Worker uploads',
     'index.html': '<h1>home</h1>', 'about.html': '<h1>about</h1>', '404.html': '<h1>missing</h1>',
     'style.css': 'body { color: red }', 'x.secret': 's', 'sub/y.secret': 's', 'keep.secret': 'k', 'root-only.txt': 'r', 'sub/root-only.txt': 'r',
     'docs/page.html': 'd', 'sub/docs/page.html': 'd', 'build/app.js': 'b', 'build.js': 'b', 'sub/deep/deep.txt': 'd',
@@ -64,8 +68,9 @@ function tree(files) {
   try {
     const served = [...assetServer(dir).load().keys()].sort();
     assert.deepEqual(served, ['/404.html', '/Assets/Pasted text.txt', '/Assets/logo.png', '/CNAME', '/.well-known/security.txt',
-      '/about.html', '/build.js', '/clip.mp4', '/cx.txt', '/index.html', '/keep.secret', '/style.css', '/sub/_headers',
-      '/sub/index.html', '/sub/root-only.txt'].sort(), 'negation re-includes a file, never one inside an ignored directory; wrangler ignores /_headers');
+      '/about.html', '/build.js', '/clip.mp4', '/cx.txt', '/index.html', '/keep.secret', '/style.css', '/sub/REVISION', '/sub/_headers',
+      '/sub/index.html', '/sub/root-only.txt'].sort(),
+      'negation re-includes a file, never one inside an ignored directory or /REVISION; wrangler ignores /_headers');
 
     const files = assetServer(dir).fetch;
     // Exact paths only: a directory is not its index.html, and a file has no trailing slash.
@@ -77,7 +82,7 @@ function tree(files) {
     assert.equal(await status(files, '/Assets/Pasted%20text.txt'), 200, 'paths are matched decoded');
     assert.equal(await status(files, '/assets/logo.png'), 404, 'case-sensitive, like the Worker');
     for (const hidden of ['/x.secret', '/docs/page.html', '/build/app.js', '/.hidden.txt', '/node_modules/m.js',
-      '/neuroncli/auth-server/server.js', '/.assetsignore', '/_headers', '/Assets/private-key.png', '/sub/a/../../x.secret']) {
+      '/neuroncli/auth-server/server.js', '/.assetsignore', '/_headers', '/Assets/private-key.png', '/sub/a/../../x.secret', '/REVISION']) {
       assert.equal(await status(files, hidden), 404, hidden);
     }
     assert.equal(await status(files, '/%E0%A4%A'), 400, 'a malformed escape');
@@ -124,6 +129,24 @@ function tree(files) {
     assert.notEqual(edited.headers.get('etag'), etag);
     assert.equal(await edited.text(), 'body { color: blue }');
 
+    // Simultaneous first requests (after a deploy, a page full of video ranges) share one hash of
+    // the file; a later request reuses it.
+    const opened = [];
+    const createReadStream = fs.createReadStream;
+    fs.createReadStream = (file, ...rest) => {
+      opened.push(file);
+      return createReadStream(file, ...rest);
+    };
+    try {
+      const cold = assetServer(dir).fetch;
+      const heads = await Promise.all(Array.from({ length: 8 }, () => get(cold, '/clip.mp4', { method: 'HEAD' })));
+      assert.ok(heads.every(response => response.status === 200));
+      assert.equal(new Set(heads.map(response => response.headers.get('etag'))).size, 1);
+      assert.equal(opened.length, 1, 'eight simultaneous first requests read the file once');
+      await get(cold, '/clip.mp4', { method: 'HEAD' });
+      assert.equal(opened.length, 1, 'and the next one not at all');
+    } finally { fs.createReadStream = createReadStream; }
+
     // Byte ranges (206/416) for the mp4s.
     const bytes = fs.readFileSync(path.join(dir, 'clip.mp4'));
     const range = async (value, extra = {}) => {
@@ -161,6 +184,41 @@ function tree(files) {
     fs.rmSync(path.join(dir, '.assetsignore'));
     assert.equal(await status(assetServer(dir).fetch, '/index.html'), 404);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+
+  // ── ASSETS_DIR through a link (the deploy's /opt/zerox/current): the deploy flips the link, starts
+  // the new instance, then drains the old one, which keeps serving the release it started with
+  // (its allow-list, its files and its REVISION all agree) ──
+  const releases = fs.mkdtempSync(path.join(os.tmpdir(), 'zerox-releases-'));
+  const release = (name, files) => {
+    for (const [file, content] of Object.entries(files)) {
+      fs.mkdirSync(path.dirname(path.join(releases, name, file)), { recursive: true });
+      fs.writeFileSync(path.join(releases, name, file), content);
+    }
+    return path.join(releases, name);
+  };
+  const first = release('aaaaaaa', { '.assetsignore': '', 'page.html': 'first', REVISION: 'aaaaaaa\n' });
+  const second = release('bbbbbbb', { '.assetsignore': '', 'page.html': 'second', 'new.html': 'new', REVISION: 'bbbbbbb\n' });
+  const current = path.join(releases, 'current');
+  // A junction on Windows (no privilege needed); the type is ignored elsewhere.
+  fs.symlinkSync(first, current, 'junction');
+  try {
+    process.env.ASSETS_DIR = current;
+    const oldEnv = runtimeEnv('127.0.0.1');
+    assert.equal(oldEnv.GIT_COMMIT, 'aaaaaaa');
+    fs.unlinkSync(current);
+    fs.symlinkSync(second, current, 'junction');
+    assert.equal(await (await get(oldEnv.ASSETS.fetch, '/page.html')).text(), 'first', 'the old instance keeps its release');
+    assert.equal(await status(oldEnv.ASSETS.fetch, '/new.html'), 404);
+    const newEnv = runtimeEnv('127.0.0.1');
+    assert.equal(newEnv.GIT_COMMIT, 'bbbbbbb');
+    assert.equal(await (await get(newEnv.ASSETS.fetch, '/page.html')).text(), 'second');
+    assert.equal(await status(newEnv.ASSETS.fetch, '/new.html'), 200);
+    process.env.ASSETS_DIR = path.join(releases, 'missing');
+    assert.equal(await status(runtimeEnv('127.0.0.1').ASSETS.fetch, '/page.html'), 404, 'a missing directory serves nothing');
+  } finally {
+    delete process.env.ASSETS_DIR;
+    fs.rmSync(releases, { recursive: true, force: true });
+  }
 
   // ── This repository: the same set as git's matcher applies to .assetsignore ──
   const served = [...assetServer(repo).load().keys()];

@@ -1,10 +1,12 @@
 // The Node server as the EC2 origin behind the Worker's proxy switch (C1-C3, C10): x-zerox-* are
 // believed only with EC2_PROXY_SECRET (compared in constant time), then the app sees the visitor's
 // host and scheme (www -> apex, http -> https, HSTS, the dashboard and neuron hosts), address
-// (per-IP limits) and location (request.cf, which the geo rules read). Without the secret only the
-// test hosts (EXTRA_WEB_HOSTS, under the TRUST_CLOUDFLARE / TRUST_CF_IPCOUNTRY rules), the relay
-// host and the health checks are answered; client copies of x-zerox-* never reach the app. A
-// development server (none of the settings) keeps the loopback URL it always had.
+// (per-IP limits) and location (request.cf, which the geo rules read). A forward whose secret does
+// not match (rotated on one side, or EC2_PROXY_SECRET missing here) is refused, never served as the
+// test host it arrives on. Without the secret header only the test hosts (EXTRA_WEB_HOSTS, under the
+// TRUST_CLOUDFLARE / TRUST_CF_IPCOUNTRY rules), the relay paths on the relay host and the health
+// checks are answered; client copies of x-zerox-* never reach the app. A development server (none
+// of the settings) keeps the loopback URL it always had.
 const assert = require('node:assert/strict');
 const http = require('node:http');
 const { once } = require('node:events');
@@ -41,11 +43,20 @@ const geminiAvailable = async (port, headers) => {
   return response.json().data.find(model => model.id === 'gemini/gemini-3.5-flash').available;
 };
 
-async function serverWith(settings) {
+// Collects what console.error / console.warn print while fn runs (the once-only mismatch log, the
+// start-up warning), so the check can read them and its own output stays clean.
+async function capture(fn, logs = []) {
+  const { error, warn } = console;
+  console.error = (...args) => logs.push(['error', args.join(' ')]);
+  console.warn = (...args) => logs.push(['warn', args.join(' ')]);
+  try { return await fn(logs); } finally { Object.assign(console, { error, warn }); }
+}
+
+async function serverWith(settings, logs = []) {
   const saved = { ...process.env };
   Object.assign(process.env, settings);
   try {
-    const server = await start();
+    const server = await capture(() => start(), logs);
     if (!server.listening) await once(server, 'listening');
     return server;
   } finally {
@@ -57,10 +68,15 @@ async function serverWith(settings) {
 (async () => {
   // ── The posture ──
   assert.equal(originSettings({}).origin, false, 'development: none of the settings');
-  for (const source of [{ EC2_PROXY_SECRET: 'x' }, { EXTRA_WEB_HOSTS: 'aws.zero-x.live' }, { TRUST_CLOUDFLARE: 'true' },
+  for (const source of [{ EC2_PROXY_SECRET: SECRET }, { EXTRA_WEB_HOSTS: 'aws.zero-x.live' }, { TRUST_CLOUDFLARE: 'true' },
     { NODE_ENV: ' Production ' }]) {
     assert.equal(originSettings(source).origin, true, JSON.stringify(source));
   }
+  // The secret is the only gate on the public tunnel host: a short one stops the server at start.
+  for (const weak of ['x', 'a'.repeat(31)]) {
+    assert.throws(() => originSettings({ EC2_PROXY_SECRET: weak }), /EC2_PROXY_SECRET must be at least 32 characters/);
+  }
+  assert.equal(originSettings({ EC2_PROXY_SECRET: 'a'.repeat(32) }).secret.length, 32);
   assert.deepEqual(originSettings({ EXTRA_WEB_HOSTS: ' AWS.zero-x.live , ,qa.example.test' }).extraHosts, ['aws.zero-x.live', 'qa.example.test']);
   const production = originSettings({ EC2_PROXY_SECRET: SECRET, TRUST_CLOUDFLARE: 'true', TRUST_CF_IPCOUNTRY: 'true', NODE_ENV: 'production' });
   const testWindow = originSettings({ EC2_PROXY_SECRET: SECRET, EXTRA_WEB_HOSTS: 'aws.zero-x.live', TRUST_CLOUDFLARE: 'true', TRUST_CF_IPCOUNTRY: 'true' });
@@ -83,17 +99,45 @@ async function serverWith(settings) {
     assert.equal(resolveOrigin(fakeRequest(proxied('zero-x.live', { 'x-zerox-proto': proto })), production).status, 400, proto);
   }
 
-  // ── Without it (none, wrong, a prefix, the secret with more): x-zerox-* mean nothing ──
+  // ── A wrong secret (empty, wrong, a prefix, the secret with more, twice): a forward from a Worker
+  // that does not hold this server's secret is refused on every host and path, the test host and
+  // the health checks included, so a mismatch is a visible 403 rather than visitors served as
+  // aws.zero-x.live (redirects to the test host, no device page, the hop's country) ──
   const spoof = { 'x-zerox-host': 'zero-x.live', 'x-zerox-proto': 'https', 'x-zerox-client-ip': '203.0.113.9', 'x-zerox-country': 'US' };
-  for (const presented of [undefined, '', 'wrong', SECRET.slice(0, -1), SECRET + 'x', SECRET.toUpperCase()]) {
-    const headers = { ...spoof, ...(presented === undefined ? {} : { 'x-zerox-proxy-secret': presented }) };
-    assert.equal(resolveOrigin(fakeRequest({ ...headers, host: '127.0.0.1:8787' }), production).status, 403, `production, ${presented}`);
-    const direct = resolveOrigin(fakeRequest({ ...headers, host: 'aws.zero-x.live', 'cf-connecting-ip': '198.51.100.4', 'cf-ipcountry': 'DE' }), testWindow);
-    assert.deepEqual(direct, { base: 'https://aws.zero-x.live', host: 'aws.zero-x.live', address: '198.51.100.4', cf: { country: 'DE' } },
-      `test host, ${presented}: CF-Connecting-IP and CF-IPCountry under the tunnel rules`);
+  const mismatch = { status: 403, code: 'proxy_secret_mismatch',
+    message: 'The forwarded request was refused: its proxy secret does not match this server\'s.' };
+  const mismatchLogs = [];
+  await capture(async () => {
+    for (const presented of ['', 'wrong', SECRET.slice(0, -1), SECRET + 'x', SECRET.toUpperCase(), `${SECRET}, ${SECRET}`]) {
+      const headers = { ...spoof, 'x-zerox-proxy-secret': presented };
+      for (const [settings, host, url] of [[production, '127.0.0.1:8787', '/v1/models'], [production, '127.0.0.1:8787', '/health'],
+        [production, 'relay.zero-x.live', '/relay/v1/host'], [testWindow, 'aws.zero-x.live', '/v1/models'], [testWindow, 'aws.zero-x.live', '/ready']]) {
+        assert.deepEqual(resolveOrigin(fakeRequest({ ...headers, host }, { url }), settings), mismatch, `${host}${url}, ${JSON.stringify(presented)}`);
+      }
+    }
+    // EC2 without EC2_PROXY_SECRET (missing from gateway.env) during the test window: the Worker's
+    // forwards arrive on the test host, and are still refused.
+    for (const settings of [originSettings({ TRUST_CLOUDFLARE: 'true' }), originSettings({ EXTRA_WEB_HOSTS: 'aws.zero-x.live', TRUST_CLOUDFLARE: 'true' })]) {
+      for (const host of ['neuron.zero-x.live', 'dashboard.zero-x.live', 'zero-x.live']) {
+        assert.deepEqual(resolveOrigin(fakeRequest({ ...proxied(host), host: 'aws.zero-x.live' }, { url: '/device' }), settings), mismatch,
+          `no EC2_PROXY_SECRET here: ${host} forwarded to the test host`);
+      }
+    }
+  }, mismatchLogs);
+  // Logged once per server (journald shows it), never with the value presented.
+  assert.deepEqual(mismatchLogs.map(([level]) => level), ['error', 'error', 'error', 'error'], 'one line for each of the four servers');
+  for (const [, line] of mismatchLogs) {
+    assert.match(line, /x-zerox-proxy-secret does not match EC2_PROXY_SECRET.*403 proxy_secret_mismatch/);
+    assert.ok(!line.includes(SECRET), 'the presented value is never logged');
   }
-  assert.equal(resolveOrigin(fakeRequest(proxied('zero-x.live')), originSettings({ TRUST_CLOUDFLARE: 'true' })).status, 403,
-    'without EC2_PROXY_SECRET configured no secret is valid');
+  assert.match(mismatchLogs[2][1], /EC2_PROXY_SECRET is not set here/);
+
+  // ── No secret header: a request straight to the test host, served under the tunnel rules (the
+  // spoofed x-zerox-* mean nothing); anywhere else in production a 403 ──
+  assert.equal(resolveOrigin(fakeRequest({ ...spoof, host: '127.0.0.1:8787' }), production).code, 'forbidden');
+  const direct = resolveOrigin(fakeRequest({ ...spoof, host: 'aws.zero-x.live', 'cf-connecting-ip': '198.51.100.4', 'cf-ipcountry': 'DE' }), testWindow);
+  assert.deepEqual(direct, { base: 'https://aws.zero-x.live', host: 'aws.zero-x.live', address: '198.51.100.4', cf: { country: 'DE' } },
+    'test host: CF-Connecting-IP and CF-IPCountry under the tunnel rules');
   assert.equal(resolveOrigin(fakeRequest({ host: 'aws.zero-x.live', 'cf-connecting-ip': '198.51.100.4', 'cf-ipcountry': 'DE' }),
     originSettings({ EXTRA_WEB_HOSTS: 'aws.zero-x.live' })).address, '127.0.0.1', 'CF-Connecting-IP only with TRUST_CLOUDFLARE');
   assert.deepEqual(resolveOrigin(fakeRequest({ host: 'aws.zero-x.live', 'cf-ipcountry': 'DE' }),
@@ -107,7 +151,18 @@ async function serverWith(settings) {
     ['GET', '/', 403]]) {
     assert.equal(resolveOrigin(fakeRequest({ host: '127.0.0.1:8787' }, { method, url }), production).status, expected, `${method} ${url}`);
   }
-  assert.equal(resolveOrigin(fakeRequest({ host: 'relay.zero-x.live' }), production).base, 'https://relay.zero-x.live');
+  // The relay host straight through the tunnel (no Worker in front): the relay and the health
+  // checks only, not a second copy of the site and the API.
+  for (const [method, url, expected] of [['GET', '/v1/relay', undefined], ['GET', '/v1/relay?room=1', undefined], ['GET', '/relay/v1/host', undefined],
+    ['POST', '/relay/v1/ticket', undefined], ['GET', '/relay/v1/hosts', undefined], ['GET', '/health', undefined], ['HEAD', '/ready', undefined],
+    ['GET', '/', 404], ['GET', '/index.html', 404], ['GET', '/robots.txt', 404], ['POST', '/v1/chat/completions', 404], ['GET', '/v1/models', 404],
+    ['GET', '/v1/relayed', 404], ['GET', '/v1/relay/', 404], ['GET', '/relay', 404], ['GET', '/admin/overview', 404], ['GET', '/api/account', 404],
+    ['POST', '/health', 404]]) {
+    const relay = resolveOrigin(fakeRequest({ host: 'relay.zero-x.live' }, { method, url }), production);
+    assert.equal(relay.status, expected, `relay ${method} ${url}`);
+    if (expected) assert.equal(relay.code, 'not_found');
+    else assert.equal(relay.base, 'https://relay.zero-x.live');
+  }
   assert.equal(resolveOrigin(fakeRequest({ host: 'other.zero-x.live' }), testWindow).status, 403, 'a host that is not listed');
   assert.equal(resolveOrigin(fakeRequest({ host: 'zero-x.live' }), testWindow).status, 403, 'a Worker host without the secret');
 
@@ -155,12 +210,22 @@ async function serverWith(settings) {
     assert.deepEqual(refused.json().error, { message: 'This server only answers requests forwarded by https://zero-x.live.',
       type: 'permission_error', code: 'forbidden', param: null });
     assert.equal(refused.headers['cache-control'], 'no-store');
-    assert.equal((await call(port, { headers: { ...spoof, 'x-zerox-proxy-secret': 'wrong' } })).status, 403);
+    const wrong = await capture(() => call(port, { headers: { ...spoof, 'x-zerox-proxy-secret': 'wrong' } }));
+    assert.equal(wrong.status, 403);
+    assert.deepEqual(wrong.json().error, { message: mismatch.message, type: 'permission_error', code: 'proxy_secret_mismatch', param: null });
     assert.equal((await call(port, { path: '/health' })).status, 200);
     assert.equal((await call(port, { method: 'HEAD', path: '/health' })).status, 200);
     assert.notEqual((await call(port, { path: '/ready' })).status, 403, 'readiness answers (503 here: no session store)');
     assert.equal((await call(port, { method: 'POST', path: '/health' })).status, 403);
-    assert.equal((await call(port, { headers: { host: 'relay.zero-x.live' } })).status, 200, 'the relay host goes straight through the tunnel');
+    // The relay host goes straight through the tunnel, for the relay only.
+    const relayRoute = await call(port, { path: '/relay/v1/host', headers: { host: 'relay.zero-x.live' } });
+    assert.notEqual(relayRoute.status, 403);
+    assert.notEqual(relayRoute.json().error?.code, 'not_found', 'the app answers the relay route');
+    for (const pathname of ['/v1/models', '/index.html', '/robots.txt']) {
+      const other = await call(port, { path: pathname, headers: { host: 'relay.zero-x.live' } });
+      assert.equal(other.status, 404, `relay host ${pathname}`);
+      assert.equal(other.json().error.code, 'not_found');
+    }
 
     // The visitor's host and scheme reach the app.
     const ok = await call(port, { headers: proxied('zero-x.live') });
@@ -195,15 +260,46 @@ async function serverWith(settings) {
       'without x-zerox-country the hop\'s CF-IPCountry is not the visitor\'s: unknown country, closed');
 
     // The test window: aws.zero-x.live straight through the tunnel, as Cloudflare describes it.
-    const qa = await serverWith({ ...common, EC2_PROXY_SECRET: SECRET, EXTRA_WEB_HOSTS: 'aws.zero-x.live' });
+    const qaLogs = [];
+    const qa = await serverWith({ ...common, EC2_PROXY_SECRET: SECRET, EXTRA_WEB_HOSTS: 'aws.zero-x.live' }, qaLogs);
     servers.push(qa);
+    assert.deepEqual(qaLogs, [], 'nothing to warn about');
     const qaPort = qa.address().port;
     const index = await call(qaPort, { path: '/index.html', headers: { host: 'aws.zero-x.live' } });
     assert.equal(index.status, 301);
     assert.equal(index.headers.location, 'https://aws.zero-x.live/', 'the test host is the app\'s host, over https');
     assert.equal(await geminiAvailable(qaPort, { host: 'aws.zero-x.live', 'cf-ipcountry': 'US' }), true);
-    assert.equal(await geminiAvailable(qaPort, { host: 'aws.zero-x.live', 'cf-ipcountry': 'DE', 'x-zerox-country': 'US',
-      'x-zerox-proxy-secret': 'wrong' }), false, 'a spoofed x-zerox-country is ignored');
+    assert.equal(await geminiAvailable(qaPort, { host: 'aws.zero-x.live', 'cf-ipcountry': 'DE', 'x-zerox-country': 'US' }), false,
+      'a spoofed x-zerox-country is ignored');
+    // A forward with a secret the server does not share is refused rather than served as the test host.
+    const rotated = await capture(() => call(qaPort, { path: '/index.html', headers: { ...proxied('zero-x.live'), host: 'aws.zero-x.live',
+      'x-zerox-proxy-secret': 'rotated-on-the-worker-only-0123456789' } }));
+    assert.equal(rotated.status, 403);
+    assert.equal(rotated.json().error.code, 'proxy_secret_mismatch');
+
+    // The test window with EC2_PROXY_SECRET missing from gateway.env: the start-up warning says what
+    // happens, and the Worker's forwards are refused, not served as aws.zero-x.live (no redirect to
+    // the test host, no 404 for the device page).
+    const unsetLogs = [];
+    const unset = await serverWith({ ...common, EXTRA_WEB_HOSTS: 'aws.zero-x.live' }, unsetLogs);
+    servers.push(unset);
+    assert.equal(unsetLogs.length, 1);
+    assert.equal(unsetLogs[0][0], 'warn');
+    assert.match(unsetLogs[0][1], /EC2_PROXY_SECRET is not set: every request the Worker forwards .* is refused with 403 proxy_secret_mismatch; this server answers only aws\.zero-x\.live \(directly\), the relay on relay\.zero-x\.live and GET \/health and \/ready/);
+    const unsetPort = unset.address().port;
+    const forwarded = [];
+    await capture(async () => {
+      for (const [host, pathname] of [['zero-x.live', '/index.html'], ['neuron.zero-x.live', '/device'], ['dashboard.zero-x.live', '/']]) {
+        forwarded.push(await call(unsetPort, { path: pathname, headers: { ...proxied(host), host: 'aws.zero-x.live' } }));
+      }
+    }, unsetLogs);
+    assert.deepEqual(forwarded.map(response => [response.status, response.json().error.code]), Array(3).fill([403, 'proxy_secret_mismatch']));
+    assert.equal(unsetLogs.filter(([level]) => level === 'error').length, 1, 'logged once');
+    assert.equal((await call(unsetPort, { path: '/index.html', headers: { host: 'aws.zero-x.live' } })).status, 301, 'the test host itself is served');
+    // Production with the secret missing: the warning lists what is still answered.
+    const bareLogs = [];
+    servers.push(await serverWith({ ...common, NODE_ENV: 'production' }, bareLogs));
+    assert.match(bareLogs[0][1], /refused with 403 proxy_secret_mismatch; this server answers only the relay on relay\.zero-x\.live and GET \/health and \/ready/);
     assert.equal((await call(qaPort, { headers: { host: 'qa.other.test' } })).status, 403);
     assert.equal((await call(qaPort, { headers: proxied('aws.zero-x.live') })).status, 200, 'the proxy may forward to a test host');
     const qaStart = extra => call(qaPort, { path: '/auth/openrouter/start', headers: { host: 'aws.zero-x.live', ...extra } }).then(response => response.status);
@@ -221,5 +317,5 @@ async function serverWith(settings) {
   } finally {
     await Promise.all(servers.map(server => new Promise(resolve => server.close(() => resolve()))));
   }
-  console.log('PASS: Node origin trusts x-zerox-* only with EC2_PROXY_SECRET (host, scheme, address, request.cf), refuses unproxied requests in production except /health, /ready and the relay host, serves EXTRA_WEB_HOSTS under the tunnel rules, strips x-zerox-*');
+  console.log('PASS: Node origin trusts x-zerox-* only with EC2_PROXY_SECRET (host, scheme, address, request.cf; 32+ characters), refuses a forward with a wrong secret on every host (logged once), refuses unproxied requests in production except /health, /ready and the relay paths of the relay host, serves EXTRA_WEB_HOSTS under the tunnel rules, strips x-zerox-*');
 })().catch(error => { console.error(error); process.exitCode = 1; });

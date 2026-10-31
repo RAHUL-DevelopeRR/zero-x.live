@@ -27,6 +27,9 @@ const mime = {
 // the same directory and the same file, so a file the Worker would not serve (Assets/RahulCIT.png,
 // notes, server source) is a 404 here as well, whatever its extension.
 const WRANGLER_IGNORED = ['/.assetsignore', '/_headers', '/_redirects'];
+// What the deploy adds to the release root (git archive plus these), which the Worker never
+// uploads. They come after .assetsignore's own lines, so no negation there brings them back.
+const RELEASE_FILES = ['/REVISION'];
 
 const escapeRegExp = text => text.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
 
@@ -85,7 +88,7 @@ function assetIndex(dir) {
     console.error(`Static files off: no .assetsignore in ${dir}`);
     return files;
   }
-  const rules = [...WRANGLER_IGNORED, ...text.split('\n')].map(ignoreRule).filter(Boolean);
+  const rules = [...WRANGLER_IGNORED, ...text.split('\n'), ...RELEASE_FILES].map(ignoreRule).filter(Boolean);
   const walk = relative => {
     for (const entry of fs.readdirSync(path.join(dir, relative), { withFileTypes: true })) {
       const name = relative ? `${relative}/${entry.name}` : entry.name;
@@ -137,13 +140,19 @@ function assetServer(dir) {
   let files = null;
   const etags = new Map();
   const load = () => (files ??= assetIndex(dir));
-  async function entityTag(file, info) {
+  // The hash is kept as a promise from the moment it starts, so simultaneous first requests for one
+  // file (after a deploy: a page's images, a video's ranges) read it once between them. A failed
+  // read is forgotten, so the next request tries again.
+  function entityTag(file, info) {
     const known = etags.get(file);
     if (known && known.size === info.size && known.mtimeMs === info.mtimeMs) return known.tag;
-    const hash = crypto.createHash('sha256');
-    for await (const chunk of fs.createReadStream(file)) hash.update(chunk);
-    const tag = `"${hash.digest('hex').slice(0, 32)}"`;
+    const tag = (async () => {
+      const hash = crypto.createHash('sha256');
+      for await (const chunk of fs.createReadStream(file)) hash.update(chunk);
+      return `"${hash.digest('hex').slice(0, 32)}"`;
+    })();
     etags.set(file, { size: info.size, mtimeMs: info.mtimeMs, tag });
+    tag.catch(() => { if (etags.get(file)?.tag === tag) etags.delete(file); });
     return tag;
   }
   async function fetchAsset(request) {
@@ -162,7 +171,10 @@ function assetServer(dir) {
     // HTML gets no validator: where src/index.js maps a clean URL (/about -> /about.html) or the
     // 404 page it accepts only a 200 from ASSETS, so a 304 would turn a revalidated page into the
     // 404 page. The Worker's pages reach browsers without an ETag today as well.
-    const etag = type.startsWith('text/html') ? null : await entityTag(file, info);
+    let etag = null;
+    if (!type.startsWith('text/html')) {
+      try { etag = await entityTag(file, info); } catch { return new Response('Not found', { status: 404 }); }
+    }
     if (etag && etagMatches(request.headers.get('if-none-match'), etag)) {
       return new Response(null, { status: 304, headers: { ETag: etag, 'Cache-Control': cache } });
     }
@@ -202,10 +214,17 @@ function releaseRevision(dir) {
 const LOOPBACK_HOSTS = ['127.0.0.1', 'localhost', '::1', '[::1]'];
 const hostList = value => String(value || '').split(',').map(host => host.trim().toLowerCase()).filter(Boolean);
 
+// ASSETS_DIR resolved through links once, at start. On EC2 it names /opt/zerox/current, which the
+// deploy points at the next release before it stops this instance: resolved, the draining instance
+// keeps serving the release it started with (the allow-list it built, the REVISION it reported).
+function releaseDirectory(dir) {
+  try { return fs.realpathSync(dir); } catch { return dir; }
+}
+
 // Builds the bindings object shared by every request. process.env passes through unchanged
 // (including DATABASE_DRIVER=pglite and its settings for the account store).
 function runtimeEnv(host) {
-  const assetsDir = path.resolve(process.env.ASSETS_DIR || root);
+  const assetsDir = releaseDirectory(path.resolve(process.env.ASSETS_DIR || root));
   const env = { ...process.env, ...(process.env.NEURON_API_ONLY === 'true' ? {} : { ASSETS: assetServer(assetsDir) }) };
   // Marks the Node runtime: the local dev identity is never honoured by the Worker build.
   env.NEURON_RUNTIME = 'node';
@@ -284,19 +303,31 @@ const RELAY_HOST = 'relay.zero-x.live';
 const OPEN_PATHS = ['/health', '/ready'];
 // The request URL host for those health checks when the Host header is not one this server serves.
 const UNNAMED_ORIGIN = 'https://origin.invalid';
+// The relay host reaches this server without the Worker (and its EC2_PROXY_PREFIXES switch) in
+// front, so it carries the relay only: the mobile app's WebSocket and the relay's own routes
+// (tickets, hosts), plus the health checks. The site and the API are the Worker's hosts' alone.
+const isRelayPath = pathname => pathname === '/v1/relay' || pathname.startsWith('/relay/');
+// The secret is the only gate on the public tunnel host; anything shorter than this (openssl rand
+// -hex 32 gives 64 characters) is refused at start.
+const MIN_SECRET_LENGTH = 32;
 
 // The posture, read once at start. Development (none of these set): every request URL stays
 // http://127.0.0.1 as before, so src/ treats it as local. The EC2 origin (the proxy secret, a test
 // host, the tunnel or NODE_ENV=production): the rules in resolveOrigin, which answer only the
-// Worker's proxy, the test hosts, the relay host and the health checks.
+// Worker's proxy, the test hosts, the relay on the relay host and the health checks.
 function originSettings(source = process.env) {
   const extraHosts = hostList(source.EXTRA_WEB_HOSTS);
   const secret = String(source.EC2_PROXY_SECRET || '');
+  if (secret && secret.length < MIN_SECRET_LENGTH) {
+    throw new Error(`EC2_PROXY_SECRET must be at least ${MIN_SECRET_LENGTH} characters (openssl rand -hex 32); the server did not start`);
+  }
   const trustCloudflare = source.TRUST_CLOUDFLARE === 'true';
   return {
     origin: !!secret || extraHosts.length > 0 || trustCloudflare || String(source.NODE_ENV || '').trim().toLowerCase() === 'production',
     secret, extraHosts, knownHosts: new Set([...WEB_HOSTS, ...extraHosts]),
     trustCloudflare, trustCountry: source.TRUST_CF_IPCOUNTRY === 'true',
+    // Whether a forward with the wrong secret has been logged yet (once per server).
+    mismatchLogged: false,
   };
 }
 
@@ -335,20 +366,41 @@ function resolveOrigin(req, settings) {
     return Array.isArray(value) ? value[0] : value;
   };
   if (!settings.origin) return { base: 'http://127.0.0.1', address: clientAddress(req, settings.trustCloudflare) };
-  if (secretMatches(header('x-zerox-proxy-secret'), settings.secret)) {
-    const host = String(header('x-zerox-host') || '').trim().toLowerCase();
-    const proto = String(header('x-zerox-proto') || '').trim().toLowerCase();
-    if (!settings.knownHosts.has(host)) return { status: 421, code: 'misdirected_request', message: 'This server does not serve that host.' };
-    if (proto !== 'https' && proto !== 'http') return { status: 400, code: 'invalid_request', message: 'Invalid forwarded scheme.' };
-    const visitor = String(header('x-zerox-client-ip') || '').trim();
-    return { base: `${proto}://${host}`, host, proxied: true, cf: proxyGeo(header),
-      address: net.isIP(visitor) ? visitor : req.socket.remoteAddress };
+  const presented = header('x-zerox-proxy-secret');
+  if (presented !== undefined) {
+    if (secretMatches(presented, settings.secret)) {
+      const host = String(header('x-zerox-host') || '').trim().toLowerCase();
+      const proto = String(header('x-zerox-proto') || '').trim().toLowerCase();
+      if (!settings.knownHosts.has(host)) return { status: 421, code: 'misdirected_request', message: 'This server does not serve that host.' };
+      if (proto !== 'https' && proto !== 'http') return { status: 400, code: 'invalid_request', message: 'Invalid forwarded scheme.' };
+      const visitor = String(header('x-zerox-client-ip') || '').trim();
+      return { base: `${proto}://${host}`, host, proxied: true, cf: proxyGeo(header),
+        address: net.isIP(visitor) ? visitor : req.socket.remoteAddress };
+    }
+    // The Worker sends the header with every forward, so a value that does not match is a Worker and
+    // a server holding different secrets (one side rotated, or EC2_PROXY_SECRET missing here). Its
+    // forwards arrive on the tunnel's own host, which may be a test host: served as that host they
+    // would redirect visitors to it, lose the dashboard and neuron hosts and take the hop's country,
+    // all without an error. A refusal on every host and path makes the mismatch visible instead.
+    if (!settings.mismatchLogged) {
+      settings.mismatchLogged = true;
+      console.error('Refused a request the Worker forwarded: its x-zerox-proxy-secret does not match EC2_PROXY_SECRET' +
+        (settings.secret ? '' : ' (EC2_PROXY_SECRET is not set here)') +
+        '. Every forward gets 403 proxy_secret_mismatch until the Worker and this server hold the same secret (logged once).');
+    }
+    return { status: 403, code: 'proxy_secret_mismatch', message: 'The forwarded request was refused: its proxy secret does not match this server\'s.' };
   }
   const host = String(header('host') || '').trim().toLowerCase();
+  const pathname = req.url.split('?')[0];
   const country = settings.trustCountry ? countryCode(header('cf-ipcountry')) : null;
   const direct = { address: clientAddress(req, settings.trustCloudflare), cf: country ? { country } : {} };
-  if (settings.extraHosts.includes(host) || host === RELAY_HOST) return { ...direct, base: `https://${host}`, host };
-  if (['GET', 'HEAD'].includes(req.method) && OPEN_PATHS.includes(req.url.split('?')[0])) return { ...direct, base: UNNAMED_ORIGIN };
+  const healthCheck = ['GET', 'HEAD'].includes(req.method) && OPEN_PATHS.includes(pathname);
+  if (settings.extraHosts.includes(host)) return { ...direct, base: `https://${host}`, host };
+  if (host === RELAY_HOST) {
+    return isRelayPath(pathname) || healthCheck ? { ...direct, base: `https://${host}`, host }
+      : { status: 404, code: 'not_found', message: 'relay.zero-x.live serves the relay only.' };
+  }
+  if (healthCheck) return { ...direct, base: UNNAMED_ORIGIN };
   return { status: 403, code: 'forbidden', message: 'This server only answers requests forwarded by https://zero-x.live.' };
 }
 
@@ -473,22 +525,35 @@ function gatewayServer(app, env, { settings, heartbeatMs, readyOnly = false }) {
   return server;
 }
 
+// listen()'s reusePort arrived in Node 23.1 and 22.12; an older Node ignores it without a word, and
+// the next release's instance then fails to bind the shared port in the middle of a deploy.
+function supportsReusePort(version = process.version) {
+  const [major, minor] = String(version).replace(/^v/, '').split('.').map(Number);
+  return major > 23 || (major === 23 && minor >= 1) || (major === 22 && minor >= 12);
+}
+
 async function start() {
+  // The posture first: a setting that stops the server (a short EC2_PROXY_SECRET) stops it before
+  // the app loads anything.
+  const settings = originSettings();
+  const reusePort = process.env.AUTH_REUSE_PORT === 'true';
+  if (reusePort && !supportsReusePort()) {
+    throw new Error(`AUTH_REUSE_PORT=true needs Node 22.12 or later (this is ${process.version}); the server did not start`);
+  }
   const { default: app } = await import('./src/index.js');
   const port = Number(process.env.AUTH_PORT || 8787);
   const host = process.env.AUTH_HOST || '127.0.0.1';
   const env = runtimeEnv(host);
   env.ASSETS?.load();
-  const settings = originSettings();
   if (settings.origin && !settings.secret) {
-    console.warn('EC2_PROXY_SECRET is not set: requests forwarded by the Worker are refused' +
-      (settings.extraHosts.length ? '' : '; only /health, /ready and relay.zero-x.live are answered (EXTRA_WEB_HOSTS lists hosts to serve directly)'));
+    const direct = settings.extraHosts.length ? `${settings.extraHosts.join(', ')} (directly), ` : '';
+    console.warn('EC2_PROXY_SECRET is not set: every request the Worker forwards (it carries x-zerox-proxy-secret) is refused with ' +
+      `403 proxy_secret_mismatch; this server answers only ${direct}the relay on relay.zero-x.live and GET /health and /ready`);
   }
   const heartbeatMs = positiveMs(process.env.SSE_HEARTBEAT_MS, 30000);
   const server = gatewayServer(app, env, { settings, heartbeatMs });
   // Zero-downtime restarts (C6): the next release's instance binds the same port before the old
   // one drains (SO_REUSEPORT: Linux, Node 22.12+), and the kernel spreads new connections over both.
-  const reusePort = process.env.AUTH_REUSE_PORT === 'true';
   // Logs the bound port, so AUTH_PORT=0 (any free port) can be discovered from stdout.
   server.listen({ port, host, ...(reusePort ? { reusePort } : {}) },
     () => console.log(`Neuron gateway listening on ${host}:${server.address().port}${reusePort ? ' (shared port)' : ''}`));
@@ -506,9 +571,19 @@ async function start() {
 // requests in flight (token streams, whose settlement runs before their last byte) get up to
 // graceMs to finish. Whatever still runs then is cut, which settles it as a client cancel.
 // Resolves true when every request finished in time.
+//
+// A response that has not started yet (its upstream has not answered) is sent with Connection:
+// close. cloudflared pools keep-alive connections and reuses the one it used last: told nothing,
+// it may send its next request on a connection this instance is about to close, which would get
+// the draining 503, or a reset that it does not retry for a POST, while the next release's
+// instance could have served it. A response already streaming has sent its headers; its
+// connection is closed as soon as it ends (gatewayServer).
 function drain(server, graceMs) {
   const servers = [server, ...(server[COMPANIONS] || [])];
-  for (const each of servers) each[DRAINING] = true;
+  for (const each of servers) {
+    each[DRAINING] = true;
+    for (const res of each[IN_FLIGHT] || []) if (!res.headersSent) res.setHeader('Connection', 'close');
+  }
   return new Promise(resolve => {
     let open = servers.length;
     const timer = setTimeout(() => {
@@ -554,4 +629,5 @@ if (require.main === module) {
 }
 module.exports = {
   start, asset, assetServer, ignoreRule, runtimeEnv, requestHeaders, resolveOrigin, originSettings, releaseRevision, drain, stopOnSignals,
+  supportsReusePort,
 };

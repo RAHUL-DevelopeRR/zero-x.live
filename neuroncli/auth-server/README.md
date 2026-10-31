@@ -138,8 +138,11 @@ Nothing below needs Supabase, Razorpay or provider accounts.
   `concurrency_limit`, `allowed_tiers`, `monthly_credit_microusd`, prices and Razorpay plan
   ids). Edits apply to enforcement immediately and to the gateway's cached view within 60 s.
 - Containers: `docker build -t neuron-server .` then `docker run --env-file .env -p 8787:8787
-  neuron-server`. Put a TLS proxy in front; never enable `DEV_AUTH_ENABLED` or the PGlite driver
-  there (both are refused outside loopback and under `NODE_ENV=production`, and dev tokens are
-  also refused on browser requests from a non-loopback `Origin`).
+  neuron-server`. Put a TLS proxy in front, and set `EXTRA_WEB_HOSTS` to the public host it
+  serves: the image sets `NODE_ENV=production`, under which the server answers only the hosts
+  listed there (plus `GET /health` and `/ready`) and refuses everything else with a 403
+  (GATEWAY_SETUP.md, `NODE_ENV`). Never enable `DEV_AUTH_ENABLED` or the PGlite driver there
+  (both are refused outside loopback and under `NODE_ENV=production`, and dev tokens are also
+  refused on browser requests from a non-loopback `Origin`).
 
 See [PROVIDERS.md](PROVIDERS.md) for upstream adapters and operator health probes.
