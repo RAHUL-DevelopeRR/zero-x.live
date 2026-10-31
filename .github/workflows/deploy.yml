@@ -6,7 +6,10 @@ name: Deploy to Cloudflare Workers and EC2
 # only job verify and run in the GitHub environment "production", so they wait for its approval
 # together: one approval starts both, nothing ships before the checks pass or ahead of that
 # approval, and both read the environment's secrets. Job same-commit then requires both runtimes
-# to report the commit in /health. Actions are pinned by commit.
+# to report the commit in /health. Actions are pinned by commit. Every `npm ci` runs without
+# install scripts (no dependency has one today), and no checkout keeps the token in .git/config:
+# a later step of job deploy holds the Cloudflare token and every runtime secret, and a package
+# script that could write to $GITHUB_ENV (NODE_OPTIONS=--require ...) would reach them.
 on:
   push:
     branches:
@@ -38,7 +41,7 @@ jobs:
       - name: Verify production code
         working-directory: neuroncli/auth-server
         run: |
-          npm ci
+          npm ci --ignore-scripts
           node build-sitemap.mjs
           npm run check:production
           npm run check:database
@@ -57,6 +60,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
@@ -64,12 +68,13 @@ jobs:
           cache: npm
           cache-dependency-path: neuroncli/auth-server/package-lock.json
 
-      # wrangler bundles the Worker from node_modules. The sitemap ships as an asset; its lastmod
-      # dates come from the history (fetch-depth: 0).
+      # wrangler bundles the Worker from node_modules (esbuild, which wrangler-action installs with
+      # wrangler, needs none of the gateway's install scripts). The sitemap ships as an asset; its
+      # lastmod dates come from the history (fetch-depth: 0).
       - name: Install dependencies and build the sitemap
         working-directory: neuroncli/auth-server
         run: |
-          npm ci
+          npm ci --ignore-scripts
           node build-sitemap.mjs
 
       # MANUAL STEP: this workflow never touches the database. Before merging a change that adds
@@ -87,7 +92,8 @@ jobs:
       # Sonnet 5.5 and Opus 5.5 (paid pools, Pro and Max) and the weekly discovery research jobs;
       # GLM_API_KEY serves Z.ai's free GLM-4.7-Flash and GLM-4.5-Flash; EC2_PROXY_SECRET is
       # what the Worker sends with every request it forwards to the VM (without it the Worker
-      # forwards nothing). The Worker secret EC2_PROXY_PREFIXES, the forward switch, is not
+      # forwards nothing), an environment secret of "production" like every secret the VM shares
+      # with the Worker (deploy/aws/README.md, "Deploys"). The Worker secret EC2_PROXY_PREFIXES, the forward switch, is not
       # listed on purpose: `wrangler secret put` changes it in seconds and a deploy keeps it.
       # A new secret must be listed in OPTIONAL_SECRETS and in both env blocks to reach the
       # Worker, and in job ec2 to reach the VM (check-aws-deploy.mjs keeps them in step).
@@ -199,9 +205,12 @@ jobs:
       EC2_INSTANCE_ID: ${{ vars.EC2_INSTANCE_ID }}
       EC2_HOST_KEY: ${{ vars.EC2_HOST_KEY }}
     steps:
+      # The history too: package-release.sh builds the release's sitemap.xml as job deploy does,
+      # with each page's lastmod from git.
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -212,13 +221,15 @@ jobs:
       # except: the secrets the VM must share with the Worker to behave like it (users' sealed
       # OpenRouter keys, the provider key vault, device approvals, the proxy secret the Worker
       # sends) are required here, and SUPABASE_SECRET_KEY comes from SUPABASE_SECRET_KEY_EC2, the
-      # VM's own Supabase key, so either runtime's key can be revoked alone. EXTRA_WEB_HOSTS is a
-      # plain VM-only value from the repository variable. CLOUDFLARE_API_TOKEN, the Worker deploy
-      # token, never reaches the VM.
+      # VM's own Supabase key, so either runtime's key can be revoked alone. EC2_PROXY_SECRET_ROTATION
+      # is the VM's alone: the second proxy secret it accepts while EC2_PROXY_SECRET is rotated
+      # (deploy/aws/README.md, "Rotating the proxy secret"). EXTRA_WEB_HOSTS is a plain VM-only
+      # value from the repository variable. CLOUDFLARE_API_TOKEN, the Worker deploy token, never
+      # reaches the VM.
       - name: Build the gateway environment
         env:
           REQUIRED_SECRETS: SUPABASE_SECRET_KEY SESSION_ENCRYPTION_KEY PROVIDER_KEYS_KEK DEVICE_APPROVAL_SECRET EC2_PROXY_SECRET
-          OPTIONAL_SECRETS: GROQ_API_KEY OPENROUTER_API_KEY GEMINI_API_KEY NVIDIA_API_KEY RAZORPAY_KEY_SECRET RAZORPAY_WEBHOOK_SECRET GATEWAY_ADMIN_TOKEN GROQ_PAID_API_KEY GEMINI_PAID_API_KEY ANTHROPIC_API_KEY GLM_API_KEY
+          OPTIONAL_SECRETS: GROQ_API_KEY OPENROUTER_API_KEY GEMINI_API_KEY NVIDIA_API_KEY RAZORPAY_KEY_SECRET RAZORPAY_WEBHOOK_SECRET GATEWAY_ADMIN_TOKEN GROQ_PAID_API_KEY GEMINI_PAID_API_KEY ANTHROPIC_API_KEY GLM_API_KEY EC2_PROXY_SECRET_ROTATION
           VM_VARS: EXTRA_WEB_HOSTS
           EXTRA_WEB_HOSTS: ${{ vars.EXTRA_WEB_HOSTS }}
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY_EC2 }}
@@ -237,6 +248,7 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
           EC2_PROXY_SECRET: ${{ secrets.EC2_PROXY_SECRET }}
+          EC2_PROXY_SECRET_ROTATION: ${{ secrets.EC2_PROXY_SECRET_ROTATION }}
         run: |
           umask 077
           node deploy/aws/gateway-env.mjs --wrangler neuroncli/auth-server/wrangler.toml --out "$RUNNER_TEMP/gateway.env"

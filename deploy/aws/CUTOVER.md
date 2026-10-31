@@ -50,25 +50,63 @@ The EC2 smoke test left the VM on main's code (66f29a1) under the single unit
    the Worker included.
 2. **Secrets and variables for job `ec2`** (README.md, "Deploys"). Already in `production` since the
    smoke test: the secret `AWS_DEPLOY_ROLE_ARN` and the variables `EC2_INSTANCE_ID` and
-   `EC2_HOST_KEY`. New: the secret `SUPABASE_SECRET_KEY_EC2` (a Supabase secret key of the VM's
-   own, not the Worker's) and the secret `EC2_PROXY_SECRET` (`openssl rand -hex 32`; the Worker
-   gets the same value from the same secret). The smoke test's `DEVICE_VERIFICATION_URL` is not
-   needed any more: forwarded requests carry the visitor's host, so device sign-ins point at
-   `https://neuron.zero-x.live/device` (or at the test host's own page on the test host).
+   `EC2_HOST_KEY`. New, both as secrets **of the environment `production`**, never of the
+   repository (a repository secret is readable by a workflow pushed on any branch, outside the
+   environment's required reviewer): `SUPABASE_SECRET_KEY_EC2` (a Supabase secret key of the VM's
+   own, not the Worker's) and `EC2_PROXY_SECRET`, generated without echoing it:
+   `openssl rand -hex 32 | gh secret set EC2_PROXY_SECRET --env production`. The Worker job runs
+   in `production` too and gets the same value. If a repository-level `EC2_PROXY_SECRET` exists
+   (`gh secret list`), delete it: `gh secret delete EC2_PROXY_SECRET`. The smoke test's
+   `DEVICE_VERIFICATION_URL` is not needed any more: forwarded requests carry the visitor's host,
+   so device sign-ins point at `https://neuron.zero-x.live/device` (or at the test host's own page
+   on the test host).
 3. **Move the VM to the two-instance layout** (you, from the laptop, signed in with `aws login`).
-   If the running tunnel was installed with `cloudflared service install`, first write its token
-   to `/etc/cloudflared/token` (README.md, "Cloudflare Tunnel"); `host-setup.sh` keeps a tunnel's
-   own unit until that file exists. Then:
-   `deploy/aws/push-release.sh --profile zerox --setup`. It stops and removes `zerox-gateway.service`
-   and `/opt/zerox/gateway`, installs `zerox-gateway@.service` and the deploy user's sudoers, and
-   activates the commit on `zerox-gateway@0` with the environment file the smoke test wrote. Only
+   If the running tunnel was installed with `cloudflared service install <token>`, that token has
+   been on the unit's command line and in the journal, both readable by `deploy` (README.md,
+   "Cloudflare Tunnel"), so it is replaced, not copied:
+   1. In the Cloudflare dashboard, tunnel `zerox-aws` > Overview > **Refresh token**, and copy only
+      the new token (the long string at the end of the install command it shows). The running
+      connector stays connected (Cloudflare: existing connectors remain active; the old token only
+      stops opening new connections), so nothing drops yet.
+   2. On the VM, as `ubuntu`, write only the new token, from the keyboard:
+      `read -rs -p 'tunnel token: ' T; echo; printf '%s' "$T" | sudo install -o root -g root -m 0600 /dev/stdin /etc/cloudflared/token; unset T`.
+   3. Remove the old unit: `sudo cloudflared service uninstall` (it stops the connector:
+      `aws.zero-x.live` is down until the kit's unit starts below; only the test host is affected).
+   4. Drop every connection the old token still holds. A connector someone started elsewhere with
+      the old token stays connected after the refresh, and keeps receiving part of the tunnel's
+      traffic, until the tunnel's connections are deleted (Cloudflare, "Rotate a compromised
+      token"). From the laptop, with an API token that has the permission "Cloudflare Tunnel Write"
+      (create one for this and delete it afterwards; the account and tunnel ids are on the
+      tunnel's Overview):
+
+      ```bash
+      read -rs -p 'API token: ' CF; echo
+      printf 'header = "Authorization: Bearer %s"\n' "$CF" |
+        curl -fsS -K - -X DELETE "https://api.cloudflare.com/client/v4/accounts/<account id>/cfd_tunnel/<tunnel id>/connections"
+      unset CF
+      ```
+
+      (`printf` is a shell builtin and `-K -` reads the header from stdin, so the API token is on
+      no command line.) The tunnel's Overview then lists no connector until `push-release.sh`
+      below starts the kit's, and from then on exactly one: the VM's.
+
+   Then: `deploy/aws/push-release.sh --profile zerox --setup`. It installs and starts the kit's
+   `cloudflared.service` (token file, nothing on a command line), stops and removes
+   `zerox-gateway.service` and `/opt/zerox/gateway`, makes `/etc/zerox` and the environment file
+   root's (the deploy user changes it only through `zerox-install-env` from now on), installs
+   `zerox-gateway@.service` and the deploy user's sudoers, and
+   activates the commit on `zerox-gateway@0` with the environment file the smoke test wrote. Then,
+   on the VM, drop the journal that held the old token (this deletes all journal history, every
+   unit's): `sudo journalctl --rotate && sudo journalctl --vacuum-time=1s`. Only
    the test host is affected: `aws.zero-x.live` is down from the stop until `@0` is ready (a
    minute or two), and then answers only `/health` and `/ready` until job `ec2` writes
    `EXTRA_WEB_HOSTS` and `EC2_PROXY_SECRET` (the smoke test's file has neither). Until this step
    job `ec2` cannot deploy: `activate-release.sh` refuses while `zerox-gateway.service` runs or
    `/opt/zerox/gateway` is left (that unit holds port 8787 without reusePort, and the deploy user's
-   old sudo rule covers it only), and changes nothing, the environment file included. `/opt/zerox/releases/66f29a1` is pruned by
-   later activations.
+   old sudo rule covers it only), and changes nothing, the environment file included.
+   `/opt/zerox/releases/66f29a1` (installed by hand for the smoke test) becomes the deploy user's
+   in `host-setup.sh`, and later activations prune it like any other release (a release that
+   cannot be pruned is reported, not fatal: `sudo find /opt/zerox/releases ! -user deploy | head`).
 4. **Turn job `ec2` on**: `gh variable set EC2_DEPLOY --body true` (and `EXTRA_WEB_HOSTS` to
    `aws.zero-x.live` for the test window). The next approved push writes the whole environment
    file from GitHub (`gateway-env.mjs`), replacing the smoke test's.
@@ -80,29 +118,41 @@ The EC2 smoke test left the VM on main's code (66f29a1) under the single unit
 
 | | Check | How |
 |---|---|---|
-| a | **One commit on both runtimes**, both deployed by `deploy.yml` (job `ec2` on), and production's database has every migration | Jobs `ec2` and `same-commit` green on the latest push to `main` (`same-commit` compares the commits); `node scripts/apply-migrations.mjs --status` lists nothing pending. The relay decision is applied: `wrangler.toml` has no `RELAY` binding, relay routes answer 503 `relay_unavailable`. |
+| a | **One commit on both runtimes**, both deployed by `deploy.yml` (job `ec2` on), and production's database has every migration | Jobs `ec2` and `same-commit` green on the latest push to `main` (`same-commit` compares the commits); the migrations check in README.md, "Deploys" (`apply-migrations.mjs --status` with `DATABASE_URL` and `psql`, or the SQL-editor query there) lists nothing pending. The relay decision is applied: `wrangler.toml` has no `RELAY` binding, relay routes answer 503 `relay_unavailable`. |
 | b | **The models.dev facts are in Postgres** on both runtimes (C5), or you accept `/v1/models` without them after step 1 | `/v1/models` on the Worker and on `aws.zero-x.live` show the same extra facts. |
 | c | **Secrets reconciled**: `SESSION_ENCRYPTION_KEY`, `DEVICE_APPROVAL_SECRET`, `PROVIDER_KEYS_KEK` and `EC2_PROXY_SECRET` come from GitHub for both runtimes (job `ec2` requires them); the VM has its own `SUPABASE_SECRET_KEY_EC2` | Feature flags equal (below). Otherwise sealed sessions, device approvals and vault keys written by one runtime fail on the other. |
 | d | **24 h healthy on `https://aws.zero-x.live`** | CLI streams of 30-90 s complete with `NEURON_API_BASE=https://aws.zero-x.live/v1`; `/v1/models` and `/health` answer; error rate flat in the journal; `loadtest.mjs` passes on the VM at low concurrency; memory under 60 % (`free -m`); **a deploy during a stream drops nothing**: start a 90 s stream, run `push-release.sh` for the same commit, the stream completes and `/health` never fails. |
 | e | **Every browser flow passed on `aws.zero-x.live`** (`EXTRA_WEB_HOSTS=aws.zero-x.live`, and `https://aws.zero-x.live/**` in Supabase's redirect allow-list) | Google, GitHub, Microsoft and email sign-in; CLI loopback login; device flow; dashboard; Razorpay checkout opens (no payment); admin pages with the token. |
-| f | **Exactly one cron, on the Worker** | `wrangler.toml` has `[triggers] crons`; on the VM `systemctl is-enabled zerox-cron.timer` prints `disabled`. |
-| g | **Rollback branches staged and their push approved** for each window | Below, "Pre-staged rollback branches". |
+| f | **Exactly one cron, on the Worker** | `wrangler.toml` has `[triggers] crons = ["*/10 * * * *"]`; on the VM `systemctl is-enabled zerox-cron.timer` prints `disabled`. |
+| g | **Rollback branches staged and reviewed** for each window | Below, "Pre-staged rollback branches". |
 | h | **Mumbai to Supabase round trip measured** | 20 timed `curl -o /dev/null -s -w '%{time_total}\n' <SUPABASE_URL>/auth/v1/health` from the VM. |
 
 Feature flags, both runtimes (`admin-header.txt`, mode 0600, holds
-`Authorization: Bearer <GATEWAY_ADMIN_TOKEN>`, so the token stays out of history and process lists):
+`Authorization: Bearer <GATEWAY_ADMIN_TOKEN>`, so the token stays out of history and process lists).
+Node does the extraction (Git Bash has no `jq`), and an empty or failed answer on either side
+fails the check instead of comparing nothing:
 
 ```bash
-flags='{database_configured, billing_configured, webhook_configured, session_encryption, provider_key_vault, admin_access_configured, csp_enforced, providers}'
-diff <(curl -s -H @admin-header.txt https://zero-x.live/health | jq -S "$flags") \
-     <(curl -s -H @admin-header.txt https://aws.zero-x.live/health | jq -S "$flags") && echo 'same flags'
+flags() {
+  curl -fsS -H @admin-header.txt "https://$1/health" | node -e '
+    let s = ""; process.stdin.on("data", d => s += d).on("end", () => {
+      const h = JSON.parse(s), keys = ["database_configured", "billing_configured", "webhook_configured", "session_encryption",
+        "provider_key_vault", "admin_access_configured", "csp_enforced", "providers"];
+      if (!keys.every(k => k in h)) { console.error("not the full /health: is admin-header.txt right?"); process.exit(1); }
+      console.log(JSON.stringify(Object.fromEntries(keys.map(k => [k, k === "providers" ? [...h[k]].sort() : h[k]])), null, 1));
+    });'
+}
+worker="$(flags zero-x.live)" && vm="$(flags aws.zero-x.live)" && [ -n "$worker" ] && [ -n "$vm" ] &&
+  diff <(echo "$worker") <(echo "$vm") && echo 'same flags'
 ```
 
 ## Pre-staged rollback branches
 
-Two steps change `wrangler.toml` through a commit, so their rollback is a commit too. Prepare it
-right after the step's commit is on `main`, before the window, and approve its push in advance:
-rolling back then takes one CI run (2-3 minutes) instead of waiting for a review.
+Two steps change `wrangler.toml` through a commit, so their rollback is a commit too. Prepare and
+review it right after the step's commit is on `main`, before the window. The approval itself
+cannot be given ahead: GitHub asks for it per run, so during a rollback you push, wait for job
+`verify` (about 2 minutes: `npm ci`, the checks, `npm audit`), click approve, and wait for both
+deploys (about 2 more): 5 minutes or so, more if the approval waits.
 
 - **`rollback/kv-rebind`** (step 1): `git switch -c rollback/kv-rebind origin/main && git revert --no-edit <unbind commit>`.
   It puts the `SESSIONS_KV` `[[kv_namespaces]]` block back.
@@ -113,6 +163,21 @@ Pushing the branch itself deploys nothing (`deploy.yml` runs on `main` only). To
 `git push origin rollback/<name>:main` (a fast-forward while nothing else was merged; keep `main`
 frozen during the window), then approve that run (one approval: the Worker and job `ec2`). Delete
 the branch after the window.
+
+Job `verify` can stop a rollback: `npm audit --omit=dev` fails on an advisory published that day,
+and nothing deploys. The paths that skip CI, from the laptop (`cd neuroncli/auth-server`, signed in
+with `npx wrangler@4.147.0 login`), until CI passes again:
+
+- **The Worker's previous version**: `npx wrangler@4.147.0 rollback` (the version before the latest
+  one; `npx wrangler@4.147.0 deployments list` shows them). For step 1 this puts the
+  `SESSIONS_KV` binding back with the code. Do not count on it for the cron: Cloudflare's rollback
+  documentation does not say that a rollback restores Cron Triggers, and Wrangler applies them
+  apart from versions (`triggers deploy`, next item).
+- **The cron trigger back**: from a checkout of `rollback/cron-trigger`, in
+  `neuroncli/auth-server`, `npx wrangler@4.147.0 triggers deploy` applies its
+  `crons = ["*/10 * * * *"]` to the deployed Worker without uploading a version (Wrangler marks the
+  command experimental; check Settings > Trigger events afterwards). Then push the branch as above,
+  so `main` says the same.
 
 ## Steps (one per quiet window, across 3-4 days)
 
@@ -143,8 +208,16 @@ Each step lists what you approve, what to run, what to check and how to undo it.
   `zero-x.live/v1/,zero-x.live/auth/azure/,zero-x.live/neuroncli/auth-server/v1/`.
 - **Watch for 30-60 minutes**: streams complete; no new 5xx; usage shows matching
   `zerox_reserve_v2` / `zerox_settle_v2` pairs; `journalctl -u 'zerox-gateway@*'` on the VM has no
-  errors; the Worker's request count stays under Workers Free's 100,000 a day (every forwarded
+  errors (and no `Refused ... x-zerox-proxy-secret` line: the two runtimes hold different
+  secrets); the Worker's request count stays under Workers Free's 100,000 a day (every forwarded
   request still counts once on the Worker).
+- **VM or tunnel down** (watch for it here and through the 14-day window): the Worker then answers
+  forwarded paths with its own JSON 503 `service_unavailable` (Retry-After 5) and logs
+  `EC2 origin unreachable` with the status, 530 when the tunnel has no connector, 502 when nothing
+  listens on 127.0.0.1:8787 (`npx wrangler@4.147.0 tail` on the laptop shows it). From outside:
+  `curl -s -o /dev/null -w '%{http_code}\n' https://aws.zero-x.live/health` prints 200 while the VM
+  serves, 530 or 502 when it does not. A few minutes of it: delete `EC2_PROXY_PREFIXES` (Undo,
+  below), then look at the VM (`systemctl status cloudflared 'zerox-gateway@*'`).
 - **Undo**: `npx wrangler@4.147.0 secret delete EC2_PROXY_PREFIXES` (seconds). Streams in flight
   are cut; their reservation lease expires and the next cron run frees it.
 
@@ -174,14 +247,21 @@ Each step lists what you approve, what to run, what to check and how to undo it.
 ### 5. Cron switch, in one window
 
 - **You approve**: merging and pushing the cron commit and that run (the Worker and job `ec2`); enabling the timer.
-- Commit the removal of `[triggers] crons` from `wrangler.toml`, merge and push. Stage
-  `rollback/cron-trigger`.
-- After the run finishes, on the VM: `sudo systemctl enable --now zerox-cron.timer`.
+- Commit `[triggers]` with `crons = []` in `wrangler.toml` (the comment above it says why), merge
+  and push. **Not** a deleted or commented-out `crons`: Cloudflare's wrangler configuration docs
+  say "To disable a Cron Trigger, set `crons = []`. Commenting out the `crons` key will not disable
+  a Cron Trigger." With the key gone the deploy leaves the `*/10` schedule attached, and both
+  runtimes would run maintenance and discovery from then on. Stage `rollback/cron-trigger`.
+- **Check the Worker has no schedule left** before the timer starts: the run's "Deploy Worker"
+  log lists no `schedule:` under the deployed triggers, and the dashboard (Workers & Pages >
+  the Worker > Settings > Trigger events) shows no Cron Triggers.
+- Only then, on the VM: `sudo systemctl enable --now zerox-cron.timer`.
 - **Check**: `journalctl -u zerox-cron --since -15min` shows one `{"cron":"ok",...}` line per tick;
   stale reservations are released (usage and `/admin/overview`); `systemctl list-timers zerox-cron.timer`.
 - **Undo**: on the VM `sudo systemctl disable --now zerox-cron.timer`, then push
-  `rollback/cron-trigger`. (Two crons for a few minutes are safe: the release is idempotent and
-  discovery jobs are claimed in Postgres.)
+  `rollback/cron-trigger` (or, if job `verify` cannot pass, `npx wrangler@4.147.0 triggers deploy`
+  from its checkout: "Pre-staged rollback branches"). (Two crons for a few minutes are safe: the
+  release is idempotent and discovery jobs are claimed in Postgres.)
 
 ### 6. `relay.zero-x.live` (after C7)
 
@@ -217,7 +297,8 @@ relay has no Worker fallback.
 | The VM is down | `secret delete EC2_PROXY_PREFIXES`; in-flight streams are cut, their leases expire and the next cron frees them | seconds |
 | A bad release on the VM | Re-run the workflow for the previous commit, `push-release.sh --ref <commit>`, or activate a release still on the VM (README.md, "Rollback"); the Worker: `wrangler rollback` | 1-3 minutes |
 | One of the two deploy jobs failed (`same-commit` did not run: the runtimes may be on different commits) | Re-run the failed job once its cause is fixed. If the VM job failed, its activation already put the previous release back, so the Worker is ahead: from step 2, `wrangler rollback` the Worker, or take the forwarded prefixes off the VM (`secret put`/`secret delete EC2_PROXY_PREFIXES`) until both match | minutes |
-| Cron | `sudo systemctl disable --now zerox-cron.timer`, push `rollback/cron-trigger` | about 3 minutes |
-| Session store | Push `rollback/kv-rebind` (only if the Postgres store itself fails) | about 3 minutes |
+| Cron | `sudo systemctl disable --now zerox-cron.timer`, push `rollback/cron-trigger` (or `wrangler triggers deploy` from its checkout) | about 5 minutes |
+| Session store | Push `rollback/kv-rebind` (only if the Postgres store itself fails) | about 5 minutes |
+| Every forward answers 403 `proxy_secret_mismatch` (the runtimes hold different `EC2_PROXY_SECRET`s) | `secret delete EC2_PROXY_PREFIXES`, then the rotation in README.md, "Rotating the proxy secret" | seconds |
 | Razorpay webhook | Nothing: both runtimes dedupe through `zerox_webhook_claim`, Razorpay retries 5xx | - |
 | Schema | Never rolled back: migrations are additive | - |

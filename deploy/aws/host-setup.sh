@@ -14,7 +14,14 @@
 #   - upgrades without a gap: needrestart never restarts a gateway instance
 #     (/etc/needrestart/conf.d/60-zerox-gateway.conf); instead apt starts
 #     zerox-gateway-refresh.service after each dpkg run (/etc/apt/apt.conf.d/80zerox-gateway-refresh),
-#     which runs /usr/local/sbin/zerox-gateway-refresh, a root-owned copy of zerox-gateway-refresh.sh.
+#     which runs /usr/local/sbin/zerox-gateway-refresh, a root-owned copy of zerox-gateway-refresh.sh;
+#   - /usr/local/sbin/zerox-install-env, root's copy of zerox-install-env.sh, through which alone
+#     deploy changes the environment file.
+# The environment becomes root's: /etc/zerox and its files root:root, 0700 and 0600 (the first
+# boot made them deploy's, and cloud-init is not edited: that would replace the instance). A link
+# found there fails the run, since only deploy could have put it there. Every file under
+# /opt/zerox/releases becomes deploy's (the smoke test installed its release by hand), so pruning
+# old releases never fails on one.
 # Then: removes the single-instance zerox-gateway.service of the smoke test (it drains first) and
 # its /opt/zerox/gateway link, enables zerox-gateway@0 for boot (the unit starts nothing before
 # the first release), and enables cloudflared once /etc/cloudflared/token exists. It never
@@ -45,6 +52,25 @@ put() {
   changed="$changed $2"
   echo "installed $2"
 }
+
+# ── The environment file: root's. systemd reads it as root; deploy hands new ones to
+# zerox-install-env (sudoers) and never touches /etc/zerox itself ──
+envdir="$sys/etc/zerox"
+[ ! -L "$envdir" ] || fail "$envdir is a link; check what it names, then replace it with a directory"
+# The directory first: from here on deploy can neither add an entry nor open one.
+chown root:root "$envdir"
+chmod 0700 "$envdir"
+links="$(find "$envdir" -mindepth 1 -type l -printf '%p\n' 2>/dev/null || true)"
+[ -z "$links" ] || fail "links in /etc/zerox, which only deploy could have made: $(echo $links); check what they name, remove them and write the environment again"
+chown -hR root:root "$envdir"
+find "$envdir" -mindepth 1 -type f -exec chmod 0600 {} +
+put "$kit/zerox-install-env.sh" "$sys/usr/local/sbin/zerox-install-env" 0755
+
+# ── Releases: deploy's, all of them (pruning removes them as deploy). -execdir and -h: root
+# changes each entry from inside the directory find opened, never through a path deploy could
+# turn into a link meanwhile ──
+deploy_uid="$(id -u deploy)"
+find "$sys/opt/zerox/releases" -mindepth 1 ! -uid "$deploy_uid" -execdir chown -h deploy:zerox {} +
 
 # ── Kernel setting ──
 put "$kit/zerox-sysctl.conf" "$sys/etc/sysctl.d/60-zerox.conf" 0644

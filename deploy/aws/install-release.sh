@@ -1,10 +1,10 @@
 #!/bin/bash
 # Runs on the VM as the deploy user (push-release.sh runs it from the tarball's own deploy/aws,
 # for the laptop and for CI):
-#   bash install-release.sh <release.tar.gz> <commit> [--env <file>]
+#   bash install-release.sh <release.tar.gz> <commit> [--env <file> | --env-next]
 # Unpacks a release tarball (package-release.sh) into /opt/zerox/releases/<commit>, installs its
 # production dependencies, then hands over to that release's activate-release.sh, with the new
-# environment file when there is one (--env: CI's, or the operator's /etc/zerox/gateway.env.next).
+# environment when there is one (--env: CI's file; --env-next: the operator's /etc/zerox/gateway.env.next).
 # Nothing in /etc/zerox changes before the lock is held and the release is complete, so a failed
 # install, or a deploy that finds another one running, leaves the environment as it was. The
 # release is unpacked into .partial-<commit> and renamed only once complete, so a failed install never
@@ -23,8 +23,11 @@ release="${2:-}"
 [ -f "$tarball" ] || { echo "no release tarball at $tarball"; exit 2; }
 shift 2
 env_args=()
-if [ $# -gt 0 ]; then
-  [ "$1" = --env ] && [ $# = 2 ] || { echo "usage: install-release.sh <release.tar.gz> <commit> [--env <file>]"; exit 2; }
+usage='usage: install-release.sh <release.tar.gz> <commit> [--env <file> | --env-next]'
+if [ $# = 1 ] && [ "$1" = --env-next ]; then
+  env_args=(--env-next)
+elif [ $# -gt 0 ]; then
+  [ "$1" = --env ] && [ $# = 2 ] || { echo "$usage"; exit 2; }
   [ -s "$2" ] || { echo "no environment file at $2"; exit 2; }
   env_args=(--env "$2")
 fi

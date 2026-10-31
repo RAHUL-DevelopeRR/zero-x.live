@@ -134,6 +134,8 @@ new_sqlite_classes = ["HealthHub"]
 
 # Releases stale quota reservations and applies subscription expiry (src/routes/admin.js), and
 # runs provider discovery: each public model list once a day, OmniRoute and research once a week
-# (src/discovery/jobs.js).
+# (src/discovery/jobs.js). When the VM's zerox-cron.timer takes this over (deploy/aws/CUTOVER.md,
+# step 5), the line becomes crons = []: deleting or commenting out `crons` leaves the deployed
+# schedule running (Cloudflare's wrangler configuration docs), and both runtimes would run it.
 [triggers]
 crons = ["*/10 * * * *"]

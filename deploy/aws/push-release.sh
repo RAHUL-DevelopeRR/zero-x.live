@@ -4,9 +4,11 @@
 #
 # From the laptop (Git Bash on Windows, Linux or macOS; AWS CLI v2 signed in with `aws login`),
 # for the smoke test (plan section 2, step 5) and by hand. --setup runs host-setup.sh first;
-# --env-next activates the release with the environment file the operator wrote on the VM as
-# /etc/zerox/gateway.env.next (README.md, "Environment file"):
-#   deploy/aws/push-release.sh --profile zerox [--ref <commit>] [--setup] [--env-next]
+# --setup-only runs it and stops there (a new VM, before the tunnel token and the environment
+# file exist, when no release could pass its checks yet); --env-next activates the release with
+# the environment file the operator wrote on the VM as /etc/zerox/gateway.env.next, and removes
+# that file once the release is live (README.md, "Environment file"):
+#   deploy/aws/push-release.sh --profile zerox [--ref <commit>] [--setup | --setup-only] [--env-next]
 # From CI (.github/workflows/deploy.yml, job ec2), as deploy, with the environment file:
 #   deploy/aws/push-release.sh --os-user deploy --instance-id <id> --env-file <file> --known-hosts <file>
 #
@@ -30,7 +32,7 @@ set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 die() { echo "push-release: $*" >&2; exit 2; }
 usage() {
-  echo 'usage: push-release.sh [--ref <commit>] [--setup] [--profile <name>] [--region <region>]' >&2
+  echo 'usage: push-release.sh [--ref <commit>] [--setup | --setup-only] [--profile <name>] [--region <region>]' >&2
   echo '                       [--instance-id <id> | --lookup stack|tags] [--os-user ubuntu|deploy]' >&2
   echo '                       [--env-file <file> | --env-next] [--known-hosts <file>]' >&2
   exit 2
@@ -42,6 +44,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --ref) ref="${2:?}"; shift 2 ;;
     --setup) setup=1; shift ;;
+    --setup-only) setup=2; shift ;;
     --profile) profile="${2:?}"; shift 2 ;;
     --region) region="${2:?}"; shift 2 ;;
     --instance-id) instance="${2:?}"; shift 2 ;;
@@ -60,7 +63,9 @@ case "$lookup" in stack|tags) ;; *) die "--lookup is stack or tags" ;; esac
 if [ -n "$env_file" ] && [ "$user" != deploy ]; then die "--env-file only with --os-user deploy (CI): the laptop never sends secrets"; fi
 if [ -n "$env_file" ] && [ ! -s "$env_file" ]; then die "no environment file at $env_file"; fi
 if [ -n "$env_file" ] && [ "$env_next" = 1 ]; then die "--env-file or --env-next, not both"; fi
-if [ "$setup" = 1 ] && [ "$user" != ubuntu ]; then die "--setup needs --os-user ubuntu (deploy may not run host-setup.sh)"; fi
+if [ "$setup" != 0 ] && [ "$user" != ubuntu ]; then die "--setup needs --os-user ubuntu (deploy may not run host-setup.sh)"; fi
+if [ "$env_next" = 1 ] && [ "$user" != ubuntu ]; then die "--env-next is the operator's, as ubuntu (who wrote the file and removes it)"; fi
+if [ "$setup" = 2 ] && { [ -n "$env_file" ] || [ "$env_next" = 1 ]; }; then die "--setup-only installs no release, so no environment either"; fi
 
 aws_() { aws "$@" --region "$region" ${profile:+--profile "$profile"}; }
 umask 077
@@ -99,8 +104,8 @@ if ! ssh-keygen -F zerox-gateway -f "$known_hosts" >/dev/null 2>&1; then
   ssh-keygen -F zerox-gateway -f "$known_hosts" >/dev/null 2>&1 || die "the host key was not accepted"
 fi
 
-# Runs on the VM as the OS user (bash -c, with the release id, --setup, the user and the
-# environment source, none, file or next, as $1..$4).
+# Runs on the VM as the OS user (bash -c, with the release id, --setup (0, 1, or 2 for
+# --setup-only), the user and the environment source, none, file or next, as $1..$4).
 remote="$(cat <<'REMOTE'
 set -euo pipefail
 release="$1" setup="$2" user="$3" env="$4"
@@ -113,11 +118,12 @@ tar -xf - -C "$work"
 mkdir "$work/kit"
 tar -xzf "$work/release.tar.gz" -C "$work/kit" deploy/aws
 kit="$work/kit/deploy/aws"
-if [ "$setup" = 1 ]; then sudo bash "$kit/host-setup.sh"; fi
+if [ "$setup" != 0 ]; then sudo bash "$kit/host-setup.sh"; fi
+if [ "$setup" = 2 ]; then echo "host setup done; no release installed (--setup-only)" >&2; exit 0; fi
 env_args=()
 case "$env" in
   file) env_args=(--env "$work/gateway.env") ;;
-  next) env_args=(--env "$etc/gateway.env.next") ;;
+  next) env_args=(--env-next) ;;
 esac
 if [ "$user" = deploy ]; then
   bash "$kit/install-release.sh" "$work/release.tar.gz" "$release" "${env_args[@]}" < /dev/null
@@ -127,6 +133,8 @@ else
   chmod 0711 "$work"
   chmod -R a+rX "$work/kit" "$work/release.tar.gz"
   sudo -u deploy bash "$kit/install-release.sh" "$work/release.tar.gz" "$release" "${env_args[@]}" < /dev/null
+  # Live now (a failed activation exits above and keeps it): the operator's file is consumed.
+  if [ "$env" = next ]; then sudo rm -f "$etc/gateway.env.next"; fi
 fi
 REMOTE
 )"
@@ -141,4 +149,5 @@ if [ -n "$env_file" ]; then payload+=(gateway.env) env_source=file; elif [ "$env
 tar -cf - -C "$work" "${payload[@]}" |
   ssh "${ssh_base[@]}" -i "$work/key" -o IdentitiesOnly=yes -o IdentityAgent=none -o BatchMode=yes \
     -o StrictHostKeyChecking=yes "$user@$instance" "bash -c $(printf %q "$remote") zerox-push $release $setup $user $env_source"
-echo "release $release is live on $instance" >&2
+if [ "$setup" = 2 ]; then echo "host setup done on $instance (no release installed)" >&2
+else echo "release $release is live on $instance" >&2; fi

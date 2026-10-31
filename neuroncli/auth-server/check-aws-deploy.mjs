@@ -15,7 +15,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlink
 import { tmpdir } from 'node:os';
 import { basename, delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildEnvFile, envLine, wranglerVars } from '../../deploy/aws/gateway-env.mjs';
+import { REFUSED_NAMES, buildEnvFile, envLine, refusedName, wranglerVars } from '../../deploy/aws/gateway-env.mjs';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 const repo = join(here, '../..');
@@ -57,15 +57,23 @@ assert.throws(() => buildEnvFile({ vars: {}, env: {}, required: [], optional: ['
 assert.throws(() => buildEnvFile({ vars: {}, env: {}, required: [], optional: [], vmVars: ['AUTH_PORT'] }), /not allowed in the VM environment/);
 // systemd lets EnvironmentFile= override the unit's Environment=, so the file may never carry
 // the VM's runtime settings, the release's commit, the Worker's proxy switch or a development
-// switch, from [vars] or from a secret.
+// switch, from [vars] or from a secret; nor a name that changes how Node loads code, which
+// certificates it trusts, or where its outbound calls go (any case).
+const LOADER_NAMES = ['NODE_TLS_REJECT_UNAUTHORIZED', 'NODE_EXTRA_CA_CERTS', 'NODE_PATH', 'NODE_V8_COVERAGE', 'LD_LIBRARY_PATH', 'LD_AUDIT',
+  'BASH_ENV', 'BASH_FUNC_X', 'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'ALL_PROXY', 'https_proxy', 'node_options', 'Ld_Preload'];
 for (const name of ['NODE_ENV', 'AUTH_HOST', 'AUTH_PORT', 'AUTH_REUSE_PORT', 'READY_PORT', 'ASSETS_DIR', 'NEURON_API_ONLY',
   'TRUST_CLOUDFLARE', 'TRUST_CF_IPCOUNTRY', 'SHUTDOWN_GRACE_MS', 'GIT_COMMIT', 'EC2_PROXY_PREFIXES', 'EC2_PROXY_ORIGIN',
   'DEV_AUTH_ENABLED', 'ALLOW_ANONYMOUS_SESSIONS', 'ALLOW_UNKNOWN_COUNTRY', 'DATABASE_DRIVER', 'PGLITE_DATA_DIR',
-  'ALLOW_LOCAL_DATABASE', 'RAZORPAY_API_BASE', 'NEURON_RUNTIME', 'E2E_UPSTREAM_BASE', 'NODE_OPTIONS', 'LD_PRELOAD', 'TRUST_PROXY']) {
+  'ALLOW_LOCAL_DATABASE', 'RAZORPAY_API_BASE', 'NEURON_RUNTIME', 'E2E_UPSTREAM_BASE', 'NODE_OPTIONS', 'LD_PRELOAD', 'TRUST_PROXY',
+  'READY_TIMEOUT_MS', ...LOADER_NAMES]) {
   assert.throws(() => buildEnvFile({ vars: { [name]: 'x' }, env: {}, required: [], optional: [] }), /not allowed in the VM environment/, `${name} as a var`);
   assert.throws(() => buildEnvFile({ vars: {}, env: { [name]: 'x' }, required: [], optional: [name] }), /not allowed in the VM environment/, `${name} as a secret`);
 }
 assert.ok(buildEnvFile({ vars, env: {}, required: [], optional: [] }).text, 'the real [vars] hold none of them');
+assert.ok(!refusedName('EC2_PROXY_SECRET') && !refusedName('EC2_PROXY_SECRET_ROTATION') && !refusedName('NODEJS_FLAG') && !refusedName('PROXY_URL'),
+  'the families are prefixes and a suffix, nothing wider');
+assert.throws(() => buildEnvFile({ vars: {}, env: { EC2_PROXY_SECRET_ROTATION: 'b'.repeat(31) }, required: [], optional: ['EC2_PROXY_SECRET_ROTATION'] }),
+  /Secret EC2_PROXY_SECRET_ROTATION must be at least 32 characters/, 'the rotation value is a proxy secret too');
 // Secret values: printable ASCII only (what the smoke test's workflow allowed), and a proxy secret
 // server.js accepts. The error names the secret, never its value.
 for (const value of ['with space', 'tab\there', 'café', 'line sep', ' lead']) {
@@ -105,9 +113,17 @@ function stepRun(job, name) {
 // stops both runtimes on the commit they have.
 assert.ok(!/^ {4}(needs|environment|if):/m.test(verifyJob) && !/secrets\./.test(verifyJob), 'job verify: every push, no environment, no secret');
 const checks = stepRun(verifyJob, 'Verify production code').split('\n');
-for (const command of ['npm ci', 'npm run check:production', 'npm run check:database', 'node check-aws-deploy.mjs', 'npm audit --omit=dev']) {
+for (const command of ['npm ci --ignore-scripts', 'npm run check:production', 'npm run check:database', 'node check-aws-deploy.mjs', 'npm audit --omit=dev']) {
   assert.ok(checks.includes(command), `job verify runs ${command}`);
 }
+// No install script runs anywhere in the workflow (job deploy holds the Cloudflare token and every
+// runtime secret in a later step; a script could reach them through $GITHUB_ENV), and no checkout
+// leaves the job's token in .git/config.
+const npmInstalls = [...deploy.replace(/^\s*#.*$/gm, '').matchAll(/\bnpm (?:ci|install|i)\b[^\n]*/g)].map(([line]) => line);
+assert.ok(npmInstalls.length >= 2 && npmInstalls.every(line => /--ignore-scripts\b/.test(line)), `every npm install skips scripts: ${npmInstalls.join('; ')}`);
+const checkouts = deploy.split(/^ {6}- name: /m).filter(step => /uses: actions\/checkout@/.test(step));
+assert.equal(checkouts.length, 3);
+for (const step of checkouts) assert.match(step, /^ {10}persist-credentials: false$/m, 'the checkout keeps no credentials');
 // Both deploy jobs need only job verify and run in the environment "production": they wait for
 // its approval at the same time, so one approval starts both (GitHub reviews a run's pending
 // deployments per environment), the Worker never ships ahead of an approval the VM still waits
@@ -149,8 +165,14 @@ for (const name of [...list(workerJob, 'REQUIRED_SECRETS'), ...list(workerJob, '
 }
 assert.ok(PARITY_SECRETS.every(name => list(workerJob, 'OPTIONAL_SECRETS').includes(name)), 'the Worker gets the parity secrets');
 assert.deepEqual(list(ec2Job, 'REQUIRED_SECRETS'), [...list(workerJob, 'REQUIRED_SECRETS'), ...PARITY_SECRETS]);
-assert.deepEqual(list(ec2Job, 'OPTIONAL_SECRETS'), list(workerJob, 'OPTIONAL_SECRETS').filter(name => !PARITY_SECRETS.includes(name)));
+// EC2_PROXY_SECRET_ROTATION is the VM's alone: the second proxy secret it accepts during a
+// rotation; the Worker only ever sends EC2_PROXY_SECRET.
+const VM_ONLY_SECRETS = ['EC2_PROXY_SECRET_ROTATION'];
+assert.deepEqual(list(ec2Job, 'OPTIONAL_SECRETS'), [...list(workerJob, 'OPTIONAL_SECRETS').filter(name => !PARITY_SECRETS.includes(name)), ...VM_ONLY_SECRETS]);
+assert.ok(!/EC2_PROXY_SECRET_ROTATION/.test(workerJob), 'the Worker never gets the rotation value');
 assert.deepEqual(list(ec2Job, 'VM_VARS'), ['EXTRA_WEB_HOSTS']);
+// package-release.sh dates the release's sitemap from the history, as job deploy does.
+assert.match(ec2Job, /uses: actions\/checkout@\S+ # v[\d.]+\n {8}with:\n {10}fetch-depth: 0\n/);
 assert.match(ec2Job, /^ {10}EXTRA_WEB_HOSTS: \$\{\{ vars\.EXTRA_WEB_HOSTS \}\}$/m);
 const vmSecretSource = { SUPABASE_SECRET_KEY: 'SUPABASE_SECRET_KEY_EC2' };
 for (const name of [...list(ec2Job, 'REQUIRED_SECRETS'), ...list(ec2Job, 'OPTIONAL_SECRETS')]) {
@@ -307,15 +329,22 @@ assert.ok(alias, 'the alias');
 assert.ok(!/[*?[\]]|\bALL\b|sudoedit|""/.test(alias[1]), 'no wildcard, no ALL, no sudoedit');
 const allowed = alias[1].split(',').map(command => command.trim().replace(/\s+/g, ' '));
 const expectedCommands = ['start', 'stop', 'restart', 'is-active', 'status --no-pager']
-  .flatMap(verb => ['0', '1'].map(n => `/usr/bin/systemctl ${verb} zerox-gateway@${n}.service`));
-assert.deepEqual([...allowed].sort(), [...expectedCommands].sort(), 'start, stop, restart, is-active and status of the two instances');
+  .flatMap(verb => ['0', '1'].map(n => `/usr/bin/systemctl ${verb} zerox-gateway@${n}.service`))
+  .concat(['install', 'next', 'restore'].map(action => `/usr/local/sbin/zerox-install-env ${action}`));
+assert.deepEqual([...allowed].sort(), [...expectedCommands].sort(),
+  'start, stop, restart, is-active and status of the two instances, and the environment installer with its three fixed arguments');
 assert.equal(sudoLines[1], 'deploy ALL=(root) NOPASSWD: ZEROX_GATEWAY', 'as root, for deploy only');
-const sudoAllowed = line => allowed.includes(line.replace(/^sudo systemctl /, '/usr/bin/systemctl ').trim());
+const sudoAllowed = line => allowed.includes(line.replace(/^sudo systemctl /, '/usr/bin/systemctl ').replace(/^sudo /, '').trim());
 
 // ── host-setup.sh: never the cron timer, sudoers checked before it is installed ──
 assert.ok(!/(enable|start|restart|reenable)\b[^\n]*zerox-cron\.timer/.test(code_(setup)), 'host-setup.sh never enables or starts the cron timer');
 assert.match(setup, /visudo -cqf /, 'the sudoers file is checked before it is installed');
 assert.ok(!/cloudflared[^\n]*--token(?!-file)/.test(code_(setup)), 'no tunnel token on a command line');
+// /etc/zerox is root's: deploy writes nothing there itself; the environment reaches root's
+// installer on stdin. activate-release.sh never names a path under /etc/zerox.
+assert.ok(!/\/etc\/zerox|ZEROX_ETC|\$etc\b/.test(code_(activate)), 'activate-release.sh never touches /etc/zerox');
+assert.match(activate, /installed sudo "\$installer" install < "\$env_file"/);
+assert.match(activate, /^installer=\/usr\/local\/sbin\/zerox-install-env$/m);
 
 // ── Upgrades: needrestart leaves the gateway alone (a restart closes the only listener for the
 // whole drain); apt starts the refresh, which root runs from a root-owned path (never a file
@@ -327,6 +356,8 @@ assert.ok(!/\/opt\/zerox|^User=/m.test(code_(refreshUnit)) && !/^\[Install\]/m.t
 assert.match(read('deploy/aws/zerox-apt-refresh.conf'), /^DPkg::Post-Invoke \{ "systemctl start --no-block zerox-gateway-refresh\.service[^"]*\|\| true"; \};$/m,
   'apt never waits for the swap, and never fails because of it');
 assert.match(read('deploy/aws/zerox-gateway-refresh.sh'), /^exec runuser -u deploy -- bash "\$dir\/deploy\/aws\/activate-release\.sh" "\$release"$/m);
+// Root opens no file under /opt/zerox (deploy's): the release id is the link's target name.
+assert.ok(!/REVISION|\bcat\b|<\s*"\$/.test(code_(read('deploy/aws/zerox-gateway-refresh.sh'))), 'the refresh reads no release file as root');
 assert.match(read('deploy/aws/zerox-needrestart.conf'), /^\$nrconf\{override_rc\}\{qr\(\^zerox-gateway\\@\\d\+\\\.service\$\)\} = 0;$/m);
 
 // ── Runbooks: the CLI's base URL includes /v1 (it appends /chat/completions and /models to it),
@@ -348,6 +379,12 @@ for (const text of ['EC2_PROXY_PREFIXES', 'rollback/kv-rebind', 'rollback/cron-t
   assert.ok(cutover.includes(text), `CUTOVER.md: ${text}`);
 }
 assert.ok(cutover.indexOf('enable --now zerox-cron.timer') > cutover.indexOf('### 5. Cron switch'), 'the cron timer is enabled at step 5 only');
+// Deleting `crons` from wrangler.toml leaves the deployed schedule in place (Cloudflare's wrangler
+// configuration docs: "set crons = []"), so step 5 commits an empty list, and checks it took.
+const cronStep = cutover.slice(cutover.indexOf('### 5. Cron switch'), cutover.indexOf('### 6.'));
+assert.ok(cronStep.includes('crons = []') && /no Cron Triggers?/i.test(cronStep), 'step 5 sets crons = [] and checks the Worker has no schedule left');
+assert.match(wrangler, /^\[triggers\]\n(?:#.*\n)*crons = \["\*\/10 \* \* \* \*"\]$/m, 'until then the Worker owns the schedule');
+assert.match(wrangler.split('[triggers]')[0].split('\n').slice(-12).join('\n'), /crons = \[\]/, 'wrangler.toml says how to switch it off');
 const prefixValues = [...cutover.matchAll(/printf '%s' '([^']+)' \| npx wrangler@[\d.]+ secret put EC2_PROXY_PREFIXES/g)].map(match => match[1]);
 assert.ok(prefixValues.includes('zero-x.live/v1/') && prefixValues.includes('zero-x.live/'), 'steps 2 and 3');
 for (const value of [...prefixValues, ...[...cutover.matchAll(/^\s+\d\. `([^`]+)`:/gm)].map(match => match[1])]) {
@@ -457,7 +494,8 @@ try {
     const log = join(work, 'calls.log');
     for (const dir of [join(root, 'releases'), etc, stubs, state]) mkdirSync(dir, { recursive: true });
     const stub = (name, body) => writeFileSync(join(stubs, name), `#!/bin/sh\n${body}\n`, { mode: 0o755 });
-    stub('sudo', 'echo "sudo $*" >> "$STUB_LOG"\nexec "$@"');
+    // root's /usr/local/sbin/zerox-install-env is the kit's zerox-install-env.sh, on ZEROX_ETC.
+    stub('sudo', 'echo "sudo $*" >> "$STUB_LOG"\nif [ "$1" = /usr/local/sbin/zerox-install-env ]; then shift; exec bash "$STUB_INSTALL_ENV" "$@"; fi\nexec "$@"');
     stub('sleep', 'exit 0');
     // A started instance remembers the release its link (/opt/zerox/instance-N) pointed at when it
     // started; `show` gives a running instance a main PID (100 + N).
@@ -494,8 +532,93 @@ try {
       '  */health) printf \'{"status":"ok","commit":"%s"}\' "$(cat "$rel/health-commit" 2>/dev/null || cat "$rel/REVISION")" ;;',
       'esac',
     ].join('\n'));
+    const installEnv = posix(join(repo, 'deploy/aws/zerox-install-env.sh'));
     const env = { ...process.env, ...shell.env, [pathKey]: `${stubs}${delimiter}${process.env[pathKey]}`,
-      ZEROX_ROOT: posix(root), ZEROX_ETC: posix(etc), STUB_LOG: posix(log), STUB_STATE: posix(state) };
+      ZEROX_ROOT: posix(root), ZEROX_ETC: posix(etc), STUB_LOG: posix(log), STUB_STATE: posix(state), STUB_INSTALL_ENV: installEnv };
+
+    // zerox-install-env.sh, root's installer of the environment file: it takes the new file on
+    // stdin (or the operator's gateway.env.next), refuses anything gateway-env.mjs would not write
+    // (the same names, the same quoting, printable ASCII), keeps the live file as gateway.env.prev,
+    // never follows a link, and never prints a value.
+    const installer = (args, input = '') => spawnSync(shell.bash, [installEnv, ...args], { input, encoding: 'utf8', env });
+    const etcFile = name => existsSync(join(etc, name)) ? readFileSync(join(etc, name), 'utf8') : null;
+    const etcEntries = () => readdirSync(etc).sort();
+    const secretValues = { SUPABASE_SECRET_KEY: 'sb_secret_a$b`c"d\\e', EC2_PROXY_SECRET: 'p'.repeat(40), GROQ_API_KEY: 'gsk_x+y/z=' };
+    const ciFile = buildEnvFile({ vars, env: secretValues, required: Object.keys(secretValues), optional: ['GLM_API_KEY'],
+      vmVars: ['EXTRA_WEB_HOSTS'] }).text;
+    const installed = installer(['install'], ciFile);
+    assert.equal(installed.status, 0, `CI's file, as gateway-env.mjs writes it, is accepted: ${installed.stderr}`);
+    assert.equal(etcFile('gateway.env'), ciFile);
+    assert.equal(etcFile('gateway.env.prev'), '', 'no environment before it: an empty previous one');
+    assert.ok(!`${installed.stdout}${installed.stderr}`.includes('sb_secret_a'), 'no value printed');
+    const secondEnv = 'A="1"\nB=plain/value:8787,x\n\n# comment\n';
+    assert.equal(installer(['install'], secondEnv).status, 0);
+    assert.deepEqual([etcFile('gateway.env'), etcFile('gateway.env.prev')], [secondEnv, ciFile], 'the live file becomes gateway.env.prev');
+    const refusedInstall = (text, why, pattern) => {
+      const run = installer(['install'], text);
+      assert.equal(run.status, 2, `${why}: ${run.stdout}${run.stderr}`);
+      assert.match(run.stderr, pattern, why);
+      assert.match(run.stderr, /nothing changed/);
+      assert.deepEqual([etcFile('gateway.env'), etcFile('gateway.env.prev')], [secondEnv, ciFile], `${why}: nothing changed`);
+      assert.deepEqual(etcEntries(), ['gateway.env', 'gateway.env.prev'], `${why}: no temporary file left`);
+      return run;
+    };
+    for (const [text, why, pattern] of [
+      ['', 'an empty file', /empty/],
+      ['A="x"\nexport B="y"\n', 'not NAME=value', /line 2 is not NAME="value"/],
+      ['lower="x"\n', 'a lower-case name', /line 1/],
+      ['A="unterminated\n', 'an open quote', /line 1/],
+      ['A="a"b"\n', 'an unescaped quote', /line 1/],
+      ['A="a\\"\n', 'a quote escaped away', /line 1/],
+      ['A=two words\n', 'a space without quotes', /line 1/],
+      ['A=$(id)\n', 'shell syntax without quotes', /line 1/],
+      ['A="x"\r\nB="y"\n', 'a CRLF line', /character other than printable ASCII/],
+      ['A="x"\nB="nul\0byte"\n', 'a NUL byte', /character other than printable ASCII/],
+      ['A="café-value-never-printed"\n', 'non-ASCII', /printable ASCII/],
+      [`A="${'x'.repeat(70000)}"\n`, 'over 64 KiB', /larger than 64 KiB/],
+    ]) {
+      const run = refusedInstall(text, why, pattern);
+      assert.ok(!run.stderr.includes('value-never-printed'), 'never the value');
+    }
+    // The same names as gateway-env.mjs: every refused name and family, never a name it writes.
+    const upper = LOADER_NAMES.filter(name => name === name.toUpperCase());
+    const names = [...new Set([...REFUSED_NAMES, ...upper, 'E2E_UPSTREAM_BASE', 'TRUST_PROXY', 'NODE_ENV',
+      ...Object.keys(vars), ...list(ec2Job, 'REQUIRED_SECRETS'), ...list(ec2Job, 'OPTIONAL_SECRETS'), 'EXTRA_WEB_HOSTS', 'NODEJS_FLAG', 'PROXY_URL'])];
+    // One file with every name: the installer lists all it refuses, and those are exactly the
+    // names gateway-env.mjs refuses; without them, the file is accepted.
+    const everyName = installer(['install'], names.map(name => `${name}="x"`).join('\n') + '\n');
+    assert.equal(everyName.status, 2);
+    const listedRefused = /not allowed in the gateway's environment \(gateway-env\.mjs\): (.+); nothing changed/.exec(everyName.stderr)?.[1].split(' ');
+    assert.deepEqual(listedRefused, names.filter(refusedName), 'zerox-install-env and gateway-env.mjs refuse the same names');
+    const allowedNames = names.filter(name => !refusedName(name));
+    assert.ok(allowedNames.length > 30 && allowedNames.includes('EC2_PROXY_SECRET_ROTATION'));
+    assert.equal(installer(['install'], allowedNames.map(name => `${name}="x"`).join('\n') + '\n').status, 0, 'and accept every other');
+    assert.equal(installer(['restore']).status, 0);
+    // The operator's gateway.env.next: checked the same way, kept until whoever wrote it removes it.
+    writeFileSync(join(etc, 'gateway.env.next'), 'N="operator"\n');
+    assert.equal(installer(['next']).status, 0);
+    assert.deepEqual([etcFile('gateway.env'), etcFile('gateway.env.next')], ['N="operator"\n', 'N="operator"\n']);
+    writeFileSync(join(etc, 'gateway.env.next'), 'NODE_TLS_REJECT_UNAUTHORIZED="0"\n');
+    assert.equal(installer(['next']).status, 2, 'the operator\'s file is checked too');
+    assert.equal(etcFile('gateway.env'), 'N="operator"\n');
+    rmSync(join(etc, 'gateway.env.next'));
+    assert.match(installer(['next']).stderr, /there is no .*gateway\.env\.next/);
+    // restore: gateway.env.prev back (a failed activation), the previous file kept.
+    const prev = etcFile('gateway.env.prev');
+    assert.equal(installer(['restore']).status, 0);
+    assert.deepEqual([etcFile('gateway.env'), etcFile('gateway.env.prev')], [prev, prev]);
+    assert.equal(installer(['anything']).status, 2);
+    // A link where the file should be (only deploy could once have made one): refused, never followed.
+    const linked = spawnSync(shell.bash, ['-c', 'mv "$1/gateway.env" "$1/real" && ln -s "$1/real" "$1/gateway.env"', '_', posix(etc)], { env });
+    assert.equal(linked.status, 0, String(linked.stderr));
+    const throughLink = installer(['install'], 'A="1"\n');
+    assert.equal(throughLink.status, 2);
+    assert.match(throughLink.stderr, /gateway\.env is a link/);
+    unlinkSync(join(etc, 'gateway.env'));
+    spawnSync(shell.bash, ['-c', 'mv "$1/real" "$1/gateway.env"', '_', posix(etc)], { env });
+    rmSync(join(etc, 'gateway.env'));
+    rmSync(join(etc, 'gateway.env.prev'));
+
     const release = (id, { ready = true, commit, modules = true } = {}) => {
       const dir = join(root, 'releases', id);
       mkdirSync(join(dir, 'neuroncli/auth-server', modules ? 'node_modules' : ''), { recursive: true });
@@ -601,17 +724,31 @@ try {
     assert.deepEqual(running(), ['zerox-gateway@1.service:9999999']);
     assert.deepEqual([link(0), link(1)], ['9999999', '9999999']);
 
-    // The environment changes only with --env. A gateway.env.next left behind is never picked up;
-    // the operator's, passed with --env, is removed once live; --env gateway.env.prev swaps back.
+    // The environment changes only with --env or --env-next. A gateway.env.next left behind is never
+    // picked up; with --env-next root's installer takes it (whoever wrote it removes it once live:
+    // push-release.sh). The previous environment comes back the same way (README.md, "Rollback").
     writeFileSync(join(etc, 'gateway.env.next'), 'N="operator"\n');
     assert.equal(activateRun('9999999', { args: [] }).status, 0, 'the same release again, environment unchanged');
     assert.equal(envFile('gateway.env'), 'N="9999999"', 'no --env: the environment stays');
     assert.ok(existsSync(join(etc, 'gateway.env.next')), 'and gateway.env.next is left alone');
-    assert.equal(activateRun('9999999', { args: ['--env', posix(join(etc, 'gateway.env.next'))] }).status, 0);
+    assert.equal(activateRun('9999999', { args: ['--env-next'] }).status, 0);
+    assert.ok(calls().includes('sudo /usr/local/sbin/zerox-install-env next'));
     assert.equal(envFile('gateway.env'), 'N="operator"');
-    assert.ok(!existsSync(join(etc, 'gateway.env.next')), 'the operator\'s gateway.env.next is consumed once live');
-    assert.equal(activateRun('9999999', { args: ['--env', posix(join(etc, 'gateway.env.prev'))] }).status, 0);
+    rmSync(join(etc, 'gateway.env.next'));
+    writeFileSync(join(etc, 'gateway.env.next'), readFileSync(join(etc, 'gateway.env.prev')));
+    assert.equal(activateRun('9999999', { args: ['--env-next'] }).status, 0);
     assert.deepEqual([envFile('gateway.env'), envFile('gateway.env.prev')], ['N="9999999"', 'N="operator"'], 'the previous environment back');
+    rmSync(join(etc, 'gateway.env.next'));
+    assert.equal(activateRun('9999999', { args: ['--env-next', '--env', posix(join(work, 'env-9999999'))] }).status, 2, 'one source at a time');
+    // A file the installer refuses stops the activation before any instance or link changes.
+    const beforeRefused = [current(), link(0), link(1), envFile('gateway.env'), running()];
+    writeFileSync(join(work, 'env-refused'), 'N="1"\nNODE_OPTIONS="--require /tmp/x.js"\n');
+    const refusedEnv = activateRun('9999999', { args: ['--env', posix(join(work, 'env-refused'))] });
+    assert.equal(refusedEnv.status, 2, `${refusedEnv.stdout}${refusedEnv.stderr}`);
+    assert.match(refusedEnv.stderr, /not allowed in the gateway's environment \(gateway-env\.mjs\): NODE_OPTIONS;/);
+    assert.match(refusedEnv.stdout, /the new environment was not installed .*nothing changed/);
+    assert.ok(!calls().some(line => line.startsWith('sudo systemctl')), 'no instance started or stopped');
+    assert.deepEqual([current(), link(0), link(1), envFile('gateway.env'), running()], beforeRefused, 'nothing changed');
 
     // The smoke test's single unit still in place (CI deploying before push-release.sh --setup):
     // refused before anything changes, whether the unit runs or only its /opt/zerox/gateway link is left.
@@ -670,6 +807,33 @@ try {
     assert.equal(running().length, 1);
     assert.equal(envFile('gateway.env'), 'N="9999999"', 'with the environment as it was');
 
+    // Root reads nothing deploy controls. REVISION could be a link to the tunnel token or a host
+    // key: its contents must never reach the refresh's output (the journal) or the arguments of
+    // the deploy-side script. The id comes from the link's target, which must be a release.
+    const MARKER = 'MARKER-tunnel-token-0f1e2d';
+    const revisionFile = join(root, 'releases/9999999/REVISION');
+    writeFileSync(revisionFile, `${MARKER}\n`);
+    const leaked = refresh();
+    const leakedCalls = calls();
+    writeFileSync(revisionFile, '9999999\n');
+    assert.ok(!`${leaked.stdout}${leaked.stderr}`.includes(MARKER), `REVISION's contents never printed: ${leaked.stdout}${leaked.stderr}`);
+    assert.ok(!leakedCalls.some(line => line.includes(MARKER)), 'nor passed to the deploy-side script');
+    assert.ok(leakedCalls.some(line => /^runuser -u deploy -- bash \S+\/releases\/9999999\/deploy\/aws\/activate-release\.sh 9999999$/.test(line)),
+      'the id is the link target\'s name');
+    assert.notEqual(leaked.status, 0, 'deploy\'s activate-release.sh then refuses the release (its REVISION does not match)');
+    assert.match(leaked.stdout, /release 9999999 is incomplete/);
+    // current pointing anywhere but a release directory: nothing runs.
+    for (const target of [join(work, 'elsewhere', 'abcdef0'), join(root, 'releases/9999999/deploy')]) {
+      mkdirSync(target, { recursive: true });
+      const moved = spawnSync(shell.bash, ['-c', 'ln -sfn "$1" "$2"', '_', posix(target), posix(join(root, 'current'))], { env });
+      assert.equal(moved.status, 0, String(moved.stderr));
+      const outside = refresh();
+      assert.equal(outside.status, 1, `${outside.stdout}${outside.stderr}`);
+      assert.match(outside.stdout, /does not name a release/);
+      assert.ok(!calls().some(line => /^runuser /.test(line)), 'nothing ran as deploy');
+    }
+    assert.equal(spawnSync(shell.bash, ['-c', 'ln -sfn "$1" "$2"', '_', posix(join(root, 'releases/9999999')), posix(join(root, 'current'))], { env }).status, 0);
+
     // host-setup.sh against a temporary system root: units, sudoers, kernel setting, legacy unit.
     const sys = join(work, 'sys');
     const sysPath = path => join(sys, path);
@@ -684,8 +848,10 @@ try {
       writeFileSync(sysPath('etc/sudoers'), 'root ALL=(ALL:ALL) ALL\n%sudo ALL=(ALL:ALL) ALL\n@includedir /etc/sudoers.d\n');
       writeFileSync(sysPath('etc/sudoers.d/90-cloud-init-users'), cloudInitSudo);
       writeFileSync(sysPath('etc/systemd/system/zerox-gateway.service'), '[Service]\nExecStart=/usr/bin/node /opt/zerox/gateway/server.js\n');
-      // and the smoke test's release link that unit runs.
+      // and the smoke test's release link that unit runs, and its environment file (deploy's then).
       mkdirSync(sysPath('opt/zerox/releases/66f29a1/neuroncli/auth-server'), { recursive: true });
+      writeFileSync(sysPath('opt/zerox/releases/66f29a1/neuroncli/auth-server/server.js'), '');
+      writeFileSync(sysPath('etc/zerox/gateway.env'), 'SUPABASE_URL="https://smoke.invalid"\n');
       const legacyLink = spawnSync(shell.bash, ['-c', 'ln -s "$1" "$2"', '_', posix(sysPath('opt/zerox/releases/66f29a1/neuroncli/auth-server')),
         posix(sysPath('opt/zerox/gateway'))], { env: { ...process.env, ...shell.env } });
       assert.equal(legacyLink.status, 0, String(legacyLink.stderr));
@@ -709,12 +875,25 @@ try {
       ['zerox-sysctl.conf', 'etc/sysctl.d/60-zerox.conf'], ['zerox-needrestart.conf', 'etc/needrestart/conf.d/60-zerox-gateway.conf'],
       ['zerox-apt-refresh.conf', 'etc/apt/apt.conf.d/80zerox-gateway-refresh'],
       ['zerox-gateway-refresh.service', 'etc/systemd/system/zerox-gateway-refresh.service'],
-      ['zerox-gateway-refresh.sh', 'usr/local/sbin/zerox-gateway-refresh']]) {
+      ['zerox-gateway-refresh.sh', 'usr/local/sbin/zerox-gateway-refresh'], ['zerox-install-env.sh', 'usr/local/sbin/zerox-install-env']]) {
       assert.equal(readFileSync(sysPath(target), 'utf8'), read(`deploy/aws/${kit}`), `${target} installed`);
     }
     if (process.platform !== 'win32') {
       assert.equal(statSync(sysPath('etc/sudoers.d/zerox-deploy')).mode & 0o777, 0o440);
       assert.equal(statSync(sysPath('usr/local/sbin/zerox-gateway-refresh')).mode & 0o777, 0o755);
+      assert.equal(statSync(sysPath('usr/local/sbin/zerox-install-env')).mode & 0o777, 0o755);
+      assert.equal(statSync(sysPath('etc/zerox')).mode & 0o777, 0o700);
+      assert.equal(statSync(sysPath('etc/zerox/gateway.env')).mode & 0o777, 0o600);
+    }
+    {
+      const ownership = calls().filter(line => line.startsWith('chown '));
+      const envdir = posix(sysPath('etc/zerox'));
+      assert.ok(ownership.includes(`chown root:root ${envdir}`) && ownership.includes(`chown -hR root:root ${envdir}`),
+        `/etc/zerox and the smoke test's environment file become root's: ${ownership.join('; ')}`);
+      assert.ok(ownership.indexOf(`chown root:root ${envdir}`) < ownership.indexOf(`chown -hR root:root ${envdir}`), 'the directory first');
+      assert.ok(ownership.some(line => /^chown -h deploy:zerox (?:.* )?\.\/66f29a1(?: |$)/.test(line)),
+        `the smoke test's release becomes deploy's, so pruning it later works: ${ownership.join('; ')}`);
+      assert.equal(readFileSync(sysPath('etc/zerox/gateway.env'), 'utf8'), 'SUPABASE_URL="https://smoke.invalid"\n', 'its content stays');
     }
     const cloudInitAfter = readFileSync(sysPath('etc/sudoers.d/90-cloud-init-users'), 'utf8');
     assert.ok(!/^deploy\s/m.test(cloudInitAfter) && /^ubuntu ALL=\(ALL\) NOPASSWD:ALL$/m.test(cloudInitAfter),
@@ -770,6 +949,21 @@ try {
     const extraRule = setupRun();
     assert.equal(extraRule.status, 1, 'another sudo rule names deploy');
     assert.match(extraRule.stderr, /other sudo rules name deploy: \S*99-extra/);
+
+    // A link in /etc/zerox (deploy owned it until now: gateway.env pointing at the tunnel token, for
+    // systemd to read as root) fails the setup before anything is installed; it is never followed.
+    freshSystem();
+    writeFileSync(sysPath('etc/cloudflared/token'), 'eyJ0b2tlbi1uZXZlci1yZWFkIn0');
+    rmSync(sysPath('etc/zerox/gateway.env'));
+    const planted = spawnSync(shell.bash, ['-c', 'ln -s "$1" "$2"', '_', posix(sysPath('etc/cloudflared/token')), posix(sysPath('etc/zerox/gateway.env'))],
+      { env: { ...process.env, ...shell.env } });
+    assert.equal(planted.status, 0, String(planted.stderr));
+    const linkedEnv = setupRun();
+    assert.equal(linkedEnv.status, 1, `${linkedEnv.stdout}${linkedEnv.stderr}`);
+    assert.match(linkedEnv.stderr, /links in \/etc\/zerox, which only deploy could have made: \S*gateway\.env/);
+    assert.ok(!`${linkedEnv.stdout}${linkedEnv.stderr}`.includes('eyJ0b2tlbi1uZXZlci1yZWFkIn0'), 'never read');
+    assert.ok(!existsSync(sysPath('etc/sudoers.d/zerox-deploy')) && !calls().some(line => /^chown -hR/.test(line)), 'stopped before anything else');
+    unlinkSync(sysPath('etc/zerox/gateway.env'));
 
     // The smoke-test VM: a tunnel running from a unit of its own (`cloudflared service install`
     // puts the token on its command line) and no token file yet. That unit stays until the file
@@ -844,7 +1038,7 @@ const GATEWAY_RUNTIME = ['neuroncli/auth-server/server.js', 'neuroncli/auth-serv
   'neuroncli/auth-server/src/index.js', 'neuroncli/auth-server/scripts/cron.mjs'];
 const KIT = ['install-release.sh', 'activate-release.sh', 'host-setup.sh', 'zerox-gateway@.service', 'zerox-cron.service',
   'zerox-cron.timer', 'cloudflared.service', 'zerox-deploy.sudoers', 'zerox-sysctl.conf', 'zerox-needrestart.conf', 'zerox-apt-refresh.conf',
-  'zerox-gateway-refresh.service', 'zerox-gateway-refresh.sh'].map(name => `deploy/aws/${name}`);
+  'zerox-gateway-refresh.service', 'zerox-gateway-refresh.sh', 'zerox-install-env.sh'].map(name => `deploy/aws/${name}`);
 const NOT_SHIPPED = /^neuroncli\/auth-server\/(check-|test\.js$|e2e-|fixtures\/|migrations\/|docs\/|wrangler[^/]*\.toml$|Dockerfile$|\.)|(^|\/)(output|tmp)\/|\.md$|(^|\/)\.(env|dev\.vars)/;
 let packaged = false;
 const fixture = mkdtempSync(join(tmpdir(), 'zerox-package-'));
@@ -854,11 +1048,16 @@ try {
     const bash = (args, options = {}) => spawnSync(shell.bash, args, { encoding: 'utf8', ...options, env: { ...process.env, ...shell.env, ...options.env } });
     const tarList = file => bash(['-c', 'tar -tzf - < "$1"', '_', posix(file)]).stdout.trim().split('\n').sort();
     const fxRepo = join(fixture, 'repo');
+    const canonical = '<link rel="canonical" href="https://zero-x.live/">';
     const files = {
-      '.assetsignore': read('.assetsignore'), '.gitignore': 'node_modules/\n', 'index.html': '<!doctype html>', '404.html': '',
+      '.assetsignore': read('.assetsignore'), '.gitignore': 'node_modules/\n', 'index.html': `<!doctype html>${canonical}`, '404.html': '',
       'Assets/logo.png': 'png', 'Assets/RahulCIT.png': 'private', 'Assets/Pasted text.txt': 'notes', 'videos/clip.mp4': 'mp4',
       'Assets/Demo.MP4': 'mp4', 'Assets/whatsapp-chat.png': 'private', // excluded only when case is ignored, as wrangler does
-      'releases/neuron/latest.json': '{}', 'neuroncli/callback/index.html': '', 'SEO_AUDIT.md': '# notes', 'seo-pages.json': '[]',
+      'releases/neuron/latest.json': '{}', 'neuroncli/callback/index.html': '', 'SEO_AUDIT.md': '# notes',
+      // The sitemap as committed (its dates lag) and the builder job deploy runs.
+      'seo-pages.json': JSON.stringify([{ url: 'https://zero-x.live/', file: 'index.html' }]),
+      'sitemap.xml': '<urlset><url><loc>https://zero-x.live/</loc><lastmod>2001-01-01</lastmod></url></urlset>\n',
+      'neuroncli/auth-server/build-sitemap.mjs': read('neuroncli/auth-server/build-sitemap.mjs'),
       'legacy.html': '', 'tailwind.config.cjs': '', '.github/workflows/deploy.yml': '', 'docs/guide.html': '', '.env': 'SECRET=1',
       'neuroncli/auth-server/server.js': '', 'neuroncli/auth-server/package.json': '{}', 'neuroncli/auth-server/package-lock.json': '{}',
       'neuroncli/auth-server/src/index.js': 'export default {};\nexport const lf = true;\n', 'neuroncli/auth-server/scripts/cron.mjs': '', 'neuroncli/auth-server/check-gateway.mjs': '',
@@ -892,6 +1091,12 @@ try {
     assert.equal(bash(['-c', 'tar -xzOf - neuroncli/auth-server/src/index.js < "$1"', '_', posix(out)]).stdout,
       files['neuroncli/auth-server/src/index.js'], 'files as committed (no CRLF from a Windows checkout)');
     assert.ok(!listed.some(path => NOT_SHIPPED.test(path) && !path.startsWith('deploy/aws/')), 'no tests, migrations, docs, Markdown or env files');
+    // The sitemap is built for the commit, as job deploy builds the Worker's: lastmod from the history.
+    const dated = git('log', '-1', '--format=%cs', head, '--', 'index.html').stdout.trim();
+    const sitemap = bash(['-c', 'tar -xzOf - sitemap.xml < "$1"', '_', posix(out)]).stdout;
+    assert.match(dated, /^\d{4}-\d{2}-\d{2}$/);
+    assert.ok(sitemap.includes(`<loc>https://zero-x.live/</loc>\n    <lastmod>${dated}</lastmod>`) && !sitemap.includes('2001-01-01'),
+      `the release's sitemap.xml is built, not the committed copy: ${sitemap}`);
     // A tracked working file or key fails the build instead of shipping.
     const leaks = ['output/plan.txt', 'tmp/notes.txt', 'keys/zerox.pem'];
     for (const leak of leaks) {
@@ -918,7 +1123,11 @@ try {
     const log = join(fixture, 'calls.log');
     for (const dir of [join(root, 'releases'), etc, stubs, state]) mkdirSync(dir, { recursive: true });
     const stub = (name, body, sh = '/bin/sh') => writeFileSync(join(stubs, name), `#!${sh}\n${body}\n`, { mode: 0o755 });
-    stub('sudo', 'echo "sudo $*" >> "$STUB_LOG"\nif [ "$1" = -u ]; then shift 2; fi\nexec "$@"');
+    // sudo as on the VM: root's zerox-install-env is the kit's script (on ZEROX_ETC), and host-setup.sh
+    // (--setup) only says that it ran.
+    stub('sudo', ['echo "sudo $*" >> "$STUB_LOG"', 'if [ "$1" = -u ]; then shift 2; fi',
+      'if [ "$1" = /usr/local/sbin/zerox-install-env ]; then shift; exec bash "$STUB_INSTALL_ENV" "$@"; fi',
+      'if [ "$1" = bash ] && [ "${2##*/}" = host-setup.sh ]; then echo "host-setup ran" >> "$STUB_LOG"; exit 0; fi', 'exec "$@"'].join('\n'));
     stub('sleep', 'exit 0');
     stub('npm', 'echo "npm $*" >> "$STUB_LOG"\n[ -z "$STUB_NPM_FAIL" ] || exit 1\nmkdir -p node_modules');
     stub('systemctl', [
@@ -967,7 +1176,8 @@ try {
     const envSecret = join(fixture, 'gateway.env');
     writeFileSync(envSecret, 'SUPABASE_URL="https://example.invalid"\n');
     const pushEnv = { [pathKey]: `${stubs}${delimiter}${process.env[pathKey]}`, ZEROX_ROOT: posix(root), ZEROX_ETC: posix(etc),
-      STUB_LOG: posix(log), STUB_STATE: posix(state), STUB_DIR: posix(fixture), AWS_PROFILE: '' };
+      STUB_LOG: posix(log), STUB_STATE: posix(state), STUB_DIR: posix(fixture), AWS_PROFILE: '',
+      STUB_INSTALL_ENV: posix(join(fxRepo, 'deploy/aws/zerox-install-env.sh')) };
     const push = (...args) => {
       rmSync(log, { force: true });
       const vars = typeof args[0] === 'object' ? args.shift() : {};
@@ -1012,7 +1222,7 @@ try {
     assert.deepEqual(readdirSync(state), ['zerox-gateway@1.service']);
 
     // An install that fails (npm here) changes no environment and leaves none behind for a later activation.
-    writeFileSync(join(fxRepo, 'index.html'), '<!doctype html><title>2</title>');
+    writeFileSync(join(fxRepo, 'index.html'), `<!doctype html><title>2</title>${canonical}`);
     git('commit', '-q', '-am', 'second');
     const liveEnv = readFileSync(join(etc, 'gateway.env'), 'utf8');
     writeFileSync(envSecret, 'SUPABASE_URL="https://changed.invalid"\n');
@@ -1036,15 +1246,39 @@ try {
     assert.equal(readFileSync(join(etc, 'gateway.env'), 'utf8'), liveEnv, 'the laptop leaves the environment as it is');
 
     // A hand-written environment (README.md, "Environment file"): the operator writes gateway.env.next
-    // on the VM, then pushes with --env-next; it goes live with a release check, then is consumed.
+    // on the VM (root's directory), then pushes with --env-next; root's installer takes it, it goes
+    // live with a release check, then the push (ubuntu, who wrote it) removes it. Refused, it stays.
+    writeFileSync(join(etc, 'gateway.env.next'), 'SUPABASE_URL="https://by-hand.invalid"\nNODE_TLS_REJECT_UNAUTHORIZED="0"\n');
+    const byHandRefused = push('--known-hosts', posix(knownHosts), '--env-next');
+    assert.notEqual(byHandRefused.status, 0, 'a refused hand-written file fails the push');
+    assert.match(byHandRefused.stderr, /not allowed in the gateway's environment \(gateway-env\.mjs\): NODE_TLS_REJECT_UNAUTHORIZED;/);
+    assert.equal(readFileSync(join(etc, 'gateway.env'), 'utf8'), liveEnv, 'the live environment stays');
+    assert.ok(existsSync(join(etc, 'gateway.env.next')), 'and the operator\'s file stays, to be fixed');
     writeFileSync(join(etc, 'gateway.env.next'), 'SUPABASE_URL="https://by-hand.invalid"\n');
     const byHand = push('--known-hosts', posix(knownHosts), '--env-next');
     assert.equal(byHand.status, 0, `push-release.sh --env-next: ${byHand.stdout}${byHand.stderr}`);
-    assert.ok(pushCalls().some(line => /^sudo -u deploy bash \S+install-release\.sh \S+ [0-9a-f]{7} --env \S+\/gateway\.env\.next$/.test(line)));
+    assert.ok(pushCalls().some(line => /^sudo -u deploy bash \S+install-release\.sh \S+ [0-9a-f]{7} --env-next$/.test(line)));
+    assert.ok(pushCalls().includes('sudo /usr/local/sbin/zerox-install-env next'), 'root\'s installer reads the file, deploy never does');
     assert.equal(readFileSync(join(etc, 'gateway.env'), 'utf8'), 'SUPABASE_URL="https://by-hand.invalid"\n');
     assert.deepEqual(etcFiles(), ['gateway.env', 'gateway.env.prev']);
     assert.equal(push('--os-user', 'deploy', '--lookup', 'tags', '--known-hosts', posix(knownHosts), '--env-next', '--env-file', posix(envSecret)).status, 2,
       'one environment source per push');
+    assert.equal(push('--os-user', 'deploy', '--lookup', 'tags', '--known-hosts', posix(knownHosts), '--env-next').status, 2,
+      '--env-next is the operator\'s');
+
+    // --setup-only (a new VM, before the tunnel token and the environment exist): host setup, and
+    // no release installed or activated, so nothing fails a readiness check that cannot pass yet.
+    const releasesBefore = readdirSync(join(root, 'releases')).sort();
+    const setupOnly = push('--known-hosts', posix(knownHosts), '--setup-only');
+    assert.equal(setupOnly.status, 0, `push-release.sh --setup-only: ${setupOnly.stdout}${setupOnly.stderr}`);
+    assert.ok(pushCalls().includes('host-setup ran'));
+    // (The ssh line carries the whole remote script, which names install-release.sh.)
+    const setupCalls = pushCalls().filter(line => !line.startsWith('ssh ') && /install-release\.sh|^npm |^systemctl /.test(line));
+    assert.deepEqual(setupCalls, [], 'no install, no activation');
+    assert.match(setupOnly.stderr, /host setup done on i-0abc1234def567890 \(no release installed\)/);
+    assert.deepEqual(readdirSync(join(root, 'releases')).sort(), releasesBefore);
+    assert.equal(push('--known-hosts', posix(knownHosts), '--setup-only', '--env-next').status, 2, 'no environment without a release');
+    assert.equal(push('--os-user', 'deploy', '--lookup', 'tags', '--known-hosts', posix(knownHosts), '--setup-only').status, 2, 'never as deploy');
     const refusedEnv = push('--env-file', posix(envSecret), '--known-hosts', posix(knownHosts));
     assert.equal(refusedEnv.status, 2, 'the laptop never sends an environment file');
     assert.match(refusedEnv.stderr, /never sends secrets/);

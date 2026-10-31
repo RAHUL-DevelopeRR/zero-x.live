@@ -13,7 +13,11 @@
 #     not read at runtime), docs, Markdown, Worker and Docker configuration, the CI-only tools
 #     and dotfiles; scripts/ stays (cron.mjs runs on the VM);
 #   - the VM's half of deploy/aws (install, activation, host setup, units, sudoers, the upgrade
-#     refresh and its apt and needrestart settings);
+#     refresh and its apt and needrestart settings, the environment installer);
+#   - sitemap.xml built for this commit as job deploy builds the Worker's (build-sitemap.mjs, each
+#     page's lastmod from the history), in place of the committed copy, whose dates always lag: a
+#     page and the sitemap entry that dates it never change in one commit. Needs node, and the
+#     history (CI's checkout has fetch-depth: 0);
 #   - REVISION: the release id, which server.js reports in /health.
 # No node_modules: install-release.sh runs `npm ci --omit=dev --ignore-scripts` on the VM from the
 # release's package-lock.json (integrity-checked). The production dependencies are plain
@@ -39,6 +43,15 @@ for path in .assetsignore neuroncli/auth-server/server.js neuroncli/auth-server/
   neuroncli/auth-server/package-lock.json deploy/aws/install-release.sh deploy/aws/activate-release.sh; do
   [ -f "$src/$path" ] || die "$ref has no $path"
 done
+# The commit's own build-sitemap.mjs, reading the commit's pages, dating them from this repository
+# at this commit. Its output goes to stderr with the rest. A commit whose script cannot date pages
+# from another directory (older than SITEMAP_GIT_DIR) keeps its committed sitemap. The ceiling
+# keeps git from ever taking a repository around the temporary directory for the release's.
+if [ -f "$src/seo-pages.json" ] && grep -qs SITEMAP_GIT_DIR "$src/neuroncli/auth-server/build-sitemap.mjs"; then
+  command -v node >/dev/null 2>&1 || die "node is needed to build the release's sitemap.xml"
+  GIT_CEILING_DIRECTORIES="$work" SITEMAP_GIT_DIR="$repo" SITEMAP_REF="$full" \
+    node "$src/neuroncli/auth-server/build-sitemap.mjs" >&2 || die "build-sitemap.mjs failed for $ref"
+fi
 
 # Website. git evaluates the patterns: in a scratch repository, ls-files --others lists every
 # file of the tree except those .assetsignore matches, and reads no other ignore file (no

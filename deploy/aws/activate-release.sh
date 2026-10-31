@@ -3,13 +3,14 @@
 # after unpacking a release, zerox-gateway-refresh runs it again for the current release after an
 # upgrade replaced node or a library the gateway uses, and a manual rollback runs an older
 # release's copy (README.md, "Rollback"):
-#   bash /opt/zerox/releases/<commit>/deploy/aws/activate-release.sh <commit> [--env <file>]
+#   bash /opt/zerox/releases/<commit>/deploy/aws/activate-release.sh <commit> [--env <file> | --env-next]
 #
 # Swaps the two gateway instances (zerox-gateway@.service) without refusing a connection:
-#   1. With --env, that file becomes /etc/zerox/gateway.env and the old one is kept as
-#      gateway.env.prev. Without it the environment stays as it is: nothing is picked up from
-#      /etc/zerox implicitly. The operator's /etc/zerox/gateway.env.next, passed with --env, is
-#      removed once it is live.
+#   1. With --env, that file (CI's) becomes /etc/zerox/gateway.env; with --env-next, the operator's
+#      /etc/zerox/gateway.env.next does (whoever wrote it removes it once live: push-release.sh).
+#      Either way root's zerox-install-env checks it and keeps the old one as gateway.env.prev:
+#      /etc/zerox is root's, and deploy only ever hands the new file over on stdin. Without either
+#      the environment stays as it is: nothing is picked up from /etc/zerox implicitly.
 #   2. /opt/zerox/instance-N, the link of the idle instance N, points at the release. Each instance
 #      runs what its own link names; the serving instance's link and /opt/zerox/current are not
 #      touched, so if the serving instance crashes meanwhile, systemd restarts it on its release.
@@ -22,26 +23,31 @@
 #      takes every new connection. Then its link points at the release too, so either instance,
 #      and @0 at boot, starts on the live release.
 # A failed check stops the new instance, points its link back and restores the environment; the
-# old instance and /opt/zerox/current were never touched, so users see nothing (if nothing was
-# running, the previous release is started again). Keeps the current release and the three most
-# recently activated others; releases that never went live are removed first.
-# Only the systemctl commands in zerox-deploy.sudoers run as root. ZEROX_ROOT and ZEROX_ETC stand
-# in for /opt/zerox and /etc/zerox in check-aws-deploy.mjs, which runs this against a temporary
-# tree with a stub systemctl and curl.
+# old instance and /opt/zerox/current were never touched, and the new instance never took a
+# connection (with the shared port, server.js binds it only once its own /ready passed), so users
+# see nothing. If nothing was running, the previous release is started again. Keeps the current
+# release and the three most recently activated others; releases that never went live are
+# removed first (a release deploy cannot remove is reported, not fatal: the new one is live).
+# Only the systemctl and zerox-install-env commands in zerox-deploy.sudoers run as root. ZEROX_ROOT
+# stands in for /opt/zerox in check-aws-deploy.mjs, which runs this against a temporary tree with
+# a stub systemctl, curl and sudo (which runs the kit's zerox-install-env.sh on a temporary /etc/zerox).
 set -euo pipefail
 release="${1:-}"
 [[ "$release" =~ ^[0-9a-f]{7}$ ]] || { echo "invalid release id (the commit's first 7 hex digits)"; exit 2; }
 shift
-env_file=''
+env_file='' env_next=false
+usage='usage: activate-release.sh <commit> [--env <file> | --env-next]'
 while [ $# -gt 0 ]; do
   case "$1" in
     --env) [ $# -ge 2 ] || { echo "--env needs a file"; exit 2; }; env_file="$2"; shift 2 ;;
-    *) echo "unknown argument $1 (usage: activate-release.sh <commit> [--env <file>])"; exit 2 ;;
+    --env-next) env_next=true; shift ;;
+    *) echo "unknown argument $1 ($usage)"; exit 2 ;;
   esac
 done
+if [ -n "$env_file" ] && $env_next; then echo "--env or --env-next, not both ($usage)"; exit 2; fi
 root="${ZEROX_ROOT:-/opt/zerox}"
-etc="${ZEROX_ETC:-/etc/zerox}"
 dir="$root/releases/$release"
+installer=/usr/local/sbin/zerox-install-env
 umask 077
 [ -f "$dir/neuroncli/auth-server/server.js" ] && [ -d "$dir/neuroncli/auth-server/node_modules" ] &&
   [ "$(cat "$dir/REVISION" 2>/dev/null)" = "$release" ] || { echo "release $release is incomplete"; exit 2; }
@@ -95,11 +101,14 @@ previous="$(readlink "$root/current" || true)"
 before="$(readlink "$link" || true)"
 
 replaced_env=false
+# A refused file (a bad line, a refused name) or a VM whose host setup predates zerox-install-env
+# stops here, before any instance or link changed.
+installed() { "$@" || { echo "the new environment was not installed (see above; push-release.sh --setup installs zerox-install-env); nothing changed"; exit 2; }; }
 if [ -n "$env_file" ]; then
-  # Copied first: --env may name gateway.env.prev itself (putting the previous environment back).
-  install -m 0600 "$env_file" "$etc/gateway.env.new"
-  if [ -e "$etc/gateway.env" ]; then cp -p "$etc/gateway.env" "$etc/gateway.env.prev"; else : > "$etc/gateway.env.prev"; fi
-  mv -f "$etc/gateway.env.new" "$etc/gateway.env"
+  installed sudo "$installer" install < "$env_file"
+  replaced_env=true
+elif $env_next; then
+  installed sudo "$installer" next
   replaced_env=true
 fi
 point "$dir" "$link"
@@ -110,13 +119,12 @@ if sudo systemctl start "zerox-gateway@$new.service" && ready "$new" "$release";
   sudo systemctl stop "zerox-gateway@$old.service"
   point "$dir" "$root/instance-$old"
   touch "$dir/.activated"   # when the release last went live, for pruning
-  if [ "$env_file" = "$etc/gateway.env.next" ]; then rm -f "$env_file"; fi
   echo "release $release is live"
 else
   echo "release $release failed its checks; rolling back"
   sudo systemctl stop "zerox-gateway@$new.service" || true
   if [ -n "$before" ]; then point "$before" "$link"; else rm -f "$link"; fi
-  if $replaced_env; then cp -p "$etc/gateway.env.prev" "$etc/gateway.env"; fi
+  if $replaced_env; then sudo "$installer" restore || echo "the previous environment could not be put back"; fi
   if active "$old"; then
     # Its link was never touched: even restarted after a crash meanwhile, it runs what it ran.
     echo "zerox-gateway@$old never stopped; it serves $(basename "$(readlink "$root/instance-$old" || echo nothing)")"
@@ -132,7 +140,9 @@ fi
 cd "$root/releases"
 # Newest activation first; releases never activated (installed, then refused) after them, so they
 # go first. .partial-* directories (an install in progress) are not listed. On the first deploys
-# grep has nothing left to print and exits 1: not a failure (pipefail).
+# grep has nothing left to print and exits 1: not a failure (pipefail). The release is live by now:
+# a release deploy may not remove (a file another user owns) is reported, and the run still succeeds.
 activated="$(ls -1t -- */.activated 2>/dev/null | sed 's#/\.activated$##' || true)"
 printf '%s\n' "$activated" "$(ls -1d -- */ | sed 's#/$##')" | awk 'NF && !seen[$0]++' |
-  { grep -vxF "$release" || true; } | tail -n +4 | xargs -r rm -rf --
+  { grep -vxF "$release" || true; } | tail -n +4 | xargs -r rm -rf -- ||
+  echo "warning: an old release in $root/releases could not be removed (sudo find $root/releases ! -user deploy)"

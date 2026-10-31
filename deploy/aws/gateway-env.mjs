@@ -52,18 +52,33 @@ const names = list => String(list || '').split(/\s+/).filter(Boolean);
 // NODE_OPTIONS and LD_PRELOAD would load code into the gateway before server.js runs, and every
 // TRUST_* name is a decision about which headers to believe, which belongs to the unit (the
 // EC2 smoke test's environment workflow refused the same names).
-const UNIT_SETTINGS = new Set(['NODE_ENV', 'AUTH_HOST', 'AUTH_PORT', 'AUTH_REUSE_PORT', 'READY_PORT', 'ASSETS_DIR',
+const UNIT_SETTINGS = new Set(['NODE_ENV', 'AUTH_HOST', 'AUTH_PORT', 'AUTH_REUSE_PORT', 'READY_PORT', 'READY_TIMEOUT_MS', 'ASSETS_DIR',
   'NEURON_API_ONLY', 'TRUST_CLOUDFLARE', 'TRUST_CF_IPCOUNTRY', 'SHUTDOWN_GRACE_MS', 'GIT_COMMIT', 'NODE_OPTIONS', 'LD_PRELOAD']);
 const WORKER_ONLY = new Set(['EC2_PROXY_PREFIXES', 'EC2_PROXY_ORIGIN']);
 const DEVELOPMENT_ONLY = new Set(['DEV_AUTH_ENABLED', 'ALLOW_ANONYMOUS_SESSIONS', 'ALLOW_UNKNOWN_COUNTRY',
   'DATABASE_DRIVER', 'PGLITE_DATA_DIR', 'ALLOW_LOCAL_DATABASE', 'RAZORPAY_API_BASE', 'NEURON_RUNTIME']);
+// Whole families that change how the process loads or connects rather than what the gateway does,
+// and that mean nothing on the Worker (so a [vars] entry would pass unnoticed there):
+// NODE_TLS_REJECT_UNAUTHORIZED=0 turns off certificate checks for Supabase and every provider,
+// NODE_EXTRA_CA_CERTS, NODE_PATH, LD_LIBRARY_PATH and BASH_ENV load other code or trust, and
+// HTTP(S)_PROXY / NO_PROXY reroute outbound calls. Matched in any case.
+const REFUSED_FAMILY = /^(NODE_|LD_|BASH_)|_PROXY$/i;
 // server.js refuses to start with a shorter proxy secret (the only gate on the tunnel's public
 // host); failing here keeps such a deploy from reaching the VM at all.
-const MIN_LENGTH = { EC2_PROXY_SECRET: 32 };
+const MIN_LENGTH = { EC2_PROXY_SECRET: 32, EC2_PROXY_SECRET_ROTATION: 32 };
+
+// Whether a name may be in the VM's environment file. zerox-install-env.sh, which installs the file
+// as root on the VM, applies the same rule (check-aws-deploy.mjs compares the two).
+export function refusedName(name) {
+  return UNIT_SETTINGS.has(name) || WORKER_ONLY.has(name) || DEVELOPMENT_ONLY.has(name) || REFUSED_FAMILY.test(name) ||
+    /^(E2E_|TRUST_)/i.test(name);
+}
+export const REFUSED_NAMES = Object.freeze([...UNIT_SETTINGS, ...WORKER_ONLY, ...DEVELOPMENT_ONLY]);
+
 function allowed(name) {
-  if (UNIT_SETTINGS.has(name) || WORKER_ONLY.has(name) || DEVELOPMENT_ONLY.has(name) || name.startsWith('E2E_') || name.startsWith('TRUST_')) {
+  if (refusedName(name)) {
     throw new Error(`${name} is not allowed in the VM environment (zerox-gateway@.service or the release sets it, ` +
-      'or it is Worker-only or development-only)');
+      'it changes how Node loads or connects, or it is Worker-only or development-only)');
   }
   return name;
 }
