@@ -448,7 +448,7 @@ and compare with the newest files in `neuroncli/auth-server/migrations/`.
 
 `EC2_PROXY_SECRET` is one GitHub secret that both runtimes read, and one approval deploys both,
 the Worker usually a minute or two before the VM (job `ec2` installs and checks the release). A
-plain rotation would leave the VM refusing every forward (403 `proxy_secret_mismatch`) for those
+plain rotation would leave the VM refusing every forward (503, `X-Zerox-Refused: proxy_secret_mismatch`) for those
 minutes, and for good if job `ec2` then failed and kept the old environment. So the VM accepts a
 second value, `EC2_PROXY_SECRET_ROTATION`, while the Worker switches. Two approved runs (a push, or
 "Re-run all jobs" on the latest run of `main`), the second only once job `same-commit` passed on

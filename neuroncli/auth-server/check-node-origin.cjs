@@ -161,7 +161,7 @@ async function serverWith(settings, logs = []) {
   // the refusals above are one line for each of the four servers.
   assert.deepEqual(mismatchLogs.map(([level]) => level), ['error', 'error', 'error', 'error'], 'one line for each of the four servers');
   for (const [, line] of mismatchLogs) {
-    assert.match(line, /x-zerox-proxy-secret matches neither EC2_PROXY_SECRET nor EC2_PROXY_SECRET_ROTATION.*403 proxy_secret_mismatch/);
+    assert.match(line, /x-zerox-proxy-secret matches neither EC2_PROXY_SECRET nor EC2_PROXY_SECRET_ROTATION.*503 \(X-Zerox-Refused: proxy_secret_mismatch\)/);
     assert.ok(!line.includes(SECRET), 'the presented value is never logged');
   }
   assert.match(mismatchLogs[2][1], /EC2_PROXY_SECRET is not set here/);
@@ -217,13 +217,25 @@ async function serverWith(settings, logs = []) {
   // Development: the loopback URL as before, and the socket or CF-Connecting-IP rules.
   assert.deepEqual(resolveOrigin(fakeRequest({ ...spoof, host: 'zero-x.live' }), originSettings({})), { base: 'http://127.0.0.1', address: '127.0.0.1' });
 
+  // ── The visitor's cf-ray, as the Worker forwards it: checked, then the app's x-neuron-ray ──
+  assert.equal(resolveOrigin(fakeRequest(proxied('zero-x.live', { 'x-zerox-ray': '8f00aa11bb22cc33-BOM' })), production).ray, '8f00aa11bb22cc33-BOM');
+  for (const forged of ['<script>', '8f00aa11bb22cc33-BOM, 1', 'x'.repeat(16)]) {
+    assert.equal(resolveOrigin(fakeRequest(proxied('zero-x.live', { 'x-zerox-ray': forged })), production).ray, undefined, forged);
+  }
+  assert.equal(resolveOrigin(fakeRequest({ ...spoof, 'x-zerox-ray': '8f00aa11bb22cc33-BOM', host: 'aws.zero-x.live' }), testWindow).ray, undefined,
+    'only from the proxy');
+
   // ── The headers the app sees ──
   const headers = requestHeaders(fakeRequest({ host: '127.0.0.1:8787', 'x-zerox-proxy-secret': SECRET, 'x-zerox-host': 'zero-x.live',
     'x-zerox-anything': 'x', 'x-neuron-client-ip': '192.0.2.1', 'cf-connecting-ip': '2a06:98c0:3600::103', 'cf-ipcountry': 'XX',
-    'cf-ray': 'abc', accept: 'text/html' }), { address: '203.0.113.7', host: 'zero-x.live', proxied: true });
-  assert.deepEqual([...headers.keys()].sort(), ['accept', 'cf-ray', 'host', 'x-neuron-client-ip']);
+    'cf-ray': 'abc', 'x-neuron-ray': 'client-chosen', 'x-zerox-ray': '8f00aa11bb22cc33-BOM', accept: 'text/html' }),
+  { address: '203.0.113.7', host: 'zero-x.live', proxied: true, ray: '8f00aa11bb22cc33-BOM' });
+  assert.deepEqual([...headers.keys()].sort(), ['accept', 'cf-ray', 'host', 'x-neuron-client-ip', 'x-neuron-ray']);
   assert.equal(headers.get('host'), 'zero-x.live');
   assert.equal(headers.get('x-neuron-client-ip'), '203.0.113.7');
+  assert.equal(headers.get('x-neuron-ray'), '8f00aa11bb22cc33-BOM', 'the checked ray, not the client\'s copy');
+  assert.equal(requestHeaders(fakeRequest({ 'x-neuron-ray': 'client-chosen' }), { address: '198.51.100.4' }).get('x-neuron-ray'), null,
+    'a client copy never reaches the app');
   const plainHeaders = requestHeaders(fakeRequest({ host: 'aws.zero-x.live', 'x-zerox-host': 'zero-x.live', 'cf-ipcountry': 'DE' }), { address: '198.51.100.4' });
   assert.deepEqual([...plainHeaders.keys()].sort(), ['cf-ipcountry', 'host', 'x-neuron-client-ip'], 'x-zerox-* are dropped on every request');
 
@@ -255,12 +267,25 @@ async function serverWith(settings, logs = []) {
     const port = prod.address().port;
     const refused = await call(port, { headers: spoof });
     assert.equal(refused.status, 403);
+    assert.equal(refused.headers['x-zerox-runtime'], 'node', 'the server\'s own answers say where they ran');
     assert.deepEqual(refused.json().error, { message: 'This server only answers requests forwarded by https://zero-x.live.',
       type: 'permission_error', code: 'forbidden', param: null });
     assert.equal(refused.headers['cache-control'], 'no-store');
+    // A forward this server cannot take is a misconfiguration of a routed path: the gateway's 503
+    // with Retry-After (as when the Worker refuses), never a permission error; the reason is in
+    // X-Zerox-Refused and the journal.
     const wrong = await capture(() => call(port, { headers: { ...spoof, 'x-zerox-proxy-secret': 'wrong' } }));
-    assert.equal(wrong.status, 403);
-    assert.deepEqual(wrong.json().error, { message: mismatch.message, type: 'permission_error', code: 'proxy_secret_mismatch', param: null });
+    assert.equal(wrong.status, 503);
+    assert.equal(wrong.headers['x-zerox-refused'], 'proxy_secret_mismatch');
+    assert.equal(wrong.headers['retry-after'], '30');
+    assert.equal(wrong.headers['content-type'], 'application/json');
+    assert.equal(wrong.headers['cache-control'], 'no-store');
+    assert.equal(wrong.headers['x-zerox-runtime'], 'node');
+    const wrongError = wrong.json().error;
+    assert.deepEqual({ ...wrongError, request_id: null }, { message: 'Neuron is temporarily unavailable. Retry shortly.', type: 'server_error',
+      code: 'service_unavailable', param: null, request_id: null, retry_after_seconds: 30 });
+    assert.match(wrongError.request_id, /^req_[0-9a-f]{32}$/);
+    assert.equal(wrong.headers['x-request-id'], wrongError.request_id);
     assert.equal((await call(port, { path: '/health' })).status, 200);
     assert.equal((await call(port, { method: 'HEAD', path: '/health' })).status, 200);
     assert.notEqual((await call(port, { path: '/ready' })).status, 403, 'readiness answers (503 here: no session store)');
@@ -289,7 +314,10 @@ async function serverWith(settings, logs = []) {
     assert.equal(robots.text, 'User-agent: *\nDisallow: /\n', 'the dashboard host');
     const neuron = await call(port, { path: '/', headers: proxied('neuron.zero-x.live') });
     assert.equal(neuron.headers.location, 'https://zero-x.live/neuron-cli', 'the neuron host');
-    assert.equal((await call(port, { headers: proxied('evil.example') })).status, 421);
+    const misdirected = await call(port, { headers: proxied('evil.example') });
+    assert.equal(misdirected.status, 503);
+    assert.equal(misdirected.headers['x-zerox-refused'], 'misdirected_request');
+    assert.equal(misdirected.json().error.code, 'service_unavailable');
     const preflight = await call(port, { method: 'OPTIONS', path: '/auth/cli/session', headers: proxied('zero-x.live',
       { origin: 'https://zero-x.live', 'access-control-request-method': 'POST' }) });
     assert.equal(preflight.headers['access-control-allow-origin'], 'https://zero-x.live', 'Origin reaches the identity CORS policy');
@@ -325,8 +353,9 @@ async function serverWith(settings, logs = []) {
     // A forward with a secret the server does not share is refused rather than served as the test host.
     const rotated = await capture(() => call(qaPort, { path: '/index.html', headers: { ...proxied('zero-x.live'), host: 'aws.zero-x.live',
       'x-zerox-proxy-secret': 'rotated-on-the-worker-only-0123456789' } }));
-    assert.equal(rotated.status, 403);
-    assert.equal(rotated.json().error.code, 'proxy_secret_mismatch');
+    assert.equal(rotated.status, 503);
+    assert.equal(rotated.headers['x-zerox-refused'], 'proxy_secret_mismatch');
+    assert.equal(rotated.json().error.code, 'service_unavailable');
 
     // The test window with EC2_PROXY_SECRET missing from gateway.env: the start-up warning says what
     // happens, and the Worker's forwards are refused, not served as aws.zero-x.live (no redirect to
@@ -336,7 +365,7 @@ async function serverWith(settings, logs = []) {
     servers.push(unset);
     assert.equal(unsetLogs.length, 1);
     assert.equal(unsetLogs[0][0], 'warn');
-    assert.match(unsetLogs[0][1], /EC2_PROXY_SECRET is not set: every request the Worker forwards .* is refused with 403 proxy_secret_mismatch; this server answers only aws\.zero-x\.live \(directly\), the relay on relay\.zero-x\.live and GET \/health and \/ready/);
+    assert.match(unsetLogs[0][1], /EC2_PROXY_SECRET is not set: every request the Worker forwards .* is refused with 503 \(X-Zerox-Refused: proxy_secret_mismatch\); this server answers only aws\.zero-x\.live \(directly\), the relay on relay\.zero-x\.live and GET \/health and \/ready/);
     const unsetPort = unset.address().port;
     const forwarded = [];
     await capture(async () => {
@@ -344,13 +373,14 @@ async function serverWith(settings, logs = []) {
         forwarded.push(await call(unsetPort, { path: pathname, headers: { ...proxied(host), host: 'aws.zero-x.live' } }));
       }
     }, unsetLogs);
-    assert.deepEqual(forwarded.map(response => [response.status, response.json().error.code]), Array(3).fill([403, 'proxy_secret_mismatch']));
+    assert.deepEqual(forwarded.map(response => [response.status, response.headers['x-zerox-refused'], response.json().error.code]),
+      Array(3).fill([503, 'proxy_secret_mismatch', 'service_unavailable']));
     assert.equal(unsetLogs.filter(([level]) => level === 'error').length, 1, 'one line within the minute');
     assert.equal((await call(unsetPort, { path: '/index.html', headers: { host: 'aws.zero-x.live' } })).status, 301, 'the test host itself is served');
     // Production with the secret missing: the warning lists what is still answered.
     const bareLogs = [];
     servers.push(await serverWith({ ...common, NODE_ENV: 'production' }, bareLogs));
-    assert.match(bareLogs[0][1], /refused with 403 proxy_secret_mismatch; this server answers only the relay on relay\.zero-x\.live and GET \/health and \/ready/);
+    assert.match(bareLogs[0][1], /refused with 503 \(X-Zerox-Refused: proxy_secret_mismatch\); this server answers only the relay on relay\.zero-x\.live and GET \/health and \/ready/);
     assert.equal((await call(qaPort, { headers: { host: 'qa.other.test' } })).status, 403);
     assert.equal((await call(qaPort, { headers: proxied('aws.zero-x.live') })).status, 200, 'the proxy may forward to a test host');
     const qaStart = extra => call(qaPort, { path: '/auth/openrouter/start', headers: { host: 'aws.zero-x.live', ...extra } }).then(response => response.status);

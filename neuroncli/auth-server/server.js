@@ -281,20 +281,22 @@ function clientAddress(req, trustCloudflare) {
   return peer;
 }
 
-// The headers the app sees. x-neuron-client-ip is the server's own, and x-zerox-* only ever
-// mean something from the Worker's proxy, which resolveOrigin has already checked: client copies
-// of both are dropped on every request. A request the proxy forwarded carries the visitor's host,
-// and the CF-* headers Cloudflare added for the proxy's own hop (its address, its country) go.
-function requestHeaders(req, { trustCloudflare = false, address = clientAddress(req, trustCloudflare), host, proxied = false } = {}) {
+// The headers the app sees. x-neuron-client-ip and x-neuron-ray are the server's own, and x-zerox-*
+// only ever mean something from the Worker's proxy, which resolveOrigin has already checked: client
+// copies of all of them are dropped on every request. A request the proxy forwarded carries the
+// visitor's host and cf-ray (x-neuron-ray, so this server's log lines match the Worker's), and the
+// CF-* headers Cloudflare added for the proxy's own hop (its address, its country) go.
+function requestHeaders(req, { trustCloudflare = false, address = clientAddress(req, trustCloudflare), host, proxied = false, ray } = {}) {
   const headers = new Headers();
   for (const [name, value] of Object.entries(req.headers)) {
-    if (name === 'x-neuron-client-ip' || name.startsWith('x-zerox-') || value === undefined) continue;
+    if (name === 'x-neuron-client-ip' || name === 'x-neuron-ray' || name.startsWith('x-zerox-') || value === undefined) continue;
     if (proxied && (name === 'cf-connecting-ip' || name === 'cf-ipcountry')) continue;
     headers.set(name, Array.isArray(value) ? value.join(', ') : value);
   }
   if (host) headers.set('host', host);
   // Trusted client address for per-IP limits; any client-supplied value was dropped above.
   if (address) headers.set('x-neuron-client-ip', address);
+  if (ray) headers.set('x-neuron-ray', ray);
   return headers;
 }
 
@@ -382,8 +384,8 @@ function mismatchLog(settings, now = Date.now()) {
   state.since += 1;
   if (now - state.loggedAt < MISMATCH_LOG_MS) return;
   console.error(`Refused ${state.since} forwarded request(s) since the last line: their x-zerox-proxy-secret matches neither EC2_PROXY_SECRET ` +
-    `nor EC2_PROXY_SECRET_ROTATION${settings.secret ? '' : ' (EC2_PROXY_SECRET is not set here)'}. Each one gets 403 ` +
-    'proxy_secret_mismatch until the Worker and this server hold the same secret (logged at most once a minute).');
+    `nor EC2_PROXY_SECRET_ROTATION${settings.secret ? '' : ' (EC2_PROXY_SECRET is not set here)'}. Each one gets 503 ` +
+    '(X-Zerox-Refused: proxy_secret_mismatch) until the Worker and this server hold the same secret (logged at most once a minute).');
   state.loggedAt = now;
   state.since = 0;
 }
@@ -392,6 +394,10 @@ const countryCode = value => {
   const code = String(value || '').trim().toUpperCase();
   return /^[A-Z0-9]{2}$/.test(code) ? code : null;
 };
+
+// Cloudflare's ray id as the Worker forwards it (x-zerox-ray), or null.
+const RAY = /^[0-9a-f]{16}(?:-[A-Z]{3})?$/i;
+const rayId = value => RAY.exec(String(value || '').trim())?.[0] || null;
 
 // The request.cf the Worker saw ({country, city, region, asn, asOrganization}), from the proxy's
 // headers: the geo rules read the country, the device sign-in shows the approver the rest. The free
@@ -411,8 +417,10 @@ function proxyGeo(header) {
   return cf;
 }
 
-// One request on the main listener: { base, host, address, cf, proxied } for the app (base is the
-// scheme and host its request URL is built on), or { status, code, message } when it is refused.
+// One request on the main listener: { base, host, address, cf, proxied, ray } for the app (base is
+// the scheme and host its request URL is built on), or { status, code, message } when it is
+// refused. A refused forward (proxy_secret_mismatch, misdirected_request) goes out as the 503 of
+// FORWARD_REFUSALS, whatever status is named here.
 function resolveOrigin(req, settings) {
   const header = name => {
     const value = req.headers[name];
@@ -427,8 +435,9 @@ function resolveOrigin(req, settings) {
       if (!settings.knownHosts.has(host)) return { status: 421, code: 'misdirected_request', message: 'This server does not serve that host.' };
       if (proto !== 'https' && proto !== 'http') return { status: 400, code: 'invalid_request', message: 'Invalid forwarded scheme.' };
       const visitor = String(header('x-zerox-client-ip') || '').trim();
+      const ray = rayId(header('x-zerox-ray'));
       return { base: `${proto}://${host}`, host, proxied: true, cf: proxyGeo(header),
-        address: net.isIP(visitor) ? visitor : req.socket.remoteAddress };
+        address: net.isIP(visitor) ? visitor : req.socket.remoteAddress, ...(ray ? { ray } : {}) };
     }
     // The Worker sends the header with every forward, so a value that does not match is a Worker and
     // a server holding different secrets (one side rotated, or EC2_PROXY_SECRET missing here). Its
@@ -494,10 +503,36 @@ function canonicalPath(rawUrl) {
   }
 }
 
+// Every answer this server writes itself says which runtime it is, like the app's (src/index.js
+// X-Zerox-Runtime): the Worker passes forwarded answers on untouched, so a caller can tell that a
+// request ran here.
 const sendJson = (res, status, body, headers = {}) => {
-  res.writeHead(status, { 'Content-Type': 'application/json', ...headers });
+  res.writeHead(status, { 'Content-Type': 'application/json', 'X-Zerox-Runtime': 'node', ...headers });
   res.end(JSON.stringify(body));
 };
+
+// The gateway's error shape (src/errors.js, docs/PLATFORM_CONTRACT.md §3.3) for the answers this
+// server gives before or around the app (the app is ESM, loaded later), with a request id in the
+// body and x-request-id, and Retry-After when a retry helps.
+const SERVER_ERRORS = {
+  service_unavailable: ['server_error', 'Neuron is temporarily unavailable. Retry shortly.'],
+  invalid_request: ['invalid_request_error', 'The request body is invalid.'],
+};
+function sendError(res, status, code, { message, retryAfterSeconds, headers = {} } = {}) {
+  const [type, fallback] = SERVER_ERRORS[code];
+  const requestId = 'req_' + crypto.randomUUID().replace(/-/g, '');
+  const error = { message: message || fallback, type, code, param: null, request_id: requestId };
+  if (retryAfterSeconds) error.retry_after_seconds = retryAfterSeconds;
+  sendJson(res, status, { error }, { 'Cache-Control': 'no-store', 'x-request-id': requestId,
+    ...(retryAfterSeconds ? { 'Retry-After': String(retryAfterSeconds) } : {}), ...headers });
+}
+
+// A forward from the Worker this server cannot take: the two runtimes hold different proxy secrets,
+// or the Worker sent a host this server does not serve. Both are a misconfiguration of a path the
+// operator routed here, so the visitor gets the gateway's 503 with Retry-After, the same as when
+// the Worker itself refuses (src/ec2-proxy.js), never a permission error; X-Zerox-Refused and the
+// journal (mismatchLog) name the reason.
+const FORWARD_REFUSALS = new Set(['proxy_secret_mismatch', 'misdirected_request']);
 
 // cloudflared keeps an idle connection to the origin for 90 s (originRequest keepAliveTimeout) and
 // sends the next request on it; Node's default closes it after 5 s. A POST sent on a connection at
@@ -517,11 +552,12 @@ function gatewayServer(app, env, { settings, heartbeatMs, readyOnly = false, ser
     // A request that reaches a draining server (on a kept-alive connection) is turned away, so
     // the drain only waits for work that started before the stop.
     if (server[DRAINING]) {
-      sendJson(res, 503, { error: 'Gateway restarting' }, { 'Retry-After': '5', Connection: 'close' });
+      sendError(res, 503, 'service_unavailable', { message: 'Gateway restarting. Retry your request.', retryAfterSeconds: 5,
+        headers: { Connection: 'close' } });
       return;
     }
     if (!canonicalPath(req.url)) {
-      sendJson(res, 400, { error: 'Invalid request path' }, { Connection: 'close' });
+      sendError(res, 400, 'invalid_request', { message: 'Invalid request path.', headers: { Connection: 'close' } });
       return;
     }
     let origin;
@@ -534,6 +570,10 @@ function gatewayServer(app, env, { settings, heartbeatMs, readyOnly = false, ser
       origin = { base: 'http://127.0.0.1', address: req.socket.remoteAddress };
     } else {
       sendJson(res, 404, { error: 'Not found' });
+      return;
+    }
+    if (FORWARD_REFUSALS.has(origin.code)) {
+      sendError(res, 503, 'service_unavailable', { retryAfterSeconds: 30, headers: { 'X-Zerox-Refused': origin.code, Connection: 'close' } });
       return;
     }
     if (origin.status) {
@@ -556,13 +596,13 @@ function gatewayServer(app, env, { settings, heartbeatMs, readyOnly = false, ser
       for await (const chunk of req) {
         size += chunk.length;
         if (size > 2 * 1024 * 1024) {
-          sendJson(res, 413, { error: 'Request body too large' });
+          sendError(res, 413, 'invalid_request', { message: 'The request body is too large.' });
           return;
         }
         chunks.push(chunk);
       }
       const request = new Request(new URL(req.url, origin.base), {
-        method: req.method, headers: requestHeaders(req, { address: origin.address, host: origin.host, proxied: origin.proxied }),
+        method: req.method, headers: requestHeaders(req, { address: origin.address, host: origin.host, proxied: origin.proxied, ray: origin.ray }),
         body: ['GET', 'HEAD'].includes(req.method) ? undefined : Buffer.concat(chunks),
         signal: controller.signal,
       });
@@ -578,8 +618,10 @@ function gatewayServer(app, env, { settings, heartbeatMs, readyOnly = false, ser
         if (String(response.headers.get('content-type')).includes('text/event-stream')) keepAlive(res, body, heartbeatMs);
         body.pipe(res);
       }
-    } catch {
-      if (!res.headersSent) sendJson(res, 500, { error: 'Gateway request failed' });
+    } catch (error) {
+      // The error's name and the visitor's ray only: never a header, the body or the message.
+      console.error('Gateway request failed', { name: error?.name, ray: origin.ray ?? null });
+      if (!res.headersSent) sendError(res, 500, 'service_unavailable');
       else res.destroy();
     }
   });
@@ -636,7 +678,7 @@ async function start() {
   if (settings.origin && !settings.secret) {
     const direct = settings.extraHosts.length ? `${settings.extraHosts.join(', ')} (directly), ` : '';
     console.warn('EC2_PROXY_SECRET is not set: every request the Worker forwards (it carries x-zerox-proxy-secret) is refused with ' +
-      `403 proxy_secret_mismatch; this server answers only ${direct}the relay on relay.zero-x.live and GET /health and /ready`);
+      `503 (X-Zerox-Refused: proxy_secret_mismatch); this server answers only ${direct}the relay on relay.zero-x.live and GET /health and /ready`);
   }
   const heartbeatMs = positiveMs(process.env.SSE_HEARTBEAT_MS, 30000);
   const server = gatewayServer(app, env, { settings, heartbeatMs });

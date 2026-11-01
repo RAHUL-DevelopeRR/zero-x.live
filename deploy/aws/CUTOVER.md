@@ -232,7 +232,7 @@ Each step lists what you approve, what to run, what to check and how to undo it.
 - **Watch for 30-60 minutes**: streams complete; no new 5xx; usage shows matching
   `zerox_reserve_v2` / `zerox_settle_v2` pairs; `journalctl -u 'zerox-gateway@*'` on the VM has no
   errors (and no `Refused ... x-zerox-proxy-secret` line: the two runtimes hold different
-  secrets); the Worker's request count stays under Workers Free's 100,000 a day (every forwarded
+  secrets, and every forward answers 503 `X-Zerox-Refused: proxy_secret_mismatch`); the Worker's request count stays under Workers Free's 100,000 a day (every forwarded
   request still counts once on the Worker).
 - **VM or tunnel down** (watch for it here and through the 14-day window): the Worker then answers
   forwarded paths with its own JSON 503 `service_unavailable` (Retry-After 5, `X-Zerox-Runtime: worker`)
@@ -323,7 +323,7 @@ relay has no Worker fallback.
 | One of the two deploy jobs failed (`same-commit` did not run: the runtimes may be on different commits) | Re-run the failed job once its cause is fixed. If the VM job failed, its activation already put the previous release back, so the Worker is ahead: from step 2, `wrangler rollback` the Worker, or take the forwarded prefixes off the VM (`secret put`/`secret delete EC2_PROXY_PREFIXES`) until both match | minutes |
 | Cron | `sudo systemctl disable --now zerox-cron.timer`, push `rollback/cron-trigger` (or `wrangler triggers deploy` from its checkout) | about 5 minutes |
 | Session store | Push `rollback/kv-rebind` (only if the Postgres store itself fails) | about 5 minutes |
-| Every forward answers 403 `proxy_secret_mismatch` (the runtimes hold different `EC2_PROXY_SECRET`s) | `secret delete EC2_PROXY_PREFIXES`, then the rotation in README.md, "Rotating the proxy secret" | seconds |
+| Every forward answers 503 with `X-Zerox-Refused: proxy_secret_mismatch` and `X-Zerox-Runtime: node` (the runtimes hold different `EC2_PROXY_SECRET`s) | `secret delete EC2_PROXY_PREFIXES`, then the rotation in README.md, "Rotating the proxy secret" | seconds |
 | Routed paths answer 503 `X-Zerox-Runtime: worker` (`EC2 proxy refused` in `wrangler tail`) | Fix what the reason names (`ec2_proxy.refusal` in the operator's `/health`), or `secret delete EC2_PROXY_PREFIXES` | seconds |
 | Razorpay webhook | Nothing: both runtimes dedupe through `zerox_webhook_claim`, Razorpay retries 5xx | - |
 | Schema | Never rolled back: migrations are additive | - |

@@ -10,7 +10,8 @@
 //   - spoofed x-zerox-* sent to the Worker are replaced, and sent straight to the tunnel host
 //     (no secret, a wrong one) are refused;
 //   - a streamed /v1 answer is the very Response the tunnel returned, unread by the Worker, and its
-//     first tokens reach the visitor while the upstream still holds the rest;
+//     first tokens reach the visitor while the upstream still holds the rest; it says it ran on Node
+//     (x-zerox-runtime), and a visitor who leaves mid-stream closes the provider's connection too;
 //   - the release's site files through the forward (allow-list, cache headers, 304, mp4 ranges);
 //   - /health reports the same commit from the Worker (GIT_COMMIT) and from EC2 (REVISION), on
 //     the public path and on READY_PORT in the form activate-release.sh matches;
@@ -63,7 +64,10 @@ for (const name of ['activate-release.sh', 'zerox-deploy.sudoers', 'zerox-gatewa
 // the check releases it ──
 let releaseGate = null;
 const gate = () => new Promise(resolve => { releaseGate = resolve; });
+// Responses the upstream could not finish because the gateway closed the connection first.
+const cutShort = [];
 const upstream = http.createServer(async (req, res) => {
+  res.on('close', () => { if (!res.writableEnded) cutShort.push(Date.now()); });
   let raw = '';
   for await (const chunk of req) raw += chunk;
   res.writeHead(200, { 'Content-Type': 'text/event-stream' });
@@ -110,9 +114,11 @@ async function logged(pattern) {
 
 // A raw request to the server's loopback port, as cloudflared sends it (fetch would not let the
 // Host header differ from the URL). Answers a Response whose body streams as it arrives.
-function toServer(port, { method = 'GET', path = '/', headers = {}, body = null } = {}) {
+// The request's signal closes the connection, as the edge does when the Worker's subrequest is
+// cancelled.
+function toServer(port, { method = 'GET', path = '/', headers = {}, body = null, signal } = {}) {
   return new Promise((resolve, reject) => {
-    const req = http.request({ host: '127.0.0.1', port, method, path, headers, agent: false }, res => {
+    const req = http.request({ host: '127.0.0.1', port, method, path, headers, agent: false, signal }, res => {
       const responseHeaders = new Headers();
       for (const [name, value] of Object.entries(res.headers)) {
         for (const each of [value].flat()) responseHeaders.append(name, each);
@@ -140,7 +146,8 @@ try {
     const url = new URL(request.url);
     assert.equal(url.origin, ORIGIN, `the Worker reaches only EC2_PROXY_ORIGIN, not ${url.origin}`);
     const headers = { ...Object.fromEntries(request.headers), ...WORKER_HOP, host: url.host };
-    const response = await toServer(port, { method: request.method, path: url.pathname + url.search, headers, body: request.body });
+    const response = await toServer(port, { method: request.method, path: url.pathname + url.search, headers, body: request.body,
+      signal: request.signal });
     tunnelled.push({ request, response });
     return response;
   };
@@ -149,8 +156,8 @@ try {
   const WORKER_ENV = { EC2_PROXY_PREFIXES: 'zero-x.live/,www.zero-x.live/,dashboard.zero-x.live/', EC2_PROXY_SECRET: SECRET, GIT_COMMIT: COMMIT };
   const ctx = { waitUntil() {}, passThroughOnException() {} };
   const MUMBAI = { country: 'IN', city: 'Mumbai', region: 'Maharashtra', asn: 9498, asOrganization: 'Bharti Airtel Ltd.' };
-  function visit(url, { method = 'GET', headers = {}, body, ip = '203.0.113.7', cf = MUMBAI } = {}) {
-    const request = new Request(url, { method, headers: { ...headers, 'cf-connecting-ip': ip }, body,
+  function visit(url, { method = 'GET', headers = {}, body, ip = '203.0.113.7', cf = MUMBAI, signal } = {}) {
+    const request = new Request(url, { method, headers: { ...headers, 'cf-connecting-ip': ip }, body, signal,
       ...(body ? { duplex: 'half' } : {}) });
     Object.defineProperty(request, 'cf', { value: cf });
     return app.fetch(request, WORKER_ENV, ctx);
@@ -209,6 +216,7 @@ try {
   assert.equal(stream.bodyUsed, false, 'and never reads its body');
   assert.equal(stream.status, 200);
   assert.match(stream.headers.get('content-type'), /text\/event-stream/);
+  assert.equal(stream.headers.get('x-zerox-runtime'), 'node', 'the chat ran on EC2');
   await held;
   const reader = stream.body.getReader();
   const decoder = new TextDecoder();
@@ -229,6 +237,33 @@ try {
     .map(event => event.choices?.[0]?.delta?.content || '').join('');
   assert.equal(content, 't0 t1 ');
   assert.match(text, /data: \[DONE\]/);
+  assert.equal(cutShort.length, 0);
+
+  // ── A visitor who leaves mid-stream: the client's signal goes with the Worker's forward, the
+  // tunnel's connection closes, and server.js aborts the provider call (which settles it) ──
+  releaseGate = null;
+  const leaving = new AbortController();
+  const heldAgain = new Promise(resolve => { const wait = () => (releaseGate ? resolve() : setTimeout(wait, 5)); wait(); });
+  const left = await visit('https://zero-x.live/v1/chat/completions', { method: 'POST', signal: leaving.signal,
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: 'groq/openai/gpt-oss-120b', stream: true, max_tokens: 32, messages: [{ role: 'user', content: 'gate' }] }) });
+  assert.equal(left.headers.get('x-zerox-runtime'), 'node');
+  await heldAgain;
+  const leftReader = left.body.getReader();
+  for (let seen = ''; !seen.includes('t0 ');) {
+    const { done, value } = await leftReader.read();
+    assert.ok(!done, 'the stream ended before its first token');
+    seen += decoder.decode(value, { stream: true });
+  }
+  // Only the signal: the body is not cancelled, so nothing but the abort can close the tunnel's
+  // connection.
+  leaving.abort();
+  for (const until = Date.now() + 5000; !cutShort.length;) {
+    assert.ok(Date.now() < until, 'the provider\'s connection closed within 5 s of the visitor leaving');
+    await sleep(10);
+  }
+  await leftReader.cancel().catch(() => {});
+  releaseGate();
 
   // ── The release's site files through the forward (C4) ──
   const logo = await visit('https://zero-x.live/Assets/logo.png');
@@ -256,20 +291,28 @@ try {
   assert.equal(direct.status, 403);
   assert.equal((await direct.json()).error.code, 'forbidden');
   const wrong = await toServer(port, { path: '/v1/models', headers: { ...spoof, 'x-zerox-proxy-secret': `${SECRET.slice(0, -1)}x` } });
-  assert.equal(wrong.status, 403);
-  assert.equal((await wrong.json()).error.code, 'proxy_secret_mismatch');
+  assert.equal(wrong.status, 503, 'a forward with another secret: the gateway\'s 503, to retry');
+  assert.equal(wrong.headers.get('x-zerox-refused'), 'proxy_secret_mismatch');
+  assert.ok(wrong.headers.get('retry-after'));
+  assert.equal((await wrong.json()).error.code, 'service_unavailable');
 
   // ── One commit: the Worker's own /health (a host no prefix covers), EC2's through the forward,
   // through the tunnel host and on READY_PORT, in the form activate-release.sh matches ──
   const activate = readFileSync(join(repo, 'deploy/aws/activate-release.sh'), 'utf8');
   assert.ok(activate.includes('\\"commit\\":\\ ?\\"([0-9a-f]+)\\"'), 'activate-release.sh reads "commit" from /health');
   const tunnelledBefore = tunnelled.length;
-  const workerHealth = await (await visit('https://neuron.zero-x.live/health')).json();
+  const workerAnswer = await visit('https://neuron.zero-x.live/health');
+  assert.equal(workerAnswer.headers.get('x-zerox-runtime'), 'worker');
+  const workerHealth = await workerAnswer.json();
   assert.equal(tunnelled.length, tunnelledBefore, 'the Worker answered its own /health');
   assert.equal(workerHealth.commit, COMMIT, 'the Worker: GIT_COMMIT');
+  assert.equal(workerHealth.runtime, 'worker');
   const ec2Health = await visit('https://zero-x.live/health');
   assert.equal(tunnelled.length, tunnelledBefore + 1, 'EC2 answered the forwarded /health');
-  assert.equal((await ec2Health.json()).commit, COMMIT, 'EC2: REVISION');
+  assert.equal(ec2Health.headers.get('x-zerox-runtime'), 'node', 'passed on untouched by the Worker');
+  const ec2Status = await ec2Health.json();
+  assert.equal(ec2Status.commit, COMMIT, 'EC2: REVISION');
+  assert.equal(ec2Status.runtime, 'node');
   assert.equal((await (await toServer(port, { path: '/health', headers: { host: 'aws.zero-x.live' } })).json()).commit, COMMIT,
     'the tunnel host\'s /health answers without the secret');
   const readyHealth = await (await toServer(readyPort, { path: '/health', headers: { host: `127.0.0.1:${readyPort}` } })).text();
@@ -292,7 +335,7 @@ try {
   }
 
   assert.ok(!/outbound request to aws\.zero-x\.live/.test(log), 'EC2 never forwarded to itself');
-  console.log('PASS: Worker -> EC2 end to end: the Worker\'s forward reaches server.js with the visitor\'s host, scheme, address and location (spoofed x-zerox-* replaced; straight to the tunnel host refused without the secret or with a wrong one), redirects reach the visitor, a /v1 stream is the tunnel\'s Response unread and streams while the upstream holds, site files with the allow-list, cache headers, 304 and ranges, the same commit in /health on both runtimes and READY_PORT, and EXTRA_WEB_HOSTS read alike');
+  console.log('PASS: Worker -> EC2 end to end: the Worker\'s forward reaches server.js with the visitor\'s host, scheme, address and location (spoofed x-zerox-* replaced; straight to the tunnel host refused without the secret or with a wrong one), redirects reach the visitor, a /v1 stream is the tunnel\'s Response unread, runs on Node (x-zerox-runtime) and streams while the upstream holds, a visitor who leaves closes the provider\'s connection, site files with the allow-list, cache headers, 304 and ranges, the same commit in /health on both runtimes and READY_PORT, and EXTRA_WEB_HOSTS read alike');
 } catch (error) {
   console.error(`server.js log:\n${log}`);
   throw error;
