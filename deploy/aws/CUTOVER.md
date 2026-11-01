@@ -221,6 +221,8 @@ Each step lists what you approve, what to run, what to check and how to undo it.
 
 ### 2. `/v1` to EC2 (the CPU cap)
 
+- **Before**: a staging A/B report ([AB-TEST.md](AB-TEST.md)) passes P1-P9, the fail-closed
+  drill (S13) and the switch drill (S14) included.
 - **You approve**: the `secret put`.
 - `printf '%s' 'zero-x.live/v1/' | npx wrangler@4.147.0 secret put EC2_PROXY_PREFIXES`.
   It covers chat under the legacy aliases too (`/auth/azure/*`, `/neuroncli/auth-server/v1/`) and

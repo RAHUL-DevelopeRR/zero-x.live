@@ -25,6 +25,8 @@ reach it only through an EC2 Instance Connect Endpoint, so no port faces the int
 | `gateway-env.mjs`, `gateway.env.example` | The environment file CI writes, and every variable the gateway reads (names only). |
 | `CUTOVER.md`, `SESSIONS.md` | The Phase 1 cutover runbook, and the session store move it starts with. |
 | `loadtest.mjs`, `loadtest-probe.mjs` | Capacity check of the gateway with a fake upstream. |
+| `abtest.mjs`, `abtest-guard.mjs`, `abtest-sse.mjs`, `abtest-payloads.mjs`, `abtest-tail.mjs`, `abtest-local.mjs`, `abtest-targets.example.json` | The Worker-vs-EC2 A/B harness for `/v1` chat: dry run by default, staging or local targets only ([AB-TEST.md](AB-TEST.md)). |
+| `synth-upstream.mjs`, `zerox-synth.staging.service`, `vm-sampler.mjs` | Its synthetic provider and witness, and a read-only VM sampler: staging VM only, never installed by `host-setup.sh`. |
 
 Use an IAM admin user signed in with `aws login`, not the root user.
 
@@ -565,6 +567,31 @@ node ../../deploy/aws/loadtest.mjs --streams 10,25,50 --tokens 300 --rate 50
 
 A step passes when every stream ends with `[DONE]`, the event loop is busy under 80 % of the time
 and its p99 delay stays under 100 ms.
+
+## A/B test: is the CPU problem gone?
+
+`abtest.mjs` sends the same chat requests to two staging Workers of one commit: arm A runs the
+pipeline itself, arm B forwards it here through the switch. It never targets production: a dry
+run unless `--execute`, staging hosts by name from a gitignored file, `--confirm` with arm B's
+host, a credential from a hidden prompt or `ZEROX_AB_TOKEN`, capped volume, and operator actions
+printed, never run. Setup, scenarios and safety rules are in [AB-TEST.md](AB-TEST.md); offline,
+`node check-abtest.mjs` and `node ../../deploy/aws/abtest.mjs run --target local --execute --confirm local`
+(from `neuroncli/auth-server`) run it on loopback.
+
+The CPU problem is gone when the staging report (`summary.json`) passes:
+
+- forwarded `/v1` runs on EC2: every arm B answer says `X-Zerox-Runtime: node`, and the synthetic
+  upstream was called by the VM, never by a Worker (P1);
+- the Worker never runs the chat handler for forwarded requests and its CPU for them is proxy
+  overhead only: B's Workers `cpuTime` p99 at most 2 ms, flat in body size and tokens, no
+  `exceededCpu`, while arm A reproduces the 1102s (P2, P3);
+- the first token arrives reliably and long streams (30-90 s, a 40 s quiet one) complete (P4, P5);
+- streams survive a rolling deploy of the VM (P9), and the VM keeps headroom (P6);
+- sessions and billing stay correct: a cancelled stream closes at the provider within 5 s and every
+  request has exactly one usage event (P7);
+- failed EC2 routing (restart, tunnel down, a missing secret, a bad origin) answers node or the
+  Worker's JSON 503 with Retry-After, never HTML and never the Worker's own chat (P8); only deleting
+  `EC2_PROXY_PREFIXES` brings chat back to the Worker (S14).
 
 ## Timeouts, upgrades and restarts
 

@@ -1,0 +1,18 @@
+{
+  "staging": {
+    "_comment": "Copy to deploy/aws/abtest-targets.local.json (gitignored) and fill in the staging values (AB-TEST.md). Every host must be https, its first label 'staging' or ending in '-staging'; production hosts and Workers are refused whatever this file says.",
+    "arms": {
+      "A": { "worker_base": "https://zerox-a-staging.example.workers.dev", "worker_script": "zerox-a-staging", "path": "/v1/chat/completions" },
+      "B": { "worker_base": "https://zerox-b-staging.example.workers.dev", "worker_script": "zerox-b-staging", "path": "/v1/chat/completions" }
+    },
+    "ec2_origin": "https://aws-staging.zero-x.live",
+    "synth_base": "https://synth-staging.zero-x.live",
+    "database": "staging",
+    "account_email": "abtest@example.com",
+    "model": "omniroute/synth-primary",
+    "max_concurrency": 32,
+    "max_requests_per_run": 1000,
+    "allow_real_upstream": false,
+    "vm": { "instance_id": "i-0123456789abcdef0", "known_hosts": "~/.ssh/zerox-staging.known_hosts", "env_file": "~/zerox-staging/gateway.env" }
+  }
+}

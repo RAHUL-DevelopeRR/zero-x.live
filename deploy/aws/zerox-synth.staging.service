@@ -1,0 +1,51 @@
+# The A/B harness's synthetic upstream (synth-upstream.mjs, AB-TEST.md). STAGING VM ONLY:
+# host-setup.sh never installs or enables it, and package-release.sh never ships it (the extra
+# ".staging" keeps it out of the release kit): the production VM has no reason to run it.
+# On the staging VM, as ubuntu:
+#   sudo install -d -o zerox -g zerox -m 0750 /opt/zerox/abtest
+#   sudo install -o zerox -g zerox -m 0640 deploy/aws/synth-upstream.mjs /opt/zerox/abtest/   # it needs no other file
+#   printf 'SYNTH_KEY=%s\n' "$(openssl rand -hex 24)" | sudo install -m 0600 /dev/stdin /etc/zerox/synth.env
+#   sudo install -m 0644 deploy/aws/zerox-synth.staging.service /etc/systemd/system/zerox-synth.service && sudo systemctl daemon-reload
+#   sudo systemctl start zerox-synth            # never enable it; stop it after the test window
+# The staging tunnel maps synth-staging.zero-x.live to 127.0.0.1:8899; the same SYNTH_KEY is the
+# staging gateway's OMNIROUTE_API_KEY.
+[Unit]
+Description=Zero-X A/B synthetic upstream (staging only)
+Documentation=https://github.com/RAHUL-DevelopeRR/zero-x.live/tree/main/deploy/aws/AB-TEST.md
+Wants=network-online.target
+After=network-online.target
+ConditionPathExists=/opt/zerox/abtest/synth-upstream.mjs
+
+[Service]
+Type=simple
+User=zerox
+Group=zerox
+WorkingDirectory=/opt/zerox/abtest
+EnvironmentFile=/etc/zerox/synth.env
+ExecStart=/usr/bin/node /opt/zerox/abtest/synth-upstream.mjs --host 127.0.0.1 --port 8899
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RemoveIPC=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+UMask=0077
