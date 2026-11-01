@@ -15,9 +15,15 @@ const PLACEHOLDER_HEX = 12;
 const PLACEHOLDER = new RegExp(`${PLACEHOLDER_PREFIX}[0-9a-f]{${PLACEHOLDER_HEX}}`, 'g');
 const PLACEHOLDER_LENGTH = PLACEHOLDER_PREFIX.length + PLACEHOLDER_HEX;
 
-// Whole-match credentials.
+// Every rule runs over whole prompts (up to 1 MiB) on every attempt, on the one Node process that
+// carries every stream, so each one must stay linear: a rule that backtracks polynomially on some
+// input (a long identifier run, blank lines, repeated BEGIN lines) blocks the event loop for
+// seconds to minutes. check-oiop.mjs times them on such inputs.
+
+// Whole-match credentials. A key block's body never holds "-----", so a BEGIN line without its END
+// stops at the next marker instead of scanning 16 KiB for each one.
 const TOKEN_RULES = [
-  /-----BEGIN [A-Z0-9 ]{0,40}PRIVATE KEY(?: BLOCK)?-----[\s\S]{16,16384}?-----END [A-Z0-9 ]{0,40}PRIVATE KEY(?: BLOCK)?-----/g,
+  /-----BEGIN [A-Z0-9 ]{0,40}PRIVATE KEY(?: BLOCK)?-----(?:[^-]|-(?!----)){16,16384}?-----END [A-Z0-9 ]{0,40}PRIVATE KEY(?: BLOCK)?-----/g,
   /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g,
   /\bAIza[0-9A-Za-z_-]{35}\b/g,
   /\bgh[pousr]_[A-Za-z0-9]{36,255}\b/g,
@@ -32,13 +38,19 @@ const TOKEN_RULES = [
   /\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g,
 ];
 
-// Credentials inside a larger match: [pattern, index of the secret group].
-const SECRET_NAME = '[A-Za-z0-9_.-]*(?:secret|token|passw(?:or)?d|pwd|api[_-]?key|apikey|access[_-]?key|private[_-]?key|auth[_-]?key|client[_-]?secret|credential|kek|signing[_-]?key)[A-Za-z0-9_.-]*';
+// Credentials inside a larger match: [pattern, index of the secret group]. A secret's name is a
+// bounded run of name characters around one of the words, matched from the start of the run only
+// (the lookbehind): unbounded on both sides and tried from every position of a long run, it
+// backtracked cubically ('token' repeated to 8,000 characters took 19 s).
+const NAME_WORD = '(?:secret|token|passw(?:or)?d|pwd|api[_-]?key|apikey|access[_-]?key|private[_-]?key|auth[_-]?key|client[_-]?secret|credential|kek|signing[_-]?key)';
+const SECRET_NAME = `(?<![A-Za-z0-9_.-])[A-Za-z0-9_.-]{0,64}${NAME_WORD}[A-Za-z0-9_.-]{0,64}`;
 const VALUE_RULES = [
   // postgres://user:password@host
   [/\b((?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|rediss?|amqps?|mssql|sqlserver):\/\/[^:/\s@]{1,128}:)([^@\s/]{3,256})(@)/gi, 2],
-  // API_KEY=value, export TOKEN="value", password: value (dotenv, shell, YAML)
-  [new RegExp(`^(\\s*(?:export\\s+)?${SECRET_NAME}\\s*[=:]\\s*)(["']?)([^\\s"'#]{8,512})\\2`, 'gim'), 3],
+  // API_KEY=value, export TOKEN="value", password: value (dotenv, shell, YAML). The indent is
+  // spaces and tabs: \s* there would run across blank lines from every line start (quadratic in a
+  // run of newlines), and the line holding the name is tried from its own start anyway.
+  [new RegExp(`^([ \\t]*(?:export[ \\t]+)?${SECRET_NAME}\\s*[=:]\\s*)(["']?)([^\\s"'#]{8,512})\\2`, 'gim'), 3],
   // "apiKey": "value", api_key = 'value', password="value" (JSON, code, TOML)
   [new RegExp(`(["']?${SECRET_NAME}["']?\\s*[:=]\\s*)(["'])([^"'\\s]{8,512})\\2`, 'gi'), 3],
 ];

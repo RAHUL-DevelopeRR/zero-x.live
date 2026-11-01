@@ -402,7 +402,40 @@ try {
       'SECRET_NAME=short', 'PASSWORD=<your password>', 'OPENAI_API_KEY=changeme',
     ];
     for (const text of negatives) assert.deepEqual(secretsIn(text), [], `nothing in ${text}`);
+    // The forms the bounded name and the line-start rule still cover: an encrypted key block with
+    // its headers, a long name, an indented and an exported assignment, the value after a blank line.
+    const encrypted = '-----BEGIN RSA PRIVATE KEY-----\nProc-Type: 4,ENCRYPTED\nDEK-Info: AES-128-CBC,3F17F5316E2BAC89\n\nMIIEowIBAAKCAQEA7bq9\n-----END RSA PRIVATE KEY-----';
+    const longName = `${'a'.repeat(60)}_TOKEN=Zx81qPlm0Nn5`;
+    for (const [text, secret] of [[`key:\n${encrypted}\n`, encrypted], [longName, 'Zx81qPlm0Nn5'], ['\t  export  GITHUB_TOKEN=abc123def456', 'abc123def456'],
+      ['\n\n\n  db_password: Zx81qPlm0Nn\n', 'Zx81qPlm0Nn'], ['{"x":1,"client_secret":"s3cr3tValue9"}', 's3cr3tValue9']]) {
+      assert.deepEqual(secretsIn(text), [secret], text.slice(0, 40));
+    }
     ok(`scrubber detection: ${positives.length} credential forms found (provider keys, PEM, JWT, connection-string and assignment values); ${negatives.length} look-alikes (env references, placeholders, prose, hashes) left alone`);
+  }
+
+  // ── Secret scrubber: linear on inputs that made the rules backtrack ──
+  // One Node process carries every stream on EC2: a rule that backtracks polynomially on a 1 MiB
+  // prompt (a long identifier run, blank lines, BEGIN lines without END) blocks all of them. Each
+  // input below took seconds to minutes before the rules were bounded.
+  {
+    const MiB = 1 << 20;
+    const inputs = {
+      'token repeated': 'token'.repeat(200000), 'an identifier run': 'a'.repeat(1e6), 'hex': '0123456789abcdef'.repeat(65536),
+      'BEGIN lines': '-----BEGIN PRIVATE KEY-----\n'.repeat(37000), 'a long name': `${'x_token'.repeat(150000)}="abc12345"`,
+      'blank lines': '\n'.repeat(MiB), 'blank CRLF lines': ' \r\n'.repeat(MiB / 3), 'names on every line': 'token\n'.repeat(170000),
+      'quoted names': '"token"'.repeat(150000), 'export and spaces': `export ${' '.repeat(MiB)}`,
+    };
+    for (const [name, text] of Object.entries(inputs)) {
+      let started = performance.now();
+      findSecrets(text);
+      const findMs = performance.now() - started;
+      assert.ok(findMs < 250, `findSecrets on ${name} (${text.length} characters) took ${findMs.toFixed(0)} ms`);
+      started = performance.now();
+      await scrubRequest({ model: 'auto', messages: [{ role: 'user', content: text }] });
+      const scrubMs = performance.now() - started;
+      assert.ok(scrubMs < 500, `scrubRequest on ${name} took ${scrubMs.toFixed(0)} ms`);
+    }
+    ok(`scrubber cost: ${Object.keys(inputs).length} adversarial 1 MiB prompts each scanned in under 250 ms (linear rules)`);
   }
 
   // ── Secret scrubber: requests, placeholders, restoring ──
