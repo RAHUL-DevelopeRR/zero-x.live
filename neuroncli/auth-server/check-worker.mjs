@@ -213,7 +213,8 @@ try {
   assert.equal(usage.usage.requests, 8);
   assert.equal(usage.usage.tokens_used, 144);
   const publicHealth = await (await app.request('https://www.zero-x.live/health', {}, databaseEnv)).json();
-  assert.deepEqual(Object.keys(publicHealth).sort(), ['commit', 'service', 'status', 'version'], 'Anonymous health exposes no configuration');
+  assert.deepEqual(Object.keys(publicHealth).sort(), ['commit', 'runtime', 'service', 'status', 'version'], 'Anonymous health exposes no configuration');
+  assert.equal(publicHealth.runtime, 'worker', 'which runtime answered, nothing else');
   const operatorToken = 'operator-token-'.padEnd(40, 'x');
   const health = await (await app.request('https://www.zero-x.live/health', {
     headers: { Authorization: `Bearer ${operatorToken}` },

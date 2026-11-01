@@ -740,13 +740,15 @@ try {
   // ── 9. /health trimming, admin overview, scheduled maintenance ──
   const operatorEnv = { ...env, GATEWAY_ADMIN_TOKEN: OPERATOR };
   assert.deepEqual((await json(await request('/health', { bindings: operatorEnv }))).body,
-    { status: 'ok', service: 'neuroncli-gateway-worker', version: '2.0.0', commit: null });
+    { status: 'ok', service: 'neuroncli-gateway-worker', version: '2.0.0', commit: null, runtime: 'worker' });
   assert.deepEqual(Object.keys((await json(await request('/health', { bindings: operatorEnv, token: 'wrong-operator-token-value' }))).body).sort(),
-    ['commit', 'service', 'status', 'version']);
+    ['commit', 'runtime', 'service', 'status', 'version']);
   // The deployed commit (C9: deploy.yml's --var GIT_COMMIT on the Worker, the release's REVISION on
   // EC2), so a deploy can tell both runtimes run the same code.
   assert.deepEqual((await json(await request('/health', { bindings: { ...operatorEnv, GIT_COMMIT: '1d4c444' } }))).body,
-    { status: 'ok', service: 'neuroncli-gateway-worker', version: '2.0.0', commit: '1d4c444' });
+    { status: 'ok', service: 'neuroncli-gateway-worker', version: '2.0.0', commit: '1d4c444', runtime: 'worker' });
+  // Which runtime answered (src/ec2-proxy.js servingRuntime): the same app on Node says node.
+  assert.equal((await json(await request('/health', { bindings: { ...operatorEnv, NEURON_RUNTIME: 'node' } }))).body.runtime, 'node');
   assert.equal((await json(await request('/health', { bindings: { ...operatorEnv, GIT_COMMIT: '' } }))).body.commit, null);
   const fullHealth = await json(await request('/health', { bindings: operatorEnv, token: OPERATOR }));
   assert.equal(fullHealth.body.commit, null);
@@ -755,6 +757,7 @@ try {
   assert.equal(fullHealth.body.database_configured, true);
   assert.equal(fullHealth.body.billing_configured, false);
   assert.equal(fullHealth.body.session_encryption, false);
+  assert.deepEqual(fullHealth.body.ec2_proxy, { entries: 0, invalid: [], chat_routed: false, refusal: null }, 'the proxy switch, off');
   assert.ok(!JSON.stringify(fullHealth.body).includes(SECRET) && !JSON.stringify(fullHealth.body).includes(OPERATOR));
   assertOpenAIError(await json(await request('/admin/overview', { bindings: operatorEnv })), 401, 'invalid_session');
   assertOpenAIError(await json(await request('/admin/overview', { bindings: operatorEnv, token: bobSession.body.session_token })), 401, 'invalid_session');
