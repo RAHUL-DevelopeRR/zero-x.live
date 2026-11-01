@@ -8,9 +8,24 @@ a Worker route cannot roll that back.
 Instead the Worker forwards, as the first thing in its `fetch()`, every request whose
 `host + path` starts with an entry of its secret **`EC2_PROXY_PREFIXES`** to
 `https://aws.zero-x.live` (the tunnel to the VM), with its proxy secret and the caller's host,
-scheme, address and location in `x-zerox-*` headers. The response comes straight back, so even a
-90 s stream costs the Worker almost no CPU. Everything else, and everything when the secret is
-unset, is served by the Worker exactly as before: it stays the instant fallback.
+scheme, address, location and cf-ray in `x-zerox-*` headers. The response comes straight back, so
+even a 90 s stream costs the Worker almost no CPU. Everything else, and everything when the secret
+is unset, is served by the Worker exactly as before: it stays the instant fallback, but only
+through the switch.
+
+The switch fails closed. A routed path is never served by the Worker for any other reason: a
+missing or malformed `EC2_PROXY_SECRET`, an `EC2_PROXY_ORIGIN` that is not https or names one of
+the Worker's own hosts, an entry that is not a host + path, a Worker that still binds
+`SESSIONS_KV`, a tunnel or VM that is down, or a forward that fails all answer the gateway's JSON
+503 `service_unavailable` with Retry-After (30 s for a misconfiguration, 5 s for an origin that is
+down), and `npx wrangler@4.147.0 tail` shows one line per request with the visitor's ray and the
+reason (`EC2 proxy refused`, `EC2 origin unreachable`, `EC2 proxy request failed`). Once an entry
+covers `/v1/chat/completions`, chat goes to EC2 under every alias and host (`/auth/azure/*`, the
+`/neuroncli/auth-server` mount, `www`, `neuron`, `dashboard`) with `/v1/models/health`, and the
+chat handler refuses on the Worker. Every answer carries `X-Zerox-Runtime` (`node` from the VM,
+`worker` from the Worker), and `/health` reports `runtime`; the operator's `/health` (with the
+admin token) adds `ec2_proxy`: the entry count, invalid entries by position, `chat_routed` and the
+`refusal` reason if every routed path is refused.
 
 `EC2_PROXY_PREFIXES` is the switch. It is a Worker secret only because `wrangler secret put` takes
 effect in seconds without a commit and `deploy.yml` never overwrites a secret it does not list.
@@ -23,7 +38,9 @@ npx wrangler@4.147.0 secret delete EC2_PROXY_PREFIXES      # everything back to 
 ```
 
 Entries are comma separated, without spaces or a scheme, matched as plain prefixes of
-`host + path`: `zero-x.live/` covers every path of the apex, `/v1/` included, and no other host.
+`host + path`: `zero-x.live/` covers every path of the apex, `/v1/` included, and no other host
+(chat aside, above). After each `secret put`, read `ec2_proxy` on the operator's `/health` of a host
+no entry covers (in step 2, `https://zero-x.live/health`): `invalid: []` and `refusal: null`.
 
 VM-side commands below run on the VM as `ubuntu`:
 `aws ec2-instance-connect ssh --instance-id <id> --connection-type eice --os-user ubuntu $P`
@@ -198,23 +215,30 @@ Each step lists what you approve, what to run, what to check and how to undo it.
   `kv_bound: false`; `/v1/models` statuses look right on the Worker. Between the unbind and the copy
   (minutes) older CLI sessions get 401 and recover after the copy (the CLI keeps its login on 401).
 - **Undo**: only if the Postgres store itself fails, push `rollback/kv-rebind`. Sessions created
-  after the switch sign in again.
+  after the switch sign in again. From step 2 on, `secret delete EC2_PROXY_PREFIXES` first: a Worker
+  with `SESSIONS_KV` bound refuses every routed path (`session_store_split`), because the VM cannot
+  read the sessions it mints.
 
 ### 2. `/v1` to EC2 (the CPU cap)
 
 - **You approve**: the `secret put`.
 - `printf '%s' 'zero-x.live/v1/' | npx wrangler@4.147.0 secret put EC2_PROXY_PREFIXES`.
-  If old CLIs still use the legacy aliases, use
+  It covers chat under the legacy aliases too (`/auth/azure/*`, `/neuroncli/auth-server/v1/`) and
+  on every host; to move the rest of those paths as well, use
   `zero-x.live/v1/,zero-x.live/auth/azure/,zero-x.live/neuroncli/auth-server/v1/`.
+- **Check at once**: `curl -s -o /dev/null -D - -X POST https://zero-x.live/v1/chat/completions | grep -i x-zerox-runtime`
+  prints `node` (a 401 from the VM: no credential); `worker` with a 503 means the Worker refused,
+  and `npx wrangler@4.147.0 tail` names the reason (`session_store_split`: step 1 is not done).
 - **Watch for 30-60 minutes**: streams complete; no new 5xx; usage shows matching
   `zerox_reserve_v2` / `zerox_settle_v2` pairs; `journalctl -u 'zerox-gateway@*'` on the VM has no
   errors (and no `Refused ... x-zerox-proxy-secret` line: the two runtimes hold different
   secrets); the Worker's request count stays under Workers Free's 100,000 a day (every forwarded
   request still counts once on the Worker).
 - **VM or tunnel down** (watch for it here and through the 14-day window): the Worker then answers
-  forwarded paths with its own JSON 503 `service_unavailable` (Retry-After 5) and logs
-  `EC2 origin unreachable` with the status, 530 when the tunnel has no connector, 502 when nothing
-  listens on 127.0.0.1:8787 (`npx wrangler@4.147.0 tail` on the laptop shows it). From outside:
+  forwarded paths with its own JSON 503 `service_unavailable` (Retry-After 5, `X-Zerox-Runtime: worker`)
+  and logs `EC2 origin unreachable` with the status and the ray, 530 when the tunnel has no
+  connector, 524 when the VM sends no headers in time, 502 when nothing listens on 127.0.0.1:8787
+  (`npx wrangler@4.147.0 tail` on the laptop shows it). It never runs the chat itself instead. From outside:
   `curl -s -o /dev/null -w '%{http_code}\n' https://aws.zero-x.live/health` prints 200 while the VM
   serves, 530 or 502 when it does not. A few minutes of it: delete `EC2_PROXY_PREFIXES` (Undo,
   below), then look at the VM (`systemctl status cloudflared 'zerox-gateway@*'`).
@@ -300,5 +324,6 @@ relay has no Worker fallback.
 | Cron | `sudo systemctl disable --now zerox-cron.timer`, push `rollback/cron-trigger` (or `wrangler triggers deploy` from its checkout) | about 5 minutes |
 | Session store | Push `rollback/kv-rebind` (only if the Postgres store itself fails) | about 5 minutes |
 | Every forward answers 403 `proxy_secret_mismatch` (the runtimes hold different `EC2_PROXY_SECRET`s) | `secret delete EC2_PROXY_PREFIXES`, then the rotation in README.md, "Rotating the proxy secret" | seconds |
+| Routed paths answer 503 `X-Zerox-Runtime: worker` (`EC2 proxy refused` in `wrangler tail`) | Fix what the reason names (`ec2_proxy.refusal` in the operator's `/health`), or `secret delete EC2_PROXY_PREFIXES` | seconds |
 | Razorpay webhook | Nothing: both runtimes dedupe through `zerox_webhook_claim`, Razorpay retries 5xx | - |
 | Schema | Never rolled back: migrations are additive | - |

@@ -37,7 +37,7 @@ import { registerCatalogAdminRoutes } from './routes/catalog-admin.js';
 import { registerCreditRoutes } from './routes/credits.js';
 import { loadVaultKeys, vaultConfigured } from './provider-keys.js';
 import { accessConfigured, passedAccess } from './access-auth.js';
-import { forwardToEc2 } from './ec2-proxy.js';
+import { chatRefusal, chatRoutedToEc2, forwardToEc2, proxyStatus, servingRuntime } from './ec2-proxy.js';
 import { extraWebOrigins, isExtraWebHost } from './web-hosts.js';
 // Durable Object classes are exported from the Worker entry (wrangler.toml [[durable_objects]]),
 // each with its binding. RelayRoom (src/relay.js) is not bound for now, so it is not exported.
@@ -115,6 +115,10 @@ app.use('*', async (c, next) => {
   // A WebSocket upgrade (the relay, src/routes/relay.js) comes back from its Durable Object with
   // immutable headers, and headers mean nothing on it.
   if (c.res.status === 101 || c.res.webSocket) return;
+  // Which runtime answered: "node" on EC2 (server.js), "worker" on the Worker. A forwarded
+  // response keeps EC2's value (src/ec2-proxy.js returns it untouched), which is how a caller tells
+  // where a request ran. Nothing else (no host, instance or address).
+  c.header('X-Zerox-Runtime', servingRuntime(c.env));
   c.header('X-Content-Type-Options', 'nosniff');
   c.header('Referrer-Policy', 'strict-origin-when-cross-origin');
   c.header('X-Frame-Options', 'DENY');
@@ -290,7 +294,7 @@ const identityCors = cors({
 const openCors = cors({
   origin: '*', allowHeaders: CORS_HEADERS, allowMethods: CORS_METHODS, maxAge: 600,
   exposeHeaders: ['X-Request-Id', 'X-Neuron-Plan', 'X-Neuron-Model', 'X-Neuron-Quota-Remaining-Requests',
-    'X-Neuron-Quota-Remaining-Tokens', 'X-OIOP-Offer', 'X-OIOP-Fallback', 'X-OIOP-Redacted', 'Retry-After'],
+    'X-Neuron-Quota-Remaining-Tokens', 'X-OIOP-Offer', 'X-OIOP-Fallback', 'X-OIOP-Redacted', 'Retry-After', 'X-Zerox-Runtime'],
 });
 app.use('*', async (c, next) => {
   const path = routePath(new URL(c.req.url).pathname);
@@ -522,9 +526,11 @@ function takePkceStart(address) {
 // (GIT_COMMIT: deploy.yml's --var on the Worker, the release's REVISION file on EC2), so a deploy
 // can confirm the Worker and the Node server serve the same code. The repository is public. Once
 // an EC2_PROXY_PREFIXES entry covers a host, its /health is EC2's: the Worker's own commit then
-// has to be read through a URL that no prefix covers.
+// has to be read through a URL that no prefix covers. `runtime` says which one answered ("worker"
+// or "node", like the X-Zerox-Runtime header); the operator's view adds the proxy switch's state
+// (src/ec2-proxy.js proxyStatus: counts and reasons, never a value).
 api.get('/health', async (c) => {
-  const status = { status: "ok", service: SERVICE, version: VERSION, commit: c.env?.GIT_COMMIT || null };
+  const status = { status: "ok", service: SERVICE, version: VERSION, commit: c.env?.GIT_COMMIT || null, runtime: servingRuntime(c.env) };
   if (!await isOperator(c)) return c.json(status);
   const { supabaseUrl, supabaseKey } = readIdentityConfig(c.env);
   c.header('Cache-Control', 'no-store');
@@ -540,6 +546,7 @@ api.get('/health', async (c) => {
     provider_key_vault: vaultConfigured(c.env),
     admin_access_configured: accessConfigured(c.env),
     csp_enforced: c.env.CSP_ENFORCE === 'true',
+    ec2_proxy: proxyStatus(c.env),
   });
 });
 
@@ -813,9 +820,13 @@ api.get('/auth/me', async (c) => {
   }
 });
 
-const chatCompletionsHandler = createChatHandler({
+const chatCompletions = createChatHandler({
   validateSession: validateInferenceCredential, setSession: persistSession, getSession, planLimits: loadPlanLimits,
 });
+// Once the proxy switch sends chat to EC2, the Worker never runs the chat pipeline (it is what
+// exceeds the Worker's CPU cap): a spelling of the route the switch did not forward, or the
+// inference probe's internal call, gets the switch's JSON 503 instead (src/ec2-proxy.js).
+const chatCompletionsHandler = c => (chatRoutedToEc2(c.env) ? chatRefusal(c.req.raw) : chatCompletions(c));
 api.post('/v1/chat/completions', chatCompletionsHandler);
 api.post('/auth/azure/proxy', chatCompletionsHandler);
 api.post('/auth/azure/chat/completions', chatCompletionsHandler);
@@ -918,7 +929,8 @@ api.post('/v1/models/health', async (c) => {
     body: JSON.stringify({ model: body.model, messages: [{ role: 'user', content: 'Reply OK.' }], max_tokens: 8 }),
     signal: c.req.raw.signal,
   }), callerCountry(c.req.raw, c.env));
-  // Hono's own fetch: the probe is never forwarded to EC2, whatever EC2_PROXY_PREFIXES covers.
+  // Hono's own fetch: the probe itself is never forwarded. Once chat is routed to EC2 the probe
+  // request was forwarded before it got here, and the chat handler refuses on the Worker anyway.
   const response = await honoFetch(probe, c.env);
   const result = await response.json();
   if (!response.ok) return c.json({ model: body.model, status: 'unavailable', error: result.error, latency_ms: Date.now() - started }, response.status);

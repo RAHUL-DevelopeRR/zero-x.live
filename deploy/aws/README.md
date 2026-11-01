@@ -515,7 +515,8 @@ CI's key push is refused.
 ## Rollback
 
 - **Traffic**: the Worker serves everything again as soon as `EC2_PROXY_PREFIXES` loses the entry
-  ([CUTOVER.md](CUTOVER.md)); no deploy needed.
+  ([CUTOVER.md](CUTOVER.md)); no deploy needed. Nothing else brings a routed path back to the
+  Worker: a broken switch, tunnel or VM answers 503.
 - **Release**: run the workflow for the previous commit, push it from the laptop
   (`push-release.sh --ref <commit>`), or activate an older release already on the VM (no
   download, no npm), on the VM as `ubuntu` (`/opt/zerox` is readable by `deploy` and `zerox` only):

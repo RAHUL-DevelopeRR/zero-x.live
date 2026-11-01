@@ -91,8 +91,8 @@ jobs:
       # deploy. Only secret names are printed, never values. ANTHROPIC_API_KEY serves Claude
       # Sonnet 5.5 and Opus 5.5 (paid pools, Pro and Max) and the weekly discovery research jobs;
       # GLM_API_KEY serves Z.ai's free GLM-4.7-Flash and GLM-4.5-Flash; EC2_PROXY_SECRET is
-      # what the Worker sends with every request it forwards to the VM (without it the Worker
-      # forwards nothing), a secret of the environment "production", never of the repository,
+      # what the Worker sends with every request it forwards to the VM (without it every path
+      # EC2_PROXY_PREFIXES routes answers 503), a secret of the environment "production", never of the repository,
       # which a workflow pushed on any branch could read (deploy/aws/README.md, "Deploys"). The
       # Worker secret EC2_PROXY_PREFIXES, the forward switch, is not listed on purpose:
       # `wrangler secret put` changes it in seconds and a deploy keeps it.
