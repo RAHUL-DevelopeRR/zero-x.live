@@ -516,9 +516,12 @@ CI's key push is refused.
 
 ## Rollback
 
-- **Traffic**: the Worker serves everything again as soon as `EC2_PROXY_PREFIXES` loses the entry
-  ([CUTOVER.md](CUTOVER.md)); no deploy needed. Nothing else brings a routed path back to the
-  Worker: a broken switch, tunnel or VM answers 503.
+- **Traffic**: a path or host returns to the Worker as soon as `EC2_PROXY_PREFIXES` loses the
+  entry that covers it ([CUTOVER.md](CUTOVER.md)); no deploy needed. Chat, on every host, returns
+  only once no entry routes it (`zero-x.live/`, or a path covering `/v1/chat/completions`;
+  `chat_routed_by` in the operator's `/health` lists them); `secret delete EC2_PROXY_PREFIXES`
+  brings everything back. Nothing else brings a routed path back to the Worker: a broken switch,
+  tunnel or VM answers 503.
 - **Release**: run the workflow for the previous commit, push it from the laptop
   (`push-release.sh --ref <commit>`), or activate an older release already on the VM (no
   download, no npm), on the VM as `ubuntu` (`/opt/zerox` is readable by `deploy` and `zerox` only):
@@ -587,8 +590,9 @@ The CPU problem is gone when the staging report (`summary.json`) passes:
   `exceededCpu`, while arm A reproduces the 1102s (P2, P3);
 - the first token arrives reliably and long streams (30-90 s, a 40 s quiet one) complete (P4, P5);
 - streams survive a rolling deploy of the VM (P9), and the VM keeps headroom (P6);
-- sessions and billing stay correct: a cancelled stream closes at the provider within 5 s and every
-  request has exactly one usage event (P7);
+- sessions and billing stay correct: every cancelled stream is witnessed closing at the provider
+  within 5 s, every 200 stream has exactly one usage event under its `x-request-id`, and the run's
+  usage events equal the requests the provider saw, cancels before the first token included (P7);
 - failed EC2 routing (restart, tunnel down, a missing secret, a bad origin) answers node or the
   Worker's JSON 503 with Retry-After, never HTML and never the Worker's own chat (P8); only deleting
   `EC2_PROXY_PREFIXES` brings chat back to the Worker (S14).

@@ -218,13 +218,16 @@ async function execute(target, plan, caps, options, deps) {
       }
     } else {
       arms = target.arms;
-      uninstall = installFetchGuard([arms.A.base, arms.B.base, ...(target.synthBase ? [target.synthBase] : [])]);
+      // A remote run proves arm B reaches the staging VM (the synth witness, below) before any load:
+      // without its origin and the synth's key it could be loading whatever EC2_PROXY_ORIGIN names.
+      const synthKey = requireStagingWitness(target, deps.env);
+      uninstall = installFetchGuard([arms.A.base, arms.B.base, target.synthBase]);
       const token = await readToken({ env: deps.env, prompt: deps.prompt });
       tokens.A = tokens.B = token;
       out(`credential ${tokenLabel(token)} (never written)`);
-      await preflight(target, token, options, out);
+      reserveRequests(plan.total + 1, { limit: capped('requestsPerDay', options['per-day']) });
+      await preflight(target, token, options, out, { runId, synthKey, write });
       sessionToken = token; // the test account, checked: its usage events are read after the run
-      reserveRequests(plan.total, { limit: capped('requestsPerDay', options['per-day']) });
       if (options.tail) {
         for (const arm of ['A', 'B']) {
           if (arms[arm].script) tails.push({ arm, tail: startTail(arms[arm].script, { cwd: gatewayDir, spawnImpl: deps.spawn, env: deps.env }) });
@@ -359,7 +362,22 @@ function breakers(row, recentB) {
   }
 }
 
-async function preflight(target, token, options, out) {
+// A staging run needs ec2_origin and synth_base in its target and ZEROX_AB_SYNTH_KEY: the canary
+// (preflight) and P1/P7 read the synth witness.
+export function requireStagingWitness(target, env) {
+  const synthKey = String(env?.ZEROX_AB_SYNTH_KEY || '');
+  const missing = [!target.ec2Origin && 'ec2_origin', !target.synthBase && 'synth_base', !synthKey && 'ZEROX_AB_SYNTH_KEY'].filter(Boolean);
+  if (missing.length) throw new Error(`a staging run needs ${missing.join(', ')} (AB-TEST.md): without the synth witness nothing proves arm B reaches the staging VM`);
+  return synthKey;
+}
+
+// Pre-flight, before any load: the credential is the test account, both Workers run one commit,
+// each arm's chat path answers an unauthenticated POST with the gateway's own 401 invalid_session
+// from the runtime it should (A the Worker app, B the Node server: not a refusal, which a Worker
+// whose EC2_PROXY_ORIGIN fell back to production, or a Worker that refuses chat, would give), and
+// one authenticated tiny request on B reaches the staging synth from the VM. The production VM
+// never calls the staging synth, so its record proves B forwards to the staging VM.
+export async function preflight(target, token, options, out, { runId, synthKey, write = () => {}, wait = sleep } = {}) {
   const account = await fetch(`${target.arms.A.base}/api/account`, { headers: { Authorization: `Bearer ${token}` } });
   if (account.status !== 200) throw new Error(`pre-flight: /api/account answered ${account.status}`);
   const email = (await account.json()).user?.email;
@@ -373,12 +391,35 @@ async function preflight(target, token, options, out) {
   }
   for (const arm of ['A', 'B']) {
     const probe = await fetch(`${target.arms[arm].base}${target.arms[arm].path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
-    await probe.body?.cancel();
     const runtime = probe.headers.get('x-zerox-runtime');
+    const refused = probe.headers.get('x-zerox-refused');
+    const code = /json/.test(probe.headers.get('content-type') || '') ? (await probe.json().catch(() => null))?.error?.code ?? null : null;
+    if (code === null) await probe.body?.cancel().catch(() => {});
     const want = arm === 'A' ? 'worker' : 'node';
-    if (runtime !== want) throw new Error(`pre-flight: arm ${arm}'s chat path answered from ${runtime ?? 'an unknown runtime'}, expected ${want}`);
+    if (probe.status !== 401 || code !== 'invalid_session' || refused || runtime !== want) {
+      throw new Error(`pre-flight: arm ${arm}'s chat path answered ${probe.status} ${code ?? ''}${refused ? ` refused ${refused}` : ''} from ` +
+        `${runtime ?? 'an unknown runtime'}; expected 401 invalid_session from ${want}, not refused: stopped before any load`);
+    }
   }
-  out(`pre-flight: test account, commit ${health.A.commit}, A runs on the Worker, B on EC2`);
+  // The canary: one tiny authenticated request on B, then the synth's record of its nonce.
+  const nonce = `${runId}.canary`;
+  const body = buildBody('tiny', { model: target.model, nonce, tokens: 4, rate: 200, ttfbMs: 0, fail: null, stallAfter: null, quietMs: 0 });
+  const canary = await measureStream({ url: `${target.arms.B.base}${target.arms.B.path}?ab=${encodeURIComponent(nonce)}`,
+    headers: { Authorization: `Bearer ${token}` }, body });
+  write('requests.jsonl', { run: runId, ab: nonce, arm: 'B', cell: 'canary', scenario: 'canary', kind: 'canary', warmup: true, ...canary });
+  if (!ok2xx(canary) || canary.runtime !== 'node') {
+    throw new Error(`pre-flight: arm B's canary answered ${canary.status ?? 'nothing'} from ${canary.runtime ?? 'an unknown runtime'}: stopped before any load`);
+  }
+  let record = null;
+  for (let attempt = 0; attempt < 10 && !record; attempt++) {
+    if (attempt) await wait(500);
+    const stats = await fetch(`${target.synthBase}/stats`, { headers: { Authorization: `Bearer ${synthKey}` } });
+    if (stats.status !== 200) throw new Error(`pre-flight: the synth's /stats answered ${stats.status} (ZEROX_AB_SYNTH_KEY)`);
+    record = ((await stats.json()).records || []).find(each => each.nonce === nonce) || null;
+  }
+  if (!record) throw new Error('pre-flight: the staging synth never saw the canary of arm B: B forwards somewhere else (EC2_PROXY_ORIGIN?), stopped before any load');
+  if (record.caller !== 'vm') throw new Error(`pre-flight: the staging synth saw arm B's canary from ${record.caller}, not the VM: stopped before any load`);
+  out(`pre-flight: test account, commit ${health.A.commit}, A runs on the Worker, B on the staging VM (canary witnessed)`);
 }
 
 // One operator step: background streams on B (when the step has them), the exact command, Enter,
@@ -408,7 +449,8 @@ const completed = row => ok2xx(row) && row.done && !row.errorEvent;
 
 /** summary.json from a run directory (and the optional EC2 samples or Workers Logs export). */
 export function report(runDir, { ec2File, workersLogsFile, localStandIn } = {}) {
-  const rows = readJsonl(join(runDir, 'requests.jsonl')).filter(row => !row.warmup);
+  const allRows = readJsonl(join(runDir, 'requests.jsonl'));
+  const rows = allRows.filter(row => !row.warmup);
   const cells = readJsonl(join(runDir, 'cells.jsonl'));
   const tail = workersLogsFile ? importWorkersLogs(workersLogsFile) : readJsonl(join(runDir, 'tail.jsonl'));
   const synth = readJsonl(join(runDir, 'synth.jsonl'));
@@ -442,14 +484,18 @@ export function report(runDir, { ec2File, workersLogsFile, localStandIn } = {}) 
   const A = rows.filter(row => row.arm === 'A');
   const steady = row => ['S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'S7'].includes(row.scenario);
 
-  // P1: every B 2xx ran on Node, and the upstream saw the VM, not a Worker, for B's nonces.
+  // P1: every B 2xx ran on Node, and the upstream saw the VM, not a Worker, for B's nonces. Passed
+  // only when the witness saw every B 2xx: without it, nothing shows the provider call ran on the VM.
+  const witnessedNonces = new Set(synth.map(record => record.nonce).filter(Boolean));
   const b2xx = B.filter(row => ok2xx(row) && row.kind !== 'operator');
   const notNode = b2xx.filter(row => row.runtime !== 'node');
   const bNonces = new Set(B.map(row => row.ab));
   const witnessed = synth.filter(record => bNonces.has(record.nonce));
   const witnessWorker = witnessed.filter(record => record.caller !== 'vm');
-  set('P1', !b2xx.length ? 'unmeasured' : notNode.length || witnessWorker.length ? 'fail' : 'pass',
-    `${b2xx.length} B 2xx, ${notNode.length} not from node; upstream witness ${witnessed.length} B requests, ${witnessWorker.length} from a Worker`);
+  const b2xxUnwitnessed = b2xx.filter(row => !witnessedNonces.has(row.ab)).length;
+  set('P1', !b2xx.length ? 'unmeasured' : notNode.length || witnessWorker.length ? 'fail' : b2xxUnwitnessed ? 'unmeasured' : 'pass',
+    `${b2xx.length} B 2xx, ${notNode.length} not from node; upstream witness ${witnessed.length} B requests, ${witnessWorker.length} from a Worker, ` +
+    `${b2xxUnwitnessed} B 2xx not witnessed`);
 
   // P2: Worker CPU for B is proxy overhead only.
   const bTail = B.map(row => byAb.get(row.ab)).filter(event => event && event.cpuMs !== null);
@@ -509,23 +555,37 @@ export function report(runDir, { ec2File, workersLogsFile, localStandIn } = {}) 
     set('P6', !loaded.length ? 'unmeasured' : elu <= 0.8 && lag <= 100 ? 'pass (stand-in)' : 'fail', `server.js ELU max ${elu}, event-loop p99 max ${lag} ms`);
   } else set('P6', 'unmeasured', 'no vm-sampler file (--ec2)');
 
-  // P7: a cancelled stream closed at the upstream within 5 s.
+  // P7: every cancelled stream closed at the upstream within 5 s. Measured by the synth witness
+  // only: a cancel it has no record of is a failure, and without the witness P7 is unmeasured.
   const cancelled = rows.filter(row => row.kind === 'cancel' && row.abortAt);
-  const closes = cancelled.map(row => synth.find(record => record.nonce === row.ab)).filter(Boolean);
+  const recordOf = row => synth.find(record => record.nonce === row.ab);
+  const unseen = cancelled.filter(row => !recordOf(row));
   const late = cancelled.filter(row => {
-    const record = synth.find(each => each.nonce === row.ab);
+    const record = recordOf(row);
     return record && (record.closed === null || record.closed - row.abortAt > 5000 || record.reason === 'done');
   });
-  // And settlement: every stream that reached a provider (a 200 with x-request-id) has exactly one
-  // usage event under that id, cancelled ones included (error with partial usage, or refunded).
+  // And settlement, from the usage events read after a staging run. By id: every stream answered
+  // 200 with an x-request-id has exactly one usage event under it. By count, for what has no id (a
+  // cancel before the first token, which is where a reservation leaks or is billed the prompt
+  // estimate): the run's usage events equal the requests the witness saw (warm-ups and the canary
+  // included), except arm A requests the Worker killed (exceededCpu, a 1102 page) with no usage
+  // event under an id of their own, which may or may not have settled.
   const settledRows = rows.filter(row => row.status === 200 && row.requestId);
   const perId = new Map();
   for (const event of usage) perId.set(event.request_id, (perId.get(event.request_id) || 0) + 1);
   const unsettled = usage.length ? settledRows.filter(row => perId.get(row.requestId) !== 1) : [];
-  const measured = closes.length || usage.length;
-  set('P7', !measured ? 'unmeasured' : late.length || unsettled.length ? 'fail' : 'pass',
-    `${cancelled.length} cancelled, ${closes.length} seen by the upstream, ${late.length} not closed within 5 s; ` +
-    (usage.length ? `${settledRows.length} streams, ${unsettled.length} without exactly one usage event` : 'no usage events read (staging runs read them)'));
+  const killed = allRows.filter(row => row.arm === 'A' && witnessedNonces.has(row.ab) && (row.htmlError || byAb.get(row.ab)?.outcome === 'exceededCpu') &&
+    !perId.get(row.requestId)).length;
+  const expected = witnessedNonces.size - killed;
+  const countWrong = usage.length && synth.length && (usage.length < expected || usage.length > witnessedNonces.size);
+  const settlementRead = usage.length > 0 && synth.length > 0;
+  const failed = (unseen.length && synth.length) || late.length || unsettled.length || countWrong;
+  const p7 = failed ? 'fail' : !synth.length || !cancelled.length ? 'unmeasured' : settlementRead ? 'pass' : local ? 'pass (stand-in)' : 'unmeasured';
+  set('P7', p7,
+    `${cancelled.length} cancelled, ${cancelled.length - unseen.length} seen by the upstream (${synth.length ? `${unseen.length} not seen` : 'no synth witness'}), ` +
+    `${late.length} not closed within 5 s; ` +
+    (usage.length ? `${settledRows.length} streams, ${unsettled.length} without exactly one usage event; ${usage.length} usage events for ` +
+      `${witnessedNonces.size} witnessed requests${killed ? ` (${killed} killed on arm A)` : ''}` : 'no usage events read (staging runs read them; a local run cannot)'));
 
   // P8: failures never reach the Worker's chat path: node 2xx or the JSON 503 only, never HTML.
   const failures = rows.filter(row => row.kind === 'operator' && row.expect === 'node-or-503');

@@ -20,10 +20,16 @@
 // SESSIONS_KV (sessions it mints would be invisible to EC2, CUTOVER.md step 1) or an unexpected
 // error answers the gateway's JSON 503 service_unavailable with Retry-After, and one sanitized log
 // line with the visitor's cf-ray, the reason and the matched prefix (never the secret). The chat
-// pipeline is what exceeds the Worker's 10 ms CPU cap (error 1102), so once any entry covers
-// /v1/chat/completions, every alias Hono serves it under (the legacy /auth/azure/* paths, the
-// /neuroncli/auth-server mount, percent-encoded spellings, every host) and /v1/models/health (which
-// runs it) go to EC2 too, and the chat handler itself refuses on the Worker (chatRoutedToEc2).
+// pipeline is what exceeds the Worker's 10 ms CPU cap (error 1102), so once an entry routes the
+// API's chat path (one whose path covers /v1/chat/completions, such as "zero-x.live/v1/", or the
+// API host whole, "zero-x.live/"), every alias Hono serves it under (the legacy /auth/azure/*
+// paths, the /neuroncli/auth-server mount, percent-encoded spellings, every host) and
+// /v1/models/health (which runs it) go to EC2 too, and the chat handler itself refuses on the
+// Worker (chatRoutedToEc2). A whole-host entry for another host ("dashboard.zero-x.live/") moves
+// that host only, so taking the chat entries out brings chat back to the Worker.
+//
+// Hosts are matched without a port and without a trailing dot: "zero-x.live:8443" and
+// "zero-x.live." are the apex, so another spelling of a routed host never stays on the Worker.
 //
 // A forward returns the upstream fetch's Response as it is: the Worker never reads or transforms
 // either body, and waiting on the network is not CPU time, so a 90 s token stream (or a WebSocket,
@@ -53,6 +59,8 @@ import { isWorkersRuntime } from './auth-context.js';
 import { errorResponse, newRequestId } from './errors.js';
 
 const DEFAULT_ORIGIN = 'https://aws.zero-x.live';
+// The API's host: a whole-host entry for it routes chat (and /v1/models/health) on every host.
+const API_HOST = 'zero-x.live';
 const TRUSTED_PREFIX = 'x-zerox-';
 // Header values that need no encoding: visible ASCII, no control characters.
 const PLAIN_VALUE = /^[\x21-\x7e](?:[\x20-\x7e]*[\x21-\x7e])?$/;
@@ -96,6 +104,8 @@ const PATH = /^\/[^\s"'`;,*?#\\]*$/;
 export function parseProxyPrefixes(value) {
   const prefixes = [];
   const invalid = [];
+  // 1-based positions of the valid entries, in the order of `prefixes`.
+  const positions = [];
   const entries = String(value ?? '').split(',').map(entry => entry.trim()).filter(Boolean);
   entries.forEach((entry, index) => {
     const bare = entry.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '');
@@ -104,22 +114,36 @@ export function parseProxyPrefixes(value) {
     const path = slash < 0 ? '/' : bare.slice(slash);
     const segment = path.split('/')[1] || '';
     const miscased = API_SEGMENTS.includes(segment.toLowerCase()) && !API_SEGMENTS.includes(segment);
-    if (HOST.test(host) && PATH.test(path) && !miscased) prefixes.push(host + path);
+    if (HOST.test(host) && PATH.test(path) && !miscased) {
+      prefixes.push(host + path);
+      positions.push(index + 1);
+    }
     // Kept for the refusal rule only: its 1-based position and the path it seems to mean.
     else invalid.push({ entry: index + 1, path: path.toLowerCase() });
   });
-  return { prefixes, invalid };
+  return { prefixes, invalid, positions };
+}
+
+// Whether a valid entry routes the API's chat path, and so chat on every host: a path that covers
+// /v1/chat/completions ("/v1/", "/v1/chat/"), or the API host whole ("zero-x.live/"). A whole-host
+// entry for any other host moves that host's own paths only.
+function routesChat(prefix) {
+  const slash = prefix.indexOf('/');
+  const path = prefix.slice(slash);
+  if (path === '/') return prefix.slice(0, slash) === API_HOST;
+  return CHAT_ROUTE.startsWith(path);
 }
 
 // Parsed once per secret value, not per request.
 let parsed = { value: undefined };
 function proxyConfig(value) {
   if (value !== parsed.value) {
-    const { prefixes, invalid } = parseProxyPrefixes(value);
+    const { prefixes, invalid, positions } = parseProxyPrefixes(value);
+    // The entries that move chat off the Worker on every host (routesChat), by position.
+    const chatRoutedBy = positions.filter((_, i) => routesChat(prefixes[i]));
     parsed = {
-      value, prefixes, invalid,
-      // An entry whose path covers the chat route moves chat off the Worker on every host.
-      chatRouted: prefixes.some(prefix => CHAT_ROUTE.startsWith(prefix.slice(prefix.indexOf('/')))),
+      value, prefixes, invalid, chatRoutedBy,
+      chatRouted: chatRoutedBy.length > 0,
       // An invalid entry that seems to be about /v1 holds every /v1 path.
       invalidV1: invalid.some(each => each.path.startsWith('/v1')),
     };
@@ -202,8 +226,11 @@ export function forwardToEc2(request, env) {
   if (!config.prefixes.length && !config.invalid.length) return null;
   const url = new URL(request.url);
   const route = routeKey(url.pathname);
-  const where = url.host + url.pathname;
-  const routeWhere = url.host + route;
+  // The host as the entries name it: no port (Cloudflare also serves 8443, 2053 and the other
+  // HTTPS ports) and no trailing dot ("zero-x.live." is the apex).
+  const host = url.hostname.replace(/\.$/, '');
+  const where = host + url.pathname;
+  const routeWhere = host + route;
   const inference = INFERENCE_ROUTES.has(route);
   let prefix = config.prefixes.find(each => where.startsWith(each) || routeWhere.startsWith(each));
   if (!prefix && inference && config.chatRouted) prefix = 'chat routes';
@@ -229,7 +256,7 @@ export function forwardToEc2(request, env) {
     const origin = proxyOrigin(env.EC2_PROXY_ORIGIN);
     if (!origin) return refuse('origin_invalid', request, url, route, { prefix });
     // Pointed at a host this Worker answers, the forward would come straight back here.
-    if (origin.host === url.host || WORKER_HOSTS.includes(origin.hostname)) return refuse('origin_loop', request, url, route, { prefix });
+    if (origin.hostname === host || WORKER_HOSTS.includes(origin.hostname)) return refuse('origin_loop', request, url, route, { prefix });
     // A Worker that still keeps sessions in KV mints sessions EC2 cannot see: every forwarded call
     // would answer 401 (CUTOVER.md, step 1 before step 2).
     if (env.SESSIONS_KV) return refuse('session_store_split', request, url, route, { prefix });
@@ -242,7 +269,8 @@ export function forwardToEc2(request, env) {
     headers.delete('host');
     const cf = request.cf || {};
     const ray = rayId(request);
-    headers.set('x-zerox-host', url.host);
+    // The host without a port or trailing dot: the one server.js knows (its knownHosts).
+    headers.set('x-zerox-host', host);
     headers.set('x-zerox-proto', url.protocol === 'http:' ? 'http' : 'https');
     setTrusted(headers, 'x-zerox-client-ip', request.headers.get('cf-connecting-ip'));
     setTrusted(headers, 'x-zerox-ray', ray);
@@ -253,11 +281,13 @@ export function forwardToEc2(request, env) {
     setTrusted(headers, 'x-zerox-as-org', encodedText(cf.asOrganization));
     headers.set('x-zerox-proxy-secret', String(secret));
 
-    // Method, body (a stream, handed on unread) and the rest come from the client's request; its
-    // signal is passed explicitly, so a client that leaves cancels the forward.
+    // Method, body (a stream, handed on unread) and the rest come from the client's request. The
+    // client's signal is given to fetch itself, so a client that leaves cancels the forward
+    // whether or not the runtime copies `signal` through a Request used as the init (the outer
+    // `new Request(url, request)` below relies on that copy for everything else).
     const forward = new Request(origin.origin + url.pathname + url.search,
       new Request(request, { headers, redirect: 'manual', signal: request.signal }));
-    return fetch(forward).then(response => {
+    return fetch(forward, { signal: request.signal }).then(response => {
       if (!originDown(response)) return response;
       // Only the status and a header were read; the error page is dropped unread.
       response.body?.cancel().catch(() => {});
@@ -308,11 +338,12 @@ export function chatRefusal(request) {
 }
 
 // The switch as the operator's /health reports it (src/index.js): how many entries, which are
-// invalid (1-based positions), whether chat is routed, and the reason every routed path is refused
-// for, if any (the loop through the request's own host aside). No values.
+// invalid (1-based positions), whether chat is routed and by which entries (positions: taking all
+// of them out brings chat back to the Worker), and the reason every routed path is refused for, if
+// any (the loop through the request's own host aside). No values.
 export function proxyStatus(env) {
   const configured = env?.EC2_PROXY_PREFIXES;
-  if (!configured) return { entries: 0, invalid: [], chat_routed: false, refusal: null };
+  if (!configured) return { entries: 0, invalid: [], chat_routed: false, chat_routed_by: [], refusal: null };
   const config = proxyConfig(configured);
   const secret = env.EC2_PROXY_SECRET;
   const origin = proxyOrigin(env.EC2_PROXY_ORIGIN);
@@ -320,7 +351,7 @@ export function proxyStatus(env) {
     : WORKER_HOSTS.includes(origin.hostname) ? 'origin_loop' : env.SESSIONS_KV ? 'session_store_split'
       : config.invalid.length ? 'prefixes_invalid' : null;
   return { entries: config.prefixes.length + config.invalid.length, invalid: config.invalid.map(each => each.entry),
-    chat_routed: config.chatRouted, refusal };
+    chat_routed: config.chatRouted, chat_routed_by: config.chatRoutedBy, refusal };
 }
 
 // Test hook.

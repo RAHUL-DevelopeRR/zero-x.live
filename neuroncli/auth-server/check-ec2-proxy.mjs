@@ -87,12 +87,12 @@ async function assertRefused(response, touched, reason, why) {
 try {
   // ── Prefixes: host + path as written, a bare host covers the whole host, whitespace and blanks ignored ──
   {
-    for (const value of ['', undefined, ' , ,']) assert.deepEqual(parseProxyPrefixes(value), { prefixes: [], invalid: [] });
+    for (const value of ['', undefined, ' , ,']) assert.deepEqual(parseProxyPrefixes(value), { prefixes: [], invalid: [], positions: [] });
     assert.deepEqual(parseProxyPrefixes(' zero-x.live/v1/ , ,Dashboard.Zero-X.live,  zero-x.live/Assets/ ').prefixes,
       ['zero-x.live/v1/', 'dashboard.zero-x.live/', 'zero-x.live/Assets/']);
     // An entry written as a URL means its host + path: the scheme is not part of the match.
     assert.deepEqual(parseProxyPrefixes('https://zero-x.live/v1/, HTTP://Dashboard.zero-x.live'),
-      { prefixes: ['zero-x.live/v1/', 'dashboard.zero-x.live/'], invalid: [] });
+      { prefixes: ['zero-x.live/v1/', 'dashboard.zero-x.live/'], invalid: [], positions: [1, 2] });
     // Every value the runbook sets parses whole.
     const cutover = read('../../deploy/aws/CUTOVER.md');
     const documented = [...cutover.matchAll(/printf '%s' '([^']+)' \| npx wrangler@[\d.]+ secret put EC2_PROXY_PREFIXES/g)].map(match => match[1])
@@ -122,7 +122,23 @@ try {
         assert.equal(forwarded[0].url, `https://aws.zero-x.live${target.pathname}${target.search}`, url);
       } else assert.equal(response.headers.get('x-served-by'), null, url);
     }
-    ok('prefixes: host + path as written (trailing slash included), a bare host covers the host, case-insensitive hosts, blanks and spaces ignored, a URL entry means its host + path, every CUTOVER.md value valid');
+    // Another spelling of a routed host is the same host: Cloudflare's other HTTPS ports and a
+    // fully-qualified name with its trailing dot are forwarded, with the host as server.js knows it.
+    for (const url of ['https://zero-x.live:8443/v1/models', 'https://zero-x.live:2053/v1/models/status', 'https://zero-x.live./v1/models',
+      'https://ZERO-X.live.:2096/v1/chat/completions', 'https://dashboard.zero-x.live.:8443/']) {
+      reset();
+      const { env: proxied, touched } = watched(env);
+      const response = await app.request(url, { method: url.includes('chat') ? 'POST' : 'GET', ...(url.includes('chat') ? { body: '{}' } : {}) }, proxied);
+      assert.equal(forwarded.length, 1, url);
+      assert.equal(response.headers.get('x-served-by'), 'ec2', url);
+      assert.deepEqual([...touched], [], `${url}: the Worker app never ran`);
+      assert.equal(forwarded[0].headers.get('x-zerox-host'), new URL(url).hostname.replace(/\.$/, ''), `${url}: no port, no trailing dot`);
+      assert.equal(forwarded[0].url, `https://aws.zero-x.live${new URL(url).pathname}`, url);
+    }
+    reset();
+    await app.request('https://www.zero-x.live:8443/v1/models', {}, env);
+    assert.equal(forwarded.length, 0, 'a port does not make another host match');
+    ok('prefixes: host + path as written (trailing slash included), any port and a trailing dot on the request host ignored, a bare host covers the host, case-insensitive hosts, blanks and spaces ignored, a URL entry means its host + path, every CUTOVER.md value valid');
   }
 
   // ── Unset or empty: the Worker exactly as before, whatever else is set (the explicit rollback) ──
@@ -365,12 +381,15 @@ try {
     assert.deepEqual(parseProxyPrefixes(mixed.EC2_PROXY_PREFIXES).invalid.map(each => each.entry), [2, 3]);
     await app.request('https://zero-x.live/v1/chat/completions', { method: 'POST', body: '{}' }, mixed);
     assert.equal(forwarded.length, 1);
-    assert.deepEqual(proxyStatus(mixed), { entries: 3, invalid: [2, 3], chat_routed: true, refusal: 'prefixes_invalid' });
-    assert.deepEqual(proxyStatus({ ...PROXY }), { entries: 2, invalid: [], chat_routed: true, refusal: null });
+    assert.deepEqual(proxyStatus(mixed), { entries: 3, invalid: [2, 3], chat_routed: true, chat_routed_by: [1], refusal: 'prefixes_invalid' });
+    assert.deepEqual(proxyStatus({ ...PROXY }), { entries: 2, invalid: [], chat_routed: true, chat_routed_by: [1], refusal: null });
     assert.deepEqual(proxyStatus({ EC2_PROXY_PREFIXES: 'neuron.zero-x.live/device' }),
-      { entries: 1, invalid: [], chat_routed: false, refusal: 'secret_missing' });
+      { entries: 1, invalid: [], chat_routed: false, chat_routed_by: [], refusal: 'secret_missing' });
     assert.equal(proxyStatus({ ...PROXY, SESSIONS_KV: {} }).refusal, 'session_store_split');
-    assert.deepEqual(proxyStatus({}), { entries: 0, invalid: [], chat_routed: false, refusal: null });
+    assert.deepEqual(proxyStatus({}), { entries: 0, invalid: [], chat_routed: false, chat_routed_by: [], refusal: null });
+    // The operator sees which entries keep chat on EC2 (CUTOVER.md step 4's last value).
+    assert.deepEqual(proxyStatus({ ...PROXY, EC2_PROXY_PREFIXES: 'zero-x.live/,www.zero-x.live/,dashboard.zero-x.live/,neuron.zero-x.live/' }).chat_routed_by, [1]);
+    assert.deepEqual(proxyStatus({ ...PROXY, EC2_PROXY_PREFIXES: 'dashboard.zero-x.live/,zero-x.live/v1/chat/,www.zero-x.live/v1/' }).chat_routed_by, [2, 3]);
     ok('entries with a port, wildcard, trailing dot, quotes, whitespace, no host, ";" or a miscased API path are invalid: chat and inference (and /v1 when they name it) answer the JSON 503 naming the entry by position, other paths stay on the Worker with one warning; the operator /health reports the switch');
   }
 
@@ -404,15 +423,35 @@ try {
     assert.equal(forwarded.length, 0);
     await app.request('https://zero-x.live/neuroncli/auth-server/v1/models', {}, env);
     assert.equal(forwarded.length, 1);
-    // An entry that covers chat on one host routes it on all; one that does not leaves it alone.
-    for (const [prefixes, routedChat] of [['zero-x.live/v1/chat/', true], ['zero-x.live/', true], ['dashboard.zero-x.live/', true],
+    // An entry whose path covers chat, or the API host whole, routes chat on every host; a
+    // whole-host entry for another host, or a path that does not cover chat, leaves it alone.
+    for (const [prefixes, routedChat] of [['zero-x.live/v1/chat/', true], ['zero-x.live/', true], ['www.zero-x.live/v1/', true],
+      ['dashboard.zero-x.live/', false], ['www.zero-x.live/', false], ['neuron.zero-x.live/', false],
+      ['www.zero-x.live/,dashboard.zero-x.live/,neuron.zero-x.live/', false],
       ['zero-x.live/v1/models', false], ['neuron.zero-x.live/device', false], ['zero-x.live/v1/chat/completions/x', false]]) {
       assert.equal(chatRoutedToEc2({ EC2_PROXY_PREFIXES: prefixes }), routedChat, prefixes);
+      // Asked on a host no entry names, so only the chat rule can forward it.
+      const other = WORKER_HOSTS.find(host => !prefixes.split(',').some(prefix => prefix.startsWith(`${host}/`)));
       reset();
-      await app.request('https://www.zero-x.live/v1/chat/completions', { method: 'POST', body: '{}' }, { ...env, EC2_PROXY_PREFIXES: prefixes });
-      assert.equal(forwarded.length, routedChat ? 1 : 0, prefixes);
+      await app.request(`https://${other}/v1/chat/completions`, { method: 'POST', body: '{}' }, { ...env, EC2_PROXY_PREFIXES: prefixes });
+      assert.equal(forwarded.length, routedChat ? 1 : 0, `${prefixes} on ${other}`);
     }
     assert.equal(chatRoutedToEc2({ EC2_PROXY_PREFIXES: 'zero-x.live/v1/', NEURON_RUNTIME: 'node' }), false, 'the Node server runs chat');
+    // A partial rollback (CUTOVER.md's rollback table): from step 4's value, taking out the apex
+    // entry brings chat on the apex back to the Worker app; the hosts still routed keep their own
+    // paths, chat on them included.
+    {
+      const partial = { ...base, ...PROXY, EC2_PROXY_PREFIXES: 'www.zero-x.live/,dashboard.zero-x.live/' };
+      assert.equal(chatRoutedToEc2(partial), false);
+      reset();
+      const chat = await app.request('https://zero-x.live/v1/chat/completions', { method: 'POST', body: '{}', headers: { 'Content-Type': 'application/json' } }, partial);
+      assert.equal(forwarded.length, 0, 'apex chat back on the Worker');
+      assert.equal(chat.status, 401);
+      assert.equal(chat.headers.get('x-zerox-runtime'), 'worker');
+      reset();
+      await app.request('https://dashboard.zero-x.live/v1/chat/completions', { method: 'POST', body: '{}' }, partial);
+      assert.equal(forwarded.length, 1, 'a routed host keeps its own chat path on EC2');
+    }
 
     // The backstop: the chat handler on the Worker refuses while chat is routed, under every route
     // Hono registered for it.
@@ -427,7 +466,7 @@ try {
       assert.ok(line.includes(RAY));
       assert.equal(response.headers.get('access-control-allow-origin'), '*');
     }
-    ok('chat routed: the legacy /auth/azure aliases, the /neuroncli/auth-server mount, percent-encoded spellings, every host and /v1/models/health are forwarded with their path as it came; the chat handler refuses on the Worker under every route while chat is routed');
+    ok('chat routed by an entry covering /v1/chat/completions or the apex whole (never by a whole-host entry for another host, so a partial rollback brings chat back): the legacy /auth/azure aliases, the /neuroncli/auth-server mount, percent-encoded spellings, every host and /v1/models/health are forwarded with their path as it came; the chat handler refuses on the Worker under every route while chat is routed');
   }
 
   // ── Method, body, query, signal and streams pass through; redirects are not followed ──
@@ -484,6 +523,36 @@ try {
     assert.equal(forwarded[0].signal.aborted, true, 'the forward\'s signal follows the client\'s');
     assert.equal((await leaving).status, 499);
     assert.ok(!warnings.some(line => line.includes('EC2 proxy request failed')), 'a client that left is not an origin failure');
+
+    // The same where the runtime does not copy `signal` from a Request used as the init (Node's
+    // undici does; workerd is not proven to): a Request class that drops it. Only the signal given
+    // to fetch itself carries the client's leaving then.
+    reset();
+    const RealRequest = globalThis.Request;
+    class DroppingRequest extends RealRequest {
+      constructor(input, init) {
+        if (init instanceof RealRequest) {
+          super(input, { method: init.method, headers: init.headers, body: init.body, redirect: init.redirect, duplex: 'half' });
+        } else super(input, init);
+      }
+    }
+    const client2 = new AbortController();
+    let reached2;
+    const atFetch2 = new Promise(resolve => { reached2 = resolve; });
+    answer = forward => new Promise((resolve, reject) => {
+      forward.signal.addEventListener('abort', () => reject(new DOMException('The operation was aborted.', 'AbortError')));
+      reached2();
+    });
+    const workerdLike = workerRequest('https://zero-x.live/v1/chat/completions', { method: 'POST', body: '{}', signal: client2.signal,
+      headers: { 'cf-ray': RAY } });
+    let leaving2;
+    globalThis.Request = DroppingRequest;
+    try { leaving2 = forwardToEc2(workerdLike, { ...base, ...PROXY }); } finally { globalThis.Request = RealRequest; }
+    await atFetch2;
+    assert.equal(forwarded[0].signal.aborted, false);
+    client2.abort();
+    assert.equal(forwarded[0].signal.aborted, true, 'the client signal reaches fetch even when the Request constructor drops it');
+    assert.equal((await leaving2).status, 499);
 
     for (const method of ['PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS']) {
       reset();

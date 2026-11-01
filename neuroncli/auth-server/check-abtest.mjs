@@ -16,7 +16,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildPlan, main, report } from '../../deploy/aws/abtest.mjs';
+import { buildPlan, main, preflight, report, requireStagingWitness } from '../../deploy/aws/abtest.mjs';
 import {
   CAPS, capped, installFetchGuard, loadTarget, readToken, refuseTokenArgs, reserveRequests, stagingOrigin, stagingScript,
 } from '../../deploy/aws/abtest-guard.mjs';
@@ -205,9 +205,19 @@ try {
     const rows = [];
     for (let i = 0; i < 40; i++) rows.push(row('A', { ab: `r.a${i}`, bodyKb: 10 + i }), row('B', { ab: `r.b${i}`, bodyKb: 10 + i }));
     const write = (name, list) => writeFileSync(join(dir, name), list.map(each => JSON.stringify(each)).join('\n') + '\n');
+    // S8 on both arms: a cancel before the first token (no status, no request id) and one mid-stream.
+    for (const arm of ['A', 'B']) {
+      rows.push(row(arm, { ab: `r.${arm}c1`, cell: 'S8-before-first-token', scenario: 'S8', kind: 'cancel', status: null, requestId: null, done: false,
+        contentType: null, abortAt: 1000 }));
+      rows.push(row(arm, { ab: `r.${arm}c2`, cell: 'S8-mid-stream', scenario: 'S8', kind: 'cancel', done: false, abortAt: 2000 }));
+    }
     write('requests.jsonl', rows);
-    write('tail.jsonl', rows.map(each => ({ ab: each.ab, outcome: each.arm === 'A' && each.ab.endsWith('1') ? 'exceededCpu' : 'ok',
+    write('tail.jsonl', rows.map(each => ({ ab: each.ab, outcome: each.arm === 'A' && each.ab.endsWith('1') && each.kind !== 'cancel' ? 'exceededCpu' : 'ok',
       cpuMs: each.arm === 'A' ? 9 + each.bodyKb / 10 : 0.4 })));
+    // The synth witness: every request reached it from its arm's runtime; cancels closed 500 ms after the abort.
+    const witness = rows.map(each => ({ nonce: each.ab, caller: each.arm === 'B' ? 'vm' : 'worker',
+      closed: each.abortAt ? each.abortAt + 500 : 5000, reason: each.abortAt ? 'client_closed' : 'done' }));
+    write('synth.jsonl', witness);
     let summary = report(dir);
     assert.equal(summary.criteria.P1.status, 'pass');
     assert.equal(summary.criteria.P2.status, 'pass', summary.criteria.P2.detail);
@@ -215,8 +225,9 @@ try {
     assert.equal(summary.criteria.P4.status, 'pass');
     assert.equal(summary.criteria.P5.status, 'pass');
     assert.equal(summary.cells.S2.B.workerCpu.coverage, 1);
-    // Settlement: one usage event per stream that reached a provider; a missing or a doubled one fails.
-    const events = rows.map(each => ({ request_id: each.requestId, status: 'ok' }));
+    // Settlement: one usage event per stream answered 200 (by id), and as many usage events as
+    // witnessed requests (the cancels before the first token have no id); a missing or doubled one fails.
+    const events = rows.map(each => ({ request_id: each.requestId ?? `req_unanswered_${each.ab}`, status: each.kind === 'cancel' ? 'error' : 'ok' }));
     write('usage.jsonl', events);
     assert.equal(report(dir).criteria.P7.status, 'pass', report(dir).criteria.P7.detail);
     write('usage.jsonl', [...events, events[3]]);
@@ -224,6 +235,31 @@ try {
     assert.equal(report(dir).criteria.P7.status, 'fail');
     write('usage.jsonl', events.slice(1));
     assert.equal(report(dir).criteria.P7.status, 'fail');
+    // A cancel before the first token on B whose reservation never settled: no id to join, the count catches it.
+    write('usage.jsonl', events.filter(each => each.request_id !== 'req_unanswered_r.Bc1'));
+    assert.equal(report(dir).criteria.P7.status, 'fail', report(dir).criteria.P7.detail);
+    assert.match(report(dir).criteria.P7.detail, /83 usage events for 84 witnessed requests/);
+    // A cancel the witness has no record of fails; one closed late fails.
+    write('usage.jsonl', events);
+    write('synth.jsonl', witness.filter(each => each.nonce !== 'r.Bc1'));
+    assert.equal(report(dir).criteria.P7.status, 'fail', report(dir).criteria.P7.detail);
+    write('synth.jsonl', witness.map(each => (each.nonce === 'r.Bc2' ? { ...each, closed: 9000 } : each)));
+    assert.equal(report(dir).criteria.P7.status, 'fail');
+    // Without the witness neither P1 nor P7 can pass: usage events alone measure no cancel, and
+    // nothing shows B's provider call ran on the VM.
+    write('synth.jsonl', []);
+    summary = report(dir);
+    assert.equal(summary.criteria.P7.status, 'unmeasured', summary.criteria.P7.detail);
+    assert.equal(summary.criteria.P1.status, 'unmeasured', summary.criteria.P1.detail);
+    // The witness short of the B 2xx: P1 unmeasured, not passed.
+    write('synth.jsonl', witness.filter(each => each.nonce !== 'r.b7'));
+    assert.equal(report(dir).criteria.P1.status, 'unmeasured');
+    // Arm A requests the Worker killed (a 1102 page) may or may not have settled: excused from the count.
+    write('synth.jsonl', witness);
+    write('requests.jsonl', rows.map(each => (each.ab === 'r.a5' ? { ...each, status: 503, htmlError: true, requestId: null } : each)));
+    write('usage.jsonl', events.filter(each => each.request_id !== 'req_r.a5'));
+    assert.equal(report(dir).criteria.P7.status, 'pass', report(dir).criteria.P7.detail);
+    write('requests.jsonl', rows);
     write('usage.jsonl', []);
     // B's Worker CPU growing with the body: the CPU problem is still there.
     write('tail.jsonl', rows.map(each => ({ ab: each.ab, outcome: 'ok', cpuMs: 0.3 + each.bodyKb * 0.05 })));
@@ -250,6 +286,67 @@ try {
     ok('the report passes a clean run and fails a fail-open B, a missing or doubled usage event, B\'s Worker CPU growing with the body, and failures answered by anything but node or the JSON 503');
   }
 
+  // ── Pre-flight: arm B must reach the staging VM before any load ──
+  {
+    const target = loadTarget('staging', { file: targetsFile });
+    // A staging run without the witness stops before it opens a socket or prompts.
+    assert.equal(requireStagingWitness(target, { ZEROX_AB_SYNTH_KEY: 'synth-key' }), 'synth-key');
+    assert.throws(() => requireStagingWitness(target, {}), /ZEROX_AB_SYNTH_KEY/);
+    assert.throws(() => requireStagingWitness({ ...target, ec2Origin: null }, { ZEROX_AB_SYNTH_KEY: 'k' }), /ec2_origin/);
+    assert.throws(() => requireStagingWitness({ ...target, synthBase: null }, { ZEROX_AB_SYNTH_KEY: 'k' }), /synth_base/);
+    globalThis.fetch = refuseNetwork;
+    await assert.rejects(main(['run', '--target', 'staging', '--targets-file', targetsFile, '--scenarios', 'S1', '--execute', '--confirm',
+      'zerox-b-staging.example.workers.dev', '--out', join(work, 'no-witness')], { out: quiet, env: { ZEROX_AB_TOKEN: KEY },
+      prompt: () => { throw new Error('prompted'); } }), /ZEROX_AB_SYNTH_KEY/);
+    globalThis.fetch = realFetch;
+
+    // The two Workers and the staging synth, faked. `chat[arm]` answers an unauthenticated chat
+    // POST; B's authenticated canary streams from node; `callers` is who the synth saw for it.
+    const json = (status, body, headers = {}) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json', ...headers } });
+    const invalidSession = runtime => json(401, { error: { code: 'invalid_session' } }, { 'X-Zerox-Runtime': runtime });
+    const fake = ({ chat, caller = 'vm' }) => {
+      let canary = null;
+      return async (input, init = {}) => {
+        const url = new URL(String(input));
+        const auth = new Headers(init.headers).get('authorization');
+        if (url.pathname === '/api/account') return json(200, { user: { email: 'abtest@example.com' } });
+        if (url.pathname === '/health') return json(200, { commit: 'c0ffee' });
+        if (url.pathname === '/stats') return json(200, { records: canary && caller ? [{ nonce: canary, caller, closed: 1, reason: 'done' }] : [] });
+        const arm = url.host.startsWith('zerox-a-') ? 'A' : 'B';
+        if (!auth) return chat[arm]();
+        canary = url.searchParams.get('ab');
+        return new Response('data: {"choices":[{"delta":{"content":"hi"}}]}\n\ndata: [DONE]\n\n',
+          { status: 200, headers: { 'Content-Type': 'text/event-stream', 'X-Zerox-Runtime': 'node', 'X-Request-Id': 'req_canary' } });
+      };
+    };
+    const good = { A: () => invalidSession('worker'), B: () => invalidSession('node') };
+    const run = async options => {
+      globalThis.fetch = fake(options);
+      const rows = [];
+      try {
+        await preflight(target, KEY, {}, quiet, { runId: 'run1', synthKey: 'synth-key', write: (name, row) => rows.push(row), wait: async () => {} });
+      } finally { globalThis.fetch = realFetch; }
+      return rows;
+    };
+    const rows = await run({ chat: good });
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].ab, 'run1.canary');
+    assert.equal(rows[0].warmup, true, 'the canary is kept out of the statistics');
+    // B's Worker fell back to the production tunnel: the production VM refuses its forward.
+    await assert.rejects(run({ chat: { ...good, B: () => json(503, { error: { code: 'service_unavailable' } },
+      { 'X-Zerox-Runtime': 'node', 'X-Zerox-Refused': 'proxy_secret_mismatch' }) } }), /arm B's chat path answered 503 service_unavailable refused proxy_secret_mismatch/);
+    await assert.rejects(run({ chat: { ...good, B: () => json(503, { error: { code: 'service_unavailable' } },
+      { 'X-Zerox-Runtime': 'node', 'X-Zerox-Refused': 'misdirected_request' }) } }), /arm B/);
+    // Arm A's Worker refuses chat (its switch is on): not a baseline.
+    await assert.rejects(run({ chat: { ...good, A: () => json(503, { error: { code: 'service_unavailable' } }, { 'X-Zerox-Runtime': 'worker' }) } }),
+      /arm A's chat path answered 503/);
+    await assert.rejects(run({ chat: { ...good, B: () => invalidSession('worker') } }), /expected 401 invalid_session from node/);
+    // B reaches a VM, but not the one that calls the staging synth.
+    await assert.rejects(run({ chat: good, caller: null }), /never saw the canary/);
+    await assert.rejects(run({ chat: good, caller: 'worker' }), /not the VM/);
+    ok('pre-flight: a staging run needs ec2_origin, synth_base and ZEROX_AB_SYNTH_KEY; each arm must answer 401 invalid_session from its runtime, never a refusal (a B Worker on the production tunnel, an A Worker that refuses chat), and B\'s canary must reach the staging synth from the VM');
+  }
+
   // ── A local A/B ──
   {
     lines.length = 0;
@@ -259,7 +356,9 @@ try {
     const answered = rows.filter(each => each.status === 200);
     assert.ok(answered.length >= 30, `${answered.length} streams answered`);
     for (const each of answered) assert.equal(each.runtime, each.arm === 'A' ? 'worker' : 'node', `${each.arm} ${each.cell}`);
-    for (const id of ['P1', 'P4', 'P7']) assert.equal(summary.criteria[id].status, 'pass', `${id}: ${summary.criteria[id].detail}`);
+    for (const id of ['P1', 'P4']) assert.equal(summary.criteria[id].status, 'pass', `${id}: ${summary.criteria[id].detail}`);
+    // Locally every cancel is witnessed closing; settlement is not read (no database): a stand-in pass.
+    assert.equal(summary.criteria.P7.status, 'pass (stand-in)', summary.criteria.P7.detail);
     assert.equal(summary.criteria.P2.status, 'pass (stand-in)', summary.criteria.P2.detail);
     const forward = summary.local.filter(entry => entry.appSyncMsPerRequest).map(entry => entry.appSyncMsPerRequest.B);
     assert.ok(forward.every(ms => ms < 1), `B's forwarding decision: ${forward.join(', ')} ms`);

@@ -757,7 +757,7 @@ try {
   assert.equal(fullHealth.body.database_configured, true);
   assert.equal(fullHealth.body.billing_configured, false);
   assert.equal(fullHealth.body.session_encryption, false);
-  assert.deepEqual(fullHealth.body.ec2_proxy, { entries: 0, invalid: [], chat_routed: false, refusal: null }, 'the proxy switch, off');
+  assert.deepEqual(fullHealth.body.ec2_proxy, { entries: 0, invalid: [], chat_routed: false, chat_routed_by: [], refusal: null }, 'the proxy switch, off');
   assert.ok(!JSON.stringify(fullHealth.body).includes(SECRET) && !JSON.stringify(fullHealth.body).includes(OPERATOR));
   assertOpenAIError(await json(await request('/admin/overview', { bindings: operatorEnv })), 401, 'invalid_session');
   assertOpenAIError(await json(await request('/admin/overview', { bindings: operatorEnv, token: bobSession.body.session_token })), 401, 'invalid_session');

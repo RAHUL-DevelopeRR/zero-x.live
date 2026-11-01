@@ -23,13 +23,13 @@ Each run writes `summary.json` with these criteria (`abtest.mjs report <runDir>`
 
 | | Criterion | What it proves |
 |---|---|---|
-| P1 | Every arm B 2xx carries `X-Zerox-Runtime: node`; the synthetic upstream saw the VM (no `CF-Worker` header) for every B request | Forwarded `/v1` runs on EC2, the provider call included |
+| P1 | Every arm B 2xx carries `X-Zerox-Runtime: node`; the synthetic upstream saw the VM (no `CF-Worker` header) for every B request (unmeasured, not passed, when the witness saw fewer B requests than B 2xx) | Forwarded `/v1` runs on EC2, the provider call included |
 | P2 | B's Workers `cpuTime` p99 at most 2 ms, its slope against body size and tokens about 0, outcomes only `ok` (or `canceled` in S8), tail coverage at least 95 % | The Worker never runs chat-handler for forwarded requests: its CPU is proxy overhead only |
 | P3 | A's baseline recorded (S3-S5 reproduce `exceededCpu` or 1102 pages) | The problem existed on this commit and these payloads |
 | P4 | B completes at least 99.5 % of steady streams, no 5xx, event-stream and `x-request-id` as A | The first token arrives reliably, long streams complete (S7) |
 | P5 | B's first-token p50 at most 150 ms above A's (S1, S2) | The extra hop costs little |
 | P6 | On the VM: CPU p95 at most 80 %, MemAvailable at least 40 %, steal about 0 | EC2 has headroom at the tested concurrency |
-| P7 | Every cancelled stream closed at the upstream within 5 s; one usage event per `x-request-id` | Disconnects reach the provider; billing and settlement stay correct |
+| P7 | The synth witness saw every cancelled stream close within 5 s (unmeasured without the witness or without a cancel); one usage event per `x-request-id`, and as many usage events as witnessed requests (before-first-token cancels included; arm A requests killed by 1102 excused) | Disconnects reach the provider; billing and settlement stay correct |
 | P8 | During S11-S13 B answers only node 2xx or the Worker's JSON 503 with Retry-After; never HTML, never a Worker 2xx | A failed EC2 route cannot reactivate the Worker inference path |
 | P9 | Every stream completes across a VM deploy (S10a) | Streams survive a rolling deploy |
 
@@ -122,11 +122,18 @@ node deploy/aws/abtest.mjs report <runDir> --ec2 samples.jsonl [--workers-logs <
   and pass it with `--workers-logs`.
 - Operator scenarios (S10-S14) print the exact staging command, wait for Enter, record the time
   and probe arm B once a second for 60 s. The harness never runs them.
+- A staging run needs `ec2_origin` and `synth_base` in its target and `ZEROX_AB_SYNTH_KEY` (the
+  synth key) in the environment, or it stops before sending anything. Pre-flight then requires
+  each arm's unauthenticated chat POST to answer the gateway's 401 `invalid_session` from the
+  right runtime (A `worker`, B `node`) with no `X-Zerox-Refused`, and sends one authenticated
+  canary on B whose nonce the staging synth must record with caller `vm`: the production VM never
+  calls the staging synth, so a B Worker whose `EC2_PROXY_ORIGIN` is missing (and fell back to
+  production) is stopped before any load.
 - After a run the harness reads the test account's usage events since it started
-  (`GET /api/usage/events`, into `usage.jsonl`): P7 needs exactly one per `x-request-id` of every
-  stream that reached a provider (a cancelled one shows `error` with partial usage, or `refunded`).
-  With `ZEROX_AB_SYNTH_KEY` set to the synth key it also reads the synthetic upstream's witness
-  records for the run (P1's caller check, P7's close times).
+  (`GET /api/usage/events`, into `usage.jsonl`) and the synth's witness records for the run
+  (`synth.jsonl`). P7 needs exactly one usage event per `x-request-id` of every stream answered
+  200 (a cancelled one shows `error` with partial usage, or `refunded`), and, since a cancel
+  before the first token has no id, as many usage events as requests the synth witnessed.
 - Not automated yet: the slot-reuse probe (open as many streams as the plan's concurrency right
   after a cell; a 429 `user_concurrency` means a reservation was not settled).
 

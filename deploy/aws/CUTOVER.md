@@ -20,12 +20,16 @@ the Worker's own hosts, an entry that is not a host + path, a Worker that still 
 503 `service_unavailable` with Retry-After (30 s for a misconfiguration, 5 s for an origin that is
 down), and `npx wrangler@4.147.0 tail` shows one line per request with the visitor's ray and the
 reason (`EC2 proxy refused`, `EC2 origin unreachable`, `EC2 proxy request failed`). Once an entry
-covers `/v1/chat/completions`, chat goes to EC2 under every alias and host (`/auth/azure/*`, the
+routes the API's chat path (a path covering `/v1/chat/completions`, such as `zero-x.live/v1/`, or
+the apex whole, `zero-x.live/`), chat goes to EC2 under every alias and host (`/auth/azure/*`, the
 `/neuroncli/auth-server` mount, `www`, `neuron`, `dashboard`) with `/v1/models/health`, and the
-chat handler refuses on the Worker. Every answer carries `X-Zerox-Runtime` (`node` from the VM,
+chat handler refuses on the Worker. A whole-host entry for another host (`dashboard.zero-x.live/`)
+moves that host only. Hosts match without a port or trailing dot (`zero-x.live:8443` and
+`zero-x.live.` are the apex). Every answer carries `X-Zerox-Runtime` (`node` from the VM,
 `worker` from the Worker), and `/health` reports `runtime`; the operator's `/health` (with the
-admin token) adds `ec2_proxy`: the entry count, invalid entries by position, `chat_routed` and the
-`refusal` reason if every routed path is refused.
+admin token) adds `ec2_proxy`: the entry count, invalid entries by position, `chat_routed`,
+`chat_routed_by` (the positions of the entries that keep chat on EC2) and the `refusal` reason if
+every routed path is refused.
 
 `EC2_PROXY_PREFIXES` is the switch. It is a Worker secret only because `wrangler secret put` takes
 effect in seconds without a commit and `deploy.yml` never overwrites a secret it does not list.
@@ -39,7 +43,8 @@ npx wrangler@4.147.0 secret delete EC2_PROXY_PREFIXES      # everything back to 
 
 Entries are comma separated, without spaces or a scheme, matched as plain prefixes of
 `host + path`: `zero-x.live/` covers every path of the apex, `/v1/` included, and no other host
-(chat aside, above). After each `secret put`, read `ec2_proxy` on the operator's `/health` of a host
+(chat aside, above). Chat comes back to the Worker only once no entry routes it: `chat_routed_by`
+in the operator's `/health` names the entries that still do. After each `secret put`, read `ec2_proxy` on the operator's `/health` of a host
 no entry covers (in step 2, `https://zero-x.live/health`): `invalid: []` and `refusal: null`.
 
 VM-side commands below run on the VM as `ubuntu`:
@@ -222,7 +227,10 @@ Each step lists what you approve, what to run, what to check and how to undo it.
 ### 2. `/v1` to EC2 (the CPU cap)
 
 - **Before**: a staging A/B report ([AB-TEST.md](AB-TEST.md)) passes P1-P9, the fail-closed
-  drill (S13) and the switch drill (S14) included.
+  drill (S13) and the switch drill (S14) included, with the long streams (S7) and client cancels
+  (S8) in the run: they are the only proof that the client's abort reaches EC2 and the provider
+  through workerd (offline checks run Node's Request, not workerd's), and P7 stays unmeasured
+  without S8 and the synth witness.
 - **You approve**: the `secret put`.
 - `printf '%s' 'zero-x.live/v1/' | npx wrangler@4.147.0 secret put EC2_PROXY_PREFIXES`.
   It covers chat under the legacy aliases too (`/auth/azure/*`, `/neuroncli/auth-server/v1/`) and
@@ -319,7 +327,7 @@ relay has no Worker fallback.
 
 | What went wrong | Action | Time |
 |---|---|---|
-| One path or host misbehaves on the VM | `secret put EC2_PROXY_PREFIXES` without that entry | seconds |
+| One path or host misbehaves on the VM | `secret put EC2_PROXY_PREFIXES` without that entry. Chat (every host) stays on EC2 while any entry in `chat_routed_by` remains (`zero-x.live/`, or a path covering `/v1/chat/completions`); to bring chat back, drop those entries too, or `secret delete` | seconds |
 | The VM is down | `secret delete EC2_PROXY_PREFIXES`; in-flight streams are cut, their leases expire and the next cron frees them | seconds |
 | A bad release on the VM | Re-run the workflow for the previous commit, `push-release.sh --ref <commit>`, or activate a release still on the VM (README.md, "Rollback"); the Worker: `wrangler rollback` | 1-3 minutes |
 | One of the two deploy jobs failed (`same-commit` did not run: the runtimes may be on different commits) | Re-run the failed job once its cause is fixed. If the VM job failed, its activation already put the previous release back, so the Worker is ahead: from step 2, `wrangler rollback` the Worker, or take the forwarded prefixes off the VM (`secret put`/`secret delete EC2_PROXY_PREFIXES`) until both match | minutes |
