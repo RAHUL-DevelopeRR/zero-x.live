@@ -122,9 +122,13 @@ node deploy/aws/abtest.mjs report <runDir> --ec2 samples.jsonl [--workers-logs <
   and pass it with `--workers-logs`.
 - Operator scenarios (S10-S14) print the exact staging command, wait for Enter, record the time
   and probe arm B once a second for 60 s. The harness never runs them.
-- P7's settlement half: after a run, `GET /api/usage/events` with the test credential lists one
-  event per `x-request-id` in `requests.jsonl`; a cancelled request shows `error` with partial
-  usage or `refunded`.
+- After a run the harness reads the test account's usage events since it started
+  (`GET /api/usage/events`, into `usage.jsonl`): P7 needs exactly one per `x-request-id` of every
+  stream that reached a provider (a cancelled one shows `error` with partial usage, or `refunded`).
+  With `ZEROX_AB_SYNTH_KEY` set to the synth key it also reads the synthetic upstream's witness
+  records for the run (P1's caller check, P7's close times).
+- Not automated yet: the slot-reuse probe (open as many streams as the plan's concurrency right
+  after a cell; a 429 `user_concurrency` means a reservation was not settled).
 
 ## Safety (not switchable)
 

@@ -201,7 +201,7 @@ try {
   {
     const dir = mkdtempSync(join(work, 'report-'));
     const row = (arm, extra) => ({ arm, cell: 'S2', scenario: 'S2', kind: 'latency', status: 200, runtime: arm === 'A' ? 'worker' : 'node', done: true,
-      contentType: 'text/event-stream', requestId: 'req_x', firstTokenMs: arm === 'A' ? 300 : 340, totalMs: 900, bodyKb: 21, tokens: 64, ...extra });
+      contentType: 'text/event-stream', requestId: `req_${extra.ab}`, firstTokenMs: arm === 'A' ? 300 : 340, totalMs: 900, bodyKb: 21, tokens: 64, ...extra });
     const rows = [];
     for (let i = 0; i < 40; i++) rows.push(row('A', { ab: `r.a${i}`, bodyKb: 10 + i }), row('B', { ab: `r.b${i}`, bodyKb: 10 + i }));
     const write = (name, list) => writeFileSync(join(dir, name), list.map(each => JSON.stringify(each)).join('\n') + '\n');
@@ -215,6 +215,16 @@ try {
     assert.equal(summary.criteria.P4.status, 'pass');
     assert.equal(summary.criteria.P5.status, 'pass');
     assert.equal(summary.cells.S2.B.workerCpu.coverage, 1);
+    // Settlement: one usage event per stream that reached a provider; a missing or a doubled one fails.
+    const events = rows.map(each => ({ request_id: each.requestId, status: 'ok' }));
+    write('usage.jsonl', events);
+    assert.equal(report(dir).criteria.P7.status, 'pass', report(dir).criteria.P7.detail);
+    write('usage.jsonl', [...events, events[3]]);
+    assert.match(report(dir).criteria.P7.detail, /1 without exactly one usage event/);
+    assert.equal(report(dir).criteria.P7.status, 'fail');
+    write('usage.jsonl', events.slice(1));
+    assert.equal(report(dir).criteria.P7.status, 'fail');
+    write('usage.jsonl', []);
     // B's Worker CPU growing with the body: the CPU problem is still there.
     write('tail.jsonl', rows.map(each => ({ ab: each.ab, outcome: 'ok', cpuMs: 0.3 + each.bodyKb * 0.05 })));
     assert.equal(report(dir).criteria.P2.status, 'fail');
@@ -237,7 +247,7 @@ try {
       runtime: null, contentType: 'text/html', htmlError: true })]);
     assert.equal(report(dir).criteria.P8.status, 'fail');
     assert.ok(JSON.parse(readFileSync(join(dir, 'summary.json'), 'utf8')).criteria.P8);
-    ok('the report passes a clean run and fails a fail-open B, B\'s Worker CPU growing with the body, and failures answered by anything but node or the JSON 503');
+    ok('the report passes a clean run and fails a fail-open B, a missing or doubled usage event, B\'s Worker CPU growing with the body, and failures answered by anything but node or the JSON 503');
   }
 
   // ── A local A/B ──

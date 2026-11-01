@@ -200,6 +200,8 @@ async function execute(target, plan, caps, options, deps) {
   const write = (name, row) => appendFileSync(join(runDir, name), `${JSON.stringify(row)}\n`);
   let local = null;
   let uninstall = () => {};
+  let sessionToken = null;
+  const runStarted = Date.now();
   const tails = [];
   try {
     let arms;
@@ -221,6 +223,7 @@ async function execute(target, plan, caps, options, deps) {
       tokens.A = tokens.B = token;
       out(`credential ${tokenLabel(token)} (never written)`);
       await preflight(target, token, options, out);
+      sessionToken = token; // the test account, checked: its usage events are read after the run
       reserveRequests(plan.total, { limit: capped('requestsPerDay', options['per-day']) });
       if (options.tail) {
         for (const arm of ['A', 'B']) {
@@ -302,6 +305,8 @@ async function execute(target, plan, caps, options, deps) {
     if (local) {
       for (const record of local.synth.records) write('synth.jsonl', record);
       await local.stop();
+    } else if (sessionToken) {
+      await collectStaging(target, sessionToken, runId, runStarted, write, deps.env, out).catch(error => out(`collecting results: ${error.message}`));
     }
     uninstall();
   }
@@ -309,6 +314,34 @@ async function execute(target, plan, caps, options, deps) {
   printSummary(summary, out);
   out(`results: ${runDir}`);
   return summary;
+}
+
+// After a staging run: the test account's usage events since the run started (one per request
+// that reached a provider: P7's settlement half), and the synthetic upstream's witness records for
+// this run when ZEROX_AB_SYNTH_KEY holds its key (P1, P7). Counts and ids only.
+async function collectStaging(target, token, runId, since, write, env, out) {
+  let before = null;
+  let events = 0;
+  for (let page = 0; page < 50; page++) {
+    const query = new URLSearchParams({ limit: '200', ...(before ? { before: String(before) } : {}) });
+    const response = await fetch(`${target.arms.A.base}/api/usage/events?${query}`, { headers: { Authorization: `Bearer ${token}` } });
+    if (response.status !== 200) throw new Error(`usage events: HTTP ${response.status}`);
+    const body = await response.json();
+    const fresh = (body.events || []).filter(event => Date.parse(event.created_at) >= since - 60000);
+    for (const event of fresh) write('usage.jsonl', { request_id: event.request_id, status: event.status, prompt_tokens: event.prompt_tokens,
+      completion_tokens: event.completion_tokens, created_at: event.created_at });
+    events += fresh.length;
+    if (!body.next_before || fresh.length < (body.events || []).length) break;
+    before = body.next_before;
+  }
+  out(`usage events since the run started: ${events}`);
+  const synthKey = String(env?.ZEROX_AB_SYNTH_KEY || '');
+  if (target.synthBase && synthKey) {
+    const response = await fetch(`${target.synthBase}/stats`, { headers: { Authorization: `Bearer ${synthKey}` } });
+    if (response.status === 200) {
+      for (const record of (await response.json()).records || []) if (String(record.nonce).startsWith(`${runId}.`)) write('synth.jsonl', record);
+    }
+  }
 }
 
 // Stops the run on what no further request can fix: a B answer served by the Worker (fail open),
@@ -379,6 +412,7 @@ export function report(runDir, { ec2File, workersLogsFile, localStandIn } = {}) 
   const cells = readJsonl(join(runDir, 'cells.jsonl'));
   const tail = workersLogsFile ? importWorkersLogs(workersLogsFile) : readJsonl(join(runDir, 'tail.jsonl'));
   const synth = readJsonl(join(runDir, 'synth.jsonl'));
+  const usage = readJsonl(join(runDir, 'usage.jsonl'));
   const samples = ec2File ? readJsonl(ec2File) : [];
   const local = localStandIn ?? cells.some(cell => cell.workerCpuMsPerRequest);
   const byAb = new Map(tail.filter(event => event.ab).map(event => [event.ab, event]));
@@ -482,9 +516,16 @@ export function report(runDir, { ec2File, workersLogsFile, localStandIn } = {}) 
     const record = synth.find(each => each.nonce === row.ab);
     return record && (record.closed === null || record.closed - row.abortAt > 5000 || record.reason === 'done');
   });
-  set('P7', !closes.length ? 'unmeasured' : late.length ? 'fail' : 'pass',
-    `${cancelled.length} cancelled, ${closes.length} seen by the upstream, ${late.length} not closed within 5 s` +
-    '; settlement: compare usage events per request_id (AB-TEST.md)');
+  // And settlement: every stream that reached a provider (a 200 with x-request-id) has exactly one
+  // usage event under that id, cancelled ones included (error with partial usage, or refunded).
+  const settledRows = rows.filter(row => row.status === 200 && row.requestId);
+  const perId = new Map();
+  for (const event of usage) perId.set(event.request_id, (perId.get(event.request_id) || 0) + 1);
+  const unsettled = usage.length ? settledRows.filter(row => perId.get(row.requestId) !== 1) : [];
+  const measured = closes.length || usage.length;
+  set('P7', !measured ? 'unmeasured' : late.length || unsettled.length ? 'fail' : 'pass',
+    `${cancelled.length} cancelled, ${closes.length} seen by the upstream, ${late.length} not closed within 5 s; ` +
+    (usage.length ? `${settledRows.length} streams, ${unsettled.length} without exactly one usage event` : 'no usage events read (staging runs read them)'));
 
   // P8: failures never reach the Worker's chat path: node 2xx or the JSON 503 only, never HTML.
   const failures = rows.filter(row => row.kind === 'operator' && row.expect === 'node-or-503');
