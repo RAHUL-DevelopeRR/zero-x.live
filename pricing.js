@@ -11,14 +11,14 @@ export const PLAN_CATALOG = Object.freeze({
   plans: [
     {
       id: 'free', name: 'Free', price: { usd_cents: 0, inr_paise: 0 }, interval: 'month',
-      limits: { daily_requests: 100, daily_tokens: 500000, rpm: 10, concurrency: 2 },
+      limits: { daily_requests: 100, daily_tokens: 5000000, window_tokens: 1000000, window_seconds: 18000, rpm: 10, concurrency: 2 },
       monthly_credit_usd: 0, tiers: ['free'], highlighted: false,
       features: ['Free models from Groq, Google Gemini, Cloudflare Workers AI, NVIDIA and OpenRouter',
         '100 requests per day and 1M tokens every 5 hours', '10 requests per minute, 2 at once', 'Every Neuron feature, the same on all plans'],
     },
     {
       id: 'pro', name: 'Pro', price: { usd_cents: 1000, inr_paise: 89900 }, interval: 'month',
-      limits: { daily_requests: 2000, daily_tokens: 10000000, rpm: 30, concurrency: 4 },
+      limits: { daily_requests: 2000, daily_tokens: 10000000, window_tokens: null, window_seconds: null, rpm: 30, concurrency: 4 },
       monthly_credit_usd: 8, tiers: ['free', 'paid'], highlighted: true,
       features: ['Claude Sonnet 5.5 and Claude Opus 5.5, billed from credits', '$8 of credits included every month',
         'Free models with higher limits: 2,000 requests and 10M tokens per day', '30 requests per minute, 4 at once',
@@ -26,7 +26,7 @@ export const PLAN_CATALOG = Object.freeze({
     },
     {
       id: 'max', name: 'Max', price: { usd_cents: 4000, inr_paise: 349900 }, interval: 'month',
-      limits: { daily_requests: 10000, daily_tokens: 50000000, rpm: 60, concurrency: 8 },
+      limits: { daily_requests: 10000, daily_tokens: 50000000, window_tokens: null, window_seconds: null, rpm: 60, concurrency: 8 },
       monthly_credit_usd: 35, tiers: ['free', 'paid'], highlighted: false,
       features: ['Claude Sonnet 5.5 and Claude Opus 5.5, billed from credits', '$35 of credits included every month',
         'Free models with higher limits: 10,000 requests and 50M tokens per day', '60 requests per minute, 8 at once',
@@ -101,6 +101,10 @@ function count(value) {
   return Number.isSafeInteger(value) && value >= 0 ? value : null;
 }
 
+function positive(value) {
+  return Number.isSafeInteger(value) && value > 0 ? value : null;
+}
+
 function amount(value) {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
 }
@@ -125,6 +129,7 @@ export function normalizeCatalog(data) {
       interval: raw.interval === 'year' ? 'year' : 'month',
       limits: {
         daily_requests: count(limits.daily_requests), daily_tokens: count(limits.daily_tokens),
+        window_tokens: positive(limits.window_tokens), window_seconds: positive(limits.window_seconds),
         rpm: count(limits.rpm), concurrency: count(limits.concurrency),
       },
       monthly_credit_usd: amount(raw.monthly_credit_usd),
@@ -152,11 +157,30 @@ export function findTopup(catalog, id) {
   return (catalog && catalog.topups || []).find(pack => pack.id === id) || null;
 }
 
-/** Text for a [data-plan-limit="plan:field"] element. */
+/** 18000 → "5 hours", 3600 → "hour", 5400 → "90 minutes": a rolling token window's length. */
+export function windowLength(seconds) {
+  if (!Number.isSafeInteger(seconds) || seconds < 60) return null;
+  if (seconds % 3600 === 0) return seconds === 3600 ? 'hour' : seconds / 3600 + ' hours';
+  return Math.round(seconds / 60) + ' minutes';
+}
+
+/**
+ * A plan's token allowance: "1M every 5 hours" for a plan with a rolling window (Free), else
+ * "10M per day". With a window the daily token figure is only the most the window allows in a day.
+ */
+export function tokenAllowance(plan) {
+  const limits = plan && plan.limits ? plan.limits : {};
+  const length = windowLength(limits.window_seconds);
+  if (Number.isFinite(limits.window_tokens) && length) return formatTokens(limits.window_tokens) + ' every ' + length;
+  return Number.isFinite(limits.daily_tokens) ? formatTokens(limits.daily_tokens) + ' per day' : null;
+}
+
+/** Text for a [data-plan-limit="plan:field"] element; field "token_allowance" is tokenAllowance(). */
 export function limitLabel(plan, field) {
+  if (field === 'token_allowance') return tokenAllowance(plan);
   const value = plan && plan.limits ? plan.limits[field] : null;
   if (value === null || value === undefined) return null;
-  return field === 'daily_tokens' ? formatTokens(value) : formatCount(value);
+  return field === 'daily_tokens' || field === 'window_tokens' ? formatTokens(value) : formatCount(value);
 }
 
 function safeStorage(win, kind) {

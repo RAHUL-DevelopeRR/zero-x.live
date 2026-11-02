@@ -332,6 +332,22 @@ async function mountDashboard({profile = PROFILE, hash = '', state = {}, routes 
   assert.equal(auth.calls.modal.length, 1, 'Sign in opens the ZeroXAuth modal');
 }
 
+// Free's rolling 5-hour window: the tokens card shows the window (usage_window), not the day.
+{
+  const freeAccount = accountPayload({plan: {id: 'free', name: 'Free'}, subscription: null,
+    limits: {daily_requests: 100, daily_tokens: 5000000, window_tokens: 1000000, window_seconds: 18000, rpm: 10, concurrency: 2},
+    usage_today: {requests: 40, tokens: 1300000, resets_at: '2026-10-17T00:00:00.000Z'},
+    usage_window: {tokens: 800000, limit_tokens: 1000000, remaining_tokens: 200000, window_seconds: 18000, resets_at: '2026-10-16T20:30:00.000Z'}});
+  const {$} = await mountDashboard({state: {account: () => freeAccount}});
+  assert.equal($('ov-tokens-label').textContent, 'Tokens this 5-hour window');
+  assert.equal($('ov-tokens').textContent, '800K / 1M');
+  assert.equal($('ov-tokens-bar').getAttribute('aria-valuenow'), '80');
+  assert.equal($('ov-tokens-detail').textContent, '200K tokens left · frees up in 2 h 30 min · 1.3M today');
+  assert.equal($('ov-reset').textContent, 'Resets in 6 h 0 min. Tokens free up 5 hours after use.');
+  assert.match($('ov-plan-detail').textContent, /rolling 5-hour window/);
+  assert.equal($('ov-requests').textContent, '40 / 100', 'the daily request cap stays');
+}
+
 {
   const t = await mountDashboard({session: makeStorage({'zx-dev-token': 'dev_b3duZXJAZXhhbXBsZS5jb20'})});
   const {$, doc, win, calls, auth} = t;
