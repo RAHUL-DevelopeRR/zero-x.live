@@ -198,6 +198,28 @@ and apply, in order (the ten catalog and app migrations were renumbered from 202
 9. `20261029000800_paid_billing_caps.sql` (per-pool daily spend caps `p_pool.cpd`, cache-aware settlement, abandoned paid reservations keep their credit hold for 60 minutes)
 10. `20261029000900_plan_features_claude.sql` (plan feature strings; tiers, limits and credits unchanged)
 11. `20261029001000_pool_concurrency.sql` (`p_pool.concurrency`: requests of a pool key running at once, for Z.ai's one-at-a-time free models)
+12. `20261102000000_free_token_window.sql` (Free: 1,000,000 tokens per rolling 5-hour window instead of 500K a day; see below)
+
+**Free's 5-hour token window (`20261102000000_free_token_window.sql`).** Deploy the gateway that
+knows `user_window_tokens` (both runtimes: the Worker and the EC2 Node server) **before** pasting
+this migration: an older gateway answers that unknown reservation status with 503
+`service_unavailable` instead of 429 `insufficient_quota`. The new gateway works against the
+old database (no window columns: no window is shown or enforced). The migration adds
+`zerox_plan_policy.window_tokens`/`window_seconds`, sets Free to 1,000,000 / 18,000 with
+`daily_tokens` 5,000,000 and the feature "100 requests per day and 1M tokens every 5 hours" (or
+"1M tokens every 5 hours" where the older seed strings are still in place), adds
+`zerox_window_usage`, and recreates `zerox_reserve_v2`, `zerox_plan_policies_v2` and
+`zerox_account_overview` with extra result columns (same arguments and grants). It is
+independent of the held-back `20261029000900_plan_features_claude.sql`, whose Free string now
+says the same, so the two can be applied in either order. Verify:
+
+- `SELECT plan, daily_tokens, window_tokens, window_seconds FROM public.zerox_plan_policy ORDER BY sort;`
+  returns free 5000000 1000000 18000 and null windows for pro, max and ultrawork;
+- `SELECT count(*) FROM pg_proc WHERE proname = 'zerox_reserve_v2';` returns 1.
+
+Roll back with `migrations/down/20261102000000_free_token_window.sql` (psql -X -v ON_ERROR_STOP=1 -f,
+or paste it): Free gets 500,000 tokens a day back. It must run before
+`down/20261029001000_pool_concurrency.sql` if both are rolled back.
 
 `DATABASE_URL=… node scripts/apply-migrations.mjs --status`, then `--apply`; or run each file in the
 Supabase SQL editor followed by
@@ -290,7 +312,8 @@ Work through these in order; nothing in this repository does them for you.
 2. **Apply the migrations** in `migrations/` in order (`supabase db push`, or
    `DATABASE_URL=… node scripts/apply-migrations.mjs --status` then `--apply`; psql required).
    The business migrations reseed the plans per contract §1 at once (Free becomes 100 requests /
-   500K tokens a day), so apply them together with this gateway version. Before production
+   500K tokens a day, then 1M tokens per rolling 5 hours with `20261102000000_free_token_window.sql`),
+   so apply them together with this gateway version. Before production
    traffic, run one parallel reserve/settle burst against the real Postgres (PGlite tests are
    single-connection).
 3. **Razorpay.** Complete account activation (it reviews the About, Contact, Pricing, Terms,

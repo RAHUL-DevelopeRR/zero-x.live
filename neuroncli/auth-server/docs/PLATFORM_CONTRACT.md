@@ -24,16 +24,28 @@ change both together.
 
 ## 1. Plans (seeded in migration, editable in `zerox_plan_policy`)
 
-| id | name | price | daily_requests | daily_tokens | rpm | concurrency | tiers | monthly credits |
-|----|------|-------|----------------|--------------|-----|-------------|-------|-----------------|
-| free | Free | $0 | 100 | 500,000 | 10 | 2 | free | $0 |
-| pro | Pro | $10 / ₹899 per month | 2,000 | 10,000,000 | 30 | 4 | free, paid | $8 |
-| max | Max | $40 / ₹3,499 per month | 10,000 | 50,000,000 | 60 | 8 | free, paid | $35 |
-| ultrawork | Pro (legacy) | same as pro | | | | | | |
+| id | name | price | daily_requests | daily_tokens | rpm | concurrency | tiers | monthly credits | window_tokens | window_seconds |
+|----|------|-------|----------------|--------------|-----|-------------|-------|-----------------|---------------|----------------|
+| free | Free | $0 | 100 | 5,000,000 | 10 | 2 | free | $0 | 1,000,000 | 18,000 |
+| pro | Pro | $10 / ₹899 per month | 2,000 | 10,000,000 | 30 | 4 | free, paid | $8 | — | — |
+| max | Max | $40 / ₹3,499 per month | 10,000 | 50,000,000 | 60 | 8 | free, paid | $35 | — | — |
+| ultrawork | Pro (legacy) | same as pro | | | | | | | | |
+
+**Rolling token window** (migration `20261102000000_free_token_window.sql`, 2026-11-02). A plan
+with `window_tokens` and `window_seconds` (set together; `—` = none) allows at most
+`window_tokens` tokens in any `window_seconds`, per user: Free gets 1,000,000 tokens every 5
+hours. A window counts each reservation from when it was made for `window_seconds`: settled ones
+with the tokens they were charged (refunds count 0), running and released ones with what they
+reserved. With a window, `daily_tokens` refuses nothing; it is the most the window allows in a
+UTC day (five windows, 5,000,000 on Free), kept so clients that show tokens per day stay
+truthful. `daily_requests`, rpm, concurrency and credits apply as before. A refusal is
+`user_window_tokens` → 429 `insufficient_quota` "You've used your 1,000,000 tokens for this
+5-hour window; it frees up at HH:MM UTC.", `resets_at` and `Retry-After` = when enough of the
+window has expired for that request. Any plan can opt in by setting both columns.
 
 Credits are stored in micro-USD (`1 USD = 1_000_000`). Paid-pool usage is billed at the
 catalog price (upstream cost × 1.25 markup). Free-pool usage costs 0 credits but counts
-toward daily request/token caps. Top-up packs: `credits_5` ($5 credit, $5 / ₹449),
+toward daily request/token caps (on Free: the daily request cap and the 5-hour token window). Top-up packs: `credits_5` ($5 credit, $5 / ₹449),
 `credits_20` ($20 credit, $20 / ₹1,749).
 
 ## 2. Model catalog (gateway `src/catalog.js`, data-driven rows since v1.8: section 13.1)
@@ -123,7 +135,7 @@ credential (never an `nzx_` key). Session tokens are stored hashed (SHA-256) in 
 | 403 | `region_unavailable` | permission_error | geo-blocked free pool and no paid option |
 | 403 | `policy_restricted` | permission_error | no offer of the model meets the caller's data policy (§12.2) |
 | 403 | `account_suspended` | permission_error | account suspended |
-| 429 | `insufficient_quota` | insufficient_quota | daily request/token cap reached (`resets_at`, `upgrade_url`) — clients must NOT retry |
+| 429 | `insufficient_quota` | insufficient_quota | daily request/token cap reached, or the plan's rolling token window is full (`resets_at` = when enough frees, with `Retry-After`; `upgrade_url`) — clients must NOT retry before `resets_at` |
 | 429 | `rate_limited` | rate_limit_error | per-user rpm/concurrency (`retry_after_seconds`) — clients may retry after the delay |
 | 503 | `capacity_exhausted` | server_error | shared free pool exhausted (`retry_after_seconds`, `upgrade_url`) |
 | 502 | `upstream_error` | server_error | upstream failure after failover; request count refunded |
@@ -134,12 +146,13 @@ credential (never an `nzx_` key). Session tokens are stored hashed (SHA-256) in 
 ### 3.4 Account & usage (`/api/*`)
 
 - `GET /api/plans` (public) → `{currency_default:'USD', plans:[{id, name, price:{usd_cents, inr_paise},
-  interval:'month', limits:{daily_requests, daily_tokens, rpm, concurrency},
+  interval:'month', limits:{daily_requests, daily_tokens, window_tokens, window_seconds, rpm, concurrency},
   monthly_credit_usd, tiers, features:[string], highlighted}], topups:[{id, credit_usd,
   price:{usd_cents, inr_paise}}]}`
 - `GET /api/account` → `{user:{id,email,name,display_name,initials,image_url},
   session_expires_at, plan:{id,name}, limits:{...},
-  usage_today:{requests, tokens, resets_at}, credits:{balance_usd, monthly_grant_usd},
+  usage_today:{requests, tokens, resets_at}, usage_window:null|{tokens, limit_tokens, remaining_tokens,
+  window_seconds, resets_at}, credits:{balance_usd, monthly_grant_usd},
   subscription:null|{status, current_period_end, cancel_at_period_end},
   flags:{suspended}}` (`display_name`, `initials` and `session_expires_at`: §9.1)
 - `GET /api/usage?from=YYYY-MM-DD&to=YYYY-MM-DD` (max 92 days, default last 30) →
@@ -206,12 +219,13 @@ All called through `rpc(env, name, args)` / `rpcRows(env, name, args)` in
 
 | RPC | args | returns (row) |
 |-----|------|---------------|
-| `zerox_reserve_v2` | `p_user_id uuid, p_request_id text, p_model text, p_tier text, p_tokens bigint, p_cost_microusd bigint, p_pool jsonb` (`{rpm,rpd,tpm,tpd,cpd,concurrency}` or null; `cpd` = a paid pool's daily spend cap in billed micro-USD per UTC day, section 13.4; `concurrency` = requests of the pool key running at once, section 8.6), `p_pool_key text = null` (a provider key vault pool's key, 1-300 characters: `p_pool` is then that key's budget, counted in its own buckets; null = the model's default bucket, §11.1) | `{status, reservation_id, plan, remaining_requests, remaining_tokens, credit_balance_microusd, resets_at, retry_after_seconds}`; status ∈ `ok, no_account, suspended, upgrade_required, user_daily_requests, user_daily_tokens, user_rpm, user_concurrency, insufficient_credits, pool_exhausted` |
+| `zerox_reserve_v2` | `p_user_id uuid, p_request_id text, p_model text, p_tier text, p_tokens bigint, p_cost_microusd bigint, p_pool jsonb` (`{rpm,rpd,tpm,tpd,cpd,concurrency}` or null; `cpd` = a paid pool's daily spend cap in billed micro-USD per UTC day, section 13.4; `concurrency` = requests of the pool key running at once, section 8.6), `p_pool_key text = null` (a provider key vault pool's key, 1-300 characters: `p_pool` is then that key's budget, counted in its own buckets; null = the model's default bucket, §11.1) | `{status, reservation_id, plan, remaining_requests, remaining_tokens, credit_balance_microusd, resets_at, retry_after_seconds, window_tokens, window_seconds, window_used_tokens, window_resets_at}` (window columns null without a window; with one, `remaining_tokens` is the window's; `user_window_tokens`: `resets_at` = when enough frees); status ∈ `ok, no_account, suspended, user_window_tokens, upgrade_required, user_daily_requests, user_daily_tokens, user_rpm, user_concurrency, insufficient_credits, pool_exhausted` |
 | `zerox_settle_v2` | `p_reservation_id uuid, p_prompt_tokens bigint, p_completion_tokens bigint, p_cost_microusd bigint, p_status text ('ok','error','refunded','failed_upstream'), p_latency_ms int, p_provider text, p_upstream_model text, p_error_code text, p_cache_read_tokens bigint = 0, p_cache_write_tokens bigint = 0` (cache tokens are part of `p_prompt_tokens`, section 13.4) | `{status:'settled'|'already_settled'|'not_found', credit_balance_microusd}`; reconciles the pool bucket stored on the reservation (model, tier, pool key) |
 | `zerox_renew_reservation` | `p_reservation_id uuid, p_lease_seconds int` (1-3600) | `boolean`: the lease now runs at least `p_lease_seconds` from now; `false` once the reservation is settled or released (section 8.5) |
 | `zerox_release_stale_reservations` | — | `{released}` |
-| `zerox_plan_policies_v2` | — | one row per plan: `plan, name, price_usd, price_usd_cents, price_inr_paise, daily_requests, daily_tokens, rpm_limit, concurrency_limit, allowed_tiers text[], monthly_credit_microusd, features, sort, public, highlighted, razorpay_plan_id_inr, razorpay_plan_id_usd` |
-| `zerox_account_overview` | `p_user_id` | account + policy + credits + subscription + today usage (jsonb columns) |
+| `zerox_plan_policies_v2` | — | one row per plan: `plan, name, price_usd, price_usd_cents, price_inr_paise, daily_requests, daily_tokens, rpm_limit, concurrency_limit, allowed_tiers text[], monthly_credit_microusd, features, sort, public, highlighted, razorpay_plan_id_inr, razorpay_plan_id_usd, window_tokens, window_seconds` |
+| `zerox_account_overview` | `p_user_id` | account + policy + credits + subscription + today usage + `usage_window` (`{window_seconds, limit_tokens, tokens, remaining_tokens, resets_at}` or null) (jsonb columns) |
+| `zerox_window_usage` | `p_user_id uuid, p_window_seconds int, p_now timestamptz = now()` | rows `{created_at, tokens}`: the user's reservations in the window and the tokens each counts |
 | `zerox_usage_series` | `p_user_id, p_from date, p_to date` | rows `{day, requests, prompt_tokens, completion_tokens, cost_microusd}` |
 | `zerox_usage_by_model` | `p_user_id, p_from, p_to` | rows `{model, requests, prompt_tokens, cache_read_tokens, cache_write_tokens, completion_tokens, cost_microusd}` |
 | `zerox_usage_events` | `p_user_id, p_limit int, p_before bigint` | rows of `zerox_usage_events` |
