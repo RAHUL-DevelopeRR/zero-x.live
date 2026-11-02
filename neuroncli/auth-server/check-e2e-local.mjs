@@ -304,9 +304,9 @@ try {
   const plans = await bootstrapPlans({ env: razorpayEnv, apply: true });
   assert.equal(plans.filter(row => row.action === 'created').length, 4, 'bootstrap creates Pro/Max in INR and USD');
   await handle.db.exec(planSql(plans));
-  // Cap fixture: a small free-plan token allocation so the daily cap is reached without
-  // spending upstream calls (a 60K-token prompt exceeds it).
-  await handle.db.query("UPDATE public.zerox_plan_policy SET daily_tokens = 50000 WHERE plan = 'free'");
+  // Cap fixture: a small Free token window (5 hours as in production) so the window is reached
+  // without spending upstream calls (a 60K-token prompt exceeds it).
+  await handle.db.query("UPDATE public.zerox_plan_policy SET window_tokens = 50000 WHERE plan = 'free'");
   // Credit-hold fixture (step 11d): a Pro account (granted by the operator) holding $0.30.
   await handle.db.query('INSERT INTO auth.users (id, email) VALUES ($1, $2) ON CONFLICT DO NOTHING', [creditsUserId, CREDITS_EMAIL]);
   await handle.db.query('SELECT * FROM public.zerox_sync_account($1, $2::jsonb)', [creditsUserId, JSON.stringify({ email: CREDITS_EMAIL, name: 'e2e.credits' })]);
@@ -426,10 +426,15 @@ try {
   let account = (await call('/api/account', { token: ses })).body;
   assert.equal(account.user.id, userId);
   assert.equal(account.plan.id, 'free');
-  assert.deepEqual(account.limits, { daily_requests: 100, daily_tokens: 50000, rpm: 10, concurrency: 2 });
+  assert.deepEqual(account.limits, { daily_requests: 100, daily_tokens: 5000000, rpm: 10, concurrency: 2,
+    window_tokens: 50000, window_seconds: 18000 });
   assert.equal(account.usage_today.requests, 1);
   assert.equal(account.usage_today.tokens, settled.prompt_tokens + settled.completion_tokens);
   assert.equal(account.usage_today.resets_at, nextUtcMidnight());
+  assert.deepEqual({ ...account.usage_window, resets_at: undefined }, { tokens: account.usage_today.tokens, limit_tokens: 50000,
+    remaining_tokens: 50000 - account.usage_today.tokens, window_seconds: 18000, resets_at: undefined });
+  const windowFrees = Date.parse(account.usage_window.resets_at);
+  assert.ok(windowFrees > Date.now() + 17000000 && windowFrees <= Date.now() + 18000000, 'the window frees 5 hours after the request');
   const usage = (await call('/api/usage', { token: ses })).body;
   assert.equal(usage.totals.requests, 1);
   assert.equal(usage.series.length, 30);
@@ -531,20 +536,25 @@ try {
   'device codes, user codes and session tokens never reach the logs');
   step('device sign-in', `code ${grantA.user_code} pending -> slow_down (interval 10) -> page lookup (origin-checked, CLI session refused) -> approve (forged nonce refused) -> one ses_ session -> replay invalid_grant; deny -> access_denied; page served at /neuroncli/device/ and /device with enforced CSP`);
 
-  // ── 7. Daily cap → 429 insufficient_quota (no upstream call) ──
+  // ── 7. Free's 5-hour token window → 429 insufficient_quota (no upstream call) ──
   // A reservation holds the prompt plus at most 1,024 output tokens (max_tokens alone no longer
   // reaches the cap), so the request carries a ~60K-token prompt.
   const callsBeforeCap = upstream.calls.length;
   const realBeforeCap = realCalls();
-  const cap = expectError(await call('/v1/chat/completions', { method: 'POST', token: ses,
-    body: { model: 'gemini/gemini-2.5-flash', messages: [{ role: 'user', content: 'word '.repeat(42000) }], max_tokens: 4096 } }),
-  429, 'insufficient_quota');
+  const capResponse = await call('/v1/chat/completions', { method: 'POST', token: ses,
+    body: { model: 'gemini/gemini-2.5-flash', messages: [{ role: 'user', content: 'word '.repeat(42000) }], max_tokens: 4096 } });
+  const cap = expectError(capResponse, 429, 'insufficient_quota');
   assert.equal(cap.type, 'insufficient_quota');
-  assert.equal(cap.resets_at, nextUtcMidnight());
+  // Enough of the window frees once the requests made so far (steps 4 and 6) leave it.
+  assert.ok(Date.parse(cap.resets_at) >= windowFrees && Date.parse(cap.resets_at) <= Date.now() + 18000000,
+    `the window frees within 5 hours of the requests it counts (${cap.resets_at})`);
+  assert.match(cap.message, /^You've used your 50,000 tokens for this 5-hour window; it frees up at \d{2}:\d{2} UTC\.$/);
+  assert.ok(cap.retry_after_seconds > 17000 && cap.retry_after_seconds <= 18000, `retry ${cap.retry_after_seconds}`);
+  assert.equal(capResponse.headers.get('retry-after'), String(cap.retry_after_seconds), 'Retry-After until the window frees');
   assert.equal(cap.upgrade_url, 'https://zero-x.live/pricing');
   assert.equal(upstream.calls.length, callsBeforeCap);
   assert.equal(realCalls(), realBeforeCap, 'the cap is enforced before any upstream call');
-  step('daily cap', `429 insufficient_quota, resets_at ${cap.resets_at}, upgrade_url ${cap.upgrade_url}, no upstream call`);
+  step('5-hour token window', `429 insufficient_quota, resets_at ${cap.resets_at}, retry ${cap.retry_after_seconds} s, upgrade_url ${cap.upgrade_url}, no upstream call`);
 
   // ── 7b. A model-side failure is refunded to the caller but kept in the shared pool budget ──
   // (review P2, integration: tool_use_failed and timeouts drained the free pools unseen)
@@ -984,7 +994,7 @@ if (failed) {
 }
 await writeFile(join(tmpdir(), `zerox-e2e-${LIVE ? 'live' : 'offline'}-steps.json`), JSON.stringify(steps, null, 2)).catch(() => {});
 console.log(`PASS: end-to-end ${LIVE ? '(live Groq/Gemini free pools)' : '(offline)'}: ${steps.length} steps — dev sign-in, CLI session, plan-aware ` +
-  'models, streamed tool calls, usage, API keys, daily cap, pool-kept model failures, Pro checkout (reused across tabs), charged webhook once, ' +
+  'models, streamed tool calls, usage, API keys, Free 5-hour token window, pool-kept model failures, Pro checkout (reused across tabs), charged webhook once, ' +
   'duplicate subscription cancelled and refunded, paid-pool credits, top-up, refund clawback, Claude billed cache-aware, Claude credit holds ' +
   '(402 before any upstream call, one of two concurrent holds), cancel, revoke-all, admin overview, provider key vault, ' +
   'static site and CSP, credit ledger');

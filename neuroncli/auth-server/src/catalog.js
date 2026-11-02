@@ -484,7 +484,7 @@ export function unavailableReason(verdicts) {
 
 // ── Plans (contract §1) ──
 export const BUILTIN_PLANS = Object.freeze({
-  free: Object.freeze({ id: 'free', name: 'Free', daily_requests: 100, daily_tokens: 500000, rpm: 10,
+  free: Object.freeze({ id: 'free', name: 'Free', daily_requests: 100, daily_tokens: 5000000, rpm: 10,
     concurrency: 2, tiers: Object.freeze(['free']), monthly_credit_microusd: 0 }),
   pro: Object.freeze({ id: 'pro', name: 'Pro', daily_requests: 2000, daily_tokens: 10000000, rpm: 30,
     concurrency: 4, tiers: Object.freeze(['free', 'paid']), monthly_credit_microusd: 8000000 }),

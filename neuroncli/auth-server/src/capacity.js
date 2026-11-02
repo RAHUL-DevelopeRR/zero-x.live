@@ -24,6 +24,7 @@ export const RESERVE_ERRORS = Object.freeze({
   upgrade_required: 'upgrade_required',
   user_daily_requests: 'insufficient_quota',
   user_daily_tokens: 'insufficient_quota',
+  user_window_tokens: 'insufficient_quota',
   user_rpm: 'rate_limited',
   user_concurrency: 'rate_limited',
   insufficient_credits: 'insufficient_credits',
@@ -32,7 +33,7 @@ export const RESERVE_ERRORS = Object.freeze({
 
 // Statuses about the caller rather than the pool: failover cannot help.
 export const TERMINAL_RESERVE_STATUSES = new Set(['no_account', 'suspended', 'user_daily_requests',
-  'user_daily_tokens', 'user_rpm', 'user_concurrency']);
+  'user_daily_tokens', 'user_window_tokens', 'user_rpm', 'user_concurrency']);
 // Statuses that rule out every paid pool for the rest of the request.
 export const PAID_DENIED_STATUSES = new Set(['upgrade_required', 'insufficient_credits']);
 
@@ -48,6 +49,37 @@ const RESERVE_MESSAGES = {
 
 export function nextUtcMidnight(now = Date.now()) {
   return new Date((Math.floor(now / 86400000) + 1) * 86400000).toISOString();
+}
+
+// "5-hour" for 18000 s, "90-minute" for 5400 s: the length of a plan's rolling token window.
+export function windowLength(seconds) {
+  const value = Number(seconds);
+  if (!Number.isSafeInteger(value) || value < 60) return null;
+  if (value % 3600 === 0) return `${value / 3600}-hour`;
+  return `${Math.round(value / 60)}-minute`;
+}
+
+// "17:05 UTC" for a time within a day, else "Nov 3, 17:05 UTC"; rounded up to the minute so
+// the time shown is never before the window frees.
+export function formatWindowTime(value, now = Date.now()) {
+  const time = Date.parse(value || '');
+  if (!Number.isFinite(time)) return null;
+  const at = new Date(Math.ceil(time / 60000) * 60000);
+  const clock = at.toISOString().slice(11, 16) + ' UTC';
+  if (at.getTime() - now < 86400000) return clock;
+  return at.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }) + ', ' + clock;
+}
+
+// The message for user_window_tokens (zerox_reserve_v2 window_* columns, migration
+// 20261102000000): "You've used your 1,000,000 tokens for this 5-hour window; it frees up at 17:05 UTC."
+export function windowQuotaMessage(row, now = Date.now()) {
+  const limit = Number(row?.window_tokens);
+  const length = windowLength(row?.window_seconds);
+  const at = formatWindowTime(row?.window_resets_at || row?.resets_at, now);
+  if (!Number.isSafeInteger(limit) || limit < 1 || !length || !at) {
+    return 'You have used the tokens of your current usage window. Retry after the indicated delay, or upgrade for more.';
+  }
+  return `You've used your ${limit.toLocaleString('en-US')} tokens for this ${length} window; it frees up at ${at}.`;
 }
 
 // Output tokens a reservation holds against the user's daily tokens and the shared pool budget
@@ -105,10 +137,17 @@ export async function reserveCapacity(env, args) {
 }
 
 // Error code and details for a non-ok reservation status (unknown statuses fail closed).
-export function reserveError(row) {
+export function reserveError(row, now = Date.now()) {
   const status = row?.status;
   const code = RESERVE_ERRORS[status] || 'service_unavailable';
   const retry = Number(row?.retry_after_seconds);
+  if (status === 'user_window_tokens') {
+    // A rolling window frees at a known time: resets_at and Retry-After say when.
+    const resetsAt = row?.window_resets_at || row?.resets_at || null;
+    const until = Math.ceil((Date.parse(resetsAt || '') - now) / 1000);
+    return { code, message: windowQuotaMessage(row, now), resetsAt,
+      retryAfterSeconds: retry > 0 ? retry : until > 0 ? until : undefined };
+  }
   const options = { code, message: RESERVE_MESSAGES[status] };
   if (code === 'insufficient_quota') options.resetsAt = row?.resets_at || nextUtcMidnight();
   if (code === 'rate_limited') options.retryAfterSeconds = retry > 0 ? retry : status === 'user_rpm' ? 60 : 5;

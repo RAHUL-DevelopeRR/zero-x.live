@@ -29,20 +29,23 @@ export async function loadPlanLimits(env) {
 // Static fallback used when the database is unavailable. It must stay identical to the seeded
 // zerox_plan_policy rows (features: migration 20261029000900_plan_features_claude.sql, also the
 // site's pricing.js fallback and pricing.html). Prices are in minor units (cents/paise); credits
-// are micro-USD. Free has the free tier only; Pro and Max add the paid tier (Claude Sonnet 5.5 and
-// Claude Opus 5.5, billed from credits); every plan has the same Neuron features.
+// are micro-USD. Free's tokens are limited per rolling window (window_tokens per window_seconds,
+// migration 20261102000000_free_token_window.sql: 1M every 5 hours; its daily_tokens is the most
+// five windows allow in a UTC day and does not refuse requests); null = no window. Free has the
+// free tier only; Pro and Max add the paid tier (Claude Sonnet 5.5 and Claude Opus 5.5, billed
+// from credits); every plan has the same Neuron features.
 export const PAID_PLAN_IDS = Object.freeze(['pro', 'max']);
 export const PLAN_CATALOG = Object.freeze([
   Object.freeze({
     id: 'free', name: 'Free', price: { usd_cents: 0, inr_paise: 0 }, interval: 'month',
-    limits: { daily_requests: 100, daily_tokens: 500000, rpm: 10, concurrency: 2 },
+    limits: { daily_requests: 100, daily_tokens: 5000000, window_tokens: 1000000, window_seconds: 18000, rpm: 10, concurrency: 2 },
     monthly_credit_microusd: 0, tiers: ['free'], highlighted: false,
     features: ['Free models from Groq, Google Gemini, Cloudflare Workers AI, NVIDIA and OpenRouter',
       '100 requests per day and 1M tokens every 5 hours', '10 requests per minute, 2 at once', 'Every Neuron feature, the same on all plans'],
   }),
   Object.freeze({
     id: 'pro', name: 'Pro', price: { usd_cents: 1000, inr_paise: 89900 }, interval: 'month',
-    limits: { daily_requests: 2000, daily_tokens: 10000000, rpm: 30, concurrency: 4 },
+    limits: { daily_requests: 2000, daily_tokens: 10000000, window_tokens: null, window_seconds: null, rpm: 30, concurrency: 4 },
     monthly_credit_microusd: 8000000, tiers: ['free', 'paid'], highlighted: true,
     features: ['Claude Sonnet 5.5 and Claude Opus 5.5, billed from credits', '$8 of credits included every month',
       'Free models with higher limits: 2,000 requests and 10M tokens per day', '30 requests per minute, 4 at once',
@@ -50,7 +53,7 @@ export const PLAN_CATALOG = Object.freeze([
   }),
   Object.freeze({
     id: 'max', name: 'Max', price: { usd_cents: 4000, inr_paise: 349900 }, interval: 'month',
-    limits: { daily_requests: 10000, daily_tokens: 50000000, rpm: 60, concurrency: 8 },
+    limits: { daily_requests: 10000, daily_tokens: 50000000, window_tokens: null, window_seconds: null, rpm: 60, concurrency: 8 },
     monthly_credit_microusd: 35000000, tiers: ['free', 'paid'], highlighted: false,
     features: ['Claude Sonnet 5.5 and Claude Opus 5.5, billed from credits', '$35 of credits included every month',
       'Free models with higher limits: 10,000 requests and 50M tokens per day', '60 requests per minute, 8 at once',
@@ -90,6 +93,12 @@ const tierList = (value, fallback) => {
   const tiers = list?.map(tier => String(tier).trim().replace(/^"|"$/g, '')).filter(tier => ['free', 'paid'].includes(tier));
   return tiers?.length ? tiers : fallback;
 };
+// A window column the row lacks (a database without migration 20261102000000) means no window:
+// the database, not this file, decides what is enforced.
+const windowValue = (row, column) => {
+  const value = integer(row[column], null);
+  return value !== null && value > 0 ? value : null;
+};
 const razorpayPlanId = value => typeof value === 'string' && /^plan_[A-Za-z0-9]{6,40}$/.test(value) ? value : null;
 
 // Maps one zerox_plan_policies_v2 row (WP-B1 columns: plan, name, price_usd_cents,
@@ -107,6 +116,8 @@ export function catalogEntry(base, row) {
     limits: {
       daily_requests: integer(row.daily_requests, base.limits.daily_requests),
       daily_tokens: integer(row.daily_tokens, base.limits.daily_tokens),
+      window_tokens: windowValue(row, 'window_tokens'),
+      window_seconds: windowValue(row, 'window_seconds'),
       rpm: integer(row.rpm_limit ?? row.rpm, base.limits.rpm),
       concurrency: integer(row.concurrency_limit ?? row.concurrency, base.limits.concurrency),
     },
