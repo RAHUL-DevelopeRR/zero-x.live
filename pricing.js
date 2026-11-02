@@ -14,7 +14,7 @@ export const PLAN_CATALOG = Object.freeze({
       limits: { daily_requests: 100, daily_tokens: 500000, rpm: 10, concurrency: 2 },
       monthly_credit_usd: 0, tiers: ['free'], highlighted: false,
       features: ['Free models from Groq, Google Gemini, Cloudflare Workers AI, NVIDIA and OpenRouter',
-        '100 requests and 500K tokens per day', '10 requests per minute, 2 at once', 'Every Neuron feature, the same on all plans'],
+        '100 requests per day and 1M tokens every 5 hours', '10 requests per minute, 2 at once', 'Every Neuron feature, the same on all plans'],
     },
     {
       id: 'pro', name: 'Pro', price: { usd_cents: 1000, inr_paise: 89900 }, interval: 'month',

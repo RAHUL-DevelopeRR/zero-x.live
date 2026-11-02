@@ -74,7 +74,7 @@ const columnsOf = async table => (await sql(`SELECT column_name FROM information
 
 const PLAN_FEATURES = {
   free: ['Free models from Groq, Google Gemini, Cloudflare Workers AI, NVIDIA and OpenRouter',
-    '100 requests and 500K tokens per day', '10 requests per minute, 2 at once', 'Every Neuron feature, the same on all plans'],
+    '100 requests per day and 1M tokens every 5 hours', '10 requests per minute, 2 at once', 'Every Neuron feature, the same on all plans'],
   pro: ['Claude Sonnet 5.5 and Claude Opus 5.5, billed from credits', '$8 of credits included every month',
     'Free models with higher limits: 2,000 requests and 10M tokens per day', '30 requests per minute, 4 at once',
     'Every Neuron feature, the same on all plans'],
@@ -302,11 +302,11 @@ try {
   const plans = await rpcRows(env, 'zerox_plan_policies_v2', {});
   assert.deepEqual(plans.map(plan => [plan.plan, plan.allowed_tiers, plan.daily_requests, plan.daily_tokens, plan.price_usd,
     plan.monthly_credit_microusd, plan.rpm_limit, plan.concurrency_limit]), [
-    ['free', ['free'], 100, 500000, 0, 0, 10, 2],
+    ['free', ['free'], 100, 5000000, 0, 0, 10, 2],
     ['pro', ['free', 'paid'], 2000, 10000000, 10, 8000000, 30, 4],
     ['max', ['free', 'paid'], 10000, 50000000, 40, 35000000, 60, 8],
     ['ultrawork', ['free', 'paid'], 2000, 10000000, 10, 8000000, 30, 4],
-  ], 'Free has the free tier only, Pro and Max add paid; limits, prices and credits unchanged');
+  ], 'Free has the free tier only, Pro and Max add paid; limits, prices and credits unchanged (Free: daily_tokens 5M under its 5-hour window)');
   assert.deepEqual(Object.fromEntries(plans.map(plan => [plan.plan, plan.features])), PLAN_FEATURES);
   // The static fallbacks on the site show the same strings until /api/plans answers.
   const { PLAN_CATALOG: sitePlans } = await import(pathToFileURL(join(site, 'pricing.js')).href);
@@ -338,8 +338,8 @@ try {
   // Baseline: every migration except the two under test, on a fresh PGlite.
   const scratch = await mkdtemp(join(tmpdir(), 'zerox-billing-caps-'));
   baseline = { scratch, db: null };
-  // Rolled back newest first: what the migrations before CAPS left (20261029001000, which
-  // replaces zerox_reserve_v2 after PLANS, is rolled back first below).
+  // Rolled back newest first: what the migrations before CAPS left (20261102000000 and
+  // 20261029001000, which replace zerox_reserve_v2 after PLANS, are rolled back first below).
   for (const migration of await listMigrations()) {
     if (migration.file < CAPS) await copyFile(migration.path, join(scratch, migration.file));
   }
@@ -361,6 +361,7 @@ try {
       has_function_privilege('anon', p.oid, 'EXECUTE') AS anon, has_function_privilege('authenticated', p.oid, 'EXECUTE') AS auth,
       has_function_privilege('service_role', p.oid, 'EXECUTE') AS service
     FROM pg_proc AS p JOIN pg_namespace AS n ON n.oid = p.pronamespace WHERE n.nspname = 'public' AND p.proname = ANY($1) ORDER BY 1, 2`, [names])).rows;
+  await db.exec(await readFile(join(root, 'migrations', 'down', '20261102000000_free_token_window.sql'), 'utf8'));
   await db.exec(await readFile(join(root, 'migrations', 'down', '20261029001000_pool_concurrency.sql'), 'utf8'));
   await db.exec(await downSql(PLANS));
   await db.exec(await downSql(CAPS));

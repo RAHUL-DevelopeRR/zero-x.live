@@ -117,7 +117,7 @@ try {
     '20261028000000_reservation_leases.sql', '20261029000000_session_devices.sql', '20261029000100_push_tokens.sql',
     '20261029000200_provider_keys.sql', '20261029000300_provider_key_budgets.sql', '20261029000400_oiop_offers.sql',
     '20261029000500_credit_programs.sql', '20261029000800_paid_billing_caps.sql', '20261029000900_plan_features_claude.sql',
-    '20261029001000_pool_concurrency.sql'];
+    '20261029001000_pool_concurrency.sql', '20261102000000_free_token_window.sql'];
   assert.deepEqual(migrations.map(migration => migration.file).filter(file => businessMigrations.includes(file)), businessMigrations);
   assert.equal((await sql('SELECT count(*)::int AS n FROM supabase_migrations.schema_migrations'))[0].n, migrations.length);
   await assert.rejects(rpc(env, 'zerox_does_not_exist', {}), error =>
@@ -177,21 +177,22 @@ try {
   // ---------------------------------------------------------------- plans
   const plans = await rpcRows(env, 'zerox_plan_policies_v2', {});
   const pick = ({ plan, name, price_usd, price_usd_cents, price_inr_paise, daily_requests, daily_tokens, rpm_limit,
-    concurrency_limit, allowed_tiers, monthly_credit_microusd, public: listed }) => ({ plan, name, price_usd,
+    concurrency_limit, allowed_tiers, monthly_credit_microusd, public: listed, window_tokens, window_seconds }) => ({ plan, name, price_usd,
     price_usd_cents, price_inr_paise, daily_requests, daily_tokens, rpm_limit, concurrency_limit, allowed_tiers,
-    monthly_credit_microusd, listed });
+    monthly_credit_microusd, listed, window_tokens, window_seconds });
   assert.deepEqual(plans.map(pick), [
-    { plan: 'free', name: 'Free', price_usd: 0, price_usd_cents: 0, price_inr_paise: 0, daily_requests: 100, daily_tokens: 500000,
-      rpm_limit: 10, concurrency_limit: 2, allowed_tiers: ['free'], monthly_credit_microusd: 0, listed: true },
+    { plan: 'free', name: 'Free', price_usd: 0, price_usd_cents: 0, price_inr_paise: 0, daily_requests: 100, daily_tokens: 5000000,
+      rpm_limit: 10, concurrency_limit: 2, allowed_tiers: ['free'], monthly_credit_microusd: 0, listed: true,
+      window_tokens: 1000000, window_seconds: 18000 },
     { plan: 'pro', name: 'Pro', price_usd: 10, price_usd_cents: 1000, price_inr_paise: 89900, daily_requests: 2000,
       daily_tokens: 10000000, rpm_limit: 30, concurrency_limit: 4, allowed_tiers: ['free', 'paid'],
-      monthly_credit_microusd: 8000000, listed: true },
+      monthly_credit_microusd: 8000000, listed: true, window_tokens: null, window_seconds: null },
     { plan: 'max', name: 'Max', price_usd: 40, price_usd_cents: 4000, price_inr_paise: 349900, daily_requests: 10000,
       daily_tokens: 50000000, rpm_limit: 60, concurrency_limit: 8, allowed_tiers: ['free', 'paid'],
-      monthly_credit_microusd: 35000000, listed: true },
+      monthly_credit_microusd: 35000000, listed: true, window_tokens: null, window_seconds: null },
     { plan: 'ultrawork', name: 'Pro (legacy)', price_usd: 10, price_usd_cents: 1000, price_inr_paise: 89900,
       daily_requests: 2000, daily_tokens: 10000000, rpm_limit: 30, concurrency_limit: 4, allowed_tiers: ['free', 'paid'],
-      monthly_credit_microusd: 8000000, listed: false },
+      monthly_credit_microusd: 8000000, listed: false, window_tokens: null, window_seconds: null },
   ]);
   assert.ok(plans.every(plan => Array.isArray(plan.features) && plan.features.length >= 4 && plan.features.every(f => typeof f === 'string')));
   assert.deepEqual(plans.map(plan => plan.highlighted), [false, true, false, false]);
@@ -215,7 +216,8 @@ try {
   assert.match(first.reservation_id, /^[0-9a-f-]{36}$/);
   assert.equal(first.plan, 'free');
   assert.equal(first.remaining_requests, 99);
-  assert.equal(first.remaining_tokens, 499000);
+  assert.equal(first.remaining_tokens, 999000, 'Free: the rolling window\'s remaining tokens');
+  assert.deepEqual([first.window_tokens, first.window_seconds, first.window_used_tokens], [1000000, 18000, 1000]);
   assert.equal(first.credit_balance_microusd, 0);
   assert.equal(new Date(first.resets_at).toISOString(), nextResets);
   assert.equal(first.retry_after_seconds, null);
@@ -254,7 +256,8 @@ try {
   // ---------------------------------------------------------------- failure statuses
   const missing = await reserve(randomUUID());
   assert.deepEqual(missing, { status: 'no_account', reservation_id: null, plan: null, remaining_requests: null,
-    remaining_tokens: null, credit_balance_microusd: null, resets_at: null, retry_after_seconds: null });
+    remaining_tokens: null, credit_balance_microusd: null, resets_at: null, retry_after_seconds: null,
+    window_tokens: null, window_seconds: null, window_used_tokens: null, window_resets_at: null });
   const suspendedUser = await newUser('pro', { suspended: true, credits: 5000000 });
   const suspended = await reserve(suspendedUser);
   assert.equal(suspended.status, 'suspended');
@@ -274,25 +277,138 @@ try {
   const reset = await reserve(freeUser, { p_tokens: 1000 });
   assert.equal(reset.status, 'ok', 'UTC daily reset applies before the cap check');
   assert.equal(reset.remaining_requests, 99);
-  assert.equal(reset.remaining_tokens, 499000);
+  assert.equal(reset.remaining_tokens, 999000);
   const resetRow = await account(freeUser);
   assert.equal(resetRow.last_usage_reset.toISOString().slice(0, 10), todayUtc);
   assert.equal(resetRow.daily_requests, 1);
   await settle(reset.reservation_id, { p_prompt_tokens: 1000, p_completion_tokens: 0 });
-  const dailyTokens = await reserve(freeUser, { p_tokens: 499001 });
+  // Plans without a token window (Pro, Max) keep the daily token cap exactly as before.
+  const dailyCapUser = await newUser('pro', { credits: 5000000 });
+  await sql('UPDATE public.zerox_accounts SET daily_tokens_used = 9999000, last_usage_reset = $2 WHERE clerk_id = $1', [dailyCapUser, todayUtc]);
+  const dailyTokens = await reserve(dailyCapUser, { p_tokens: 1001 });
   assert.equal(dailyTokens.status, 'user_daily_tokens');
-  assert.equal(dailyTokens.remaining_tokens, 499000);
+  assert.equal(dailyTokens.remaining_tokens, 1000);
   assert.equal(new Date(dailyTokens.resets_at).toISOString(), nextResets);
-  assert.equal((await reserve(freeUser, { p_tokens: 499000 })).status, 'ok', 'exactly the remaining tokens fit');
+  assert.deepEqual([dailyTokens.window_tokens, dailyTokens.window_seconds, dailyTokens.window_used_tokens, dailyTokens.window_resets_at],
+    [null, null, null, null], 'no window columns for a plan without a window');
+  assert.equal((await reserve(dailyCapUser, { p_tokens: 1000 })).status, 'ok', 'exactly the remaining tokens fit');
   // A reservation from yesterday settled today leaves today's counters alone.
-  await sql("UPDATE public.zerox_reservations SET usage_day = usage_day - 1 WHERE user_id = $1 AND status = 'active'", [freeUser]);
-  const [yesterday] = await sql("SELECT id FROM public.zerox_reservations WHERE user_id = $1 AND status = 'active'", [freeUser]);
-  const beforeSettle = await account(freeUser);
+  await sql("UPDATE public.zerox_reservations SET usage_day = usage_day - 1 WHERE user_id = $1 AND status = 'active'", [dailyCapUser]);
+  const [yesterday] = await sql("SELECT id FROM public.zerox_reservations WHERE user_id = $1 AND status = 'active'", [dailyCapUser]);
+  const beforeSettle = await account(dailyCapUser);
   await settle(yesterday.id, { p_status: 'refunded', p_prompt_tokens: 0, p_completion_tokens: 0 });
-  const afterSettle = await account(freeUser);
+  const afterSettle = await account(dailyCapUser);
   assert.equal(afterSettle.daily_requests, beforeSettle.daily_requests);
   assert.equal(afterSettle.daily_tokens_used, beforeSettle.daily_tokens_used);
   ok('no_account, suspended, upgrade_required, user_daily_requests, user_daily_tokens, UTC reset, cross-day settle');
+
+  // ---------------------------------------------------------------- rolling 5-hour token window (Free)
+  {
+    const WINDOW = 18000;
+    const shift = (userId, seconds, where = 'true') => sql(`UPDATE public.zerox_reservations SET created_at = created_at - make_interval(secs => $2)
+      WHERE user_id = $1 AND ${where}`, [userId, seconds]);
+    const near = (actual, expected, label) => assert.ok(Math.abs(new Date(actual).getTime() - expected) <= 2000,
+      `${label}: ${new Date(actual).toISOString()} vs ${new Date(expected).toISOString()}`);
+    const createdAt = async id => (await sql('SELECT created_at FROM public.zerox_reservations WHERE id = $1', [id]))[0].created_at.getTime();
+
+    // Enforcement: 1,000,000 tokens per window, this reservation included.
+    const windowUser = await newUser('free');
+    const big = await reserve(windowUser, { p_tokens: 600000 });
+    assert.equal(big.status, 'ok');
+    assert.deepEqual([big.window_tokens, big.window_seconds, big.window_used_tokens, big.remaining_tokens], [1000000, WINDOW, 600000, 400000]);
+    const bigAt = await createdAt(big.reservation_id);
+    near(big.window_resets_at, bigAt + WINDOW * 1000, 'window resets when its oldest tokens leave it');
+    assert.equal(new Date(big.resets_at).toISOString(), nextResets, 'resets_at stays the UTC midnight on success');
+    const over = await reserve(windowUser, { p_tokens: 400001 });
+    assert.equal(over.status, 'user_window_tokens', 'an active reservation counts with its reserved tokens');
+    assert.equal(over.reservation_id, null);
+    assert.equal(over.window_used_tokens, 600000);
+    near(over.resets_at, bigAt + WINDOW * 1000, 'refused: resets_at is when enough of the window has expired');
+    near(over.window_resets_at, bigAt + WINDOW * 1000, 'window_resets_at too');
+    assert.ok(over.retry_after_seconds > WINDOW - 5 && over.retry_after_seconds <= WINDOW, `retry ${over.retry_after_seconds}`);
+    assert.equal((await account(windowUser)).daily_requests, 1, 'a refused reservation counts no request');
+    const fits = await reserve(windowUser, { p_tokens: 400000 });
+    assert.equal(fits.status, 'ok', 'exactly the remaining window tokens fit');
+    assert.equal(fits.remaining_tokens, 0);
+
+    // Settled reservations count their charged tokens; refunds count nothing.
+    await settle(big.reservation_id, { p_prompt_tokens: 150000, p_completion_tokens: 50000 });
+    await settle(fits.reservation_id, { p_status: 'refunded', p_prompt_tokens: 0, p_completion_tokens: 0 });
+    const afterRefund = await reserve(windowUser, { p_tokens: 800000 });
+    assert.equal(afterRefund.status, 'ok', 'settling to actual usage and a refund free the window');
+    assert.equal(afterRefund.window_used_tokens, 1000000);
+    // A released reservation (lease lapsed, never settled) keeps its reserved tokens in the window.
+    await sql("UPDATE public.zerox_reservations SET lease_expires_at = now() - interval '1 second' WHERE id = $1", [afterRefund.reservation_id]);
+    const lapsed = await reserve(windowUser, { p_tokens: 1 });
+    assert.equal(lapsed.status, 'user_window_tokens');
+    assert.equal((await sql('SELECT status FROM public.zerox_reservations WHERE id = $1', [afterRefund.reservation_id]))[0].status, 'released');
+
+    // The daily token cap no longer refuses a windowed plan; the daily request cap still does.
+    await sql('UPDATE public.zerox_accounts SET daily_tokens_used = 5000000 WHERE clerk_id = $1', [windowUser]);
+    await shift(windowUser, WINDOW + 1);
+    const rolled = await reserve(windowUser, { p_tokens: 1000 });
+    assert.equal(rolled.status, 'ok', 'tokens older than the window stop counting, and daily_tokens does not refuse');
+    assert.equal(rolled.window_used_tokens, 1000);
+    await settle(rolled.reservation_id, { p_prompt_tokens: 1000, p_completion_tokens: 0 });
+    await sql('UPDATE public.zerox_accounts SET daily_requests = 100 WHERE clerk_id = $1', [windowUser]);
+    assert.equal((await reserve(windowUser)).status, 'user_daily_requests', 'the daily request cap stays');
+
+    // Rolling expiry and reset time across several reservations: the window frees enough at the
+    // made-at time of the earliest reservation whose expiry (with all older ones) makes room.
+    const rollUser = await newUser('free');
+    const slices = [];
+    for (let index = 0; index < 3; index += 1) {
+      const row = await reserve(rollUser, { p_tokens: 300000 });
+      assert.equal(row.status, 'ok');
+      await settle(row.reservation_id, { p_prompt_tokens: 300000, p_completion_tokens: 0 });
+      slices.push(row.reservation_id);
+    }
+    // Made 4 h, 3 h and 2 h ago.
+    for (const [index, hours] of [[0, 4], [1, 3], [2, 2]]) await shift(rollUser, hours * 3600, `id = '${slices[index]}'`);
+    const ages = await Promise.all(slices.map(createdAt));
+    const needsTwo = await reserve(rollUser, { p_tokens: 500000 });
+    assert.equal(needsTwo.status, 'user_window_tokens');
+    assert.equal(needsTwo.window_used_tokens, 900000);
+    near(needsTwo.resets_at, ages[1] + WINDOW * 1000, '500K needs the two oldest slices to expire (in 2 h)');
+    assert.ok(Math.abs(needsTwo.retry_after_seconds - 7200) <= 3, `retry ${needsTwo.retry_after_seconds}`);
+    const needsOne = await reserve(rollUser, { p_tokens: 200000 });
+    assert.equal(needsOne.status, 'user_window_tokens');
+    near(needsOne.resets_at, ages[0] + WINDOW * 1000, '200K needs the oldest slice to expire (in 1 h)');
+    const tooBig = await reserve(rollUser, { p_tokens: 1000001 });
+    assert.equal(tooBig.status, 'user_window_tokens', 'a request larger than the window never fits');
+    near(tooBig.resets_at, ages[2] + WINDOW * 1000, 'and is told when the last counted tokens expire');
+    assert.equal((await reserve(rollUser, { p_tokens: 100000 })).status, 'ok', 'what fits is admitted');
+
+    // The account overview shows the current window next to today's usage.
+    const overview = await rpc(env, 'zerox_account_overview', { p_user_id: rollUser });
+    assert.deepEqual({ ...overview.usage_window, resets_at: undefined }, { window_seconds: WINDOW, limit_tokens: 1000000,
+      tokens: 1000000, remaining_tokens: 0, resets_at: undefined });
+    near(overview.usage_window.resets_at, ages[0] + WINDOW * 1000, 'overview: when the oldest counted tokens leave');
+    assert.equal(overview.policy.window_tokens, 1000000);
+    assert.equal(overview.usage_today.tokens, 1000000, 'usage_today keeps counting the UTC day');
+    const fresh = await rpc(env, 'zerox_account_overview', { p_user_id: await newUser('free') });
+    assert.deepEqual(fresh.usage_window, { window_seconds: WINDOW, limit_tokens: 1000000, tokens: 0, remaining_tokens: 1000000, resets_at: null });
+
+    // A paid plan opts in by setting both columns; they must be set together and in range.
+    await assert.rejects(sql("UPDATE public.zerox_plan_policy SET window_tokens = 5 WHERE plan = 'pro'"), /zerox_plan_policy_window_check/);
+    await assert.rejects(sql("UPDATE public.zerox_plan_policy SET window_tokens = 5, window_seconds = 10 WHERE plan = 'pro'"), /window_seconds_check/);
+
+    // The window count reads the reservations through (user_id, created_at) and usage events
+    // through their reservation_id, never a table scan.
+    await sql('SET enable_seqscan = off');
+    try {
+      const plan = (await sql(`EXPLAIN SELECT r.created_at, CASE WHEN r.status = 'settled'
+          THEN coalesce(e.prompt_tokens + e.completion_tokens, r.prompt_tokens + r.completion_tokens, r.reserved_tokens)
+          ELSE r.reserved_tokens END
+        FROM public.zerox_reservations AS r LEFT JOIN public.zerox_usage_events AS e ON e.reservation_id = r.id
+        WHERE r.user_id = $1 AND r.created_at > now() - make_interval(secs => 18000) AND r.created_at <= now()`, [rollUser]))
+        .map(row => row['QUERY PLAN']).join('\n');
+      assert.match(plan, /zerox_reservations_user_created_idx/, plan);
+      assert.match(plan, /zerox_usage_events_reservation_id_key/, plan);
+      assert.doesNotMatch(plan, /Seq Scan/, plan);
+    } finally { await sql('RESET enable_seqscan'); }
+  }
+  ok('Free 5-hour window: 1M tokens incl. active and released holds, settled usage and refunds, rolling expiry, reset time, daily token cap lifted, request cap kept, overview, index use');
 
   // ---------------------------------------------------------------- rpm and concurrency
   const rpmUser = await newUser('free');
@@ -1391,7 +1507,8 @@ try {
 
   // ---------------------------------------------------------------- account overview and admin overview
   const statsOverview = await rpc(env, 'zerox_account_overview', { p_user_id: statsUser });
-  assert.deepEqual(Object.keys(statsOverview).sort(), ['account', 'credits', 'policy', 'subscription', 'usage_today']);
+  assert.deepEqual(Object.keys(statsOverview).sort(), ['account', 'credits', 'policy', 'subscription', 'usage_today', 'usage_window']);
+  assert.equal(statsOverview.usage_window, null, 'no window on Max');
   assert.equal(statsOverview.account.id, statsUser);
   assert.equal(statsOverview.policy.daily_requests, 10000);
   assert.equal(statsOverview.credits.balance_microusd, 10000000 - 4000);
@@ -1542,7 +1659,9 @@ try {
     // v1.5 push tokens for the relay (contract section 10)
     'zerox_push_register', 'zerox_push_list', 'zerox_push_delete', 'zerox_push_delivered',
     // concurrency leases (migrations/20261028000000_reservation_leases.sql)
-    'zerox_renew_reservation'];
+    'zerox_renew_reservation',
+    // rolling token window (migrations/20261102000000_free_token_window.sql)
+    'zerox_window_usage'];
   for (const name of contractRpcs) assert.ok(functions.some(row => row.proname === name), `${name} exists`);
   for (const row of functions) {
     assert.equal(row.prosecdef, false, `${row.signature} is SECURITY INVOKER`);
@@ -1677,7 +1796,8 @@ try {
   // <version>_<name>.down.sql files are checked with their own migrations (check-billing-caps.mjs,
   // check-catalog-db.mjs).
   const downFiles = (await readdir(join(root, 'migrations/down'))).filter(file => !file.endsWith('.down.sql')).sort();
-  assert.deepEqual(downFiles, ['20261028000000_reservation_leases.sql', '20261029001000_pool_concurrency.sql']);
+  assert.deepEqual(downFiles, ['20261028000000_reservation_leases.sql', '20261029001000_pool_concurrency.sql',
+    '20261102000000_free_token_window.sql']);
   for (const file of downFiles) {
     const migration = migrations.find(candidate => candidate.file === file);
     assert.ok(migration, `${file} undoes a migration of the same name`);
