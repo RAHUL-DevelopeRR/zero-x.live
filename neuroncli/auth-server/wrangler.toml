@@ -112,9 +112,10 @@ CSP_ENFORCE = "false"
 # binding = "RELEASES"
 # bucket_name = "neuron-releases"
 
-[[kv_namespaces]]
-binding = "SESSIONS_KV"
-id = "717e03bfc7cf4efa84648ccd82e4c9ed"
+# Sessions live in Postgres for both runtimes since the cutover's step 1 (deploy/aws/SESSIONS.md):
+# with no SESSIONS_KV binding the Worker uses the same store as the Node server. The old KV
+# namespace (id 717e03bfc7cf4efa84648ccd82e4c9ed) is kept for 30 days, then deleted.
+# Rollback: git revert this commit, or `wrangler rollback` for the previous Worker version.
 
 [ai]
 binding = "AI"
