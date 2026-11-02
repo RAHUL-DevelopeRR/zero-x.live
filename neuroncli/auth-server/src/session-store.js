@@ -12,6 +12,13 @@ const storageKey = sha256Hex;
 // Raw key/value store: Cloudflare KV, or the Postgres store (which hashes keys itself).
 export function persistentSessionStore(env) {
   if (env.SESSIONS_KV) return env.SESSIONS_KV;
+  return databaseRecordStore(env);
+}
+
+// The Postgres store alone (gateway_session_store, TTLs of at most seven days), whether or not
+// SESSIONS_KV is bound, for records both runtimes must share (src/oiop/models-dev.js). Null
+// without a database.
+export function databaseRecordStore(env) {
   if (!databaseConfigured(env)) return null;
   if (!stores.has(env)) stores.set(env, {
     get: async key => (await accountRpc(env, 'zerox_session_get', { p_key: await storageKey(key) }))?.value ?? null,
@@ -126,6 +133,22 @@ export async function rearmRecord(env, key, record, now = Date.now()) {
   const done = await recordStore(env).rearm(target, JSON.stringify(rearmed), { expirationTtl: ttl });
   if (done) record.rearmed_at = now;
   return done;
+}
+
+// Rewrites a session record with a later `expires` (sliding expiry, src/session-activity.js).
+// The Postgres store's write is conditional and never recreates a deleted session. KV has no
+// conditional write, so the caller must re-check the session index afterwards and delete the
+// record when the session was signed out meanwhile. Returns whether the record was written.
+export async function extendRecord(env, key, record, now = Date.now()) {
+  const remaining = (sessionExpiry(env, record) - now) / 1000;
+  if (!(remaining > 60)) return false;
+  const { target, ttl } = await recordTarget(env, key, record, remaining);
+  const value = JSON.stringify(record);
+  if (env.SESSIONS_KV) {
+    await env.SESSIONS_KV.put(target, value, { expirationTtl: ttl });
+    return true;
+  }
+  return recordStore(env).rearm(target, value, { expirationTtl: ttl });
 }
 
 // Revoke-all only knows token hashes (from the session index).

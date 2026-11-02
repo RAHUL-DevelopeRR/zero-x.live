@@ -24,12 +24,15 @@ const STATUS_RANK = Object.freeze({ available: 0, degraded: 1, busy: 2, blurred:
 // Last value this isolate published or read per pool: { status, until, at }.
 const known = new Map();
 
+// slow_until is present while the pool's latest first-byte or idle timeout is recent
+// (provider-health.js): `auto` then tries it after the healthy pools of its tier.
 export function publicStatus(record, now = Date.now()) {
   if (!record) return { status: 'available', until: 0 };
+  const slow = (record.slow_until || 0) > now ? { slow_until: record.slow_until } : {};
   const until = record.circuit_open_until || 0;
-  if (until <= now) return { status: record.status === HealthState.DEGRADED ? 'degraded' : 'available', until: 0 };
-  if (record.status === HealthState.RATE_LIMITED && until - now <= BUSY_MAX_MS) return { status: 'busy', until };
-  return { status: 'blurred', until };
+  if (until <= now) return { status: record.status === HealthState.DEGRADED ? 'degraded' : 'available', until: 0, ...slow };
+  if (record.status === HealthState.RATE_LIMITED && until - now <= BUSY_MAX_MS) return { status: 'busy', until, ...slow };
+  return { status: 'blurred', until, ...slow };
 }
 
 /**
@@ -41,20 +44,21 @@ export function shareHealth(c, env, key, record, now = Date.now()) {
   const kv = env?.SESSIONS_KV;
   if (!kv || !key) return;
   const next = publicStatus(record, now);
+  const slowUntil = next.slow_until || 0;
   const last = known.get(key);
-  const changed = !last || last.status !== next.status || Math.abs((last.until || 0) - next.until) > 5_000;
+  const changed = !last || last.status !== next.status || Math.abs((last.until || 0) - next.until) > 5_000
+    || Math.abs((last.slow_until || 0) - slowUntil) > 5_000;
   if (!changed && now - last.at < WRITE_INTERVAL_MS) return;
   const task = (async () => {
-    if (next.status === 'available') {
-      if (last && last.status === 'available' && now - last.at < READ_INTERVAL_MS) return;
+    if (next.status === 'available' && !slowUntil) {
+      if (last && last.status === 'available' && !last.slow_until && now - last.at < READ_INTERVAL_MS) return;
       const shared = await kv.get(PREFIX + key, { type: 'json' }).catch(() => null);
       known.set(key, { ...next, at: now });
-      if (!shared || shared.status === 'available') return;
+      if (!shared || (shared.status === 'available' && !((shared.slow_until || 0) > now))) return;
     }
     known.set(key, { ...next, at: now });
-    const ttl = Math.max(MIN_TTL_SECONDS, Math.ceil((next.until - now) / 1000) + MIN_TTL_SECONDS);
-    await kv.put(PREFIX + key, JSON.stringify({ status: next.status, until: next.until, at: now }),
-      { expirationTtl: ttl });
+    const ttl = Math.max(MIN_TTL_SECONDS, Math.ceil((Math.max(next.until, slowUntil) - now) / 1000) + MIN_TTL_SECONDS);
+    await kv.put(PREFIX + key, JSON.stringify({ ...next, at: now }), { expirationTtl: ttl });
   })().catch(() => {
     console.warn('Neuron health share failed', { pool: key });
   });

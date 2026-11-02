@@ -1,0 +1,15 @@
+# Starts zerox-cron.service every 10 minutes, like the Worker's */10 cron trigger. Persistent:
+# a tick missed while the VM was down runs at boot. host-setup.sh installs it and never enables
+# it: the Worker's cron owns the schedule until the cutover's cron step (CUTOVER.md, step 5):
+#   sudo systemctl enable --now zerox-cron.timer
+[Unit]
+Description=Zero-X gateway cron every 10 minutes
+
+[Timer]
+OnCalendar=*:0/10
+Persistent=true
+AccuracySec=10s
+Unit=zerox-cron.service
+
+[Install]
+WantedBy=timers.target

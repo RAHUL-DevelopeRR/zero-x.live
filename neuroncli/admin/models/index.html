@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="theme-color" content="#0A0A0C">
+  <title>Model catalog | Zero-X admin</title>
+  <link rel="icon" type="image/png" sizes="32x32" href="/Assets/zerox-favicon-32.png">
+  <link rel="stylesheet" href="/site-fonts.css">
+  <link rel="stylesheet" href="/zx-tokens.css">
+  <link rel="stylesheet" href="/admin/models/models.css">
+  <script defer src="/admin/models/models.js"></script>
+</head>
+<body>
+  <a class="zx-skip" href="#main">Skip to content</a>
+  <header class="zx-header">
+    <div class="zx-container zx-header__inner">
+      <a class="zx-brand" href="https://dashboard.zero-x.live/"><img src="/Assets/zerox-favicon-32.png" width="28" height="28" alt="">Zero-X</a>
+      <span class="zx-badge zx-badge--purple">Operator</span>
+    </div>
+  </header>
+
+  <main id="main" class="zx-container" tabindex="-1">
+    <div class="zx-dash-head">
+      <div>
+        <p class="zx-eyebrow">Admin</p>
+        <h1>Model catalog</h1>
+      </div>
+    </div>
+    <p class="zx-muted models-intro">The models the gateway serves. A change is saved as a draft revision, checked against the
+      code guardrails (provider types, key slots, list prices, spend caps), reviewed as a diff against what serves now, and goes
+      live only when you approve it. Every change is in the audit log. Prices are upstream list prices; users pay them times the
+      markup.</p>
+
+    <p id="message" class="zx-alert zx-mb" role="status" aria-live="polite"></p>
+
+    <form id="unlock" class="zx-card" method="post" autocomplete="off">
+      <div class="zx-form-row">
+        <div class="zx-field">
+          <label for="admin-token">Gateway admin token</label>
+          <input id="admin-token" class="zx-input" type="password" autocomplete="off" spellcheck="false" minlength="32" required>
+          <p class="zx-help">GATEWAY_ADMIN_TOKEN. Kept in this tab's memory only; reloading forgets it.</p>
+        </div>
+        <button id="unlock-button" class="zx-btn zx-btn--primary" type="submit">Unlock</button>
+      </div>
+    </form>
+
+    <div id="catalog" hidden>
+      <div class="zx-row zx-row--between models-section-head">
+        <h2>Models</h2>
+        <div class="zx-row models-actions">
+          <button id="new-model" class="zx-btn zx-btn--sm" type="button">Add a model</button>
+          <button id="lock" class="zx-btn zx-btn--ghost zx-btn--sm" type="button">Forget token</button>
+        </div>
+      </div>
+      <p id="catalog-status" class="zx-muted"></p>
+      <ul id="catalog-warnings" class="models-list"></ul>
+      <div class="zx-table-wrap">
+        <table class="zx-table">
+          <thead>
+            <tr><th scope="col">Model</th><th scope="col">Provider</th><th scope="col">Status</th><th scope="col">Serves from</th>
+              <th scope="col">Tiers</th><th scope="col">Change</th><th scope="col"><span class="zx-visually-hidden">Actions</span></th></tr>
+          </thead>
+          <tbody id="models"></tbody>
+        </table>
+      </div>
+      <p id="empty" class="zx-muted zx-mt" hidden>No catalog rows: the code catalog serves alone.</p>
+
+      <section id="detail" class="zx-card zx-mt-lg" hidden aria-labelledby="detail-title">
+        <div class="zx-row zx-row--between">
+          <h2 id="detail-title">Model</h2>
+          <button id="close-detail" class="zx-btn zx-btn--ghost zx-btn--sm" type="button">Close</button>
+        </div>
+        <p id="detail-meta" class="zx-muted"></p>
+        <ul id="detail-reasons" class="models-list models-danger"></ul>
+        <h3>Serving revision</h3>
+        <dl id="active-spec" class="models-spec"></dl>
+        <div id="pending" hidden>
+          <h3 id="pending-title">Pending change</h3>
+          <div class="zx-table-wrap">
+            <table class="zx-table">
+              <thead><tr><th scope="col">Field</th><th scope="col">Now</th><th scope="col">Proposed</th><th scope="col">Kind</th></tr></thead>
+              <tbody id="diff"></tbody>
+            </table>
+          </div>
+          <ul id="pending-validation" class="models-list"></ul>
+          <dl id="pending-preview" class="models-spec"></dl>
+          <div class="zx-field zx-mt">
+            <label for="decision-note">Note for the audit log</label>
+            <input id="decision-note" class="zx-input" maxlength="2000" autocomplete="off">
+          </div>
+          <div class="zx-row models-actions zx-mt">
+            <button id="approve" class="zx-btn zx-btn--primary" type="button">Approve</button>
+            <button id="reject" class="zx-btn zx-btn--danger" type="button">Reject</button>
+          </div>
+        </div>
+        <div class="zx-row models-actions zx-mt">
+          <button id="edit" class="zx-btn zx-btn--sm" type="button">Propose a change</button>
+          <button id="disable" class="zx-btn zx-btn--danger zx-btn--sm" type="button">Disable</button>
+          <button id="enable" class="zx-btn zx-btn--sm" type="button">Enable</button>
+        </div>
+        <h3>History</h3>
+        <ul id="events" class="models-list"></ul>
+      </section>
+
+      <form id="editor" class="zx-card zx-mt-lg" method="post" autocomplete="off" hidden>
+        <h2 id="editor-title">Add a model</h2>
+        <div class="zx-form-row">
+          <div class="zx-field">
+            <label for="f-type">Provider type</label>
+            <select id="f-type" class="zx-select" required></select>
+          </div>
+          <div class="zx-field">
+            <label for="f-upstream">Upstream model id</label>
+            <input id="f-upstream" class="zx-input zx-mono" maxlength="200" autocomplete="off" spellcheck="false" required>
+            <p class="zx-help">Public id: <span id="f-id" class="zx-mono">—</span></p>
+          </div>
+        </div>
+        <div class="zx-form-row">
+          <div class="zx-field">
+            <label for="f-name">Display name</label>
+            <input id="f-name" class="zx-input" maxlength="120" autocomplete="off" required>
+          </div>
+          <div class="zx-field">
+            <label for="f-aliases">Aliases (comma separated)</label>
+            <input id="f-aliases" class="zx-input zx-mono" autocomplete="off" spellcheck="false">
+          </div>
+        </div>
+        <div class="zx-form-row">
+          <div class="zx-field"><label for="f-context">Context window</label><input id="f-context" class="zx-input" type="number" min="1024" step="1" required></div>
+          <div class="zx-field"><label for="f-max">Max output tokens</label><input id="f-max" class="zx-input" type="number" min="256" step="1" required></div>
+          <div class="zx-field"><label for="f-default-max">Default max_tokens</label><input id="f-default-max" class="zx-input" type="number" min="256" step="1"></div>
+        </div>
+        <div class="zx-form-row">
+          <div class="zx-field"><label for="f-efforts">Reasoning efforts</label><input id="f-efforts" class="zx-input zx-mono" autocomplete="off" placeholder="low, medium, high"></div>
+          <div class="zx-field"><label for="f-effort-map">Effort map</label><input id="f-effort-map" class="zx-input zx-mono" autocomplete="off" placeholder="minimal=low, none=low"></div>
+          <div class="zx-field"><label for="f-default-effort">Default effort</label><input id="f-default-effort" class="zx-input zx-mono" autocomplete="off"></div>
+        </div>
+        <div class="zx-form-row">
+          <div class="zx-field"><label for="f-auto">Auto rank (empty: never chosen by auto)</label><input id="f-auto" class="zx-input" type="number" min="1" max="1000" step="1"></div>
+          <div class="zx-field"><label for="f-position">List position</label><input id="f-position" class="zx-input" type="number" min="0" max="100000" step="1" required></div>
+          <div class="zx-field"><label for="f-geo">Free-pool geo block</label><input id="f-geo" class="zx-input zx-mono" autocomplete="off" placeholder="EEA, GB, CH"></div>
+        </div>
+        <div class="zx-row models-checks">
+          <label><input id="f-tools" type="checkbox"> Tools</label>
+          <label><input id="f-vision" type="checkbox"> Vision</label>
+          <label><input id="f-enabled" type="checkbox"> Listed unless *_MODELS narrows it</label>
+        </div>
+
+        <fieldset id="free-pool" class="models-pool">
+          <legend><label><input id="f-free-on" type="checkbox"> Free pool</label></legend>
+          <div class="zx-form-row">
+            <div class="zx-field"><label for="f-free-slot">Key slot</label><select id="f-free-slot" class="zx-select"></select></div>
+            <div class="zx-field"><label for="f-free-rpm">RPM</label><input id="f-free-rpm" class="zx-input" type="number" min="0" step="1"></div>
+            <div class="zx-field"><label for="f-free-rpd">RPD</label><input id="f-free-rpd" class="zx-input" type="number" min="0" step="1"></div>
+            <div class="zx-field"><label for="f-free-tpm">TPM</label><input id="f-free-tpm" class="zx-input" type="number" min="0" step="1"></div>
+            <div class="zx-field"><label for="f-free-tpd">TPD</label><input id="f-free-tpd" class="zx-input" type="number" min="0" step="1"></div>
+          </div>
+        </fieldset>
+
+        <fieldset id="paid-pool" class="models-pool">
+          <legend><label><input id="f-paid-on" type="checkbox"> Paid pool (Pro and Max credits)</label></legend>
+          <div class="zx-form-row">
+            <div class="zx-field"><label for="f-paid-slot">Key slot</label><select id="f-paid-slot" class="zx-select"></select></div>
+            <div class="zx-field"><label for="f-paid-cap">Daily spend cap (USD)</label><input id="f-paid-cap" class="zx-input" type="number" min="0" step="any"></div>
+          </div>
+          <p id="f-paid-hint" class="zx-help"></p>
+          <div class="zx-form-row">
+            <div class="zx-field"><label for="f-paid-input">Input $/Mtok</label><input id="f-paid-input" class="zx-input" type="number" min="0" step="any"></div>
+            <div class="zx-field"><label for="f-paid-output">Output $/Mtok</label><input id="f-paid-output" class="zx-input" type="number" min="0" step="any"></div>
+            <div class="zx-field"><label for="f-paid-cache-read">Cache read $/Mtok</label><input id="f-paid-cache-read" class="zx-input" type="number" min="0" step="any"></div>
+            <div class="zx-field"><label for="f-paid-cache-write">Cache write $/Mtok</label><input id="f-paid-cache-write" class="zx-input" type="number" min="0" step="any"></div>
+            <div class="zx-field"><label for="f-paid-cache-write-1h">1h cache write $/Mtok</label><input id="f-paid-cache-write-1h" class="zx-input" type="number" min="0" step="any"></div>
+          </div>
+        </fieldset>
+
+        <div class="zx-field zx-mt">
+          <label for="f-note">Note for the reviewer</label>
+          <input id="f-note" class="zx-input" maxlength="2000" autocomplete="off">
+        </div>
+        <ul id="check-result" class="models-list"></ul>
+        <dl id="check-preview" class="models-spec"></dl>
+        <div class="zx-row models-actions zx-mt">
+          <button id="check" class="zx-btn" type="button">Check</button>
+          <button id="save" class="zx-btn zx-btn--primary" type="submit">Save draft</button>
+          <button id="cancel-edit" class="zx-btn zx-btn--ghost" type="button">Cancel</button>
+        </div>
+      </form>
+
+      <div class="zx-row zx-row--between models-section-head">
+        <h2>Audit log</h2>
+        <button id="load-audit" class="zx-btn zx-btn--ghost zx-btn--sm" type="button">Load</button>
+      </div>
+      <ul id="audit" class="models-list"></ul>
+    </div>
+  </main>
+</body>
+</html>

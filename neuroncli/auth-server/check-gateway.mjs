@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import app from './src/index.js';
 import { estimatePromptTokens, modelCatalog } from './src/providers.js';
-import { globalHealthTracker } from './src/provider-health.js';
+import { FailureKind, globalHealthTracker } from './src/provider-health.js';
+import { CATALOG, poolKey } from './src/catalog.js';
 import { RESERVED_OUTPUT_TOKENS } from './src/capacity.js';
 import { planPolicyRows } from './contract-rows.mjs';
 
@@ -103,6 +105,31 @@ try {
   assert.equal(new Set(chunks.filter(chunk => chunk.choices).map(chunk => chunk.id)).size, 1);
   assert.equal(JSON.parse(store.get('ses_test')).tokens_used, 64);
 
+  // Production (28 Oct, CPU-3): with Gemini and Groq parked, every `auto` request with tool
+  // history spent an attempt on Workers AI llama-3.3, which answered 400 (5006). auto now goes
+  // straight to the next candidate (NVIDIA) without calling the binding.
+  globalHealthTracker.reset();
+  for (const entry of CATALOG.filter(item => item.provider === 'gemini' || item.provider === 'groq')) {
+    for (const pool of entry.pools) globalHealthTracker.recordFailure(poolKey(entry, pool), { kind: FailureKind.RATE_LIMITED, retryAfterSeconds: 60 });
+  }
+  const bindingRuns = [];
+  const parkedEnv = { ...env, ALLOW_UNKNOWN_COUNTRY: 'true',
+    AI: { run: async model => { bindingRuns.push(model); throw new Error('5006: Invalid input'); } } };
+  const parkedUpstreams = [];
+  globalThis.fetch = async url => {
+    parkedUpstreams.push(url);
+    return Response.json({ choices: [{ index: 0, message: { role: 'assistant', content: 'done' }, finish_reason: 'stop' }], usage: { total_tokens: 7 } });
+  };
+  store.set('ses_parked', JSON.stringify(session));
+  const toolHistory = [...messages,
+    { role: 'assistant', content: null, tool_calls: [{ id: 'call-1', type: 'function', function: { name: 'read_file', arguments: '{"path":"hello.js"}' } }] },
+    { role: 'tool', tool_call_id: 'call-1', content: 'console.log(1)', is_error: false }];
+  response = await request('/v1/chat/completions', { model: 'auto', messages: toolHistory, tools }, 'ses_parked', parkedEnv);
+  assert.equal(response.status, 200);
+  assert.deepEqual(bindingRuns, [], 'auto makes no Workers AI binding call');
+  assert.deepEqual(parkedUpstreams, ['https://integrate.api.nvidia.com/v1/chat/completions']);
+  globalHealthTracker.reset();
+
   globalThis.fetch = async (url, options) => {
     assert.equal(url, 'https://api.groq.com/openai/v1/chat/completions');
     assert.equal(JSON.parse(options.body).model, 'openai/gpt-oss-120b');
@@ -199,6 +226,80 @@ try {
   const quotaError = (await response.json()).error;
   assert.equal(quotaError.code, 'insufficient_quota');
   assert.ok(quotaError.resets_at);
+
+  // A running attempt renews its concurrency lease through zerox_renew_reservation. Before that
+  // migration is applied the RPC is missing (PostgREST PGRST202): the handler warns once, stops
+  // renewing, and the request still completes and settles. A settle that fails is retried once.
+  const leaseCalls = [];
+  let settleFailures = 1;
+  let finishUpstream;
+  const upstreamHeld = new Promise(resolve => { finishUpstream = resolve; });
+  const leaseFetch = async (url, options) => {
+    if (url.includes('/rest/v1/rpc/')) {
+      const rpc = url.split('/').at(-1); leaseCalls.push([rpc, JSON.parse(options.body)]);
+      if (rpc === 'zerox_get_account') return Response.json([{ clerk_id: accountId, plan: 'free', daily_requests: 2, daily_tokens_used: 5000, last_usage_reset: day }]);
+      if (rpc === 'zerox_plan_policies_v2') return Response.json(B1_POLICY_ROWS);
+      if (rpc === 'zerox_reserve_v2') return Response.json([{ status: 'ok', reservation_id: 'res-lease', plan: 'free', remaining_requests: 97, remaining_tokens: 480000 }]);
+      if (rpc === 'zerox_renew_reservation') {
+        return Response.json({ code: 'PGRST202', message: 'Could not find the function public.zerox_renew_reservation(p_lease_seconds, p_reservation_id) in the schema cache',
+          details: null, hint: null }, { status: 404 });
+      }
+      if (rpc === 'zerox_settle_v2') {
+        if (settleFailures-- > 0) return new Response('upstream connect error', { status: 503 });
+        return Response.json([{ status: 'settled' }]);
+      }
+      throw new Error(`Unexpected RPC ${rpc}`);
+    }
+    const encoder = new TextEncoder();
+    return new Response(new ReadableStream({ async start(controller) {
+      controller.enqueue(encoder.encode('data: {"choices":[{"index":0,"delta":{"content":"partial"},"finish_reason":null}]}\n\n'));
+      await upstreamHeld;
+      controller.enqueue(encoder.encode('data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n'));
+      controller.close();
+    } }), { headers: { 'Content-Type': 'text/event-stream' } });
+  };
+  globalThis.fetch = leaseFetch;
+  const leaseLogs = [];
+  const { warn, error: logError } = console;
+  console.warn = (...args) => leaseLogs.push(['warn', ...args]);
+  console.error = (...args) => leaseLogs.push(['error', ...args]);
+  let leaseText = '';
+  try {
+    response = await request('/v1/chat/completions', { model: 'groq/openai/gpt-oss-120b', messages, stream: true }, 'ses_account',
+      { ...accountEnv, RESERVATION_RENEW_MS: '20' });
+    assert.equal(response.status, 200);
+    const leaseReader = response.body.getReader();
+    await new Promise(resolve => setTimeout(resolve, 200));
+    finishUpstream();
+    for (let read = await leaseReader.read(); !read.done; read = await leaseReader.read()) leaseText += new TextDecoder().decode(read.value);
+    // A non-streamed request whose settle fails twice: one retry, then one error log.
+    globalThis.fetch = async (url, options) => {
+      if (url.includes('/rest/v1/rpc/')) return leaseFetch(url, options);
+      return Response.json({ choices: [], usage: { total_tokens: 9 } });
+    };
+    settleFailures = 2;
+    const failedSettle = await request('/v1/chat/completions', { model: 'groq/openai/gpt-oss-120b', messages }, 'ses_account',
+      { ...accountEnv, RESERVATION_RENEW_MS: '20' });
+    assert.equal(failedSettle.status, 200);
+    await new Promise(resolve => setTimeout(resolve, 100));
+  } finally {
+    console.warn = warn;
+    console.error = logError;
+  }
+  assert.ok(leaseText.includes('[DONE]'));
+  const renewCalls = leaseCalls.filter(([rpc]) => rpc === 'zerox_renew_reservation');
+  assert.equal(renewCalls.length, 1, 'renewal stops once the RPC is known to be missing');
+  assert.deepEqual(renewCalls[0][1], { p_reservation_id: 'res-lease', p_lease_seconds: 90 });
+  const settles = leaseCalls.filter(([rpc]) => rpc === 'zerox_settle_v2');
+  assert.equal(settles.length, 4, 'each failed settle is retried once');
+  assert.deepEqual(settles.slice(0, 2).map(([, args]) => [args.p_reservation_id, args.p_status]), [['res-lease', 'ok'], ['res-lease', 'ok']]);
+  // This fake database has no catalog or offer RPCs either; their loaders report that themselves.
+  const ownLoaders = /^error: (Neuron catalog rows unavailable|OIOP offers unavailable)/;
+  assert.deepEqual(leaseLogs.map(([level, message]) => `${level}: ${message}`).filter(line => !ownLoaders.test(line)), [
+    'warn: Neuron reservation renewal unavailable',
+    'error: Neuron settlement failed',
+  ], 'one warning for the missing RPC; a settle is reported only when its retry failed too');
+  assert.ok(!JSON.stringify(leaseLogs).includes('sb_secret_test'), 'no key in the logs');
   globalThis.fetch = async () => { throw new Error('database down'); };
   assert.equal((await app.request('https://zero-x.live/auth/session', { method: 'DELETE', headers: { Authorization: 'Bearer ses_account' } }, accountEnv)).status, 200);
   assert.equal(store.has('ses_account'), false);
@@ -224,5 +325,216 @@ try {
   assert.ok(!JSON.stringify(exchange).includes('secret-owned-key'));
   assert.deepEqual(exchange.models, ['meta-llama/llama-3.3-70b-instruct:free']);
   assert.equal((await app.request(callbackUrl, {}, env)).status, 400);
+
+  // Production (28 Oct, request #47): each candidate had 45 s to its first byte and the chain
+  // had no overall deadline, so the request ran 91 s, past the CLI's 60 s retry, and its third
+  // attempt started after the client had left. UPSTREAM_FAILOVER_BUDGET_MS bounds everything
+  // before the stream is committed: no candidate starts once it is spent, and the request ends
+  // as a 504 upstream_timeout.
+  globalHealthTracker.reset();
+  store.set('ses_budget', JSON.stringify(session));
+  const budgetMs = 600;
+  const budgetEnv = { ALLOW_ANONYMOUS_SESSIONS: 'true', SESSIONS_KV: env.SESSIONS_KV, ALLOW_UNKNOWN_COUNTRY: 'true',
+    GROQ_API_KEY: 'groq-test', GEMINI_API_KEY: 'gemini-test', NVIDIA_API_KEY: 'nvidia-test', NVIDIA_HOSTED: 'true',
+    ROUTER_MAX_ATTEMPTS: '8', UPSTREAM_TTFB_TIMEOUT_MS: '250', UPSTREAM_FAILOVER_BUDGET_MS: String(budgetMs) };
+  // An upstream that never sends a byte (it only stops when the gateway aborts the attempt).
+  const silent = options => new Promise((_, reject) => {
+    options.signal.addEventListener('abort', () => reject(options.signal.reason), { once: true });
+  });
+  let upstreamStarts = [];
+  globalThis.fetch = async (url, options) => { upstreamStarts.push(Date.now()); return silent(options); };
+  let budgetStart = Date.now();
+  response = await request('/v1/chat/completions', { model: 'auto', messages, stream: true }, 'ses_budget', budgetEnv);
+  let elapsed = Date.now() - budgetStart;
+  assert.equal(response.status, 504);
+  assert.equal((await response.json()).error.code, 'upstream_timeout');
+  assert.ok(elapsed < budgetMs + 300, `the failover chain ended within its budget (${elapsed} ms)`);
+  assert.ok(upstreamStarts.length >= 2 && upstreamStarts.length < 8,
+    `failed over within the budget, then stopped (${upstreamStarts.length} candidates)`);
+  assert.ok(upstreamStarts.every(at => at - budgetStart < budgetMs), 'no candidate started after the budget ran out');
+
+  // Only an attempt's own first-byte timeout counts against its pool. With 400 ms to the first
+  // byte, the first candidate times out on its own (marked slow) and the second is cut by the
+  // 600 ms budget: that pool was not given its full time, so nothing is recorded for it.
+  globalHealthTracker.reset();
+  upstreamStarts = [];
+  budgetStart = Date.now();
+  response = await request('/v1/chat/completions', { model: 'auto', messages, stream: true }, 'ses_budget',
+    { ...budgetEnv, UPSTREAM_TTFB_TIMEOUT_MS: '400' });
+  elapsed = Date.now() - budgetStart;
+  assert.equal(response.status, 504);
+  assert.equal((await response.json()).error.code, 'upstream_timeout');
+  assert.equal(upstreamStarts.length, 2);
+  assert.ok(elapsed >= budgetMs - 20 && elapsed < budgetMs + 300, `the second attempt ended with the budget (${elapsed} ms)`);
+  const recorded = [...globalHealthTracker.records.values()];
+  assert.equal(recorded.length, 1, 'the budget cut is not recorded against the second pool');
+  assert.equal(recorded[0].last_failure_kind, 'timeout');
+  assert.ok(recorded[0].slow_until > Date.now(), "the first pool's own timeout marks it slow");
+
+  // A non-streaming response may take longer than the budget to generate, so it is due by the
+  // end of the budget plus the idle timeout instead (1000 + 600 ms here), not after its own
+  // first-byte plus idle timeouts (1200 ms from a start at about 700 ms).
+  globalHealthTracker.reset();
+  upstreamStarts = [];
+  globalThis.fetch = async (url, options) => {
+    upstreamStarts.push(Date.now());
+    if (upstreamStarts.length === 1) {
+      await new Promise(resolve => setTimeout(resolve, 700));
+      return new Response('overloaded', { status: 503 });
+    }
+    return silent(options);
+  };
+  budgetStart = Date.now();
+  response = await request('/v1/chat/completions', { model: 'auto', messages }, 'ses_budget',
+    { ...budgetEnv, UPSTREAM_FAILOVER_BUDGET_MS: '1000', UPSTREAM_TTFB_TIMEOUT_MS: '600', UPSTREAM_IDLE_TIMEOUT_MS: '600' });
+  elapsed = Date.now() - budgetStart;
+  assert.equal(response.status, 504, 'a 5xx, then the budget ran out');
+  assert.equal((await response.json()).error.code, 'upstream_timeout');
+  assert.equal(upstreamStarts.length, 2);
+  assert.ok(elapsed >= 1550 && elapsed < 1850, `the non-streaming attempt ended at budget + idle (${elapsed} ms)`);
+  assert.equal(globalHealthTracker.records.size, 1, 'only the 503 is recorded');
+
+  // C8: a non-streaming answer is one JSON body with no byte before it, so it is due
+  // UPSTREAM_RESPONSE_TIMEOUT_MS (90 s) after the request arrived, under the first-byte limit of the
+  // proxy in front of the Node server, whatever budget + idle (up to 140 s) would allow. The same
+  // 503-then-silent upstream, capped at 1200 ms: a clean JSON 504, and the cut is not held against
+  // the second pool, which did not get its own time.
+  globalHealthTracker.reset();
+  upstreamStarts = [];
+  budgetStart = Date.now();
+  response = await request('/v1/chat/completions', { model: 'auto', messages }, 'ses_budget',
+    { ...budgetEnv, UPSTREAM_FAILOVER_BUDGET_MS: '1000', UPSTREAM_TTFB_TIMEOUT_MS: '600', UPSTREAM_IDLE_TIMEOUT_MS: '600',
+      UPSTREAM_RESPONSE_TIMEOUT_MS: '1200' });
+  elapsed = Date.now() - budgetStart;
+  assert.equal(response.status, 504);
+  assert.equal(response.headers.get('content-type'), 'application/json');
+  let capped = await response.json();
+  assert.deepEqual([capped.error.code, capped.error.type], ['upstream_timeout', 'server_error'], 'the contract error shape');
+  assert.equal(capped.error.request_id, response.headers.get('x-request-id'));
+  assert.equal(upstreamStarts.length, 2);
+  assert.ok(elapsed >= 1150 && elapsed < 1450, `the non-streaming request ended at its deadline (${elapsed} ms)`);
+  assert.equal(globalHealthTracker.records.size, 1, 'only the 503 is recorded');
+
+  // One silent pool whose own timeouts (5 s) and budget (3 s, + idle 2.5 s) would let it run on:
+  // the 1 s deadline ends it, and no candidate starts after it (each needs a tenth of the budget).
+  globalHealthTracker.reset();
+  upstreamStarts = [];
+  globalThis.fetch = async (url, options) => { upstreamStarts.push(Date.now()); return silent(options); };
+  budgetStart = Date.now();
+  response = await request('/v1/chat/completions', { model: 'auto', messages }, 'ses_budget',
+    { ...budgetEnv, UPSTREAM_FAILOVER_BUDGET_MS: '3000', UPSTREAM_TTFB_TIMEOUT_MS: '2500', UPSTREAM_IDLE_TIMEOUT_MS: '2500',
+      UPSTREAM_RESPONSE_TIMEOUT_MS: '1000' });
+  elapsed = Date.now() - budgetStart;
+  assert.equal(response.status, 504);
+  capped = await response.json();
+  assert.equal(capped.error.code, 'upstream_timeout');
+  assert.ok(elapsed >= 950 && elapsed < 1300, `ended at the 1 s deadline (${elapsed} ms)`);
+  assert.equal(upstreamStarts.length, 1, 'nothing starts once the deadline is too close');
+  assert.equal(globalHealthTracker.records.size, 0, 'a pool cut by the deadline is not marked failed');
+
+  // Streams are not capped: their first data event commits them within the budget, and the
+  // Node server's keep-alives (server.js) carry a quiet one.
+  globalHealthTracker.reset();
+  upstreamStarts = [];
+  globalThis.fetch = async () => {
+    upstreamStarts.push(Date.now());
+    await new Promise(resolve => setTimeout(resolve, 450));
+    return new Response('data: {"choices":[{"index":0,"delta":{"content":"late but fine"},"finish_reason":null}]}\n\n' +
+      'data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n', { headers: { 'Content-Type': 'text/event-stream' } });
+  };
+  response = await request('/v1/chat/completions', { model: 'auto', messages, stream: true }, 'ses_budget',
+    { ...budgetEnv, UPSTREAM_FAILOVER_BUDGET_MS: '5000', UPSTREAM_TTFB_TIMEOUT_MS: '2000', UPSTREAM_RESPONSE_TIMEOUT_MS: '200' });
+  assert.equal(response.status, 200);
+  assert.ok((await response.text()).includes('late but fine'));
+  assert.equal(upstreamStarts.length, 1);
+
+  // SSE comments before the first data event extend a candidate's wait (up to TTFB + idle),
+  // but not past the budget.
+  globalHealthTracker.reset();
+  upstreamStarts = [];
+  globalThis.fetch = async (url, options) => {
+    upstreamStarts.push(Date.now());
+    let timer;
+    const stop = () => clearInterval(timer);
+    options.signal.addEventListener('abort', stop, { once: true });
+    return new Response(new ReadableStream({
+      start(controller) {
+        timer = setInterval(() => {
+          try { controller.enqueue(new TextEncoder().encode(': keep-alive\n\n')); } catch { stop(); }
+        }, 50);
+      },
+      cancel: stop,
+    }), { headers: { 'Content-Type': 'text/event-stream' } });
+  };
+  budgetStart = Date.now();
+  response = await request('/v1/chat/completions', { model: 'auto', messages, stream: true }, 'ses_budget',
+    { ...budgetEnv, UPSTREAM_IDLE_TIMEOUT_MS: '1500' });
+  elapsed = Date.now() - budgetStart;
+  assert.equal(response.status, 504);
+  assert.equal((await response.json()).error.code, 'upstream_timeout');
+  assert.ok(elapsed < budgetMs + 300, `keep-alives do not extend the budget (${elapsed} ms)`);
+  assert.equal(upstreamStarts.length, 1);
+  // Keep-alives are not a data event: the pool had the whole budget and sent none, so it is
+  // marked slow (on any plan), and nothing else, since it did not get its own timeout.
+  const keptAlive = [...globalHealthTracker.records.values()];
+  assert.deepEqual(keptAlive.map(rec => [rec.failed_attempts, rec.status, rec.slow_until > Date.now()]), [[0, 'HEALTHY', true]],
+    'a pool that sent only keep-alives for the whole budget is slow, not failed');
+
+  // A client that leaves while the first candidate waits for its first byte ends the request:
+  // no other candidate is tried and the reservation is settled as client_disconnected, so the
+  // abandoned request does not hold the user's concurrency slot. Workers only fire
+  // request.signal on a disconnect with the enable_request_signal compatibility flag, and may
+  // cancel work outside waitUntil once the client is gone, so the settlement goes through it.
+  for (const config of ['wrangler.toml', 'wrangler.api.toml']) {
+    assert.match(readFileSync(new URL(config, import.meta.url), 'utf8'),
+      /^compatibility_flags\s*=\s*\[[^\]]*"enable_request_signal"/m, `${config} fires request.signal on disconnect`);
+  }
+  globalHealthTracker.reset();
+  upstreamStarts = [];
+  const leaverRpc = [];
+  let leaverSettled = false;
+  store.set('ses_leaver', JSON.stringify({ ...session, user_id: accountId, account_backed: true }));
+  globalThis.fetch = async (url, options) => {
+    if (url.includes('/rest/v1/rpc/')) {
+      const rpc = url.split('/').at(-1); leaverRpc.push([rpc, JSON.parse(options.body)]);
+      if (rpc === 'zerox_get_account') return Response.json([{ clerk_id: accountId, plan: 'free', daily_requests: 3, daily_tokens_used: 5000, last_usage_reset: day }]);
+      if (rpc === 'zerox_plan_policies_v2') return Response.json(B1_POLICY_ROWS);
+      if (rpc === 'zerox_reserve_v2') return Response.json([{ status: 'ok', reservation_id: `res-leaver-${leaverRpc.length}`, plan: 'free', remaining_requests: 96, remaining_tokens: 470000 }]);
+      if (rpc === 'zerox_settle_v2') {
+        await new Promise(resolve => setTimeout(resolve, 150));
+        leaverSettled = true;
+        return Response.json([{ status: 'settled' }]);
+      }
+      return Response.json(null);
+    }
+    upstreamStarts.push(Date.now());
+    return silent(options);
+  };
+  const leaver = new AbortController();
+  setTimeout(() => leaver.abort(), 100);
+  const waited = [];
+  const executionCtx = { waitUntil: promise => waited.push(promise), passThroughOnException() {} };
+  budgetStart = Date.now();
+  response = await app.request('https://zero-x.live/v1/chat/completions', { method: 'POST', signal: leaver.signal,
+    headers: { Authorization: 'Bearer ses_leaver', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: 'auto', messages, stream: true }) },
+  { ...budgetEnv, SUPABASE_URL: 'https://test.supabase.co', SUPABASE_SECRET_KEY: 'sb_secret_test',
+    UPSTREAM_TTFB_TIMEOUT_MS: '2000', UPSTREAM_FAILOVER_BUDGET_MS: '10000' }, executionCtx);
+  elapsed = Date.now() - budgetStart;
+  assert.ok(elapsed < 1000, `the request ended when the client left (${elapsed} ms)`);
+  assert.equal(upstreamStarts.length, 1, 'no candidate is tried after the client left');
+  assert.equal(leaverSettled, false, 'the answer did not wait for the settlement');
+  assert.ok(waited.length >= 1, 'the settlement was handed to waitUntil');
+  await Promise.all(waited);
+  assert.equal(leaverSettled, true);
+  const leaverReserves = leaverRpc.filter(([rpc]) => rpc === 'zerox_reserve_v2');
+  const leaverSettles = leaverRpc.filter(([rpc]) => rpc === 'zerox_settle_v2').map(([, args]) => args);
+  assert.equal(leaverReserves.length, 1);
+  assert.equal(leaverSettles.length, 1);
+  assert.equal(leaverSettles[0].p_reservation_id, `res-leaver-${leaverRpc.indexOf(leaverReserves[0]) + 1}`);
+  assert.equal(leaverSettles[0].p_status, 'error');
+  assert.equal(leaverSettles[0].p_error_code, 'client_disconnected');
+  assert.equal(globalHealthTracker.records.size, 0, 'a client abort says nothing about the pool');
+  globalHealthTracker.reset();
 } finally { globalThis.fetch = originalFetch; }
-console.log('PASS: verified catalogs, explicit provider routing, owned keys, tool round trips, split SSE, streamed quota, daily reset, rate-limit errors, ledger reservations');
+console.log('PASS: verified catalogs, explicit provider routing, owned keys, tool round trips, split SSE, streamed quota, daily reset, rate-limit errors, ledger reservations, failover budget, client aborts');

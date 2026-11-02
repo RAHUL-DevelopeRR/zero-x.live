@@ -45,7 +45,7 @@ pre { white-space: pre-wrap; word-break: break-word; font-size: 12px; background
 <body>
 <main>
   <h1>Provider discovery</h1>
-  <p class="lead">Candidates found by the daily lists, the weekly OmniRoute diff and the research agent. Nothing here is served until you approve it, a live tool call verifies it, and you promote it. Signing up to a provider stays manual.</p>
+  <p class="lead">Candidates found by the daily lists, the weekly OmniRoute diff and the research agent. Nothing here is served until you approve it, a live tool call verifies it, you promote it to a draft catalog row and approve that row on the model catalog page (/admin/models). Signing up to a provider stays manual.</p>
   <div class="panel row">
     <label for="token">Admin token</label>
     <input id="token" type="password" autocomplete="off" placeholder="GATEWAY_ADMIN_TOKEN">
@@ -157,10 +157,10 @@ pre { white-space: pre-wrap; word-break: break-word; font-size: 12px; background
           : result.message || 'Approved.', check && !check.passed ? 'bad' : 'good');
       } else if (action === 'promote') {
         const result = await api('/admin/discovery/candidates/' + row.id + '/promote', { method: 'POST', body: '{}' });
-        say('Promoted ' + result.promoted?.public_model_id + '. ' + (result.notes || []).join(' '), result.notes?.length ? 'bad' : 'good');
+        say('Saved ' + result.promoted?.public_model_id + ' as a draft. ' + (result.notes || []).join(' '), 'good');
       } else if (action === 'demote') {
-        await api('/admin/discovery/candidates/' + row.id + '/demote', { method: 'POST', body: '{}' });
-        say('Removed from the catalog.', 'good');
+        const result = await api('/admin/discovery/candidates/' + row.id + '/demote', { method: 'POST', body: '{}' });
+        say(result.note || 'The legacy discovery row was disabled.', 'good');
       }
       await load(false);
     } catch (error) { say(error.message, 'bad'); button.disabled = false; }
@@ -178,8 +178,14 @@ pre { white-space: pre-wrap; word-break: break-word; font-size: 12px; background
       const button = (label, action) => { const b = el('button', { text: label }); b.addEventListener('click', () => act(row, action, b)); actions.append(b); };
       if (row.status !== 'excluded' && row.status !== 'verified' && row.status !== 'approved') button('Approve', 'approve');
       if (['approved', 'verified'].includes(row.status) && row.verifiable) button('Verify', 'verify');
-      if (row.status === 'verified' && row.catalog_template && !row.promoted) button('Promote', 'promote');
-      if (row.promoted) button('Remove from catalog', 'demote');
+      if (row.status === 'verified' && row.catalog_template && !row.promoted && !row.catalog_model_id) button('Promote', 'promote');
+      if (row.catalog_model_id) {
+        actions.append(link('https://dashboard.zero-x.live/admin/models?id=' + encodeURIComponent(row.catalog_model_id),
+          'Catalog: ' + row.catalog_status));
+      }
+      // A catalog row is disabled on /admin/models (the link above); only a legacy row without one
+      // can be cleaned up here, and it was never served.
+      if (row.promoted && !row.catalog_model_id) button('Remove legacy row', 'demote');
       if (row.status !== 'excluded' && !(row.status === 'rejected' && !row.filtered)) button('Reject', 'reject');
       const more = el('button', { text: 'Details' });
       const name = el('td', {}, el('div', {}, el('strong', { text: row.provider })),
@@ -210,9 +216,9 @@ pre { white-space: pre-wrap; word-break: break-word; font-size: 12px; background
       $('page').textContent = result.total ? (state.offset + 1) + '–' + (state.offset + result.data.length) + ' of ' + result.total : '';
       $('prev').disabled = state.offset === 0; $('next').disabled = state.offset + state.limit >= state.total;
       const s = result.settings;
-      $('settings').textContent = 'Discovery ' + (s.discovery_enabled ? 'on' : 'off') + ' · promoted models '
-        + (s.catalog_db_models ? 'served' : 'not served (CATALOG_DB_MODELS)') + ' · research '
-        + (s.research_enabled ? 'on, up to $' + s.research_cap_usd + ' a run' : 'off (no ANTHROPIC_API_KEY)');
+      $('settings').textContent = 'Discovery ' + (s.discovery_enabled ? 'on' : 'off') + ' · catalog '
+        + (s.catalog_source === 'code' ? 'code only (CATALOG_SOURCE=code)' : 'rows approved on /admin/models') + ' · research '
+        + (s.research_enabled ? 'on, up to $' + s.research_cap_usd + ' a run' : 'off (no ANTHROPIC_API_KEY, or DISCOVERY_RESEARCH=false)');
       $('run-research').disabled = !s.research_enabled;
       if (clear) say('');
     } catch (error) { say(error.message, 'bad'); }

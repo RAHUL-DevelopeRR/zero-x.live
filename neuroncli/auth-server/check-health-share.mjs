@@ -37,6 +37,27 @@ assert.equal(publicStatus({ status: HealthState.DOWN, circuit_open_until: now - 
   'an expired cooldown is half-open: the next request decides');
 console.log('ok - public status: available, degraded, busy (<=60 s), blurred, half-open after cooldown');
 
+// 1b. slow_until (provider-health.js) rides along while it lasts, whatever the status.
+assert.deepEqual(publicStatus({ status: HealthState.DEGRADED, circuit_open_until: 0, slow_until: now + 300_000 }, now),
+  { status: 'degraded', until: 0, slow_until: now + 300_000 });
+assert.deepEqual(publicStatus({ status: HealthState.DEGRADED, circuit_open_until: 0, slow_until: now - 1 }, now),
+  { status: 'degraded', until: 0 }, 'an expired mark is dropped');
+assert.deepEqual(publicStatus({ status: HealthState.DOWN, circuit_open_until: now - 1, slow_until: now + 1_000 }, now),
+  { status: 'available', until: 0, slow_until: now + 1_000 }, 'half-open after a cooldown and still slow');
+{
+  resetSharedHealthCache();
+  const kv = fakeKv();
+  const key = 'nvidia:openai/gpt-oss-20b:free';
+  await shareHealth(ctx, { SESSIONS_KV: kv }, key, { status: HealthState.DOWN, circuit_open_until: now - 1, slow_until: now + 300_000 }, now);
+  assert.equal(kv.writes.length, 1, 'an available but slow pool is published');
+  assert.deepEqual(kv.writes[0].value, { status: 'available', until: 0, slow_until: now + 300_000, at: now });
+  assert.ok(kv.writes[0].options.expirationTtl >= 300, 'kept at least until the mark ends');
+  await shareHealth(ctx, { SESSIONS_KV: kv }, key, { status: HealthState.HEALTHY, circuit_open_until: 0, slow_until: 0 }, now + 1_000);
+  assert.equal(kv.writes.length, 2, 'a success clears the shared mark');
+  assert.deepEqual(kv.writes[1].value, { status: 'available', until: 0, at: now + 1_000 });
+}
+console.log('ok - slow_until: kept while it lasts, published to KV and cleared by a success');
+
 // 2. Publishing: failures write, repeats are throttled, a success clears a shared bad state.
 {
   resetSharedHealthCache();

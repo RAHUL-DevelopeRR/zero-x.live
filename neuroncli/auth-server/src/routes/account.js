@@ -1,6 +1,7 @@
 import { rpc, rpcRows } from '../account-store.js';
-import { ApiError, ALL_CREDENTIALS, invalidSession, withCaller } from '../auth-context.js';
+import { ApiError, ALL_CREDENTIALS, bearerToken, invalidSession, withCaller } from '../auth-context.js';
 import { normalizePlanId, planById } from '../plan-policy.js';
+import { sessionExpiry } from '../session-store.js';
 import { microusdToUsd } from './plans.js';
 
 const DAY_MS = 86400000;
@@ -18,9 +19,48 @@ export const isoTime = value => {
   return Number.isFinite(time) ? new Date(time).toISOString() : null;
 };
 
+// The apps' account row (A3): the profile name, else the email's local part. Names come from
+// the sign-in provider, so they are trimmed, stripped of control characters and capped.
+const DISPLAY_NAME_LIMIT = 80;
+const cleanName = value => typeof value === 'string'
+  ? Array.from(value.replace(/[\p{Cc}\p{Cf}]/gu, '').replace(/\s+/g, ' ').trim()).slice(0, DISPLAY_NAME_LIMIT).join('').trim() : '';
+export function displayName(account = {}, caller = {}) {
+  const fullName = [account.first_name, account.last_name].map(cleanName).filter(Boolean).join(' ');
+  for (const candidate of [account.name, caller.name, fullName, account.username]) {
+    const name = cleanName(candidate);
+    if (name) return name;
+  }
+  const email = cleanName(account.email || caller.email);
+  return cleanName(email.includes('@') ? email.slice(0, email.indexOf('@')) : email) || 'Zero-X user';
+}
+// One letter for a one-word name, else the first letters of the first and last words; email
+// local parts split on dots, dashes and underscores ("rahul.s" → "RS").
+export function initials(name) {
+  const words = cleanName(name).split(/[\s._-]+/u)
+    .map(word => word.match(/[\p{L}\p{N}]/u)?.[0]).filter(Boolean);
+  if (!words.length) return '?';
+  return (words.length === 1 ? words[0] : words[0] + words.at(-1)).toLocaleUpperCase('en');
+}
+
+// When the credential behind this request stops working, for "sign in again" warnings: a CLI
+// session's expiry, a website access token's `exp`; API keys and dev identities never expire.
+export function credentialExpiresAt(env, caller, token = '') {
+  if (caller.kind === 'session' && caller.session) {
+    const expires = sessionExpiry(env, caller.session);
+    return Number.isFinite(expires) ? new Date(expires).toISOString() : null;
+  }
+  if (caller.kind === 'supabase') {
+    try {
+      const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+      return Number.isSafeInteger(payload?.exp) && payload.exp > 0 ? new Date(payload.exp * 1000).toISOString() : null;
+    } catch { return null; }
+  }
+  return null;
+}
+
 // Builds the GET /api/account payload from zerox_account_overview (jsonb columns account,
 // policy, credits, subscription, usage_today), filling gaps from the plan catalogue.
-export async function accountPayload(env, caller) {
+export async function accountPayload(env, caller, { token = '' } = {}) {
   const row = await rpc(env, 'zerox_account_overview', { p_user_id: caller.user_id });
   if (!row) throw invalidSession();
   const account = object(row.account) || {};
@@ -40,13 +80,17 @@ export async function accountPayload(env, caller) {
     }
     return plan.limits[name];
   };
+  const name = displayName(account, caller);
   return {
     user: {
       id: caller.user_id,
       email: account.email || caller.email || '',
       name: account.name || caller.name || '',
+      display_name: name,
+      initials: initials(name),
       image_url: account.image_url || caller.image_url || '',
     },
+    session_expires_at: credentialExpiresAt(env, caller, token),
     plan: { id: planId, name: typeof policy.name === 'string' && policy.name ? policy.name : plan.name },
     limits: {
       daily_requests: limit('daily_requests', 'daily_requests'),
@@ -124,8 +168,11 @@ export async function usagePayload(env, userId, range) {
     for (const key of Object.keys(totals)) totals[key] += row[key];
     series.push({ day, ...withCost(row) });
   }
+  // Per model also the prompt tokens read from and written to the provider's prompt cache (part of
+  // prompt_tokens; Claude bills them at their own rates).
   const byModel = modelRows.filter(row => typeof row?.model === 'string')
-    .map(row => ({ model: row.model, ...withCost(usageRow(row)) }))
+    .map(row => ({ model: row.model, ...withCost(usageRow(row)), cache_read_tokens: count(row.cache_read_tokens),
+      cache_write_tokens: count(row.cache_write_tokens) }))
     .sort((left, right) => right.requests - left.requests || left.model.localeCompare(right.model));
   return { from: range.from, to: range.to, series, by_model: byModel, totals: withCost(totals) };
 }
@@ -159,6 +206,9 @@ const eventView = row => ({
   tier: row.tier ?? null,
   status: row.status ?? null,
   prompt_tokens: count(row.prompt_tokens),
+  // Of prompt_tokens: read from and written to the provider's prompt cache.
+  cache_read_tokens: count(row.cache_read_tokens),
+  cache_write_tokens: count(row.cache_write_tokens),
   completion_tokens: count(row.completion_tokens),
   cost_usd: microusdToUsd(row.cost_microusd ?? 0),
   latency_ms: row.latency_ms === null || row.latency_ms === undefined ? null : count(row.latency_ms),
@@ -166,7 +216,8 @@ const eventView = row => ({
 });
 
 export function registerAccountRoutes(api) {
-  api.get('/api/account', withCaller(ALL_CREDENTIALS, async (c, caller) => c.json(await accountPayload(c.env, caller))));
+  api.get('/api/account', withCaller(ALL_CREDENTIALS, async (c, caller) =>
+    c.json(await accountPayload(c.env, caller, { token: bearerToken(c) }))));
 
   api.get('/api/usage', withCaller(ALL_CREDENTIALS, async (c, caller) => {
     const range = usageRange({ from: c.req.query('from'), to: c.req.query('to') });

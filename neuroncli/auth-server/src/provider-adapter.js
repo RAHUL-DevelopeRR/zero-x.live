@@ -1,4 +1,31 @@
 ﻿import { normalizeProviderRequest } from './provider-request.js';
+import { poolSecret } from './catalog.js';
+
+// Usage reported before a stream ended, for adapters whose OpenAI usage chunk only comes at the
+// end (Claude sends its input and cache counts in message_start, the usage chunk at
+// message_delta). An adapter registers `usageSoFar(outputBytes)` on the streaming Response it
+// returns, and on the attempt's AbortSignal (unique per attempt) once the upstream answered.
+// providers.js startCompletion hands it to createCompletionStream, which settles an aborted or
+// failed stream with it instead of the byte estimate; when the attempt fails before it commits
+// (an error Response, a timeout, an abort: non-streaming Claude calls are streamed upstream) it
+// passes it on with the failure (`usage` on the result, partialUsageOf(error) on a throw), so
+// chat-handler settles what the model already ran. Keyed by objects callers cannot reach or forge.
+const PARTIAL_USAGE = new WeakMap();
+
+export function setPartialUsage(target, usageSoFar) {
+  if (target && typeof target === 'object' && typeof usageSoFar === 'function') PARTIAL_USAGE.set(target, usageSoFar);
+  return target;
+}
+
+export function partialUsageOf(target) {
+  return (target && typeof target === 'object' && PARTIAL_USAGE.get(target)) || null;
+}
+
+// The usage a probe reports now, or null (no probe, nothing reported, or the probe failed).
+export function usageNow(usageSoFar, outputBytes = 0) {
+  if (typeof usageSoFar !== 'function') return null;
+  try { return usageSoFar(outputBytes) ?? null; } catch { return null; }
+}
 
 /**
  * ProviderAdapter - Common interface for upstream AI model providers.
@@ -78,12 +105,14 @@ export class OpenAICompatibleAdapter extends ProviderAdapter {
   }
 
   // A caller's own OpenRouter key (BYOK) is used only for sessions that are not
-  // provisioned accounts; every hosted pool names its own server-side key variable.
+  // provisioned accounts; every hosted pool names its own server-side key variable, or is a
+  // provider key vault pool (src/catalog.js entryPools) whose key never leaves the gateway.
   getApiKey(env, session = {}, pool = null) {
     if (this.id === 'openrouter' && !session.account_backed && session.openrouter_key &&
         (!pool || pool.tier === 'byok')) {
       return session.openrouter_key;
     }
+    if (pool?.key_id) return poolSecret(env, pool);
     return env[pool?.key_var || this.keyVar];
   }
 

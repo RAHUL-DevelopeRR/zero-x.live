@@ -45,7 +45,7 @@
       <nav class="zx-breadcrumb" aria-label="Breadcrumb"><a href="/">Zero-X</a> / Docs</nav>
       <h1>Neuron CLI and Zero-X API docs</h1>
       <p class="zx-lead">Everything you need to install Neuron, sign in, configure it, and call the OpenAI-compatible gateway directly.</p>
-      <p class="zx-help">These docs cover Neuron 7.0.0-alpha.1, a GitHub pre-release published on 24 October 2026. The full reference is the <a href="https://github.com/RAHUL-DevelopeRR/neuron-v2/blob/HEAD/USAGE.md">usage guide</a>; see the <a href="https://github.com/RAHUL-DevelopeRR/neuron-v2/blob/HEAD/CHANGELOG.md">changelog</a> for known limitations.</p>
+      <p class="zx-help">These docs cover Neuron 7.0.0-alpha.2, a GitHub pre-release published on 26 October 2026. The full reference is the <a href="https://github.com/RAHUL-DevelopeRR/neuron-v2/blob/HEAD/USAGE.md">usage guide</a>; see the <a href="https://github.com/RAHUL-DevelopeRR/neuron-v2/blob/HEAD/CHANGELOG.md">changelog</a> for known limitations.</p>
     </div>
     <div class="zx-docs">
       <nav class="zx-toc" aria-label="On this page">
@@ -58,17 +58,18 @@
           <li><a href="#limits">Limits</a></li>
           <li><a href="#api-keys">API keys</a></li>
           <li><a href="#billing">Billing FAQ</a></li>
+          <li><a href="#support">Help and support</a></li>
         </ol>
       </nav>
       <article>
         <section id="quickstart" aria-labelledby="quickstart-title">
           <h2 id="quickstart-title">Quickstart</h2>
           <ol>
-            <li>Install: on macOS and Linux, <code>curl -fsSL https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.1/install.sh | sh -s -- --version 7.0.0-alpha.1</code>; on Windows (PowerShell 5.1 or 7), <code>&amp; ([scriptblock]::Create((irm https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.1/install.ps1))) -Version 7.0.0-alpha.1</code>. npm (<code>@zero-x.live/neuron@next</code>) comes once the alpha is published there; pip is not available for the alpha. See <a href="/neuron-cli#install">all install options</a>.</li>
+            <li>Install: on macOS and Linux, <code>curl -fsSL https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.2/install.sh | sh -s -- --version 7.0.0-alpha.2</code>; on Windows (PowerShell 5.1 or 7), <code>&amp; ([scriptblock]::Create((irm https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.2/install.ps1))) -Version 7.0.0-alpha.2</code>. Not on npm or pip yet: npm still serves the old, unsupported 6.2.0 build and PyPI the old, unsupported <code>neuroncli</code> 6.2.4. Every install option is on <a href="/download">the download page</a>.</li>
             <li>Sign in: <code>neuron login</code> prints <code>https://neuron.zero-x.live/device</code> and a short code. Open it in any browser, sign in, check the code and choose <strong>Approve</strong>. The code expires after 10 minutes.</li>
-            <li>Run <code>neuron</code> inside a project; on a terminal it opens the full-screen UI. The UI cannot trust a folder yet: run <code>neuron --no-tui</code> there once and press 1, or add the folder to <code>trustedRoots</code> in <code>~/.neuron/settings.json</code>. Until then the folder's own settings, hooks and MCP servers are ignored.</li>
+            <li>Run <code>neuron</code> inside a project; on a terminal it opens the full-screen UI. The UI cannot trust a folder yet: run <code>neuron --no-tui</code> there once and press 1, or add the folder to <code>trustedRoots</code> in <code>~/.neuron/settings.json</code>. Until then the folder's own settings, hooks and MCP servers are ignored. <a href="/docs/trust">Security and trust</a> explains what trusting a folder allows.</li>
           </ol>
-          <div class="zx-code"><pre><code>curl -fsSL https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.1/install.sh | sh -s -- --version 7.0.0-alpha.1
+          <div class="zx-code"><pre><code>curl -fsSL https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.2/install.sh | sh -s -- --version 7.0.0-alpha.2
 neuron login
 cd path/to/project
 neuron</code></pre></div>
@@ -188,7 +189,7 @@ neuron</code></pre></div>
     "checked_at": "2026-10-24T13:53:52.473Z"
   }]
 }</code></pre></div>
-          <p><code>unavailable_reason</code> is <code>null</code>, <code>upgrade_required</code>, <code>region_unavailable</code> or <code>not_configured</code>. <code>pricing</code> is the paid-capacity price per million tokens, or <code>null</code> for free-only models. <code>status</code> is <code>available</code>, <code>degraded</code>, <code>busy</code> or <code>blurred</code>; a blurred model is temporarily unavailable until <code>available_again_at</code>. <code>GET /v1/models/status</code> returns the same availability fields for polling. The list includes the pseudo-model <code>auto</code>.</p>
+          <p><code>unavailable_reason</code> is <code>null</code>, <code>upgrade_required</code>, <code>region_unavailable</code>, <code>policy_restricted</code> or <code>not_configured</code>. <code>pricing</code> is the paid-capacity price per million tokens (<code>input_per_mtok_usd</code>, <code>output_per_mtok_usd</code>, and for Claude <code>cache_read_per_mtok_usd</code> and <code>cache_write_per_mtok_usd</code>), or <code>null</code> for free-only models. Claude Sonnet 5.5 (<code>anthropic/claude-sonnet-5-5</code>) and Claude Opus 5.5 (<code>anthropic/claude-opus-5-5</code>) are paid models: Pro and Max can choose them and are billed from credits, Free sees them with <code>upgrade_required</code>, and <code>auto</code> never picks them. <code>status</code> is <code>available</code>, <code>degraded</code>, <code>busy</code> or <code>blurred</code>; a blurred model is temporarily unavailable until <code>available_again_at</code>. <code>GET /v1/models/status</code> returns the same availability fields for polling. The list includes the pseudo-model <code>auto</code>.</p>
 
           <h3 id="chat-completions">POST /v1/chat/completions</h3>
           <p>Standard OpenAI request body. <code>model</code> may be <code>auto</code>. Set <code>"stream": true</code> for server-sent events ending with <code>data: [DONE]</code>; streamed <code>tool_calls</code> deltas always include <code>index</code>.</p>
@@ -220,9 +221,10 @@ neuron</code></pre></div>
                 <tr><td>400</td><th scope="row"><code>invalid_request</code></th><td><code>invalid_request_error</code></td><td>Malformed body.</td><td>Fix the request. Do not retry.</td></tr>
                 <tr><td>400</td><th scope="row"><code>context_length_exceeded</code></th><td><code>invalid_request_error</code></td><td>No model can fit the request.</td><td>Shorten the prompt or run <code>/compact</code>.</td></tr>
                 <tr><td>401</td><th scope="row"><code>invalid_session</code></th><td><code>authentication_error</code></td><td>Missing, expired or revoked credential.</td><td>Run <code>neuron login</code> or use a valid key.</td></tr>
-                <tr><td>402</td><th scope="row"><code>insufficient_credits</code></th><td><code>insufficient_quota</code></td><td>Paid capacity needed and the credit balance is too low.</td><td>Top up or wait for renewal (<code>upgrade_url</code>).</td></tr>
+                <tr><td>402</td><th scope="row"><code>insufficient_credits</code></th><td><code>insufficient_quota</code></td><td>A paid model (Claude or paid capacity) needs more credits than are available; credits held by your running requests count as used.</td><td>Lower <code>max_tokens</code>, top up, or wait for renewal (<code>upgrade_url</code>).</td></tr>
                 <tr><td>403</td><th scope="row"><code>upgrade_required</code></th><td><code>permission_error</code></td><td>The model is not in your plan.</td><td>Pick another model or upgrade.</td></tr>
                 <tr><td>403</td><th scope="row"><code>region_unavailable</code></th><td><code>permission_error</code></td><td>The free pool is not offered in your region and no paid option is available.</td><td>Pick another model or upgrade.</td></tr>
+                <tr><td>403</td><th scope="row"><code>policy_restricted</code></th><td><code>permission_error</code></td><td>No provider of this model meets your data policy (the trust tiers you allow, or no training on your prompts).</td><td>Allow more trust tiers or training in your settings, or pick another model.</td></tr>
                 <tr><td>403</td><th scope="row"><code>account_suspended</code></th><td><code>permission_error</code></td><td>The account is suspended.</td><td>Email support@zero-x.live.</td></tr>
                 <tr><td>403</td><th scope="row"><code>api_key_not_allowed</code></th><td><code>permission_error</code></td><td>API keys cannot call this route (managing keys, sessions or billing).</td><td>Use a signed-in session. Do not retry.</td></tr>
                 <tr><td>404</td><th scope="row"><code>model_not_found</code></th><td><code>invalid_request_error</code></td><td>The requested model is not available.</td><td>List models with <code>GET /v1/models</code>. Do not retry.</td></tr>
@@ -288,6 +290,17 @@ neuron</code></pre></div>
               <p>Cancel from the Billing tab; access continues until the end of the paid period. Refunds follow the <a href="/refund">cancellation and refund policy</a>.</p>
             </details>
           </div>
+        </section>
+
+        <section id="support" aria-labelledby="support-title">
+          <h2 id="support-title">Help and support</h2>
+          <ul>
+            <li>Inside Neuron, run <code>/doctor</code> to check your setup and connection, and <code>neuron auth status</code> to see which credential is in use.</li>
+            <li>Email <a href="mailto:support@zero-x.live">support@zero-x.live</a> from your account address. Include the <code>x-request-id</code> of a failed request and the output of <code>neuron --version</code>. We reply within 2 business days.</li>
+            <li>Security problems: see <a href="/docs/trust#report">reporting a security problem</a>.</li>
+            <li>Installers, install commands and checksums: <a href="/download">download Neuron</a>. Release notes: <a href="/changelog">what's new</a>.</li>
+            <li>Plans, usage and API keys: the <a href="https://dashboard.zero-x.live/">dashboard</a>. Billing questions: the <a href="/refund">cancellation and refund policy</a> or the <a href="/contact">contact page</a>.</li>
+          </ul>
         </section>
       </article>
     </div>

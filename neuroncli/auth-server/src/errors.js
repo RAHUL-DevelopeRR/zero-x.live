@@ -17,6 +17,8 @@ export const ERROR_CODES = Object.freeze({
     message: 'This model is not included in your plan. Upgrade to use it.' },
   region_unavailable: { status: 403, type: 'permission_error',
     message: 'This model is not available in your region on the free tier.' },
+  policy_restricted: { status: 403, type: 'permission_error',
+    message: 'No provider of this model meets your data policy. Allow more trust tiers or training, or choose another model.' },
   account_suspended: { status: 403, type: 'permission_error',
     message: 'This account is suspended. Contact support@zero-x.live.' },
   insufficient_quota: { status: 429, type: 'insufficient_quota', upgrade: true,

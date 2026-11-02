@@ -1,0 +1,380 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  Zero-X gateway VM - Ubuntu 24.04 arm64 on a t4g instance in the default VPC. Users reach it only
+  through Cloudflare Tunnel, which dials out, so no port faces the internet. Admin and CI SSH come
+  only through an EC2 Instance Connect Endpoint, authorized by IAM. The first boot sets the VM up
+  from the cloud-init in the launch template; the VM holds no secret until the operator or CI
+  writes one. See deploy/aws/README.md.
+
+Metadata:
+  AWSToolsMetrics:
+    AWSAgentToolkit: aws-cloudformation@3
+
+Parameters:
+  SshPublicKey:
+    Type: String
+    Description: OpenSSH public key for the ubuntu user (a fallback; EC2 Instance Connect pushes one-time keys).
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: Subnet of the instance and of the endpoint. Must assign public IPv4 addresses (outbound needs one; there is no NAT).
+  # Pinned on purpose. An SSM parameter here would be resolved again on every stack update, and a
+  # newer Canonical image would then replace the instance during an unrelated change. To move to a
+  # new image, look it up and pass it explicitly (README, "Changing the image"); that replaces the
+  # instance.
+  ImageId:
+    Type: AWS::EC2::Image::Id
+    Description: Ubuntu 24.04 arm64 AMI id (Canonical), e.g. from /aws/service/canonical/ubuntu/server/24.04/stable/current/arm64/hvm/ebs-gp3/ami-id
+  InstanceType:
+    Type: String
+    Default: t4g.small
+    AllowedValues: [t4g.micro, t4g.small, t4g.medium, t4g.large]
+  # Termination protection also blocks CloudFormation from deleting a replaced instance: the old one
+  # is dropped from the stack (DELETE_FAILED) and keeps running, while the update still reports
+  # success. These replace the instance: ImageId, SubnetId, KeyPair/SshPublicKey and ANY edit to
+  # LaunchTemplateData (one character of the cloud-init included). InstanceType is a stop/start, not
+  # a replacement. Put Phase 2's instance profile on the Instance (IamInstanceProfile, no
+  # interruption), never in LaunchTemplateData. A planned replacement is two updates: this set to
+  # false alone, then the replacing change with it true again (README, "Replacing the instance").
+  # stack-policy.json denies replacements until it is lifted for that update.
+  TerminationProtection:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+
+Resources:
+  KeyPair:
+    Type: AWS::EC2::KeyPair
+    Properties:
+      KeyName: zerox-gateway
+      PublicKeyMaterial: !Ref SshPublicKey
+      Tags:
+        - { Key: Project, Value: zerox-gateway }
+
+  # The endpoint's group: nothing inbound; SSH out to the gateway VM's group only.
+  EndpointSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Zero-X EC2 Instance Connect Endpoint - no inbound; SSH out to the gateway VM only
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          DestinationSecurityGroupId: !GetAtt InstanceSecurityGroup.GroupId
+          Description: SSH to the gateway VM
+      Tags:
+        - { Key: Name, Value: zerox-eice }
+        - { Key: Project, Value: zerox-gateway }
+
+  # The VM's group: no inline ingress (SshFromEndpoint below adds the only rule, as its own
+  # resource so the two groups can name each other without a circular reference). Egress keeps the
+  # default allow-all: apt, NodeSource, Cloudflare (tunnel on 7844 TCP and UDP), Supabase, the model
+  # providers and Razorpay are all outbound.
+  InstanceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Zero-X gateway VM - SSH only from the Instance Connect Endpoint; users arrive through Cloudflare Tunnel
+      VpcId: !Ref VpcId
+      Tags:
+        - { Key: Name, Value: zerox-gateway }
+        - { Key: Project, Value: zerox-gateway }
+
+  SshFromEndpoint:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !GetAtt InstanceSecurityGroup.GroupId
+      IpProtocol: tcp
+      FromPort: 22
+      ToPort: 22
+      SourceSecurityGroupId: !GetAtt EndpointSecurityGroup.GroupId
+      Description: SSH from the Instance Connect Endpoint
+
+  # IAM decides who may open a tunnel through it (ec2-instance-connect:OpenTunnel), and CloudTrail
+  # records each one. PreserveClientIp false: the VM sees the endpoint's private address, which is
+  # what the security-group reference above matches (and the host firewall's VPC-only SSH rule).
+  # SubnetId, SecurityGroupIds (a GroupDescription edit on EndpointSecurityGroup included) and
+  # PreserveClientIp replace the endpoint, and a replacement always fails (one endpoint per VPC):
+  # remove the resource in one update and add it back in the next (README).
+  InstanceConnectEndpoint:
+    Type: AWS::EC2::InstanceConnectEndpoint
+    Properties:
+      SubnetId: !Ref SubnetId
+      SecurityGroupIds: [!GetAtt EndpointSecurityGroup.GroupId]
+      PreserveClientIp: false
+      Tags:
+        - { Key: Name, Value: zerox-eice }
+        - { Key: Project, Value: zerox-gateway }
+
+  LaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: zerox-gateway
+      LaunchTemplateData:
+        # IMDSv2 only, one hop (no container can reach it). It stays enabled: EC2 Instance Connect
+        # reads the one-time SSH keys from the instance metadata.
+        MetadataOptions:
+          HttpTokens: required
+          HttpPutResponseHopLimit: 1
+          HttpEndpoint: enabled
+        BlockDeviceMappings:
+          - DeviceName: /dev/sda1
+            Ebs:
+              VolumeSize: 20
+              VolumeType: gp3
+              Encrypted: true
+              DeleteOnTermination: true
+        # Standard credits: CPU above the baseline is throttled when credits run out instead of
+        # being billed as surplus credits.
+        CreditSpecification:
+          CpuCredits: standard
+        TagSpecifications:
+          - ResourceType: volume
+            Tags:
+              - { Key: Name, Value: zerox-gateway }
+              - { Key: Project, Value: zerox-gateway }
+        # Runs once, on the first boot of each new instance. Holds no secret.
+        UserData:
+          Fn::Base64: |
+            #cloud-config
+            # First boot of the Zero-X gateway VM: Ubuntu 24.04 arm64 on EC2 (deploy/aws/README.md).
+            # Holds no secret: the environment file and the tunnel token are written later.
+            #
+            # Users: ubuntu (the image default: the stack's key pair or an EC2 Instance Connect
+            # one-time key; full sudo), deploy (CI: EC2 Instance Connect one-time keys only, no static
+            # key; owns the releases and the environment file; may only restart the gateway), zerox
+            # (runs the gateway and the cron; no shell, no SSH, read-only code).
+            #
+            # Firewall: the security group admits SSH only from the Instance Connect Endpoint; ufw
+            # repeats that on the host (inbound denied except SSH from the VPC, which is where the
+            # endpoint's connections come from; outbound open; loopback untouched). No SSM Agent: with
+            # no instance role it would only be a second, unreviewed way in (Phase 2 decides).
+            #
+            # Checking a boot: `sudo cloud-init status --wait --long` must end "status: done" (the
+            # bootstrap runs last, so its failure shows as "error"), and the serial console shows a
+            # ZEROX-BOOTSTRAP: OK or FAILED line (deploy/aws/README.md, "First boot").
+            package_update: true
+            package_upgrade: true
+            packages:
+              - ca-certificates
+              - curl
+              - ec2-instance-connect
+              - gnupg
+              - rsync
+              - ufw
+              - unattended-upgrades
+
+            users:
+              - default
+              - name: zerox
+                system: true
+                shell: /usr/sbin/nologin
+                no_create_home: true
+                lock_passwd: true
+              - name: deploy
+                shell: /bin/bash
+                lock_passwd: true
+                groups: [systemd-journal]
+                sudo:
+                  - "ALL=(root) NOPASSWD: /usr/bin/systemctl restart zerox-gateway.service, /usr/bin/systemctl is-active zerox-gateway.service, /usr/bin/systemctl status zerox-gateway.service"
+
+            write_files:
+              # Key-only SSH for the two login users; everything else is refused. deploy logs in only
+              # with EC2 Instance Connect one-time keys (AuthorizedKeysCommand), never a key file it
+              # could write itself. The bootstrap checks this file with sshd -t before ssh reloads it.
+              - path: /etc/ssh/sshd_config.d/60-zerox.conf
+                permissions: '0644'
+                content: |
+                  PasswordAuthentication no
+                  KbdInteractiveAuthentication no
+                  PermitRootLogin no
+                  AllowUsers ubuntu deploy
+                  Match User deploy
+                          AuthorizedKeysFile none
+              # Security updates daily, plus Node.js (NodeSource) and cloudflared from their signed
+              # repositories, installed in the night window only (apt-daily-upgrade.timer below, 20:45
+              # to 20:55 UTC, 02:15 IST). needrestart then restarts the services whose binaries or
+              # libraries changed (zerox-gateway drains on SIGTERM for up to 110 s). No automatic
+              # reboot: a kernel update waits for a reboot by hand at a quiet hour.
+              - path: /etc/apt/apt.conf.d/20auto-upgrades
+                permissions: '0644'
+                content: |
+                  APT::Periodic::Update-Package-Lists "1";
+                  APT::Periodic::Unattended-Upgrade "1";
+                  APT::Periodic::AutocleanInterval "7";
+              - path: /etc/apt/apt.conf.d/52zerox-unattended-upgrades
+                permissions: '0644'
+                content: |
+                  Unattended-Upgrade::Origins-Pattern {
+                          "site=deb.nodesource.com";
+                          "site=pkg.cloudflare.com";
+                  };
+                  Unattended-Upgrade::Automatic-Reboot "false";
+              # Ubuntu installs upgrades at 06:00 UTC plus up to 60 minutes (11:30 to 12:30 IST,
+              # midday traffic). Moved to the night. apt-daily.timer still refreshes the lists and
+              # downloads at any hour; it installs nothing.
+              - path: /etc/systemd/system/apt-daily-upgrade.timer.d/zerox.conf
+                permissions: '0644'
+                content: |
+                  [Timer]
+                  OnCalendar=
+                  OnCalendar=*-*-* 20:45
+                  RandomizedDelaySec=10m
+              # needrestart's choice made explicit: restart affected services without asking.
+              - path: /etc/needrestart/conf.d/zerox.conf
+                permissions: '0644'
+                content: |
+                  $nrconf{restart} = 'a';
+              # Node.js comes from NodeSource only (Ubuntu's own nodejs is an older major).
+              - path: /etc/apt/preferences.d/nodejs
+                permissions: '0644'
+                content: |
+                  Package: nodejs
+                  Pin: origin deb.nodesource.com
+                  Pin-Priority: 600
+              # Journal: bounded on the 20 GB volume, two weeks of history.
+              - path: /etc/systemd/journald.conf.d/zerox.conf
+                permissions: '0644'
+                content: |
+                  [Journal]
+                  SystemMaxUse=1G
+                  SystemKeepFree=2G
+                  SystemMaxFileSize=100M
+                  MaxRetentionSec=14day
+                  RateLimitIntervalSec=30s
+                  RateLimitBurst=20000
+              - path: /usr/local/sbin/zerox-bootstrap
+                permissions: '0700'
+                content: |
+                  #!/bin/bash
+                  # Repositories, Node.js 22, cloudflared, directories, sshd and the host firewall.
+                  # Safe to run again: sudo /usr/local/sbin/zerox-bootstrap
+                  set -euo pipefail
+                  export DEBIAN_FRONTEND=noninteractive
+                  # apt-daily or unattended-upgrades may hold the dpkg lock during the first boot.
+                  apt_get() {
+                    for i in $(seq 1 20); do
+                      apt-get -o DPkg::Lock::Timeout=300 "$@" && return 0
+                      echo "apt-get $* failed (try $i), retrying in 15 s" >&2; sleep 15
+                    done
+                    return 1
+                  }
+                  fetch() { curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 "$@"; }
+
+                  # Node.js 22 (arm64) from NodeSource's signed apt repository.
+                  install -d -m 0755 /etc/apt/keyrings
+                  fetch https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor --yes -o /etc/apt/keyrings/nodesource.gpg
+                  cat > /etc/apt/sources.list.d/nodesource.sources <<'EOF'
+                  Types: deb
+                  URIs: https://deb.nodesource.com/node_22.x/
+                  Suites: nodistro
+                  Components: main
+                  Signed-By: /etc/apt/keyrings/nodesource.gpg
+                  EOF
+                  # cloudflared from Cloudflare's signed apt repository (the "any" suite Cloudflare recommends).
+                  install -d -m 0755 /usr/share/keyrings
+                  fetch https://pkg.cloudflare.com/cloudflare-main.gpg -o /usr/share/keyrings/cloudflare-main.gpg
+                  echo 'deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared any main' \
+                    > /etc/apt/sources.list.d/cloudflared.list
+                  apt_get update
+                  apt_get install -y nodejs cloudflared
+                  # reusePort (zero-downtime restarts) needs Node 22.12 or later.
+                  node -e 'const [major, minor] = process.versions.node.split(".").map(Number); process.exit(major > 22 || (major === 22 && minor >= 12) ? 0 : 1)' \
+                    || { echo "node $(node --version) is older than 22.12" >&2; exit 1; }
+                  # The repository keys' fingerprints, to compare with what NodeSource and Cloudflare publish.
+                  gpg --show-keys --with-fingerprint /etc/apt/keyrings/nodesource.gpg /usr/share/keyrings/cloudflare-main.gpg \
+                    > /var/log/zerox-apt-keys.txt 2>&1 || true
+                  echo "node $(node --version), $(cloudflared --version)" > /var/log/zerox-bootstrap.txt
+
+                  # Releases: written by deploy, read by zerox (setgid keeps the zerox group on new files).
+                  install -d -o deploy -g zerox -m 2750 /opt/zerox /opt/zerox/releases
+                  # Environment file: written by deploy, read by systemd as root; zerox cannot read it.
+                  install -d -o deploy -g deploy -m 0700 /etc/zerox
+                  [ -e /etc/zerox/gateway.env ] || install -o deploy -g deploy -m 0600 /dev/null /etc/zerox/gateway.env
+                  install -d -o root -g root -m 0755 /etc/cloudflared
+
+                  # No instance role in Phase 1, so no SSM Agent: an account-wide Default Host
+                  # Management switch must not open a root-capable path around the endpoint.
+                  if snap list amazon-ssm-agent >/dev/null 2>&1; then snap remove --purge amazon-ssm-agent; fi
+
+                  # sshd: the drop-in must parse, and deploy must get no key file, before ssh reloads.
+                  # (sshd -t needs its privilege separation directory, which socket activation creates
+                  # only when the first connection starts sshd.)
+                  install -d -m 0755 /run/sshd
+                  if ! /usr/sbin/sshd -t; then
+                    mv /etc/ssh/sshd_config.d/60-zerox.conf /root/60-zerox.conf.rejected
+                    echo 'sshd rejected 60-zerox.conf (moved to /root)' >&2; exit 1
+                  fi
+                  # Captured first: piping sshd -T into grep -q under pipefail fails (grep exits at the
+                  # first match, sshd then dies of SIGPIPE). The key command EC2 Instance Connect uses is
+                  # passed on ssh.service's command line, so sshd -T here shows it as none.
+                  deploy_cfg="$(/usr/sbin/sshd -T -C user=deploy,host=eice,addr=172.31.0.10)"
+                  grep -qx 'authorizedkeysfile none' <<<"$deploy_cfg"
+                  ubuntu_cfg="$(/usr/sbin/sshd -T -C user=ubuntu,host=eice,addr=172.31.0.10)"
+                  grep -q '^authorizedkeysfile .ssh/authorized_keys' <<<"$ubuntu_cfg"
+                  systemctl try-reload-or-restart ssh
+
+                  # Host firewall: inbound denied except SSH from this VPC (the endpoint connects from its
+                  # private address, PreserveClientIp false); outbound open; loopback (the gateway on
+                  # 127.0.0.1:8787) is not filtered. A failed lookup stops here, before ufw is enabled.
+                  tok="$(curl -fsS -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' http://169.254.169.254/latest/api/token)"
+                  md() { curl -fsS -H "X-aws-ec2-metadata-token: $tok" "http://169.254.169.254/latest/meta-data/$1"; }
+                  vpc_cidr="$(md "network/interfaces/macs/$(md mac)/vpc-ipv4-cidr-block")"
+                  [[ "$vpc_cidr" =~ ^[0-9.]+/[0-9]+$ ]] || { echo "no VPC CIDR from IMDS: '$vpc_cidr'" >&2; exit 1; }
+                  ufw default deny incoming
+                  ufw default allow outgoing
+                  ufw allow from "$vpc_cidr" to any port 22 proto tcp comment 'SSH from the Instance Connect Endpoint'
+                  ufw --force enable
+                  ufw status verbose >> /var/log/zerox-bootstrap.txt 2>&1
+                  echo "bootstrap: ok $(date -u +%FT%TZ)" >> /var/log/zerox-bootstrap.txt
+
+            runcmd:
+              - [systemctl, restart, systemd-journald]
+              - [systemctl, daemon-reload]
+              - [systemctl, restart, apt-daily-upgrade.timer]
+              # Last on purpose: runcmd is one /bin/sh script without set -e, so only the last
+              # command's exit status reaches `cloud-init status`. The marker also reaches the serial
+              # console (aws ec2 get-console-output).
+              - [sh, -c, 'if /usr/local/sbin/zerox-bootstrap; then echo "ZEROX-BOOTSTRAP: OK"; else echo "ZEROX-BOOTSTRAP: FAILED, see /var/log/cloud-init-output.log"; exit 1; fi']
+
+  Instance:
+    Type: AWS::EC2::Instance
+    # Created last: if the endpoint fails, a rollback has no protected instance it cannot delete.
+    DependsOn: [InstanceConnectEndpoint, SshFromEndpoint]
+    Metadata:
+      # Phase 1: the VM calls no AWS API and holds no AWS credentials, so it has no instance profile.
+      # Phase 2 adds one (logs, metrics, backups) on this resource (deploy/aws/README.md).
+      # Detailed (1-minute) monitoring costs about $2/month; Phase 2's alarms use the free 5-minute
+      # metrics. Monitoring: true can be set later without interruption.
+      guard:
+        SuppressedRules:
+          - EC2_INSTANCE_PROFILE_ATTACHED
+          - EC2_INSTANCE_DETAILED_MONITORING_ENABLED
+    Properties:
+      InstanceType: !Ref InstanceType
+      # t4g is EBS-optimized by default; stated so the template says what runs.
+      EbsOptimized: true
+      ImageId: !Ref ImageId
+      KeyName: !Ref KeyPair
+      SubnetId: !Ref SubnetId
+      SecurityGroupIds: [!GetAtt InstanceSecurityGroup.GroupId]
+      DisableApiTermination: !Ref TerminationProtection
+      LaunchTemplate:
+        LaunchTemplateId: !Ref LaunchTemplate
+        Version: !GetAtt LaunchTemplate.LatestVersionNumber
+      Tags:
+        - { Key: Name, Value: zerox-gateway }
+        - { Key: Project, Value: zerox-gateway }
+
+Outputs:
+  InstanceId:
+    Value: !Ref Instance
+  PublicIp:
+    Description: Outbound address only; nothing connects to it.
+    Value: !GetAtt Instance.PublicIp
+  InstanceConnectEndpointId:
+    Value: !Ref InstanceConnectEndpoint
+  ConnectCommand:
+    Description: Admin shell through the endpoint (needs AWS CLI v2 and a signed-in profile).
+    Value: !Sub aws ec2-instance-connect ssh --instance-id ${Instance} --connection-type eice --os-user ubuntu --region ${AWS::Region}

@@ -101,13 +101,13 @@
       <li>Models can be wrong and sound certain. Review the diff and run the checks yourself before you merge.</li>
       <li>A model sees only what fits in its context window, and long sessions fill it. In Neuron's line REPL, <code>/compact</code> shrinks a long session.</li>
       <li>Free hosted models come from shared pools with best-effort availability. Neuron's Free plan allows <span data-plan-limit="free:daily_requests">100</span> requests and <span data-plan-limit="free:daily_tokens">500K</span> tokens a day; <a href="/pricing">Pro and Max</a> raise the limits.</li>
-      <li>Neuron 7.0.0-alpha.1 is an alpha, so expect rough edges and read the <a href="https://github.com/RAHUL-DevelopeRR/neuron-v2/blob/HEAD/CHANGELOG.md">known limitations</a>. The binaries are not code-signed (Windows) or notarized (macOS).</li>
+      <li>Neuron 7.0.0-alpha.2 is an alpha, so expect rough edges and read the <a href="https://github.com/RAHUL-DevelopeRR/neuron-v2/blob/HEAD/CHANGELOG.md">known limitations</a>. The binaries are not code-signed (Windows) or notarized (macOS).</li>
     </ul>
 
     <h2 id="try">Try a coding agent in your terminal</h2>
     <p>Neuron installs with one command on macOS, Linux and Windows.</p>
-    <div class="zx-code"><span class="zx-code__label">macOS and Linux</span><pre><code>curl -fsSL https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.1/install.sh | sh -s -- --version 7.0.0-alpha.1</code></pre></div>
-    <div class="zx-code"><span class="zx-code__label">Windows (PowerShell)</span><pre><code>&amp; ([scriptblock]::Create((irm https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.1/install.ps1))) -Version 7.0.0-alpha.1</code></pre></div>
+    <div class="zx-code"><span class="zx-code__label">macOS and Linux</span><pre><code>curl -fsSL https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.2/install.sh | sh -s -- --version 7.0.0-alpha.2</code></pre></div>
+    <div class="zx-code"><span class="zx-code__label">Windows (PowerShell)</span><pre><code>&amp; ([scriptblock]::Create((irm https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.2/install.ps1))) -Version 7.0.0-alpha.2</code></pre></div>
     <p>Then sign in once and start Neuron in a project:</p>
     <div class="zx-code"><span class="zx-code__label">First run</span><pre><code>neuron login
 cd path/to/your-project

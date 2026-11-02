@@ -37,3 +37,7 @@ wrangler.log
 .dev.vars*
 !.dev.vars.example
 !.env.example
+
+# The A/B harness's staging targets and Worker config (deploy/aws/AB-TEST.md)
+deploy/aws/abtest-targets.local.json
+neuroncli/auth-server/wrangler.staging.toml

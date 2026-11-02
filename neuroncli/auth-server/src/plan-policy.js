@@ -27,29 +27,34 @@ export async function loadPlanLimits(env) {
 
 // ── Public plan catalogue (docs/PLATFORM_CONTRACT.md §1) ──
 // Static fallback used when the database is unavailable. It must stay identical to the seeded
-// zerox_plan_policy rows. Prices are in minor units (cents/paise); credits are micro-USD.
+// zerox_plan_policy rows (features: migration 20261029000900_plan_features_claude.sql, also the
+// site's pricing.js fallback and pricing.html). Prices are in minor units (cents/paise); credits
+// are micro-USD. Free has the free tier only; Pro and Max add the paid tier (Claude Sonnet 5.5 and
+// Claude Opus 5.5, billed from credits); every plan has the same Neuron features.
 export const PAID_PLAN_IDS = Object.freeze(['pro', 'max']);
 export const PLAN_CATALOG = Object.freeze([
   Object.freeze({
     id: 'free', name: 'Free', price: { usd_cents: 0, inr_paise: 0 }, interval: 'month',
     limits: { daily_requests: 100, daily_tokens: 500000, rpm: 10, concurrency: 2 },
     monthly_credit_microusd: 0, tiers: ['free'], highlighted: false,
-    features: ['Free upstream models (Groq, Gemini, Workers AI)', '100 requests and 500K tokens per day',
-      '10 requests per minute, 2 concurrent', 'Bring your own OpenRouter key'],
+    features: ['Free models from Groq, Google Gemini, Cloudflare Workers AI, NVIDIA and OpenRouter',
+      '100 requests and 500K tokens per day', '10 requests per minute, 2 at once', 'Every Neuron feature, the same on all plans'],
   }),
   Object.freeze({
     id: 'pro', name: 'Pro', price: { usd_cents: 1000, inr_paise: 89900 }, interval: 'month',
     limits: { daily_requests: 2000, daily_tokens: 10000000, rpm: 30, concurrency: 4 },
     monthly_credit_microusd: 8000000, tiers: ['free', 'paid'], highlighted: true,
-    features: ['Everything in Free', '$8 of paid-model credits every month', '2,000 requests and 10M tokens per day',
-      '30 requests per minute, 4 concurrent', 'Personal API keys for CI and headless runs'],
+    features: ['Claude Sonnet 5.5 and Claude Opus 5.5, billed from credits', '$8 of credits included every month',
+      'Free models with higher limits: 2,000 requests and 10M tokens per day', '30 requests per minute, 4 at once',
+      'Every Neuron feature, the same on all plans'],
   }),
   Object.freeze({
     id: 'max', name: 'Max', price: { usd_cents: 4000, inr_paise: 349900 }, interval: 'month',
     limits: { daily_requests: 10000, daily_tokens: 50000000, rpm: 60, concurrency: 8 },
     monthly_credit_microusd: 35000000, tiers: ['free', 'paid'], highlighted: false,
-    features: ['Everything in Pro', '$35 of paid-model credits every month', '10,000 requests and 50M tokens per day',
-      '60 requests per minute, 8 concurrent', 'Priority access to paid capacity'],
+    features: ['Claude Sonnet 5.5 and Claude Opus 5.5, billed from credits', '$35 of credits included every month',
+      'Free models with higher limits: 10,000 requests and 50M tokens per day', '60 requests per minute, 8 at once',
+      'Every Neuron feature, the same on all plans'],
   }),
 ]);
 export const TOPUP_PACKS = Object.freeze([

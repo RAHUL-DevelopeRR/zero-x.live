@@ -251,6 +251,8 @@ li + li { margin-top: .35em; }
 .zx-code pre { margin: 0; padding: 14px 16px; overflow-x: auto; font-size: .88rem; line-height: 1.6; color: var(--zx-text); }
 .zx-code--copy pre { padding-right: 88px; }
 .zx-code .zx-copy { position: absolute; top: 6px; right: 6px; }
+/* Long one-line commands wrap instead of scrolling under the copy button */
+.zx-code--wrap pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 .zx-code__label { display: block; padding: 8px 16px 0; font-family: var(--zx-font-mono); font-size: .75rem; color: var(--zx-faint); text-transform: uppercase; letter-spacing: .06em; }
 .zx-secret { display: block; width: 100%; padding: 12px; border-radius: var(--zx-radius-sm); border: 1px solid var(--zx-accent); background: var(--zx-code-bg); color: var(--zx-heading); font-family: var(--zx-font-mono); font-size: .9rem; overflow-wrap: anywhere; user-select: all; }
 

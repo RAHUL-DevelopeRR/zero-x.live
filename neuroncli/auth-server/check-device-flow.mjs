@@ -153,8 +153,41 @@ try {
     assert.ok(second.user_code);
     ok('failed device steps (create, lookup, deny/approve account sync, approve, poll, load_user, mint_session, redeem) each log a line without codes or tokens');
   }
+
+  // ── Test hosts (EXTRA_WEB_HOSTS, EC2 only, C10): the approval page may run there too ──
+  {
+    const testHosts = { ...env, EXTRA_WEB_HOSTS: 'aws.zero-x.live' };
+    const approvalCall = (origin, bindings, headers = {}) => app.request('https://aws.zero-x.live/auth/device/lookup', {
+      method: 'POST', body: JSON.stringify({ user_code: 'BDWPHQPK' }),
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${devToken('test.host@example.test')}`, Origin: origin, ...headers },
+    }, bindings).then(async response => ({ status: response.status, code: (await response.json()).error?.code }));
+    const pageRefused = { status: 403, code: 'forbidden' };
+    // Past the origin check the dev identity is refused (not a loopback host): 401, not 403.
+    const pastOriginCheck = { status: 401, code: 'invalid_session' };
+    assert.deepEqual(await approvalCall('https://aws.zero-x.live', env), pageRefused, 'unset: only the production pages');
+    assert.deepEqual(await approvalCall('https://aws.zero-x.live', { ...env, EXTRA_WEB_HOSTS: '' }), pageRefused);
+    assert.deepEqual(await approvalCall('https://aws.zero-x.live', testHosts), pastOriginCheck);
+    assert.deepEqual(await approvalCall('https://neuron.zero-x.live', env), pastOriginCheck, 'the production page as before');
+    assert.deepEqual(await approvalCall('http://aws.zero-x.live', testHosts), pageRefused, 'https only');
+    assert.deepEqual(await approvalCall('https://other.zero-x.live', testHosts), pageRefused);
+    assert.deepEqual(await approvalCall('https://aws.zero-x.live', testHosts, { 'Sec-Fetch-Site': 'cross-site' }), pageRefused,
+      'still same-origin only');
+
+    // A sign-in started on the test host is approved there, so the whole flow runs on EC2.
+    const deviceCode = (host, bindings, ip) => app.request(`https://${host}/auth/device/code`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'x-neuron-client-ip': ip }, body: JSON.stringify({ client_id: 'neuron-cli' }),
+    }, bindings).then(response => response.json());
+    let created = await deviceCode('aws.zero-x.live', testHosts, '203.0.113.31');
+    assert.equal(created.verification_uri, 'https://aws.zero-x.live/neuroncli/device/');
+    assert.equal(created.verification_uri_complete, `https://aws.zero-x.live/neuroncli/device/?user_code=${created.user_code}`);
+    created = await deviceCode('aws.zero-x.live', env, '203.0.113.32');
+    assert.equal(created.verification_uri, 'https://neuron.zero-x.live/device', 'unset: the production page');
+    created = await deviceCode('zero-x.live', testHosts, '203.0.113.33');
+    assert.equal(created.verification_uri, 'https://neuron.zero-x.live/device', 'production hosts keep the production page');
+    ok('EXTRA_WEB_HOSTS: the approval endpoints accept the test host\'s https page (same-origin only), and a sign-in started there is approved there; unset, nothing changes');
+  }
 } finally {
   await closeAllPglite();
 }
 
-console.log(`PASS: device sign-in (${passed.length} groups): deny without a synced account, Retry-After from the oldest pending grant, logged failures`);
+console.log(`PASS: device sign-in (${passed.length} groups): deny without a synced account, Retry-After from the oldest pending grant, logged failures, test-host origins (EXTRA_WEB_HOSTS)`);

@@ -665,7 +665,7 @@ try {
   });
 
   await test('free Gemini budgets stay below the observed upstream limit and still fit a Neuron request', () => {
-    assert.deepEqual({ ...POOL_LIMITS.gemini_free }, { rpm: 5, rpd: 250, tpm: 120000, tpd: 5000000 });
+    assert.deepEqual({ ...POOL_LIMITS.gemini_free }, { rpm: 5, rpd: 20, tpm: 120000, tpd: 5000000 });
     for (const id of ['gemini/gemini-2.5-flash', 'gemini/gemini-3.5-flash']) {
       const free = entry(id).pools.find(pool => pool.tier === 'free');
       assert.equal(free.limits, POOL_LIMITS.gemini_free);
@@ -673,7 +673,7 @@ try {
       assert.equal(fitMaxTokens(entry(id), free, 23500, 8192), 8192);
       assert.equal(fitMaxTokens(entry(id), free, 119500, 8192), 0, 'no room for a useful answer in the per-minute budget');
       const args = reservationArgs({ session: { user_id: 'u' }, requestId: 'r', entry: entry(id), pool: free, promptTokens: 23500, maxTokens: 8192 });
-      assert.deepEqual(args.p_pool, { rpm: 5, rpd: 250, tpm: 120000, tpd: 5000000 });
+      assert.deepEqual(args.p_pool, { rpm: 5, rpd: 20, tpm: 120000, tpd: 5000000 });
       // Sequential Neuron turns settle to ~25K each (prompt + a short answer): the fourth one in a
       // minute still fits its 31.7K reservation, and no minute can pass more than 120K tokens upstream.
       assert.ok(3 * 25000 + args.p_tokens <= free.limits.tpm && 4 * 25000 + args.p_tokens > free.limits.tpm);

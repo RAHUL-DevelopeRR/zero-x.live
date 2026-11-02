@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -109,10 +109,16 @@ try {
     'Worker-bundled modules stay free of Node built-ins');
   const migrations = await listMigrations();
   assert.deepEqual(handle.applied, migrations.map(migration => migration.version), 'all migrations applied in version order');
-  assert.deepEqual(migrations.slice(-7).map(migration => migration.file), [
+  // The business migrations in apply order; other migrations may sit between them.
+  const businessMigrations = [
     '20261016000000_business_schema.sql', '20261016000100_business_quota.sql',
     '20261016000200_business_billing.sql', '20261016000300_business_sessions_admin.sql',
-    '20261019000000_device_auth.sql', '20261019120000_provider_discovery.sql', '20261021000000_device_pending_retry.sql']);
+    '20261019000000_device_auth.sql', '20261019120000_provider_discovery.sql', '20261021000000_device_pending_retry.sql',
+    '20261028000000_reservation_leases.sql', '20261029000000_session_devices.sql', '20261029000100_push_tokens.sql',
+    '20261029000200_provider_keys.sql', '20261029000300_provider_key_budgets.sql', '20261029000400_oiop_offers.sql',
+    '20261029000500_credit_programs.sql', '20261029000800_paid_billing_caps.sql', '20261029000900_plan_features_claude.sql',
+    '20261029001000_pool_concurrency.sql'];
+  assert.deepEqual(migrations.map(migration => migration.file).filter(file => businessMigrations.includes(file)), businessMigrations);
   assert.equal((await sql('SELECT count(*)::int AS n FROM supabase_migrations.schema_migrations'))[0].n, migrations.length);
   await assert.rejects(rpc(env, 'zerox_does_not_exist', {}), error =>
     error instanceof AccountDatabaseError && error.code === 'PGRST202');
@@ -308,12 +314,50 @@ try {
   assert.equal(slotA.status, 'ok'); assert.equal(slotB.status, 'ok');
   const busy = await reserve(concurrentUser);
   assert.equal(busy.status, 'user_concurrency');
-  assert.equal(busy.retry_after_seconds, 5);
+  assert.equal(busy.reservation_id, null);
+  // A slot is a 90 s lease, and the refusal reports the wait until the first one lapses (it
+  // said 5 s while a leaked slot was held for 10 minutes, E2E finding 2026-10-27).
+  assert.ok(busy.retry_after_seconds >= 85 && busy.retry_after_seconds <= 90, `concurrency retry ${busy.retry_after_seconds}`);
+  await sql("UPDATE public.zerox_reservations SET lease_expires_at = now() + interval '30 seconds' WHERE id = $1", [slotA.reservation_id]);
+  const shortLease = await reserve(concurrentUser);
+  assert.equal(shortLease.status, 'user_concurrency');
+  assert.ok(shortLease.retry_after_seconds >= 29 && shortLease.retry_after_seconds <= 30, `retry ${shortLease.retry_after_seconds}`);
+  // Rows reserved under the 10 minute horizon (backfilled leases) never ask for more than 90 s.
+  await sql("UPDATE public.zerox_reservations SET lease_expires_at = now() + interval '9 minutes' WHERE user_id = $1 AND status = 'active'",
+    [concurrentUser]);
+  assert.equal((await reserve(concurrentUser)).retry_after_seconds, 90);
   await settle(slotA.reservation_id);
-  assert.equal((await reserve(concurrentUser)).status, 'ok', 'settling frees a concurrency slot');
-  await sql("UPDATE public.zerox_reservations SET created_at = now() - interval '11 minutes' WHERE id = $1", [slotB.reservation_id]);
-  assert.equal((await reserve(concurrentUser)).status, 'ok', 'reservations older than 10 minutes do not hold a slot');
-  ok('user_rpm with retry_after_seconds and rolling window, user_concurrency with 10 minute horizon');
+  const slotC = await reserve(concurrentUser);
+  assert.equal(slotC.status, 'ok', 'settling frees a concurrency slot');
+  const leaseSeconds = async (id, from = 'now()') => (await sql(`SELECT round(extract(epoch FROM lease_expires_at - ${from}))::int AS s
+    FROM public.zerox_reservations WHERE id = $1`, [id]))[0].s;
+  assert.equal(await leaseSeconds(slotC.reservation_id, 'created_at'), 90, 'a new reservation leases its slot for 90 s');
+  // A lapsed lease (the isolate died: nothing renewed or settled it) is released by the user's
+  // next reservation, without the cron, and keeps what it was charged.
+  await sql("UPDATE public.zerox_reservations SET lease_expires_at = now() - interval '1 second' WHERE id = $1", [slotB.reservation_id]);
+  const beforeHeal = await account(concurrentUser);
+  const healed = await reserve(concurrentUser);
+  assert.equal(healed.status, 'ok', 'a lapsed lease does not hold a slot');
+  assert.deepEqual(await sql(`SELECT status, outcome, settled_at IS NOT NULL AS closed, prompt_tokens, completion_tokens
+    FROM public.zerox_reservations WHERE id = $1`, [slotB.reservation_id]),
+  [{ status: 'released', outcome: null, closed: true, prompt_tokens: null, completion_tokens: null }]);
+  const afterHeal = await account(concurrentUser);
+  assert.equal(afterHeal.daily_requests, beforeHeal.daily_requests + 1, 'releasing a lapsed lease refunds nothing');
+  assert.equal(afterHeal.daily_tokens_used, beforeHeal.daily_tokens_used + 100);
+  const renew = (id, seconds) => rpc(env, 'zerox_renew_reservation', { p_reservation_id: id, p_lease_seconds: seconds });
+  assert.equal(await renew(slotB.reservation_id, 90), false, 'a released reservation is not renewed');
+  await sql("UPDATE public.zerox_reservations SET lease_expires_at = now() + interval '5 seconds' WHERE id = $1", [slotC.reservation_id]);
+  assert.equal(await renew(slotC.reservation_id, 90), true);
+  const renewedFor = await leaseSeconds(slotC.reservation_id);
+  assert.ok(renewedFor >= 89 && renewedFor <= 90, `a renewal extends the lease to 90 s from now (${renewedFor})`);
+  assert.equal(await renew(slotC.reservation_id, 1), true);
+  assert.ok(await leaseSeconds(slotC.reservation_id) >= 88, 'a renewal never shortens a lease');
+  await settle(slotC.reservation_id);
+  assert.equal(await renew(slotC.reservation_id, 90), false, 'a settled reservation is not renewed');
+  assert.equal(await renew(randomUUID(), 90), false);
+  await assert.rejects(renew(healed.reservation_id, 0), /invalid_lease/);
+  await assert.rejects(renew(healed.reservation_id, 3601), /invalid_lease/);
+  ok('user_rpm with retry_after_seconds and rolling window, user_concurrency as renewable 90 s leases with the real wait, lapsed leases released by the next reservation');
 
   // ---------------------------------------------------------------- credits
   const proUser = await newUser('pro');
@@ -349,15 +393,21 @@ try {
   const freeTierCost = await reserve(proUser, { p_tier: 'free' });
   assert.deepEqual(await settle(freeTierCost.reservation_id, { p_cost_microusd: 999 }),
     { status: 'settled', credit_balance_microusd: 5000 }, 'free pool usage costs no credits');
-  // A long-running paid request keeps its credits held after its concurrency slot lapses (10 min),
-  // until it is settled or released (15 min).
+  // A long-running paid request keeps its credits held while its lease is renewed and after its
+  // concurrency slot lapses, until it is settled or released (5 minutes after its lease lapsed, and
+  // for a paid reservation not before 60 minutes after it was made).
   const longRunner = await newUser('pro', { credits: 1000 });
   const longPaid = await reserve(longRunner, { p_tier: 'paid', p_cost_microusd: 1000 });
   assert.equal(longPaid.status, 'ok');
   await sql("UPDATE public.zerox_reservations SET created_at = now() - interval '11 minutes' WHERE id = $1", [longPaid.reservation_id]);
   assert.equal((await reserve(longRunner, { p_tier: 'paid', p_cost_microusd: 1000 })).status, 'insufficient_credits',
-    'credits stay held beyond the 10 minute concurrency horizon');
-  await sql("UPDATE public.zerox_reservations SET created_at = now() - interval '16 minutes' WHERE id = $1", [longPaid.reservation_id]);
+    'credits stay held while the lease runs, also past the former 10 minute horizon');
+  await sql(`UPDATE public.zerox_reservations SET created_at = now() - interval '16 minutes',
+    lease_expires_at = now() - interval '6 minutes' WHERE id = $1`, [longPaid.reservation_id]);
+  await rpc(env, 'zerox_release_stale_reservations', {});
+  assert.equal((await reserve(longRunner, { p_tier: 'paid', p_cost_microusd: 1000 })).status, 'insufficient_credits',
+    'a paid reservation is not released at 15 minutes, so a long Claude stream keeps its hold');
+  await sql("UPDATE public.zerox_reservations SET created_at = now() - interval '61 minutes' WHERE id = $1", [longPaid.reservation_id]);
   await rpc(env, 'zerox_release_stale_reservations', {});
   assert.equal((await reserve(longRunner, { p_tier: 'paid', p_cost_microusd: 1000 })).status, 'ok', 'release returns the held credits');
   // The usage: ref namespace belongs to settlements, so a grant can never block one.
@@ -569,24 +619,349 @@ try {
   }
   ok('Groq free pool: four Neuron-sized turns in one minute (prompt + 1,024 held, settled to usage); the fifth is refused, logged with its pool and budget, and shown busy');
 
+  // ---------------------------------------------------------------- concurrency leases through the chat handler
+  // E2E finding (2026-10-27): when Cloudflare killed an isolate mid-stream (exceededCpu, 1102),
+  // nothing settled its reservation (no cancel(), no onFinish, waitUntil died with it) and the slot
+  // stayed taken for 10 minutes. The CLI's immediate retry was killed too, so one kill pair filled
+  // both Free slots, and every refusal said "retry in 5 s". A slot is now a 90 s lease that the
+  // handler renews while the attempt runs.
+  await clockHeadroom(20);
+  {
+    resetPoolBudgets();
+    // Each part runs on an unused minute of the Groq free pool (8K TPM); the counters are put back afterwards.
+    await db.exec(`CREATE TEMP TABLE lease_pool_saved AS SELECT * FROM public.zerox_pool_usage
+      WHERE model = 'groq/openai/gpt-oss-120b' AND tier = 'free';`);
+    const freshPool = () => db.exec("DELETE FROM public.zerox_pool_usage WHERE model = 'groq/openai/gpt-oss-120b' AND tier = 'free'");
+    const encoder = new TextEncoder();
+    const sse = value => encoder.encode(`data: ${typeof value === 'string' ? value : JSON.stringify(value)}\n\n`);
+    const delta = (content, finish = null) => ({ id: 'up', object: 'chat.completion.chunk', created: 1, model: 'openai/gpt-oss-120b',
+      choices: [{ index: 0, delta: content ? { role: 'assistant', content } : {}, finish_reason: finish }] });
+    const completeUpstream = controller => {
+      controller.enqueue(sse(delta(null, 'stop')));
+      controller.enqueue(sse('[DONE]'));
+      controller.close();
+    };
+    // 'hang': the generation is still running (its controller is kept); 'complete': a whole
+    // answer; 'no-done': the upstream ends without finish_reason or [DONE].
+    let upstreamMode = 'hang';
+    const upstreams = [];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = async (input, options = {}) => {
+      if (!String(input).startsWith('https://api.groq.com/')) return realFetch(input, options);
+      const mode = upstreamMode;
+      return new Response(new ReadableStream({ start(controller) {
+        controller.enqueue(sse(delta('partial')));
+        if (mode === 'complete') completeUpstream(controller);
+        else if (mode === 'no-done') controller.close();
+        else upstreams.push(controller);
+      } }), { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+    };
+    // Counts zerox_renew_reservation calls (the PGlite driver runs every RPC in a transaction).
+    const realTransaction = db.transaction;
+    let renewals = 0;
+    db.transaction = callback => realTransaction.call(db, tx => {
+      const query = tx.query.bind(tx);
+      tx.query = (text, ...rest) => {
+        if (String(text).includes('zerox_renew_reservation')) renewals++;
+        return query(text, ...rest);
+      };
+      return callback(tx);
+    });
+    const leaseChat = (userId, extra = {}) => {
+      const session = { account_backed: true, user_id: userId, plan: 'free' };
+      const tracker = new ProviderHealthTracker();
+      const app = new Hono();
+      app.post('/v1/chat/completions', createChatHandler({
+        validateSession: async () => ({ token: 'ses_lease', session }),
+        setSession: async () => {}, getSession: async () => null, planLimits: async () => ({}),
+        router: new RoutingEngine(tracker), healthTracker: tracker,
+      }));
+      const leaseEnv = { ...env, GROQ_API_KEY: 'groq-free-test-key', UPSTREAM_IDLE_TIMEOUT_MS: '600000', ...extra };
+      return () => app.request('http://127.0.0.1/v1/chat/completions', { method: 'POST',
+        headers: { Authorization: 'Bearer ses_lease', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: 'groq/openai/gpt-oss-120b', stream: true, messages: [{ role: 'user', content: 'hi' }] }) }, leaseEnv);
+    };
+    // Starts a stream and reads its first chunk.
+    const open = async chat => {
+      const response = await chat();
+      assert.equal(response.status, 200);
+      const reader = response.body.getReader();
+      assert.equal((await reader.read()).done, false, 'the first chunk reached the client');
+      return reader;
+    };
+    const drain = async reader => {
+      let text = '';
+      for (let read = await reader.read(); !read.done; read = await reader.read()) text += new TextDecoder().decode(read.value);
+      return text;
+    };
+    const reservationsOf = async userId => (await sql(`SELECT status, outcome FROM public.zerox_reservations
+      WHERE user_id = $1 ORDER BY created_at, id`, [userId])).map(row => `${row.status}/${row.outcome}`);
+    const abandoned = [];
+    try {
+      // (a) The isolate dies mid-stream: the client got one chunk, then nothing of the request
+      // runs again (no cancel(), no onFinish, no renewal). The refusal reports the real wait, and
+      // once the leases lapse the user's next request releases them, without the cron.
+      await freshPool();
+      const killedUser = await newUser('free');
+      const killedChat = leaseChat(killedUser, { RESERVATION_RENEW_MS: '600000' });
+      upstreamMode = 'hang';
+      abandoned.push(await open(killedChat), await open(killedChat));
+      const killedUpstreams = upstreams.splice(0);
+      const locked = await killedChat();
+      assert.equal(locked.status, 429);
+      const lockError = (await locked.json()).error;
+      assert.equal(lockError.code, 'rate_limited');
+      assert.ok(lockError.retry_after_seconds > 0 && lockError.retry_after_seconds <= 90 && lockError.retry_after_seconds >= 85,
+        `Retry-After is the wait until the first lease lapses (${lockError.retry_after_seconds} s), not 5 s`);
+      assert.equal(locked.headers.get('retry-after'), String(lockError.retry_after_seconds));
+      assert.deepEqual(await reservationsOf(killedUser), ['active/null', 'active/null']);
+      await sql("UPDATE public.zerox_reservations SET lease_expires_at = now() - interval '1 second' WHERE user_id = $1 AND status = 'active'",
+        [killedUser]);
+      upstreamMode = 'complete';
+      const recovered = await killedChat();
+      assert.equal(recovered.status, 200, 'lapsed leases free their slots without the cron');
+      assert.match(await recovered.text(), /\[DONE\]/);
+      assert.deepEqual(await reservationsOf(killedUser), ['released/null', 'released/null', 'settled/ok']);
+      upstreams.push(...killedUpstreams);
+
+      // (b) A generation that runs past its lease keeps its slot: the handler renews the lease every
+      // RESERVATION_RENEW_MS while the attempt runs, and stops once the attempt is settled.
+      await freshPool();
+      const longUser = await newUser('free');
+      const longChat = leaseChat(longUser, { RESERVATION_RENEW_MS: '50', RESERVATION_LEASE_SECONDS: '1' });
+      upstreamMode = 'hang';
+      const running = [await open(longChat), await open(longChat)];
+      const runningUpstreams = upstreams.splice(-2);
+      // From here only the renewals keep these leases.
+      await sql("UPDATE public.zerox_reservations SET lease_expires_at = now() + interval '1 second' WHERE user_id = $1", [longUser]);
+      renewals = 0;
+      await sleep(1500);
+      assert.ok(renewals >= 10, `the leases were renewed while the generations ran (${renewals} renewals)`);
+      const stillBusy = await longChat();
+      assert.equal(stillBusy.status, 429, 'running generations keep their slots past the 1 s lease');
+      assert.equal((await stillBusy.json()).error.retry_after_seconds, 1);
+      assert.deepEqual(await reservationsOf(longUser), ['active/null', 'active/null']);
+      for (const controller of runningUpstreams) completeUpstream(controller);
+      for (const reader of running) assert.match(await drain(reader), /\[DONE\]/);
+      assert.deepEqual(await reservationsOf(longUser), ['settled/ok', 'settled/ok']);
+      const afterSettle = renewals;
+      await sleep(300);
+      assert.equal(renewals, afterSettle, 'renewals stop once the attempts are settled');
+      upstreamMode = 'complete';
+      const freed = await longChat();
+      assert.equal(freed.status, 200, 'finished generations free their slots');
+      await freed.text();
+
+      // (c) Regressions: a client cancel and an upstream that ends without [DONE] settle at once
+      // and stop renewing.
+      await freshPool();
+      const endedUser = await newUser('free');
+      const endedChat = leaseChat(endedUser, { RESERVATION_RENEW_MS: '50' });
+      upstreamMode = 'hang';
+      const cancelled = await open(endedChat);
+      await cancelled.cancel();
+      upstreamMode = 'no-done';
+      const cut = await endedChat();
+      assert.equal(cut.status, 200);
+      assert.match(await cut.text(), /upstream_error/);
+      await sleep(50);
+      assert.deepEqual(await reservationsOf(endedUser), ['settled/error', 'settled/error']);
+      const afterEnded = renewals;
+      await sleep(200);
+      assert.equal(renewals, afterEnded, 'no renewals after a cancel or an interrupted stream');
+
+      // (d) A renew interval as long as the lease or longer (RESERVATION_RENEW_MS=90000 with the
+      // default 90 s lease, scaled down here) is clamped to a third of the lease, so running
+      // generations renew before their leases lapse and are never released under them.
+      await freshPool();
+      const clampedUser = await newUser('free');
+      const clampedChat = leaseChat(clampedUser, { RESERVATION_RENEW_MS: '600000', RESERVATION_LEASE_SECONDS: '1' });
+      upstreamMode = 'hang';
+      const clamped = [await open(clampedChat), await open(clampedChat)];
+      const clampedUpstreams = upstreams.splice(-2);
+      await sql("UPDATE public.zerox_reservations SET lease_expires_at = now() + interval '1 second' WHERE user_id = $1", [clampedUser]);
+      renewals = 0;
+      await sleep(1500);
+      assert.ok(renewals >= 4, `renewals at most a third of the lease apart (${renewals} renewals)`);
+      const clampedBusy = await clampedChat();
+      assert.equal(clampedBusy.status, 429, 'a renew interval longer than the lease does not cost running generations their slots');
+      await clampedBusy.json();
+      for (const controller of clampedUpstreams) completeUpstream(controller);
+      for (const reader of clamped) assert.match(await drain(reader), /\[DONE\]/);
+      assert.deepEqual(await reservationsOf(clampedUser), ['settled/ok', 'settled/ok']);
+    } finally {
+      for (const reader of abandoned) await reader.cancel().catch(() => {});
+      for (const controller of upstreams) try { controller.close(); } catch { /* already cancelled */ }
+      db.transaction = realTransaction;
+      globalThis.fetch = realFetch;
+      resetPoolBudgets();
+      await db.exec(`DELETE FROM public.zerox_pool_usage WHERE model = 'groq/openai/gpt-oss-120b' AND tier = 'free';
+        INSERT INTO public.zerox_pool_usage SELECT * FROM lease_pool_saved; DROP TABLE lease_pool_saved;`);
+    }
+  }
+  ok('concurrency leases: a killed stream frees its slot once its lease lapses, without the cron (Retry-After is the real wait); running streams renew their leases (at least three times per lease) and stop once settled; cancel and cut streams settle at once');
+
+  // ---------------------------------------------------------------- per-key pool budgets (provider key vault, §11.1)
+  // Each vault key is its own upstream budget: p_pool_key selects that key's buckets, so a spent
+  // key returns pool_exhausted while another key of the same model still reserves.
+  await clockHeadroom();
+  const vaultModel = 'groq/openai/gpt-oss-120b-vault';
+  const keyIds = [randomUUID(), randomUUID()];
+  const [vaultKeyA, vaultKeyB] = keyIds.map(id => `groq:openai/gpt-oss-120b:free#${id}`);
+  const keyRow = async (poolKey, bucket) => (await sql(`SELECT * FROM public.zerox_pool_usage
+    WHERE model = $1 AND tier = 'free' AND pool_key = $2 AND bucket = $3 ORDER BY bucket_start DESC LIMIT 1`,
+  [vaultModel, poolKey, bucket]))[0];
+  const keyUsers = [await newUser('max'), await newUser('max'), await newUser('max')];
+  const perKey = { rpm: 2, rpd: 5, tpm: 1000, tpd: null };
+  const onKey = (user, poolKey, overrides = {}) => reserve(user, { p_model: vaultModel, p_pool: perKey, p_pool_key: poolKey, ...overrides });
+  const a1 = await onKey(keyUsers[0], vaultKeyA);
+  const a2 = await onKey(keyUsers[1], vaultKeyA);
+  assert.equal(a1.status, 'ok'); assert.equal(a2.status, 'ok');
+  const aSpent = await onKey(keyUsers[2], vaultKeyA);
+  assert.equal(aSpent.status, 'pool_exhausted', 'key A has spent its own per-minute budget');
+  assert.ok(aSpent.retry_after_seconds >= 1 && aSpent.retry_after_seconds <= 60);
+  const b1 = await onKey(keyUsers[2], vaultKeyB);
+  assert.equal(b1.status, 'ok', 'key B of the same model still has its own budget');
+  assert.equal((await reserve(keyUsers[2], { p_model: vaultModel, p_pool: perKey })).status, 'ok',
+    'the default bucket (no pool key, e.g. the environment key) is separate from every vault key');
+  assert.equal((await keyRow(vaultKeyA, 'minute')).requests, 2);
+  assert.equal((await keyRow(vaultKeyB, 'minute')).requests, 1);
+  assert.equal((await keyRow('', 'minute')).requests, 1);
+  assert.equal((await keyRow(vaultKeyA, 'day')).requests, 2);
+  const stored = Object.fromEntries((await sql('SELECT id, pool_key FROM public.zerox_reservations WHERE id = ANY($1::uuid[])',
+    [[a1.reservation_id, b1.reservation_id]])).map(row => [row.id, row.pool_key]));
+  assert.deepEqual(stored, { [a1.reservation_id]: vaultKeyA, [b1.reservation_id]: vaultKeyB }, 'the reservation remembers its bucket');
+  // Settlement reconciles the reservation's own bucket: actual tokens on A, a refund on B.
+  await settle(a1.reservation_id, { p_prompt_tokens: 30, p_completion_tokens: 10 });
+  assert.equal((await keyRow(vaultKeyA, 'minute')).tokens, 140, 'key A: 100 reserved + 40 actual');
+  assert.equal((await keyRow(vaultKeyA, 'day')).tokens, 140);
+  assert.equal((await keyRow(vaultKeyB, 'minute')).tokens, 100, 'key B untouched by key A settling');
+  await settle(b1.reservation_id, { p_status: 'refunded', p_prompt_tokens: 0, p_completion_tokens: 0 });
+  assert.deepEqual([(await keyRow(vaultKeyB, 'minute')).requests, (await keyRow(vaultKeyB, 'minute')).tokens], [0, 0],
+    'a refund returns the request and tokens to key B only');
+  assert.equal((await keyRow(vaultKeyA, 'minute')).requests, 2);
+  assert.equal((await keyRow('', 'minute')).requests, 1);
+  // Token and daily budgets are per key as well.
+  assert.equal((await onKey(keyUsers[0], vaultKeyB, { p_tokens: 900 })).status, 'ok');
+  assert.equal((await onKey(keyUsers[1], vaultKeyB, { p_tokens: 200 })).status, 'pool_exhausted', 'key B tpm');
+  await sql(`UPDATE public.zerox_pool_usage SET requests = 5 WHERE model = $1 AND pool_key = $2 AND bucket = 'day'`, [vaultModel, vaultKeyA]);
+  const daySpent = await onKey(keyUsers[1], vaultKeyA);
+  assert.equal(daySpent.status, 'pool_exhausted', 'key A rpd');
+  assert.ok(Math.abs(daySpent.retry_after_seconds - Math.ceil((Date.parse(nextResets) - Date.now()) / 1000)) <= 5,
+    'a spent daily key budget retries at UTC midnight');
+  const vaultKeyC = `groq:openai/gpt-oss-120b:free#${randomUUID()}`;
+  assert.equal((await onKey(keyUsers[1], vaultKeyC)).status, 'ok', 'a third key starts with an empty budget');
+  await assert.rejects(onKey(keyUsers[0], ''), /invalid_reservation: p_pool_key/);
+  await assert.rejects(onKey(keyUsers[0], 'k'.repeat(301)), /invalid_reservation: p_pool_key/);
+  // Users only ever see models: usage events, by-model usage and the account overview carry no pool key.
+  const userViews = JSON.stringify([
+    await rpcRows(env, 'zerox_usage_events', { p_user_id: keyUsers[0], p_limit: 50, p_before: null }),
+    await rpcRows(env, 'zerox_usage_by_model', { p_user_id: keyUsers[0], p_from: todayUtc, p_to: todayUtc }),
+    await rpc(env, 'zerox_account_overview', { p_user_id: keyUsers[0] })]);
+  assert.ok(userViews.includes(vaultModel) && !keyIds.some(id => userViews.includes(id)), 'no vault key id in user-facing rows');
+  assert.ok(!(await sql(`SELECT column_name FROM information_schema.columns WHERE table_schema = 'public'
+    AND table_name IN ('zerox_usage_events', 'zerox_usage_daily') AND column_name = 'pool_key'`)).length);
+  // Operators get one row per model and tier, summed over its keys, with each key's counters.
+  const vaultPool = (await rpc(env, 'zerox_admin_overview', {})).overview.pools.find(row => row.model === vaultModel && row.tier === 'free');
+  const vaultKeys = Object.fromEntries(vaultPool.keys.map(key => [key.pool_key, key]));
+  assert.deepEqual(Object.keys(vaultKeys).sort(), [vaultKeyA, vaultKeyB, vaultKeyC, 'null'].sort());
+  assert.equal(vaultKeys[vaultKeyA].requests_this_minute, 2);
+  assert.equal(vaultKeys[vaultKeyA].requests_today, 5);
+  assert.equal(vaultKeys[vaultKeyB].requests_this_minute, 1);
+  assert.equal(vaultKeys[vaultKeyB].tokens_this_minute, 900);
+  assert.equal(vaultKeys.null.requests_today, 1);
+  assert.equal(vaultPool.requests_this_minute, 2 + 1 + 1 + 1, 'the model row sums its keys');
+  assert.equal(vaultPool.requests_today, 5 + 1 + 1 + 1);
+  assert.equal(vaultPool.tokens_this_minute, vaultPool.keys.reduce((sum, key) => sum + key.tokens_this_minute, 0));
+  assert.equal((await rpc(env, 'zerox_admin_overview', {})).overview.pools.filter(row => row.model === vaultModel && row.tier === 'free').length, 1);
+  ok('per-key pool budgets: p_pool_key buckets (rpm/tpm/rpd) are independent of each other and of the default bucket, stored on the reservation and settled/refunded there; users see models only; admin overview sums keys and lists each');
+
+  // ---------------------------------------------------------------- per-pool concurrency (contract section 8.6)
+  // Z.ai's free GLM Flash models serve one request at a time per account and model: p_pool.concurrency
+  // counts the pool key's running reservations (active, lease running) across every user.
+  await clockHeadroom();
+  {
+    const model = 'zai/glm-test-flash';
+    const single = { rpm: null, rpd: null, tpm: null, tpd: null, concurrency: 1 };
+    const users = [await newUser('free'), await newUser('free'), await newUser('free')];
+    const running = await reserve(users[0], { p_model: model, p_pool: single });
+    assert.equal(running.status, 'ok');
+    const busy = await reserve(users[1], { p_model: model, p_pool: single });
+    assert.equal(busy.status, 'pool_exhausted', 'a second request while the first runs, from another user');
+    assert.ok(busy.retry_after_seconds >= 1 && busy.retry_after_seconds <= 60, `retry within the minute (${busy.retry_after_seconds} s)`);
+    assert.equal((await poolRow(model, 'free', 'minute')).requests, 1, 'a refused request is not counted in the pool');
+    assert.equal((await reserve(users[1], { p_model: model, p_pool: { ...single, concurrency: 2 } })).status, 'ok', 'two slots');
+    const vaultKey = `zai:glm-test-flash:free#${randomUUID()}`;
+    const keyed = await reserve(users[2], { p_model: model, p_pool: single, p_pool_key: vaultKey });
+    assert.equal(keyed.status, 'ok', "another key of the model has its own slot");
+    assert.equal((await reserve(users[2], { p_model: 'zai/glm-other-flash', p_pool: single })).status, 'ok', 'and so has another model');
+    await sql("UPDATE public.zerox_reservations SET status = 'settled' WHERE model = $1 AND pool_key = '' AND id <> $2", [model, running.reservation_id]);
+    assert.equal((await reserve(users[1], { p_model: model, p_pool: single })).status, 'pool_exhausted');
+    await settle(running.reservation_id);
+    const next = await reserve(users[1], { p_model: model, p_pool: single });
+    assert.equal(next.status, 'ok', 'a settle frees the slot at once');
+    // A request whose isolate died stops holding the slot when its lease lapses.
+    await sql("UPDATE public.zerox_reservations SET lease_expires_at = now() - interval '1 second' WHERE id = $1", [next.reservation_id]);
+    assert.equal((await reserve(users[0], { p_model: model, p_pool: single })).status, 'ok', 'a lapsed lease frees the slot');
+    const spare = await newUser('free');
+    assert.equal((await reserve(spare, { p_model: 'zai/glm-none-flash', p_pool: { ...single, concurrency: 0 } })).status,
+      'pool_exhausted', 'concurrency 0 serves nothing');
+    assert.equal((await reserve(spare, { p_model: 'zai/glm-free-flash', p_pool: { concurrency: null } })).status, 'ok', 'null is unlimited');
+    for (const concurrency of [-1, '1', true]) {
+      await assert.rejects(reserve(users[2], { p_model: model, p_pool: { concurrency } }), /invalid_pool_budget: concurrency/);
+    }
+    // The count runs under a transaction advisory lock on the pool key: the bucket row locks alone
+    // do not serialize two reservations on either side of 00:00 UTC (different minute and day
+    // rows). PGlite has one connection, so this checks the lock is held until the transaction
+    // ends; check-quota-race.mjs shows a reservation waiting for it on a real Postgres.
+    const locker = await newUser('free');
+    const heldLocks = (poolModel, budget, poolKeyId = null) => db.transaction(async tx => {
+      const { rows: [reserved] } = await tx.query('SELECT * FROM public.zerox_reserve_v2($1, $2, $3, $4, $5, $6, $7::jsonb, $8)',
+        [locker, `req_${randomUUID()}`, poolModel, 'free', 100, 0, JSON.stringify(budget), poolKeyId]);
+      assert.equal(reserved.status, 'ok');
+      const { rows } = await tx.query(`SELECT ((l.classid::bigint << 32) | l.objid::bigint)
+          = pg_catalog.hashtext('zerox_pool_concurrency:' || $1 || '|free|' || $2)::bigint AS pool_key_lock
+        FROM pg_catalog.pg_locks AS l WHERE l.locktype = 'advisory' AND l.pid = pg_catalog.pg_backend_pid()`, [poolModel, poolKeyId ?? '']);
+      await tx.rollback();
+      return rows.map(row => row.pool_key_lock);
+    });
+    assert.deepEqual(await heldLocks('zai/glm-lock-flash', single), [true], 'the pool key\'s lock is held to the end of the reservation');
+    assert.deepEqual(await heldLocks('zai/glm-lock-flash', single, `zai:glm-lock-flash:free#${randomUUID()}`), [true], 'per pool key');
+    assert.deepEqual(await heldLocks('zai/glm-lock-flash', { rpm: 30 }), [], 'no lock without a concurrency limit');
+    assert.equal((await sql("SELECT count(*)::int AS n FROM pg_catalog.pg_locks WHERE locktype = 'advisory'"))[0].n, 0, 'released with the transaction');
+  }
+  ok('per-pool concurrency: p_pool.concurrency counts the pool key\'s running reservations across users under the pool key\'s advisory lock (refused: pool_exhausted within the minute, nothing counted); settles and lapsed leases free slots; keys and models are separate');
+
   // ---------------------------------------------------------------- stale release and housekeeping
   const staleUser = await newUser('free');
   const abandoned = await reserve(staleUser);
   const fresh = await reserve(staleUser);
-  await sql("UPDATE public.zerox_reservations SET created_at = now() - interval '16 minutes' WHERE id = $1", [abandoned.reservation_id]);
+  // The cron releases what the user's own next reservation did not: leases that lapsed more than
+  // 5 minutes ago, and rows without a lease 10 minutes after they were created.
+  await sql(`UPDATE public.zerox_reservations SET created_at = now() - interval '8 minutes',
+    lease_expires_at = now() - interval '6 minutes' WHERE id = $1`, [abandoned.reservation_id]);
+  const [unleased, recentlyLapsed] = await sql(`INSERT INTO public.zerox_reservations (user_id, request_id, model, tier, plan,
+      reserved_tokens, usage_day, pool_minute, pool_day, created_at, lease_expires_at)
+    VALUES ($1, 'stale_unleased', 'test/model', 'free', 'free', 10, current_date, now(), now(), now() - interval '16 minutes', NULL),
+      ($1, 'stale_recent', 'test/model', 'free', 'free', 10, current_date, now(), now(), now() - interval '3 minutes', now() - interval '1 minute')
+    RETURNING id`, [staleUser]);
   await sql(`INSERT INTO public.zerox_pool_usage (model, tier, bucket, bucket_start, requests, tokens)
     VALUES ('old/model', 'free', 'minute', now() - interval '2 days', 1, 1), ('old/model', 'free', 'day', now() - interval '120 days', 1, 1)`);
   const sessionOwner = await newUser('free');
   await sql("INSERT INTO public.zerox_session_index (token_hash, user_id, expires_at) VALUES ($1, $2, now() - interval '1 hour')", [sha('expired-session'), sessionOwner]);
   const { released } = await rpc(env, 'zerox_release_stale_reservations', {});
-  assert.ok(released >= 1);
+  assert.ok(released >= 2);
   const statuses = Object.fromEntries((await sql('SELECT id, status FROM public.zerox_reservations WHERE user_id = $1', [staleUser])).map(row => [row.id, row.status]));
-  assert.equal(statuses[abandoned.reservation_id], 'released');
+  assert.equal(statuses[abandoned.reservation_id], 'released', 'lease lapsed 6 minutes ago');
+  assert.equal(statuses[unleased.id], 'released', 'no lease, created 16 minutes ago');
+  assert.equal(statuses[recentlyLapsed.id], 'active', 'lease lapsed only a minute ago');
   assert.equal(statuses[fresh.reservation_id], 'active');
   assert.equal((await sql("SELECT count(*)::int AS n FROM public.zerox_pool_usage WHERE model = 'old/model'"))[0].n, 0);
   assert.equal((await sql('SELECT count(*)::int AS n FROM public.zerox_session_index WHERE user_id = $1', [sessionOwner]))[0].n, 0);
   assert.equal((await rpc(env, 'zerox_release_stale_reservations', {})).released, 0, 'release is idempotent');
   assert.equal((await reserve(staleUser)).status, 'ok', 'released reservation frees its concurrency slot');
+  assert.equal((await sql('SELECT status FROM public.zerox_reservations WHERE id = $1', [recentlyLapsed.id]))[0].status, 'released',
+    'the next reservation of the user released the lapsed lease the cron left');
   assert.equal((await settle(abandoned.reservation_id)).status, 'settled', 'a late settle still reconciles a released reservation');
   assert.equal((await settle(abandoned.reservation_id)).status, 'already_settled');
   // Every reservation query of the quota path and the housekeeping job has a supporting index,
@@ -606,13 +981,22 @@ try {
   assert.match(await planFor(`DELETE FROM public.zerox_reservations AS r WHERE r.id IN (SELECT old.id FROM public.zerox_reservations AS old
     WHERE old.status <> 'active' AND old.created_at < now() - interval '30 days' LIMIT 10000)`), /zerox_reservations_finished_idx/);
   assert.match(await planFor(`SELECT r.id FROM public.zerox_reservations AS r WHERE r.status = 'active'
-    AND r.created_at < now() - interval '15 minutes' ORDER BY r.created_at LIMIT 10000`), /zerox_reservations_active_idx/);
+    AND coalesce(r.lease_expires_at, r.created_at + interval '10 minutes') < now() - interval '5 minutes'
+    ORDER BY r.created_at LIMIT 10000`), /zerox_reservations_active_idx/);
+  assert.match(await planFor(`SELECT count(*) FILTER (WHERE r.lease_expires_at > now()),
+      min(r.lease_expires_at) FILTER (WHERE r.lease_expires_at > now()), sum(r.reserved_cost_microusd)
+    FROM public.zerox_reservations AS r WHERE r.user_id = '${historyUser}' AND r.status = 'active'`),
+  /zerox_reservations_(?:user_)?active_idx/, 'concurrency leases are read from in-flight rows only');
+  assert.match(await planFor(`UPDATE public.zerox_reservations AS r SET status = 'released' WHERE r.id IN (
+      SELECT l.id FROM public.zerox_reservations AS l WHERE l.user_id = '${historyUser}' AND l.status = 'active'
+        AND l.lease_expires_at <= now() FOR UPDATE SKIP LOCKED)`), /zerox_reservations_(?:user_)?active_idx/,
+  'releasing lapsed leases reads in-flight rows only');
   assert.match(await planFor(`SELECT count(*), sum(r.reserved_cost_microusd) FROM public.zerox_reservations AS r
     WHERE r.user_id = '${historyUser}' AND r.status = 'active'`), /zerox_reservations_(?:user_)?active_idx/,
   'credit holds and concurrency read only in-flight rows (partial indexes), never the finished history');
   assert.equal((await reserve(historyUser)).status, 'ok', 'finished history does not hold concurrency slots');
   await sql("DELETE FROM public.zerox_reservations WHERE user_id = $1 AND request_id LIKE 'hist_%'", [historyUser]);
-  ok('stale reservations released after 15 minutes, late settle, bounded and indexed housekeeping');
+  ok('stale reservations released 5 minutes after their lease lapsed (10 minutes after creation without one), late settle, bounded and indexed housekeeping');
 
   // ---------------------------------------------------------------- API keys
   const keyUser = await newUser('pro');
@@ -985,8 +1369,8 @@ try {
     { day: utcDay(0), requests: 2, prompt_tokens: 8, completion_tokens: 4, cost_microusd: 2500 },
   ], 'series is zero-filled per UTC day');
   assert.deepEqual(await rpcRows(env, 'zerox_usage_by_model', { p_user_id: statsUser, p_from: utcDay(-3), p_to: utcDay(0) }), [
-    { model: 'm/a', requests: 3, prompt_tokens: 307, completion_tokens: 33, cost_microusd: 0 },
-    { model: 'm/b', requests: 2, prompt_tokens: 51, completion_tokens: 6, cost_microusd: 4000 },
+    { model: 'm/a', requests: 3, prompt_tokens: 307, cache_read_tokens: 0, cache_write_tokens: 0, completion_tokens: 33, cost_microusd: 0 },
+    { model: 'm/b', requests: 2, prompt_tokens: 51, cache_read_tokens: 0, cache_write_tokens: 0, completion_tokens: 6, cost_microusd: 4000 },
   ]);
   assert.deepEqual(await rpcRows(env, 'zerox_usage_by_model', { p_user_id: statsUser, p_from: utcDay(-1), p_to: utcDay(-1) }), []);
   await assert.rejects(rpcRows(env, 'zerox_usage_series', { p_user_id: statsUser, p_from: utcDay(0), p_to: utcDay(-1) }), /invalid_range/);
@@ -1082,6 +1466,26 @@ try {
   assert.equal(shared.filter(row => row.status === 'ok').length, 7, 'parallel reservations never exceed the shared pool');
   assert.ok(shared.filter(row => row.status !== 'ok').every(row => row.status === 'pool_exhausted'));
   assert.equal((await poolRow('burst/pool', 'free', 'minute')).requests, 7);
+  // Interleaved bursts on two vault keys of one model (plus the default bucket): each key admits
+  // exactly its own budget, and parallel double settles reconcile each key's bucket once.
+  const burstKeys = [`groq:burst/keys:free#${randomUUID()}`, `groq:burst/keys:free#${randomUUID()}`, null];
+  const keyBurstUsers = [];
+  for (let index = 0; index < 24; index += 1) keyBurstUsers.push(await newUser('max'));
+  const keyed = await Promise.all(keyBurstUsers.map((user, index) => reserve(user, { p_model: 'burst/keys',
+    p_pool: { rpm: 4, tpm: 100000 }, p_pool_key: burstKeys[index % 3] }).then(row => ({ ...row, key: burstKeys[index % 3] }))));
+  for (const key of burstKeys) {
+    const rows = keyed.filter(row => row.key === key);
+    assert.equal(rows.filter(row => row.status === 'ok').length, 4, `${key ?? 'default'}: never more than its own budget`);
+    assert.ok(rows.filter(row => row.status !== 'ok').every(row => row.status === 'pool_exhausted'));
+  }
+  const burstBucket = async key => (await sql(`SELECT requests, tokens FROM public.zerox_pool_usage WHERE model = 'burst/keys'
+    AND pool_key = $1 AND bucket = 'minute' ORDER BY bucket_start DESC LIMIT 1`, [key ?? '']))[0];
+  for (const key of burstKeys) assert.deepEqual(await burstBucket(key), { requests: 4, tokens: 400 });
+  const keyedOk = keyed.filter(row => row.status === 'ok');
+  const keyedSettles = await Promise.all([...keyedOk, ...keyedOk].map(row => settle(row.reservation_id)));
+  assert.equal(keyedSettles.filter(row => row.status === 'settled').length, 12);
+  assert.equal(keyedSettles.filter(row => row.status === 'already_settled').length, 12);
+  for (const key of burstKeys) assert.deepEqual(await burstBucket(key), { requests: 4, tokens: 60 }, 'each bucket reconciled once (4 x 15 tokens)');
   const capUser = await newUser('max');
   await sql('UPDATE public.zerox_accounts SET daily_requests = 9997 WHERE clerk_id = $1', [capUser]);
   const capped = await Promise.all(Array.from({ length: 8 }, () => reserve(capUser)));
@@ -1107,7 +1511,7 @@ try {
     p_user_id: keyBurstUser, p_name: `k${index}`, p_prefix: 'nzx_burst', p_hash: sha(`burst-${index}`) })));
   assert.equal(keyBurst.filter(result => result.status === 'fulfilled').length, 10);
   assert.ok(keyBurst.filter(result => result.status === 'rejected').every(result => /too_many_keys/.test(result.reason.message)));
-  ok('serialized bursts (one PGlite connection, so no lock contention): reserves never exceed concurrency, pool, daily or credit limits; settles, claims, grants and key creation are exactly-once');
+  ok('serialized bursts (one PGlite connection, so no lock contention): reserves never exceed concurrency, pool (per key), daily or credit limits; settles, claims, grants and key creation are exactly-once');
 
   // ---------------------------------------------------------------- legacy RPCs still work
   const legacyUser = await newUser('pro');
@@ -1132,7 +1536,13 @@ try {
     'zerox_session_index_list', 'zerox_session_index_revoke_all', 'zerox_admin_overview',
     // v1.1 extensions (contract section 6)
     'zerox_webhook_release', 'zerox_webhook_complete', 'zerox_billing_subscriptions', 'zerox_billing_record_checkout',
-    'zerox_billing_revoke_subscription', 'zerox_payment_by_provider_id', 'zerox_session_index_remove', 'zerox_session_rearm'];
+    'zerox_billing_revoke_subscription', 'zerox_payment_by_provider_id', 'zerox_session_index_remove', 'zerox_session_rearm',
+    // v1.5 linked devices and sliding expiry (contract section 10)
+    'zerox_session_register', 'zerox_session_list', 'zerox_session_touch', 'zerox_session_revoke',
+    // v1.5 push tokens for the relay (contract section 10)
+    'zerox_push_register', 'zerox_push_list', 'zerox_push_delete', 'zerox_push_delivered',
+    // concurrency leases (migrations/20261028000000_reservation_leases.sql)
+    'zerox_renew_reservation'];
   for (const name of contractRpcs) assert.ok(functions.some(row => row.proname === name), `${name} exists`);
   for (const row of functions) {
     assert.equal(row.prosecdef, false, `${row.signature} is SECURITY INVOKER`);
@@ -1148,7 +1558,7 @@ try {
         AND has_table_privilege('service_role', c.oid, 'UPDATE') AND has_table_privilege('service_role', c.oid, 'DELETE') AS service_all
     FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relkind = 'r'`);
   for (const name of ['zerox_reservations', 'zerox_usage_events', 'zerox_usage_daily', 'zerox_pool_usage', 'zerox_api_keys',
-    'zerox_subscriptions', 'zerox_payments', 'zerox_credit_ledger', 'zerox_webhook_events', 'zerox_session_index']) {
+    'zerox_subscriptions', 'zerox_payments', 'zerox_credit_ledger', 'zerox_webhook_events', 'zerox_session_index', 'zerox_push_tokens']) {
     assert.ok(tables.some(row => row.relname === name), `${name} exists`);
   }
   for (const row of tables) {
@@ -1182,7 +1592,7 @@ try {
   globalThis.fetch = async url => { throw new Error(`network disabled in check-business-db: ${url}`); };
   try {
     const { default: app } = await import('./src/index.js');
-    // Anonymous /health is trimmed to {status, service, version} (WP-B3), so the database
+    // Anonymous /health is trimmed to {status, service, version, commit} (WP-B3), so the database
     // configuration is read with the operator token.
     const ADMIN = 'check-business-db-operator-token-0123456789';
     const operator = { headers: { Authorization: `Bearer ${ADMIN}` } };
@@ -1245,7 +1655,56 @@ try {
     assert.equal((await psqlStandIn.query("SELECT count(*)::int AS n FROM supabase_migrations.schema_migrations WHERE version = '20990101000100'")).rows[0].n, 0,
       'a failed migration is never recorded');
     assert.equal((await psqlStandIn.query("SELECT to_regclass('public.half_applied') AS t")).rows[0].t, null);
+    // Migrations that lock busy tables give up instead of queueing reserves and settles behind a
+    // long transaction, and the timeout ends with their transaction.
+    assert.match(await readFile(join(root, 'migrations/20261028000000_reservation_leases.sql'), 'utf8'),
+      /^BEGIN;\s+(?:--.*\s+)*SET LOCAL lock_timeout = '\d+s';/);
+    assert.equal((await psqlStandIn.query('SHOW lock_timeout')).rows[0].lock_timeout, '0');
   } finally { await psqlStandIn.close(); }
+  // migrations/down/<file> undoes one migration by hand (psql -f; the runner reads
+  // migrations/*.sql only). It restores what the migration replaced exactly as the migrations
+  // before it left it and drops its history row, so the runner can apply it again.
+  // Function bodies are compared without CRs: a checkout may give the files either line ending.
+  const schemaOf = async database => (await database.query(`
+    SELECT 'function' AS kind, p.oid::regprocedure::text AS name,
+        replace(pg_get_functiondef(p.oid), chr(13), '') || coalesce(p.proacl::text, '') AS def
+      FROM pg_proc AS p WHERE p.pronamespace = 'public'::regnamespace AND p.prokind = 'f'
+    UNION ALL SELECT 'column', c.table_name || '.' || c.column_name, concat_ws(' ', c.data_type, c.is_nullable, c.column_default)
+      FROM information_schema.columns AS c WHERE c.table_schema = 'public'
+    UNION ALL SELECT 'index', i.indexname, i.indexdef FROM pg_indexes AS i WHERE i.schemaname = 'public'
+    UNION ALL SELECT 'history', h.version, h.name FROM supabase_migrations.schema_migrations AS h
+    ORDER BY 1, 2`)).rows;
+  // <version>_<name>.down.sql files are checked with their own migrations (check-billing-caps.mjs,
+  // check-catalog-db.mjs).
+  const downFiles = (await readdir(join(root, 'migrations/down'))).filter(file => !file.endsWith('.down.sql')).sort();
+  assert.deepEqual(downFiles, ['20261028000000_reservation_leases.sql', '20261029001000_pool_concurrency.sql']);
+  for (const file of downFiles) {
+    const migration = migrations.find(candidate => candidate.file === file);
+    assert.ok(migration, `${file} undoes a migration of the same name`);
+    const down = await readFile(join(root, 'migrations/down', file), 'utf8');
+    assert.ok(!/^CREATE\s+FUNCTION\b/im.test(down), `${file}: functions are restored with CREATE OR REPLACE`);
+    assert.match(down, /^BEGIN;\s+(?:--.*\s+)*SET LOCAL lock_timeout = '\d+s';[\s\S]*\bCOMMIT;\s*$/,
+      `${file}: one transaction with a lock timeout`);
+    // Applies the migrations in order up to (and without) the one at index `end`.
+    const upTo = async (database, end) => {
+      await database.exec(DEV_BOOTSTRAP_SQL);
+      for (const earlier of migrations.slice(0, end)) await database.exec(migrationScript(await readMigration(earlier)));
+    };
+    const before = await PGlite.create();
+    const rolled = await PGlite.create();
+    try {
+      await upTo(before, migrations.indexOf(migration));
+      await upTo(rolled, migrations.indexOf(migration) + 1);
+      const applied = await schemaOf(rolled);
+      await rolled.exec(down);
+      assert.deepEqual(await schemaOf(rolled), await schemaOf(before), `${file} restores the schema the migrations before it left`);
+      await rolled.exec(migrationScript(await readMigration(migration)));
+      assert.deepEqual(await schemaOf(rolled), applied, `${file}: the migration applies again after its rollback`);
+    } finally {
+      await before.close();
+      await rolled.close();
+    }
+  }
   assert.deepEqual(connectionEnv('postgresql://postgres.ref:p%40ss@db.example.invalid:6543/postgres'), {
     PGHOST: 'db.example.invalid', PGPORT: '6543', PGUSER: 'postgres.ref', PGPASSWORD: 'p@ss', PGDATABASE: 'postgres',
     PGSSLMODE: 'require', PGCONNECT_TIMEOUT: '15', PGAPPNAME: 'zerox-apply-migrations' });
@@ -1267,6 +1726,14 @@ try {
     assert.deepEqual(await migrate(scratch, { directory: brokenDir }), ['20990101000100'], 'the fixed migration applies on the next open');
     await writeFile(join(brokenDir, 'notes.sql'), '');
     await assert.rejects(listMigrations(brokenDir), /Unexpected migration file name: notes\.sql/);
+    await rm(join(brokenDir, 'notes.sql'));
+    // A renumbered migration whose old copy is back (a branch that still has it merged or rebased
+    // in) would run twice, once under each version.
+    await writeFile(join(brokenDir, '20990101000200_good.sql'), 'BEGIN; CREATE TABLE public.good_table (id int); COMMIT;');
+    await assert.rejects(listMigrations(brokenDir), /Duplicate migration name: good \(20990101000000 and 20990101000200\)/);
+    await rm(join(brokenDir, '20990101000200_good.sql'));
+    assert.equal(new Set((await listMigrations()).map(migration => migration.name)).size, (await listMigrations()).length,
+      'every migration name once');
   } finally {
     await scratch.close();
     assert.equal(dirname(resolve(brokenDir)), resolve(tmpdir()));
@@ -1301,7 +1768,7 @@ try {
     assert.equal(dirname(resolve(dataDir)), resolve(tmpdir()));
     await rm(dataDir, { recursive: true, force: true });
   }
-  ok('operator scripts and migration runner: dry run, DATABASE_URL only (argv refused), history row inside each migration transaction, failed-migration rollback, dev-db create, seed, reseed and on-disk persistence');
+  ok('operator scripts and migration runner: dry run, DATABASE_URL only (argv refused), history row inside each migration transaction, failed-migration rollback, lock timeouts, down files that restore the prior schema and let the migration re-apply, dev-db create, seed, reseed and on-disk persistence');
 
   console.log(`PASS: business data model (${passed.length} groups): every contract RPC, quota/credit/pool atomicity, billing idempotency, access control and the PGlite driver`);
 } finally {

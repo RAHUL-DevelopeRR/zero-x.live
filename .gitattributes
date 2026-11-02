@@ -1,0 +1,4 @@
+# Files that run or are read on Linux hosts keep LF in every checkout (core.autocrlf would
+# otherwise turn them CRLF on Windows, and the VM would then run "set -e\r").
+deploy/** text eol=lf
+*.sh text eol=lf

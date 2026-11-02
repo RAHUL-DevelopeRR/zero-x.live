@@ -4,34 +4,52 @@
 //                          models with >= 64K context; mark catalog entries whose upstream id is
 //                          gone in HealthHub
 //   omniroute      weekly  OmniRoute's MIT free-tier catalog (omniroute.js)
-//   research       weekly  Claude with web search, only with ANTHROPIC_API_KEY (research.js)
-// Jobs only ever create or refresh candidates. Approval, verification and promotion are
-// operator actions (src/routes/discovery.js); signing up to a provider stays manual.
+//   research       weekly  Claude with web search, only with ANTHROPIC_API_KEY (research.js),
+//                          off with DISCOVERY_RESEARCH=false; providers it finds are also
+//                          proposed as OIOP offers (discovered)
+//   credits        weekly  free cloud and AI credit programs, with quoted evidence (credits.js);
+//                          only with ANTHROPIC_API_KEY, off with DISCOVERY_RESEARCH=false or
+//                          DISCOVERY_CREDITS=false
+// Jobs only ever create or refresh candidates, offers in `discovered` and credit programs in
+// `new`. Approval, verification and promotion are operator actions (src/routes/discovery.js,
+// offers.js, credits.js); signing up to a provider or applying for credits stays manual.
+// Promotion only creates a draft catalog row; it serves once approved on /admin/models.
 import { databaseConfigured, rpcRows } from '../account-store.js';
-import { loadCatalogDbModels, offeredEntries, poolKey } from '../catalog.js';
+import { entryPools, loadCatalog, offeredEntries, poolKey } from '../catalog.js';
 import { markPoolsUnavailable } from '../health-hub-client.js';
 import { globalHealthTracker } from '../provider-health.js';
+import { loadVaultKeys } from '../provider-keys.js';
 import { candidateRow, evaluateOffer } from './policy.js';
 import { LIST_SOURCES, MODELS_DEV_URL } from './sources.js';
 import { OMNIROUTE_CATALOG_URL, MIN_ENTRIES, omnirouteDiff, parseOmnirouteCatalog } from './omniroute.js';
 import { runResearch } from './research.js';
+import { matchKnownPrograms, runCreditsResearch } from './credits.js';
+import { loadOffers, offerById } from '../oiop/offers.js';
 
 const HOUR = 3600;
 export const DAY = 24 * HOUR;
 export const WEEK = 7 * DAY;
 // Retry delays after a failure: a list soon, a paid research call only the next day.
-const RETRY_SECONDS = { list: HOUR, omniroute: 6 * HOUR, research: DAY };
+const RETRY_SECONDS = { list: HOUR, omniroute: 6 * HOUR, research: DAY, credits: DAY };
 const FETCH_TIMEOUT_MS = 20_000;
 const MAX_LIST_BYTES = 16 * 1024 * 1024;
 const UPSERT_CHUNK = 500;
 const SUMMARY_IDS = 50;
 
 export const JOB_INTERVALS = Object.freeze({
-  ...Object.fromEntries(LIST_SOURCES.map(source => [source.job, DAY])), omniroute: WEEK, research: WEEK,
+  ...Object.fromEntries(LIST_SOURCES.map(source => [source.job, DAY])), omniroute: WEEK, research: WEEK, credits: WEEK,
 });
 
+// The weekly research and credits jobs call Claude (with web search) and spend real money, capped
+// per run by DISCOVERY_RESEARCH_MAX_USD. They run once ANTHROPIC_API_KEY is set (the key the Claude
+// pools use); DISCOVERY_RESEARCH=false turns both off, DISCOVERY_CREDITS=false the credits job only.
+export function researchEnabled(env) {
+  return Boolean(env?.ANTHROPIC_API_KEY) && String(env?.DISCOVERY_RESEARCH ?? '').trim().toLowerCase() !== 'false';
+}
+
 export function discoveryJobs(env) {
-  return [...LIST_SOURCES.map(source => source.job), 'omniroute', ...(env?.ANTHROPIC_API_KEY ? ['research'] : [])];
+  const paid = researchEnabled(env) ? ['research', ...(env.DISCOVERY_CREDITS === 'false' ? [] : ['credits'])] : [];
+  return [...LIST_SOURCES.map(source => source.job), 'omniroute', ...paid];
 }
 
 async function fetchBody(url, kind = 'json') {
@@ -71,14 +89,15 @@ const firstIds = list => list.slice(0, SUMMARY_IDS);
  * more than one) is treated as broken and marks nothing.
  */
 export async function markMissingCatalogModels(env, provider, ids) {
-  await loadCatalogDbModels(env);
+  await Promise.all([loadCatalog(env), loadVaultKeys(env)]);
   const entries = offeredEntries(env).filter(entry => entry.provider === provider);
   const missing = entries.filter(entry => !ids.has(entry.upstream_model));
   if (!missing.length) return { missing: [], marked: 0 };
   if (missing.length > 1 && missing.length > entries.length / 2) {
     return { missing: missing.map(entry => entry.id), marked: 0, skipped: 'list dropped most catalog models; not trusted' };
   }
-  const keys = missing.flatMap(entry => entry.pools.map(pool => poolKey(entry, pool)));
+  // Every pool of the entry, including one per vault key.
+  const keys = missing.flatMap(entry => entryPools(env, entry).map(pool => poolKey(entry, pool)));
   const marked = await markPoolsUnavailable(env, keys, globalHealthTracker);
   return { missing: missing.map(entry => entry.id), marked };
 }
@@ -143,11 +162,58 @@ export async function runOmnirouteJob(env, state) {
   };
 }
 
+const clip = (value, max) => (typeof value === 'string' && value.trim() ? value.trim().slice(0, max) : null);
+const count = value => (Number.isSafeInteger(value) && value > 0 ? value : null);
+
+/**
+ * Providers found by the research become OIOP offers (`<provider>.free`) in `discovered`:
+ * untrusted (T3) with unknown redistribution and training until the operator reviews them, so
+ * they serve nothing (docs/OIOP.md §1-2). Offers that already exist, built-in ones included, are
+ * left alone; excluded providers are not proposed. Returns the ids created.
+ */
+export async function proposeOffers(env, rows) {
+  await loadOffers(env);
+  const created = [];
+  for (const row of rows) {
+    if (row.model_id || row.status === 'excluded') continue;
+    const id = `${row.provider.slice(0, 58).replace(/[._-]+$/, '')}.free`;
+    if (offerById(env, id)) continue;
+    const record = row.record || {};
+    const signup = record.signup || {};
+    const limits = record.limits || {};
+    const prerequisites = [
+      { type: 'account', ...(clip(record.auth, 500) ? { detail: clip(record.auth, 500) } : {}) },
+      ...(signup.card_required === true ? [{ type: 'card' }] : []),
+      ...(signup.phone_required === true ? [{ type: 'phone' }] : []),
+      ...(clip(signup.kyc, 500) ? [{ type: 'kyc', detail: clip(signup.kyc, 500) }] : []),
+    ];
+    const limit = { scope: 'account', rpm: count(limits.rpm), rpd: count(limits.rpd), tpm: count(limits.tpm), tpd: count(limits.tpd) };
+    const sources = (Array.isArray(record.sources) ? record.sources : []).slice(0, 8);
+    try {
+      await rpcRows(env, 'zerox_offer_upsert', { p_actor: 'discovery', p_offer: {
+        id, provider: row.provider, name: clip(row.display_name || record.name || row.provider, 120), lifecycle: 'discovered',
+        base_url: record.base_url || null, trust_tier: 'T3', redistribution: 'unknown', trains_on_inputs: 'unknown',
+        commercial_use: 'unknown', prerequisites,
+        limits: Object.values(limit).some(value => value !== null && value !== 'account')
+          ? [Object.fromEntries(Object.entries(limit).filter(([, value]) => value !== null))] : [],
+        evidence: sources.map(url => ({ field: 'source', source: 'page', url, note: 'Provider research (no quote captured)' })),
+        notes: clip([record.free_status_note, record.terms, record.data_training_free_tier && `Training: ${record.data_training_free_tier}`]
+          .filter(Boolean).join(' | '), 4000),
+      } });
+      created.push(id);
+    } catch (error) {
+      console.warn('Discovery could not propose an offer', { offer: id, message: String(error?.message).slice(0, 200) });
+    }
+  }
+  return created;
+}
+
 export async function runResearchJob(env, state, { now = Date.now() } = {}) {
   const known = await rpcRows(env, 'zerox_candidates_research_context', {});
   const today = new Date(now).toISOString().slice(0, 10);
   const result = await runResearch(env, known, { today, snapshot: state.snapshot });
   const upserted = result.rows.length ? await upsert(env, result.rows) : [];
+  const offers = await proposeOffers(env, result.rows);
   return {
     snapshot: result.nextSnapshot, spentMicrousd: result.spentMicrousd,
     summary: {
@@ -156,6 +222,25 @@ export async function runResearchJob(env, state, { now = Date.now() } = {}) {
       new_candidates: firstIds(upserted.filter(row => row.inserted && row.status === 'new').map(label)),
       excluded: upserted.filter(row => row.status === 'excluded').length,
       removed: result.removed.slice(0, 20),
+      proposed_offers: firstIds(offers),
+    },
+  };
+}
+
+export async function runCreditsJob(env, state, { now = Date.now() } = {}) {
+  const known = await rpcRows(env, 'zerox_credit_programs_list', {});
+  const today = new Date(now).toISOString().slice(0, 10);
+  const result = await runCreditsResearch(env, known, { today, snapshot: state.snapshot });
+  const rows = matchKnownPrograms(result.rows, known);
+  const upserted = rows.length
+    ? await rpcRows(env, 'zerox_credit_programs_upsert', { p_rows: rows, p_source: 'research', p_actor: 'discovery' }) : [];
+  return {
+    snapshot: result.nextSnapshot, spentMicrousd: result.spentMicrousd,
+    summary: {
+      spent_usd: result.spentMicrousd / 1e6, cap_usd: result.capUsd, over_budget: result.overBudget, searches: result.searches,
+      citations: result.citations, programs: rows.length, dropped_without_quotes: result.dropped,
+      new_programs: firstIds(upserted.filter(row => row.inserted && row.status === 'new').map(row => row.id)),
+      ended: firstIds(upserted.filter(row => row.status === 'expired').map(row => row.id)),
     },
   };
 }
@@ -174,6 +259,10 @@ async function runJob(env, claim, context) {
   if (claim.job === 'research') {
     if (!env.ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY is not set');
     return runResearchJob(env, claim, context);
+  }
+  if (claim.job === 'credits') {
+    if (!env.ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY is not set');
+    return runCreditsJob(env, claim, context);
   }
   throw new Error(`unknown job ${claim.job}`);
 }

@@ -24,7 +24,10 @@ function fakeState(saved = new Map()) {
   };
 }
 
+// HEALTH_CANARIES=false: these checks count every upstream request of the list, status-page and
+// half-open probe paths; the OIOP canaries are covered by check-oiop.mjs.
 const ENV = {
+  HEALTH_CANARIES: 'false',
   GROQ_API_KEY: 'groq-test', GEMINI_API_KEY: 'gemini-test', NVIDIA_API_KEY: 'nvidia-test', NVIDIA_HOSTED: 'true',
   OPENROUTER_API_KEY: 'or-test', OPENROUTER_HOSTED: 'true',
   OPENROUTER_MODELS: 'cohere/north-mini-code:free,minimax/minimax-m3.1-flash:free',
@@ -84,14 +87,54 @@ try {
   assert.ok(state.saved.get('hub').records[GEMINI_25], 'state is persisted');
   console.log('ok - reports: busy (short 429), blurred (model gone), real success brightens, bad body 400, persisted');
 
-  // 2. Alarm: free checks. Lists and status pages, two per alarm, staggered.
+  // 1b. Slow pools. Only a first-byte or idle timeout marks a pool slow (slow_until in the
+  // snapshot, which chat-handler.js reads to try it after healthy pools), for five minutes or
+  // until a success. One 5xx or one slow non-streaming response leaves it ranked as before.
+  {
+    const before = offset;
+    const slowHub = new HealthHub(fakeState(), ENV, { now: clock });
+    await slowHub.ready;
+    slowHub.report([{ key: GROQ_120B, success: false, kind: FailureKind.SERVER },
+      { key: GROQ_QWEN, success: false, kind: FailureKind.TIMEOUT, phase: 'response', caller: 'one-user' },
+      { key: NVIDIA_20B, success: false, kind: FailureKind.TIMEOUT, phase: 'first_byte', caller: 'one-user' }]);
+    let pools = slowHub.snapshot().pools;
+    assert.deepEqual([pools[GROQ_120B].status, pools[GROQ_120B].slow_until], ['degraded', undefined], 'one 5xx is not slow');
+    assert.deepEqual([pools[GROQ_QWEN].status, pools[GROQ_QWEN].slow_until], ['degraded', undefined], 'nor a slow response');
+    assert.equal(pools[NVIDIA_20B].slow_until, clock() + 300_000, 'a first-byte timeout: slow for five minutes');
+    slowHub.report([{ key: NVIDIA_20B, success: false, kind: FailureKind.TIMEOUT, phase: 'first_byte', caller: 'other-user' }]);
+    assert.equal(slowHub.snapshot().pools[NVIDIA_20B].status, 'blurred', 'two callers: parked');
+    offset += 31_000;
+    pools = slowHub.snapshot().pools;
+    assert.equal(pools[NVIDIA_20B].status, 'available', 'half-open after the cooldown');
+    assert.ok(pools[NVIDIA_20B].slow_until > clock(), 'and still slow');
+    offset += 270_000;
+    assert.equal(slowHub.snapshot().pools[NVIDIA_20B].slow_until, undefined, 'the mark ends five minutes after the last timeout');
+    slowHub.report([{ key: GEMINI_25, success: false, kind: FailureKind.TIMEOUT, phase: 'idle', caller: 'one-user' }]);
+    assert.ok(slowHub.snapshot().pools[GEMINI_25].slow_until > clock(), 'an idle timeout too');
+    slowHub.report([{ key: GEMINI_25, success: true }]);
+    assert.equal(slowHub.snapshot().pools[GEMINI_25].slow_until, undefined, 'a success clears it');
+    // A stream the failover budget cut after its whole share (chat-handler.js, phase 'budget'):
+    // slow, but not failed, so it is neither degraded nor parked, even from two callers.
+    const failed = slowHub.tracker.records.get(GEMINI_25).failed_attempts;
+    for (const caller of ['one-user', 'other-user']) {
+      slowHub.report([{ key: GEMINI_25, success: false, kind: FailureKind.TIMEOUT, phase: 'budget', caller }]);
+    }
+    pools = slowHub.snapshot().pools;
+    assert.deepEqual([pools[GEMINI_25].status, pools[GEMINI_25].until, pools[GEMINI_25].slow_until],
+      ['available', 0, clock() + 300_000], 'a budget cut only marks the pool slow');
+    assert.equal(slowHub.tracker.records.get(GEMINI_25).failed_attempts, failed, 'and is not counted as failed');
+    offset = before;
+  }
+  console.log('ok - slow pools: first-byte and idle timeouts and whole-share budget cuts only, five minutes or until a success, kept after a cooldown');
+
+  // 2. Alarm: free checks. Lists (one per key), key checks and status pages, four per alarm, staggered.
   upstream = lists;
   calls.length = 0;
   offset = 31_000;
   await hub.alarm();
   assert.equal(state.alarm, base + offset + ALARM_INTERVAL_MS, 'the alarm re-arms itself');
   const checked = calls.map(call => call.url);
-  assert.equal(checked.filter(url => !url.includes('chat/completions')).length, 2, 'two checks per alarm');
+  assert.equal(checked.filter(url => !url.includes('chat/completions')).length, 4, 'four checks per alarm');
   for (let i = 0; i < 3; i++) { offset += 31_000; await hub.alarm(); }
   snap = hub.snapshot();
   assert.equal(snap.pools[GROQ_QWEN].status, 'blurred', 'missing from the Groq list -> greyed out');
@@ -112,6 +155,35 @@ try {
   for (let i = 0; i < 4; i++) { offset += 31_000; await hub.alarm(); }
   assert.equal(hub.snapshot().pools['groq:openai/gpt-oss-20b:free'].status, 'available', 'status page operational -> bright again');
   console.log('ok - recovery: the status page clearing an outage brightens the model');
+
+  // Owner lineup (2026-10-29): GEMINI_MODELS and CLOUDFLARE_MODELS = "" (wrangler.toml) leave
+  // Gemini and Workers AI without pools here, so nothing checks or tests them.
+  {
+    const lineupHub = new HealthHub(fakeState(), { ...ENV, GEMINI_MODELS: '', CLOUDFLARE_MODELS: '' }, { now: clock });
+    await lineupHub.ready;
+    const units = lineupHub.checkUnits(lineupHub.pools()).map(unit => unit.id);
+    assert.ok(units.includes('list:groq:env') && units.includes('status:groq'));
+    assert.ok(!units.some(id => /gemini|cloudflare/.test(id)), `no Gemini or Workers AI check (${units.join(', ')})`);
+    assert.ok(![...lineupHub.pools().keys()].some(provider => provider === 'gemini' || provider === 'cloudflare'));
+  }
+  console.log('ok - lineup: with Gemini and Workers AI switched off by configuration, no check or test request goes to them');
+
+  // Z.ai's free models serve one request at a time per account: a test request or canary would
+  // take a user's slot, so they get none, and there is no free list or status page to check.
+  {
+    assert.equal(PROBE_DAILY_CAPS.zai, 0);
+    const zaiCalls = [];
+    const zaiHub = new HealthHub(fakeState(), { ...ENV, HEALTH_CANARIES: 'true', GLM_API_KEY: 'zai-test' }, { now: clock,
+      fetchImpl: async url => { if (String(url).includes('api.z.ai')) zaiCalls.push(url); return json({ data: [] }); } });
+    await zaiHub.ready;
+    assert.ok(zaiHub.pools().has('zai'));
+    assert.ok(!zaiHub.checkUnits(zaiHub.pools()).some(unit => unit.provider === 'zai'));
+    const before = offset;
+    for (let i = 0; i < 3; i++) { offset += 20 * 60_000; await zaiHub.alarm(); }
+    offset = before;
+    assert.deepEqual(zaiCalls, [], 'nothing is sent to Z.ai');
+  }
+  console.log('ok - Z.ai: no list, key or status check, test request or canary');
 
   // 3. Test requests: only half-open, idle, capped pools; never NVIDIA or OpenRouter.
   upstream = {
@@ -159,6 +231,99 @@ try {
   await hub.alarm();
   assert.equal(groq120bProbes(), 0, 'the daily cap of 24 holds');
   console.log('ok - test requests: half-open + idle only, Groq yes / NVIDIA never, 200 without choices fails, daily cap holds');
+
+  // 3b. Gemini's free tier allows 20 requests per model per day, so it gets no test requests
+  // (its model list is free). Each test request logs one line: pool, outcome, time; no bodies.
+  {
+    assert.equal(PROBE_DAILY_CAPS.gemini, 0);
+    const before = offset;
+    const probeHub = new HealthHub(fakeState(), ENV, { now: clock });
+    await probeHub.ready;
+    probeHub.report([{ key: GROQ_120B, success: false, kind: FailureKind.SERVER },
+      { key: GEMINI_25, success: false, kind: FailureKind.SERVER }]);
+    assert.equal(probeHub.tracker.records.get(GEMINI_25).status, HealthState.DEGRADED);
+    upstream = {
+      'https://api.groq.com/openai/v1/chat/completions': () => json({ choices: [{ message: { role: 'assistant', content: 'OK' } }] }),
+      'https://generativelanguage.googleapis.com/': () => json({ choices: [{ message: { role: 'assistant', content: 'OK' } }] }),
+    };
+    calls.length = 0;
+    offset += 150_000;
+    const lines = [];
+    const realInfo = console.info;
+    const realLog = console.log;
+    console.info = (...args) => lines.push(args);
+    console.log = (...args) => lines.push(args);
+    try {
+      await probeHub.runProbes(probeHub.pools(), clock());
+    } finally {
+      console.info = realInfo;
+      console.log = realLog;
+    }
+    assert.ok(!calls.some(call => call.url.startsWith('https://generativelanguage.googleapis.com/')), 'no test request to Gemini');
+    assert.equal(calls.filter(call => call.url === 'https://api.groq.com/openai/v1/chat/completions').length, 1, 'Groq is still tested');
+    assert.equal(probeHub.snapshot().pools[GROQ_120B].status, 'available');
+    assert.equal(lines.length, 1, 'one log line per test request');
+    const [message, fields] = lines[0];
+    assert.equal(message, 'HealthHub probe');
+    assert.deepEqual(Object.keys(fields).sort(), ['ms', 'outcome', 'pool']);
+    assert.deepEqual([fields.pool, fields.outcome, typeof fields.ms], [GROQ_120B, 'ok', 'number']);
+    offset = before;
+  }
+  console.log('ok - test requests: none for Gemini (cap 0), Groq still tested, one log line {pool, outcome, ms} per test request');
+
+  // 3c. A check that never answers is cut off at its timeout and logged (check, time, status);
+  // the other checks of the alarm still run. A non-200 answer or an unreadable body is logged too.
+  // Keyed checks are named after the key (list:groq:env), never the key itself.
+  {
+    const before = offset;
+    const hangCalls = [];
+    const hangHub = new HealthHub(fakeState(), ENV, { now: clock, fetchTimeoutMs: 20, fetchImpl: (url, { signal } = {}) => {
+      hangCalls.push(url);
+      if (url === 'https://api.groq.com/openai/v1/models') {
+        // Never answers. Node's AbortSignal.timeout does not hold the event loop open, this timer does.
+        const open = setTimeout(() => {}, 10_000);
+        return new Promise((resolve, reject) => signal.addEventListener('abort', () => { clearTimeout(open); reject(signal.reason); }));
+      }
+      if (url.startsWith('https://generativelanguage.googleapis.com/')) {
+        return Promise.resolve(json({ models: [{ name: 'models/gemini-2.5-flash' }, { name: 'models/gemini-3.5-flash' },
+          { name: 'models/gemini-3.6-flash' }] }));
+      }
+      if (url === 'https://integrate.api.nvidia.com/v1/models') return Promise.resolve(json({}, 503));
+      if (url === 'https://openrouter.ai/api/v1/models') return Promise.resolve(new Response('{"data": [', { status: 200 }));
+      return Promise.resolve(json({ data: [] }));
+    } });
+    await hangHub.ready;
+    const warnings = [];
+    const realWarn = console.warn;
+    console.warn = (...args) => warnings.push(args);
+    try {
+      offset += 31_000;
+      await hangHub.alarm();
+      assert.deepEqual(hangCalls, ['https://generativelanguage.googleapis.com/v1beta/models?pageSize=200',
+        'https://api.groq.com/openai/v1/models', 'https://groqstatus.com/api/v2/summary.json',
+        'https://www.cloudflarestatus.com/api/v2/summary.json'], 'the status pages run after the Groq list hung');
+      assert.equal(hangHub.seen.get(GEMINI_25), clock(), 'and the Gemini list result is used');
+      assert.equal(warnings.length, 1);
+      assert.equal(warnings[0][0], 'HealthHub check failed');
+      assert.equal(warnings[0][1].check, 'list:groq:env');
+      assert.equal(warnings[0][1].status, null);
+      assert.equal(typeof warnings[0][1].ms, 'number');
+      warnings.length = 0;
+      offset += 31_000;
+      await hangHub.alarm();
+      const nvidia = warnings.find(([, fields]) => fields?.check === 'list:nvidia');
+      assert.ok(nvidia, 'a 503 on a list is logged');
+      assert.equal(nvidia[1].status, 503);
+      const openrouter = warnings.find(([, fields]) => fields?.check === 'list:openrouter');
+      assert.deepEqual([openrouter?.[1].status, openrouter?.[1].error], [200, 'SyntaxError'], 'so is a 200 whose body cannot be read');
+      assert.ok(!JSON.stringify(warnings).includes('-test'), 'no key in the log');
+      assert.ok(!JSON.stringify(warnings).includes('"data"'), 'no body in the log');
+    } finally {
+      console.warn = realWarn;
+    }
+    offset = before;
+  }
+  console.log('ok - checks: a hung check times out with a warning naming it, the next check still runs, non-200 and unreadable bodies logged');
 
   // 4. A restarted object resumes from storage.
   const reborn = new HealthHub(state, ENV, { now: clock });

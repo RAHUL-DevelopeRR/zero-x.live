@@ -1,12 +1,17 @@
 // Manual live smoke test (not part of npm test): drives the real gateway app with the
 // provider keys in .dev.vars (or, with --env, the process environment) through one streamed
 // tool call per hosted catalog model. Never prints credential values.
-//   node check-live-providers.mjs [--env]
+//   node check-live-providers.mjs [--env] [--claude]
+// --claude (paid, opt-in, needs ANTHROPIC_API_KEY): Claude Sonnet 5.5 and Opus 5.5 each answer one
+// streamed tool call through the Claude adapter, then the identical request again must report
+// prompt-cache reads (usage.prompt_tokens_details.cached_tokens > 0). About $0.05 in total.
 import { readFile } from 'node:fs/promises';
 import app from './src/index.js';
-import { offeredEntries, poolConfigured } from './src/catalog.js';
+import { catalogEntries, offeredEntries, poolConfigured } from './src/catalog.js';
+import { buildUpstreamPayload, createCompletionStream, startCompletion, streamTimeouts } from './src/providers.js';
 
-const PROVIDER_KEYS = ['GROQ_API_KEY', 'GEMINI_API_KEY', 'NVIDIA_API_KEY', 'OPENROUTER_API_KEY'];
+const PROVIDER_KEYS = ['GROQ_API_KEY', 'GEMINI_API_KEY', 'NVIDIA_API_KEY', 'OPENROUTER_API_KEY', 'ANTHROPIC_API_KEY'];
+const CLAUDE = process.argv.includes('--claude');
 
 function parseDevVars(text) {
   const vars = {};
@@ -46,7 +51,8 @@ const hosting = { NVIDIA_HOSTED: 'true', OPENROUTER_HOSTED: 'true',
   OPENROUTER_MODELS: 'cohere/north-mini-code:free,minimax/minimax-m3.1-flash:free', ALLOW_UNKNOWN_COUNTRY: 'true' };
 const models = offeredEntries({ ...vars, ...hosting })
   .filter(entry => entry.pools.some(pool => pool.tier === 'free' && poolConfigured({ ...vars, ...hosting }, entry, pool)));
-const MAX_UPSTREAM_CALLS = models.length + 4;
+const claudeModels = CLAUDE && vars.ANTHROPIC_API_KEY ? catalogEntries(vars).filter(entry => entry.provider === 'anthropic') : [];
+const MAX_UPSTREAM_CALLS = models.length + 4 + claudeModels.length * 2;
 const env = {
   ...vars,
   ALLOW_ANONYMOUS_SESSIONS: 'true',
@@ -133,6 +139,59 @@ async function streamedToolCall(label, token, model) {
   }
 }
 
+// Claude goes through the adapter directly: anonymous sessions never reach paid pools, and the
+// paid path needs an account ledger. A system prompt above the 512-token cache minimum makes the
+// second identical request a cache read.
+const CACHED_SYSTEM = `${messages[0].content}\n\n${Array.from({ length: 60 }, (_, index) =>
+  `Rule ${index + 1}: read the files you change, keep edits small, explain each change in one sentence, and run the tests that cover it.`).join('\n')}`;
+async function claudeToolCall(label, entry) {
+  const started = Date.now();
+  const result = { label, model: entry.id, ok: false, served_by: entry.id };
+  try {
+    const payload = buildUpstreamPayload(entry, { model: entry.id, messages: [{ role: 'system', content: CACHED_SYSTEM }, messages[1]],
+      tools, stream: true }, 1024);
+    const begun = await startCompletion(env, { user_id: 'live-smoke', account_backed: true }, entry, entry.pools[0], payload,
+      { timeouts: streamTimeouts(env), request: { caller: 'live-smoke' } });
+    result.status = begun.ok ? 200 : begun.status;
+    if (!begun.ok) { result.error = redact(begun.bodyText).slice(0, 300); return result; }
+    let usage = null;
+    const stream = createCompletionStream({ ...begun.stream, model: entry.id, controller: begun.controller, timeouts: streamTimeouts(env),
+      requestId: 'live-smoke', env, onFinish: async outcome => { usage = outcome.usage; } });
+    const text = await new Response(stream).text();
+    const chunks = text.split('\n\n').filter(Boolean).map(event => event.replace(/^data: /, '')).filter(event => event !== '[DONE]')
+      .map(event => JSON.parse(event));
+    const calls = new Map();
+    for (const chunk of chunks) {
+      for (const choice of chunk.choices || []) {
+        if (choice.finish_reason) result.finish = choice.finish_reason;
+        if (choice.delta?.reasoning_content) result.reasoning = true;
+        for (const delta of choice.delta?.tool_calls || []) {
+          const call = calls.get(delta.index) || { name: '', arguments: '' };
+          call.name += delta.function?.name || '';
+          call.arguments += delta.function?.arguments || '';
+          calls.set(delta.index, call);
+        }
+      }
+    }
+    const [call] = calls.values();
+    result.tool = call?.name;
+    result.tool_calls = calls.size;
+    result.every_delta_indexed = true;
+    result.usage = usage?.total_tokens;
+    result.cached = usage?.prompt_tokens_details?.cached_tokens ?? 0;
+    result.cache_written = usage?.prompt_tokens_details?.cache_write_tokens ?? 0;
+    try { result.arguments_json = Boolean(call && JSON.parse(call.arguments || '{}')); } catch { result.arguments_json = false; }
+    result.ok = calls.size > 0 && result.arguments_json && call.name === 'read_file' && result.finish === 'tool_calls';
+    if (!result.ok) result.error = calls.size ? 'tool call incomplete' : `no tool call (finish ${result.finish})`;
+    return result;
+  } catch (error) {
+    result.error = redact(error.message);
+    return result;
+  } finally {
+    result.latency_ms = Date.now() - started;
+  }
+}
+
 const checks = [];
 const required = [];
 const run = async (label, token, model, { optional = false } = {}) => {
@@ -146,6 +205,15 @@ try {
   const token = await anonymousSession();
   for (const entry of models) await run(entry.provider, token, entry.id, { optional: entry.provider === 'openrouter' });
   await run('auto', token, 'auto');
+  for (const entry of claudeModels) {
+    const first = await claudeToolCall('anthropic', entry);
+    checks.push(first);
+    required.push(first);
+    const second = await claudeToolCall('anthropic (cache)', entry);
+    if (second.ok && !(second.cached > 0)) { second.ok = false; second.error = 'the identical request read nothing from the prompt cache'; }
+    checks.push(second);
+    required.push(second);
+  }
 } finally {
   globalThis.fetch = originalFetch;
 }
@@ -153,7 +221,8 @@ try {
 for (const check of checks) {
   const outcome = check.ok ? 'PASS' : check.optional ? 'WARN' : 'FAIL';
   const detail = check.ok
-    ? `tool=${check.tool} calls=${check.tool_calls} indexed=${check.every_delta_indexed} finish=${check.finish} usage=${check.usage ?? 'n/a'} reasoning=${Boolean(check.reasoning)}`
+    ? `tool=${check.tool} calls=${check.tool_calls} indexed=${check.every_delta_indexed} finish=${check.finish} usage=${check.usage ?? 'n/a'} reasoning=${Boolean(check.reasoning)}` +
+      (check.cached !== undefined ? ` cached=${check.cached} cache_written=${check.cache_written}` : '')
     : `status=${check.status ?? 'n/a'} ${check.error}`;
   console.log(`${outcome} ${check.label} ${check.model} -> ${check.served_by ?? '-'} (${check.latency_ms} ms) ${detail}`);
 }

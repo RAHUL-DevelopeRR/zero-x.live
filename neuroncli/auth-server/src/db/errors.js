@@ -11,3 +11,7 @@ export class AccountDatabaseError extends Error {
     this.hint = hint;
   }
 }
+
+// PostgREST (PGRST202) and Postgres (42883) codes for a function that does not exist, so the
+// gateway keeps working on a database that lacks a newer, optional migration.
+export const missingFunction = error => ['PGRST202', '42883'].includes(error?.code);

@@ -51,7 +51,7 @@ function mergeName(current, name) {
 }
 
 // Reads an OpenAI-style SSE stream; collects tool calls by index and the finish reason.
-async function readStream(response, started) {
+export async function readStream(response, started) {
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   const calls = new Map();

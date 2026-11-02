@@ -1,10 +1,13 @@
 name = "neuron-gateway"
 main = "src/index.js"
 compatibility_date = "2026-10-06"
+# request.signal fires when the client disconnects (no default-on date, see wrangler.toml).
+compatibility_flags = ["enable_request_signal"]
 workers_dev = true
 
 # Operator supplies identity configuration and SESSIONS_KV binding before deploy.
-# Provider keys are Worker secrets; Cloudflare AI works without client provider keys.
+# Provider keys are Worker secrets (GROQ_API_KEY, NVIDIA_API_KEY, OPENROUTER_API_KEY,
+# ANTHROPIC_API_KEY, GLM_API_KEY); the AI binding stays, unused while CLOUDFLARE_MODELS is empty.
 [ai]
 binding = "AI"
 
@@ -14,8 +17,17 @@ enabled = true
 [vars]
 CLI_SESSION_TTL_HOURS = "720"
 PRICING_URL = "https://zero-x.live/pricing"
-NVIDIA_HOSTED = "false"
-OPENROUTER_HOSTED = "false"
+# Owner lineup (2026-10-29), the same as wrangler.toml [vars] (check-routing-v2.mjs keeps them
+# equal): Groq, Claude, OpenRouter, NVIDIA and Z.ai. NVIDIA_HOSTED and OPENROUTER_HOSTED are the
+# owner's decision (docs/PROVIDER_TERMS.md). Gemini and Workers AI are switched off by
+# configuration only: an empty list offers none of the provider's models, by name or in auto.
+NVIDIA_HOSTED = "true"
+OPENROUTER_HOSTED = "true"
+OPENROUTER_MODELS = "cohere/north-mini-code:free,minimax/minimax-m3.1-flash:free"
+GEMINI_MODELS = ""
+CLOUDFLARE_MODELS = ""
+# With ANTHROPIC_API_KEY set, the anthropic.paid key serves these Claude models only (wrangler.toml).
+ANTHROPIC_MODELS = "claude-sonnet-5-5,claude-opus-5-5"
 RAZORPAY_KEY_ID = ""
 
 [triggers]

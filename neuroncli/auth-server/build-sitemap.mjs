@@ -1,6 +1,11 @@
 import {readFile, writeFile} from 'node:fs/promises';
 import {execFileSync} from 'node:child_process';
 const root = new URL('../../', import.meta.url);
+// The pages are read, and sitemap.xml written, at the root of the tree this script is in. Their
+// dates come from that tree's own history, or, for a release unpacked from `git archive` (no
+// .git: deploy/aws/package-release.sh), from SITEMAP_GIT_DIR at SITEMAP_REF.
+const history = process.env.SITEMAP_GIT_DIR ? ['-C', process.env.SITEMAP_GIT_DIR] : [];
+const at = process.env.SITEMAP_REF ? [process.env.SITEMAP_REF] : [];
 const pages = JSON.parse(await readFile(new URL('seo-pages.json', root), 'utf8'));
 const escape = value => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
 let xml = '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:video="http://www.google.com/schemas/sitemap-video/1.1">\n';
@@ -9,7 +14,7 @@ for (const page of pages) {
   if (html.includes('content="noindex')) throw new Error('Private page in sitemap: ' + page.file);
   if (!html.includes(`rel="canonical" href="${page.url}"`)) throw new Error('Canonical mismatch: ' + page.file);
   let modified = '';
-  try { modified = execFileSync('git', ['log','-1','--format=%cs','--',page.file], {cwd:root, encoding:'utf8'}).trim(); } catch { /* Omit lastmod when Git history is unavailable. */ }
+  try { modified = execFileSync('git', [...history,'log','-1','--format=%cs',...at,'--',page.file], {cwd:root, encoding:'utf8'}).trim(); } catch { /* Omit lastmod when Git history is unavailable. */ }
   xml += `  <url>\n    <loc>${escape(page.url)}</loc>\n`;
   if (modified) xml += `    <lastmod>${modified}</lastmod>\n`;
   if (page.video) {
