@@ -17,6 +17,7 @@ import { exhaustedBudget, notePoolExhausted, notePoolReserved, poolBudgetState }
 import { loadOffers, offerIdFor } from './oiop/offers.js';
 import { callerPolicy } from './oiop/policy.js';
 import { scrubMode, scrubRequest, scrubsOffer, SecretRestorer } from './oiop/scrub.js';
+import { applyHouseStyle, creditPreface, HOUSE_STYLE_TOKENS, HOUSE_STYLE_VERSION, STYLE_HEADER, styleDecision } from './house-style.js';
 import {
   PAID_DENIED_STATUSES, RESERVATION_LEASE_SECONDS, RESERVATION_RENEW_MS, RESERVE_ERRORS, TERMINAL_RESERVE_STATUSES,
   renewCapacity, reservationArgs, reserveCapacity, reserveError, reserveSessionQuota, runInBackground, sessionTiers,
@@ -275,6 +276,12 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
     // caller lets the tracker require timeouts from several callers before parking a shared pool,
     // and keeps one caller on the same vault key of a model (router.js rotateKeyPools).
     const caller = session.user_id || String(token).slice(0, 16);
+    // The Zero-X house style (src/house-style.js): decided once, from inputs that stay the same across
+    // the turns of a conversation, so every failover attempt sends the same prefix. The routing and
+    // reservation maths keep the client's own messages (promptTokens); only the context-window fit
+    // counts the preface, so a request just under a model's limit is not pushed over it.
+    const style = styleDecision({ env, header: c.req.header(STYLE_HEADER), body, caller });
+    const styleTokens = style.apply ? HOUSE_STYLE_TOKENS : 0;
 
     let route;
     try {
@@ -282,7 +289,7 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
         env,
         requestedModel: body.model,
         needs: requestNeeds(body),
-        promptTokens,
+        promptTokens: promptTokens + styleTokens,
         maxTokens: requestedMax,
         maxTokensExplicit: isSet(explicitMax),
         tiers: sessionTiers(env, session, policy),
@@ -383,7 +390,7 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
     const settleDb = (reservation, candidate, outcome, inBackground) => {
       stopLease(reservation.reservation_id);
       const args = settlementArgs({ reservationId: reservation.reservation_id, entry: candidate.entry, pool: candidate.pool,
-        promptEstimate: promptTokens, ...outcome });
+        promptEstimate: promptTokens, styleTokens, ...outcome });
       // Settling is idempotent, so a failed call is retried once. A reservation left unsettled
       // keeps its slot only until its lease lapses.
       const promise = settleCapacity(env, args).catch(() => settleCapacity(env, args)).catch(error => {
@@ -399,8 +406,9 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
           latencyMs: Date.now() - startedAt, errorCode: outcome.errorCode ?? null }, true);
       }
       if (kv) {
-        const billed = billableUsage(outcome.usage, { prompt_tokens: promptTokens,
-          completion_tokens: estimateOutputTokens(outcome.outputBytes) });
+        // The preface is not charged (creditPreface).
+        const billed = creditPreface(billableUsage(outcome.usage, { prompt_tokens: promptTokens,
+          completion_tokens: estimateOutputTokens(outcome.outputBytes) }), outcome.usage, styleTokens);
         await background(settleKv({ actualTokens: billed.total_tokens, refundRequest: false }));
       }
     };
@@ -473,7 +481,8 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
       const restorer = new SecretRestorer(sent.secrets);
       if (sent.count) headers['x-oiop-redacted'] = String(sent.count);
       else delete headers['x-oiop-redacted'];
-      const payload = buildUpstreamPayload(entry, sent.body, candidate.maxTokens);
+      // After the scrubber, before every provider adapter (OpenAI-compatible, Gemini, Claude, Workers AI).
+      const payload = buildUpstreamPayload(entry, style.apply ? applyHouseStyle(sent.body) : sent.body, candidate.maxTokens);
       const startedAt = Date.now();
       const log = { provider: entry.provider, model: entry.upstream_model, tier: pool.tier, request_id: requestId };
       const { request, onToolSignature } = signatureHooks(entry);
@@ -514,6 +523,7 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
         return { ok: false, ...failure, latencyMs: started.latencyMs, errorCode: ERROR_CODES_BY_KIND[failure.kind], usage: started.usage ?? null };
       }
       const responseHeaders = { ...headers, 'x-neuron-model': entry.id, 'Cache-Control': 'no-store' };
+      if (style.apply) responseHeaders[STYLE_HEADER] = HOUSE_STYLE_VERSION;
       const info = { reservation, candidate, startedAt };
       if (!payload.stream) {
         let completion;
@@ -609,10 +619,10 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
       pending = null;
       const generated = !status && (reported !== null || (GENERATED_KINDS.has(kind) && !reportsUsageAtStart(candidate.entry)));
       const settled = status || (generated ? 'failed_upstream' : 'refunded');
-      const usage = generated ? reported ?? { prompt_tokens: promptTokens, completion_tokens: 0 } : undefined;
+      const usage = generated ? reported ?? { prompt_tokens: promptTokens, completion_tokens: 0, estimate: true } : undefined;
       await settleDb(reservation, candidate, { status: settled, latencyMs, errorCode, usage, ...outcome }, inBackground);
     };
-    const abortedUsage = () => pending?.reported ?? { prompt_tokens: promptTokens, completion_tokens: 0 };
+    const abortedUsage = () => pending?.reported ?? { prompt_tokens: promptTokens, completion_tokens: 0, estimate: true };
     // A Claude attempt the client aborted before message_start never reached the model.
     const abortedUnreached = () => Boolean(pending && pending.reported == null && reportsUsageAtStart(pending.candidate.entry));
 

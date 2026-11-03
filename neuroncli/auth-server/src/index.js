@@ -39,6 +39,7 @@ import { registerCreditRoutes } from './routes/credits.js';
 import { loadVaultKeys, vaultConfigured } from './provider-keys.js';
 import { accessConfigured, passedAccess } from './access-auth.js';
 import { chatRefusal, chatRoutedToEc2, forwardToEc2, proxyStatus, servingRuntime } from './ec2-proxy.js';
+import { houseStyleStatus } from './house-style.js';
 import { extraWebOrigins, isExtraWebHost } from './web-hosts.js';
 // Durable Object classes are exported from the Worker entry (wrangler.toml [[durable_objects]]),
 // each with its binding. RelayRoom (src/relay.js) is not bound for now, so it is not exported.
@@ -592,6 +593,7 @@ api.get('/health', async (c) => {
     admin_access_configured: accessConfigured(c.env),
     csp_enforced: c.env.CSP_ENFORCE === 'true',
     ec2_proxy: proxyStatus(c.env),
+    house_style: houseStyleStatus(c.env),
   });
 });
 

@@ -7,6 +7,7 @@ import { poolKey } from './catalog.js';
 import { billableUsage, costMicrousd, estimateOutputTokens, reserveCostMicrousd } from './pricing.js';
 import { billedDailyCapMicrousd } from './catalog-guardrails.js';
 import { providerType } from './catalog-types.js';
+import { creditPreface } from './house-style.js';
 
 export function usesLedger(env, session) {
   return Boolean(session?.account_backed && session.user_id) && databaseConfigured(env || {});
@@ -194,10 +195,12 @@ export function reserveError(row, now = Date.now(), tokens = null) {
 // writes (5-minute and 1-hour writes together) are part of p_prompt_tokens; each is billed at its
 // own rate (migration 20261029000800, the 11-argument zerox_settle_v2).
 export function settlementArgs({ reservationId, entry, pool, usage, promptEstimate = 0, outputBytes = 0,
-  status, latencyMs = 0, errorCode = null }) {
+  status, latencyMs = 0, errorCode = null, styleTokens = 0 }) {
   let billed = null;
   if (status !== 'refunded') {
     billed = billableUsage(usage, { prompt_tokens: promptEstimate, completion_tokens: estimateOutputTokens(outputBytes) });
+    // The house-style preface (src/house-style.js) is in the provider's prompt count but is not charged.
+    billed = creditPreface(billed, usage, styleTokens);
   }
   const prompt = billed?.prompt_tokens ?? 0;
   const completion = billed?.completion_tokens ?? 0;
