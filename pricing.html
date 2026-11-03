@@ -70,7 +70,7 @@
           <p class="zx-plan__price"><span data-plan-price="free">$0</span> <small>/ month</small></p>
           <ul data-plan-features="free">
             <li>Free models from Groq, Google Gemini, Cloudflare Workers AI, NVIDIA and OpenRouter</li>
-            <li>100 requests and 500K tokens per day</li>
+            <li>100 requests per day and 1M tokens every 5 hours</li>
             <li>10 requests per minute, 2 at once</li>
             <li>Every Neuron feature, the same on all plans</li>
           </ul>
@@ -142,7 +142,7 @@
       <h2 id="compare-title">Compare plans</h2>
       <div class="zx-table-wrap">
         <table class="zx-table zx-table--compare">
-          <caption>Daily limits reset at 00:00 UTC.</caption>
+          <caption>Daily limits reset at 00:00 UTC. Free's tokens are counted over a rolling 5-hour window.</caption>
           <thead>
             <tr><th scope="col">Feature</th><th scope="col">Free</th><th scope="col">Pro</th><th scope="col">Max</th></tr>
           </thead>
@@ -150,7 +150,7 @@
             <tr><th scope="row">Price per month (USD)</th><td data-plan-price="free" data-price-currency="USD">$0</td><td data-plan-price="pro" data-price-currency="USD">$10</td><td data-plan-price="max" data-price-currency="USD">$40</td></tr>
             <tr><th scope="row">Price per month (INR)</th><td data-plan-price="free" data-price-currency="INR">₹0</td><td data-plan-price="pro" data-price-currency="INR">₹899</td><td data-plan-price="max" data-price-currency="INR">₹3,499</td></tr>
             <tr><th scope="row">Requests per day</th><td data-plan-limit="free:daily_requests">100</td><td data-plan-limit="pro:daily_requests">2,000</td><td data-plan-limit="max:daily_requests">10,000</td></tr>
-            <tr><th scope="row">Tokens per day</th><td data-plan-limit="free:daily_tokens">500K</td><td data-plan-limit="pro:daily_tokens">10M</td><td data-plan-limit="max:daily_tokens">50M</td></tr>
+            <tr><th scope="row">Tokens</th><td data-plan-limit="free:token_allowance">1M every 5 hours</td><td data-plan-limit="pro:token_allowance">10M per day</td><td data-plan-limit="max:token_allowance">50M per day</td></tr>
             <tr><th scope="row">Requests per minute</th><td data-plan-limit="free:rpm">10</td><td data-plan-limit="pro:rpm">30</td><td data-plan-limit="max:rpm">60</td></tr>
             <tr><th scope="row">Concurrent requests</th><td data-plan-limit="free:concurrency">2</td><td data-plan-limit="pro:concurrency">4</td><td data-plan-limit="max:concurrency">8</td></tr>
             <tr><th scope="row">Models</th><td>Free models</td><td>Free models, Claude Sonnet 5.5 and Claude Opus 5.5</td><td>Free models, Claude Sonnet 5.5 and Claude Opus 5.5</td></tr>
@@ -195,7 +195,7 @@
         </details>
         <details>
           <summary>What happens when I reach a limit?</summary>
-          <p>At the daily request or token cap, the gateway returns <code>insufficient_quota</code> with the reset time (00:00 UTC). Going over your per-minute rate returns <code>rate_limited</code> and Neuron retries after the delay. If a paid-capacity request needs more credits than you have, it returns <code>insufficient_credits</code>; top up or wait for your next renewal. Nothing is charged automatically beyond your plan. A Claude request holds the most it could cost until it finishes, so with a low balance a request with a large <code>max_tokens</code> can return <code>insufficient_credits</code>; lower <code>max_tokens</code> or top up. Each Claude model also has a daily spending limit shared by all users; when it is reached the model returns <code>capacity_exhausted</code> until 00:00 UTC.</p>
+          <p>At the daily request or token cap, the gateway returns <code>insufficient_quota</code> with the reset time (00:00 UTC). On Free, tokens are counted over a rolling 5-hour window: once a window holds 1M tokens, <code>insufficient_quota</code> says when enough of it frees up (also in <code>Retry-After</code>), and tokens older than 5 hours stop counting. Going over your per-minute rate returns <code>rate_limited</code> and Neuron retries after the delay. If a paid-capacity request needs more credits than you have, it returns <code>insufficient_credits</code>; top up or wait for your next renewal. Nothing is charged automatically beyond your plan. A Claude request holds the most it could cost until it finishes, so with a low balance a request with a large <code>max_tokens</code> can return <code>insufficient_credits</code>; lower <code>max_tokens</code> or top up. Each Claude model also has a daily spending limit shared by all users; when it is reached the model returns <code>capacity_exhausted</code> until 00:00 UTC.</p>
         </details>
         <details>
           <summary>Can I cancel? Do you give refunds?</summary>

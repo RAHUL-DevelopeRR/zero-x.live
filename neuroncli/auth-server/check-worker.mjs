@@ -212,6 +212,41 @@ try {
   }, databaseEnv)).json();
   assert.equal(usage.usage.requests, 8);
   assert.equal(usage.usage.tokens_used, 144);
+  assert.equal(usage.quota.window, null, 'no window in the policy: no window block');
+  assert.equal(usage.quota.remaining, DEVELOPMENT_PLANS.free.daily_tokens - 144);
+  // A plan with a rolling window (migration 20261102000000): the old fields keep the UTC-day
+  // figures, quota.remaining is what the window still allows, quota.window carries the window.
+  const windowPolicies = { ...DEVELOPMENT_PLANS,
+    free: { ...DEVELOPMENT_PLANS.free, daily_tokens: 5000000, window_tokens: 1000000, window_seconds: 18000 } };
+  const windowFetch = globalThis.fetch;
+  let windowOverview = { tokens: 990000, limit_tokens: 1000000, window_seconds: 18000, remaining_tokens: 10000,
+    resets_at: '2026-11-02T17:05:00Z' };
+  globalThis.fetch = async (url, options) => {
+    if (url.endsWith('/zerox_plan_policies')) return Response.json([{ policies: windowPolicies }]);
+    if (url.endsWith('/zerox_account_overview')) {
+      assert.equal(JSON.parse(options.body).p_user_id, userId);
+      if (!windowOverview) return new Response('down', { status: 503 });
+      return Response.json([{ account: {}, policy: {}, credits: {}, subscription: null, usage_today: {}, usage_window: windowOverview }]);
+    }
+    return windowFetch(url, options);
+  };
+  const windowed = await (await app.request('https://www.zero-x.live/auth/usage', {
+    headers: { Authorization: `Bearer ${created.session_token}` },
+  }, { ...databaseEnv })).json();
+  assert.equal(windowed.quota.daily_limit, 5000000, 'released clients still read the UTC-day limit');
+  assert.equal(windowed.quota.used, 144);
+  assert.equal(windowed.quota.remaining, 10000, 'remaining is what the window still allows, not 5M - used');
+  assert.deepEqual(windowed.quota.window, { limit_tokens: 1000000, window_seconds: 18000, tokens: 990000,
+    remaining_tokens: 10000, resets_at: '2026-11-02T17:05:00.000Z' });
+  assert.deepEqual([windowed.limits.tokens, windowed.limits.window_tokens, windowed.limits.window_seconds], [5000000, 1000000, 18000]);
+  windowOverview = null;
+  const unread = await (await app.request('https://www.zero-x.live/auth/usage', {
+    headers: { Authorization: `Bearer ${created.session_token}` },
+  }, { ...databaseEnv })).json();
+  assert.equal(unread.quota.remaining, 1000000 - 144, 'without the live count: at most one window a day');
+  assert.equal(unread.quota.window.tokens, null);
+  assert.equal(unread.quota.window.resets_at, null);
+  globalThis.fetch = windowFetch;
   const publicHealth = await (await app.request('https://www.zero-x.live/health', {}, databaseEnv)).json();
   assert.deepEqual(Object.keys(publicHealth).sort(), ['commit', 'runtime', 'service', 'status', 'version'], 'Anonymous health exposes no configuration');
   assert.equal(publicHealth.runtime, 'worker', 'which runtime answered, nothing else');

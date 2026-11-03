@@ -327,13 +327,17 @@ const contract = read('neuroncli/auth-server/docs/PLATFORM_CONTRACT.md');
 const money = value => Math.round(Number(String(value).replace(/[^0-9.]/g, '')) * 100);
 const expectedPlans = ['free', 'pro', 'max'].map(id => {
   const cells = contract.match(new RegExp(`^\\| ${id} \\|(.*)\\|$`, 'm'))[1].split('|').map(cell => cell.trim());
-  const [name, price, requests, tokens, rpm, concurrency, tiers, credits] = cells;
+  const [name, price, requests, tokens, rpm, concurrency, tiers, credits, windowTokens, windowSeconds] = cells;
   const [usd, inr] = price.split('/');
+  const optional = value => value === '—' ? null : Number(value.replace(/,/g, ''));
   return {id, name, usd_cents: money(usd), inr_paise: inr ? money(inr) : 0, daily_requests: Number(requests.replace(/,/g, '')), daily_tokens: Number(tokens.replace(/,/g, '')),
+    window_tokens: optional(windowTokens), window_seconds: optional(windowSeconds),
     rpm: Number(rpm), concurrency: Number(concurrency), tiers: tiers.split(',').map(t => t.trim()), monthly_credit_usd: money(credits) / 100};
 });
 const expectedTopups = [...contract.matchAll(/`(credits_\d+)` \(\$(\d+) credit, \$(\d+) \/ ₹([\d,]+)\)/g)].map(m => ({id: m[1], credit_usd: Number(m[2]), usd_cents: Number(m[3]) * 100, inr_paise: money(m[4])}));
 assert.equal(expectedPlans.length, 3);
+assert.deepEqual(expectedPlans.map(plan => [plan.id, plan.window_tokens, plan.window_seconds]), [['free', 1000000, 18000], ['pro', null, null], ['max', null, null]],
+  'contract section 1: Free has 1M tokens per rolling 5 hours, paid plans no window');
 assert.equal(expectedTopups.length, 2);
 
 const pricing = await import(new URL('pricing.js', root));
@@ -390,7 +394,8 @@ for (const file of ['pricing.html', 'neuron-cli.html']) {
   assert.deepEqual([software.offers.price, software.offers.priceCurrency], ['0', 'USD']);
   const docsLimits = text('docs.html');
   for (const plan of expectedPlans) {
-    assert.ok(docsLimits.includes(`${plan.name} ${formatCount(plan.daily_requests)} ${formatCount(plan.daily_tokens)} ${plan.rpm} ${plan.concurrency}`), 'docs.html limits row for ' + plan.id);
+    const tokens = plan.window_tokens ? `${formatCount(plan.window_tokens)} per ${plan.window_seconds / 3600} hours` : `${formatCount(plan.daily_tokens)} per day`;
+    assert.ok(docsLimits.includes(`${plan.name} ${formatCount(plan.daily_requests)} ${tokens} ${plan.rpm} ${plan.concurrency}`), 'docs.html limits row for ' + plan.id);
   }
 }
 {
@@ -451,6 +456,10 @@ assert.equal(dash.formatResetIn('2026-10-17T00:00:00Z', now), 'Resets in 1 h 30 
 assert.equal(dash.formatResetIn('2026-10-16T22:30:30Z', now), 'Resets in under a minute');
 assert.equal(dash.formatResetIn('2026-10-19T00:00:00Z', now), 'Resets on Oct 19, 2026');
 assert.equal(dash.formatResetIn('', now), '');
+assert.equal(dash.formatFreesIn('2026-10-17T01:15:00Z', now), 'Frees up in 2 h 45 min');
+assert.equal(dash.formatFreesIn(null, now), '');
+assert.equal(dash.windowLabel(18000), '5-hour');
+assert.equal(dash.windowLabel(5400), '90-minute');
 
 // Chart scaling
 assert.equal(dash.niceMax(0), 1);
@@ -493,6 +502,12 @@ assert.equal(dash.nextTab('usage', 'Enter'), null);
   assert.equal(account.usage.requests, 0);
   assert.equal(account.suspended, false);
   assert.equal(dash.normalizeAccount(null).plan.name, 'Free');
+  assert.equal(account.window, null, 'no usage_window, no window');
+  const windowed = dash.normalizeAccount({limits: {window_tokens: 1000000, window_seconds: 18000},
+    usage_window: {tokens: '250000', limit_tokens: 1000000, remaining_tokens: 750000, window_seconds: 18000, resets_at: '2026-10-16T23:00:00Z'}});
+  assert.deepEqual(windowed.window, {tokens: 250000, limit: 1000000, seconds: 18000, resets_at: '2026-10-16T23:00:00Z'});
+  assert.deepEqual([windowed.limits.window_tokens, windowed.limits.window_seconds], [1000000, 18000]);
+  assert.equal(dash.normalizeAccount({usage_window: {limit_tokens: 'lots', window_seconds: 18000}}).window, null, 'an invalid window is ignored');
   assert.equal(dash.normalizeAccount({user: {image_url: 'https://lh3.googleusercontent.com/a.png'}}).user.image_url, 'https://lh3.googleusercontent.com/a.png');
 }
 assert.equal(dash.normalizeEvents({events: [], next_before: 'x;drop'}).nextBefore, null);
@@ -540,6 +555,25 @@ assert.equal(pricing.normalizeCatalog({plans: [{id: 'pro', price: {usd_cents: -1
   assert.deepEqual(normalized.topups.map(t => t.id), ['credits_5']);
 }
 assert.equal(limitLabel(PLAN_CATALOG.plans[1], 'daily_tokens'), '10M');
+assert.equal(limitLabel(PLAN_CATALOG.plans[0], 'token_allowance'), '1M every 5 hours', 'Free: the rolling window');
+assert.equal(limitLabel(PLAN_CATALOG.plans[0], 'window_tokens'), '1M');
+assert.equal(limitLabel(PLAN_CATALOG.plans[1], 'token_allowance'), '10M per day');
+assert.equal(limitLabel(PLAN_CATALOG.plans[1], 'window_tokens'), null, 'no window on Pro');
+assert.equal(pricing.windowLength(3600), 'hour');
+assert.equal(pricing.windowLength(5400), '90 minutes');
+assert.equal(pricing.tokenAllowance({limits: {daily_tokens: 500000, window_tokens: null}}), '500K per day', 'a catalog without a window');
+// Running text carries the whole phrase in one hydrated span, so a database without the window
+// (before migration 20261102000000) turns "1M tokens every 5 hours" into "500K tokens per day".
+assert.equal(limitLabel(PLAN_CATALOG.plans[0], 'token_phrase'), '1M tokens every 5 hours');
+assert.equal(limitLabel({limits: {daily_tokens: 500000, window_tokens: null, window_seconds: null}}, 'token_phrase'), '500K tokens per day');
+assert.equal(limitLabel(PLAN_CATALOG.plans[1], 'token_phrase'), '10M tokens per day');
+for (const page of ['index.html', 'neuron-cli.html', 'ai-coding-agent.html']) {
+  const html = read(page);
+  assert.doesNotMatch(html, /data-plan-limit="free:window_tokens"/, `${page}: no bare window number next to static "every 5 hours"`);
+  assert.match(html, /<span data-plan-limit="free:token_phrase">1M tokens every 5 hours<\/span>/, `${page}: the whole phrase is hydrated`);
+}
+assert.deepEqual(pricing.normalizeCatalog({plans: [{id: 'free', price: {usd_cents: 0, inr_paise: 0}, limits: {window_tokens: 1000000, window_seconds: 18000}}]}).plans[0].limits,
+  {daily_requests: null, daily_tokens: null, window_tokens: 1000000, window_seconds: 18000, rpm: null, concurrency: null});
 assert.equal(limitLabel(PLAN_CATALOG.plans[1], 'daily_requests'), '2,000');
 assert.equal(limitLabel({limits: {rpm: null}}, 'rpm'), null);
 {

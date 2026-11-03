@@ -138,6 +138,9 @@ Nothing below needs Supabase, Razorpay or provider accounts.
 - Plans live in `public.zerox_plan_policy` (`daily_requests`, `daily_tokens`, `rpm_limit`,
   `concurrency_limit`, `allowed_tiers`, `monthly_credit_microusd`, prices and Razorpay plan
   ids). Edits apply to enforcement immediately and to the gateway's cached view within 60 s.
+  `window_tokens` and `window_seconds` (set together) give a plan a rolling token window instead
+  of a daily token cap: Free has 1,000,000 tokens every 5 hours (18,000 s), and its
+  `daily_tokens` (5,000,000) refuses nothing. Paid plans have none; setting both opts a plan in.
 - Containers: `docker build -t neuron-server .` then `docker run --env-file .env -p 8787:8787
   neuron-server`. Put a TLS proxy in front, and set `EXTRA_WEB_HOSTS` to the public host it
   serves: the image sets `NODE_ENV=production`, under which the server answers only the hosts

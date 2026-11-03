@@ -228,7 +228,7 @@ neuron</code></pre></div>
                 <tr><td>403</td><th scope="row"><code>account_suspended</code></th><td><code>permission_error</code></td><td>The account is suspended.</td><td>Email support@zero-x.live.</td></tr>
                 <tr><td>403</td><th scope="row"><code>api_key_not_allowed</code></th><td><code>permission_error</code></td><td>API keys cannot call this route (managing keys, sessions or billing).</td><td>Use a signed-in session. Do not retry.</td></tr>
                 <tr><td>404</td><th scope="row"><code>model_not_found</code></th><td><code>invalid_request_error</code></td><td>The requested model is not available.</td><td>List models with <code>GET /v1/models</code>. Do not retry.</td></tr>
-                <tr><td>429</td><th scope="row"><code>insufficient_quota</code></th><td><code>insufficient_quota</code></td><td>Daily request or token cap reached (<code>resets_at</code>).</td><td>Do not retry. Wait for the reset or upgrade.</td></tr>
+                <tr><td>429</td><th scope="row"><code>insufficient_quota</code></th><td><code>insufficient_quota</code></td><td>Daily request or token cap reached, or on Free the 5-hour token window is full (<code>resets_at</code>, and <code>Retry-After</code> for the window).</td><td>Do not retry before <code>resets_at</code>. Wait for the reset or upgrade.</td></tr>
                 <tr><td>429</td><th scope="row"><code>rate_limited</code></th><td><code>rate_limit_error</code></td><td>Per-minute or concurrency limit.</td><td>Retry after <code>retry_after_seconds</code>.</td></tr>
                 <tr><td>503</td><th scope="row"><code>capacity_exhausted</code></th><td><code>server_error</code></td><td>The shared free pool is used up.</td><td>Retry later, choose another model or upgrade.</td></tr>
                 <tr><td>502</td><th scope="row"><code>upstream_error</code></th><td><code>server_error</code></td><td>The provider failed after failover. The request is not counted.</td><td>Retry up to twice.</td></tr>
@@ -243,16 +243,17 @@ neuron</code></pre></div>
           <h2 id="limits-title">Limits</h2>
           <div class="zx-table-wrap">
             <table class="zx-table">
-              <thead><tr><th scope="col">Plan</th><th scope="col" class="zx-num">Requests / day</th><th scope="col" class="zx-num">Tokens / day</th><th scope="col" class="zx-num">Requests / min</th><th scope="col" class="zx-num">Concurrent</th><th scope="col">Pools</th></tr></thead>
+              <thead><tr><th scope="col">Plan</th><th scope="col" class="zx-num">Requests / day</th><th scope="col" class="zx-num">Tokens</th><th scope="col" class="zx-num">Requests / min</th><th scope="col" class="zx-num">Concurrent</th><th scope="col">Pools</th></tr></thead>
               <tbody>
-                <tr><th scope="row">Free</th><td class="zx-num">100</td><td class="zx-num">500,000</td><td class="zx-num">10</td><td class="zx-num">2</td><td>Free</td></tr>
-                <tr><th scope="row">Pro</th><td class="zx-num">2,000</td><td class="zx-num">10,000,000</td><td class="zx-num">30</td><td class="zx-num">4</td><td>Free and paid</td></tr>
-                <tr><th scope="row">Max</th><td class="zx-num">10,000</td><td class="zx-num">50,000,000</td><td class="zx-num">60</td><td class="zx-num">8</td><td>Free and paid</td></tr>
+                <tr><th scope="row">Free</th><td class="zx-num">100</td><td class="zx-num">1,000,000 per 5 hours</td><td class="zx-num">10</td><td class="zx-num">2</td><td>Free</td></tr>
+                <tr><th scope="row">Pro</th><td class="zx-num">2,000</td><td class="zx-num">10,000,000 per day</td><td class="zx-num">30</td><td class="zx-num">4</td><td>Free and paid</td></tr>
+                <tr><th scope="row">Max</th><td class="zx-num">10,000</td><td class="zx-num">50,000,000 per day</td><td class="zx-num">60</td><td class="zx-num">8</td><td>Free and paid</td></tr>
               </tbody>
             </table>
           </div>
           <ul class="zx-mt">
             <li>Daily caps reset at 00:00 UTC. Tokens are prompt plus completion tokens.</li>
+            <li>Free counts tokens over a rolling 5-hour window: each request's tokens count for 5 hours from when it started, and a running request counts with what it reserved (its prompt plus up to 1,024 output tokens) until it finishes. A request that would take the window past 1,000,000 tokens gets <code>insufficient_quota</code> with <code>resets_at</code> and <code>Retry-After</code> set to when enough of the window frees up; a single request larger than the whole window gets neither, since waiting does not make it fit. <code>GET /api/account</code> reports it as <code>usage_window</code>.</li>
             <li>Every free pool also has a global daily budget shared by all users; when it is spent you get <code>capacity_exhausted</code> even if your own cap has room.</li>
             <li>Groq's free tier allows about 8,000 tokens per minute, so large prompts go to models with more headroom.</li>
             <li>Paid-capacity requests cost credits at the upstream price plus 25%. Free-pool requests cost no credits.</li>

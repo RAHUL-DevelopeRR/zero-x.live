@@ -11,6 +11,7 @@ import { openSession, rearmRecord, sealSession } from './src/session-store.js';
 import { runScheduledMaintenance } from './src/routes/admin.js';
 import { v1ModelsPayload } from './src/routes/plans.js';
 import { credentialExpiresAt, displayName, initials } from './src/routes/account.js';
+import { catalogEntry, PLAN_CATALOG } from './src/plan-policy.js';
 import { overviewPools } from './src/routes/admin.js';
 import { ProviderHealthTracker, FailureKind } from './src/provider-health.js';
 import { B1_KEY_PREFIX, planPolicyRows } from './contract-rows.mjs';
@@ -48,6 +49,11 @@ function fakeDatabase() {
     credits: { balance_microusd: account.credit_balance_microusd ?? 0, monthly_grant_microusd: policy.monthly_credit_microusd },
     subscription: account.subscription ?? null,
     usage_today: { requests: account.daily_requests, tokens: account.daily_tokens_used, resets_at: `${dayOffset(1)}T00:00:00.000Z` },
+    // zerox_account_overview.usage_window (migration 20261102000000): null without a window.
+    usage_window: policy.window_tokens && policy.window_seconds ? { window_seconds: policy.window_seconds,
+      limit_tokens: policy.window_tokens, tokens: account.window_tokens_used ?? 0,
+      remaining_tokens: Math.max(0, policy.window_tokens - (account.window_tokens_used ?? 0)),
+      resets_at: account.window_resets_at ?? null } : null,
   }];
   };
   const rpc = {
@@ -504,9 +510,9 @@ try {
 
   // ── 4. GET /api/plans (public, static fallback identical to contract §1) ──
   const expectedPlans = [
-    { id: 'free', name: 'Free', price: { usd_cents: 0, inr_paise: 0 }, limits: { daily_requests: 100, daily_tokens: 500000, rpm: 10, concurrency: 2 }, monthly_credit_usd: 0, tiers: ['free'] },
-    { id: 'pro', name: 'Pro', price: { usd_cents: 1000, inr_paise: 89900 }, limits: { daily_requests: 2000, daily_tokens: 10000000, rpm: 30, concurrency: 4 }, monthly_credit_usd: 8, tiers: ['free', 'paid'] },
-    { id: 'max', name: 'Max', price: { usd_cents: 4000, inr_paise: 349900 }, limits: { daily_requests: 10000, daily_tokens: 50000000, rpm: 60, concurrency: 8 }, monthly_credit_usd: 35, tiers: ['free', 'paid'] },
+    { id: 'free', name: 'Free', price: { usd_cents: 0, inr_paise: 0 }, limits: { daily_requests: 100, daily_tokens: 5000000, window_tokens: 1000000, window_seconds: 18000, rpm: 10, concurrency: 2 }, monthly_credit_usd: 0, tiers: ['free'] },
+    { id: 'pro', name: 'Pro', price: { usd_cents: 1000, inr_paise: 89900 }, limits: { daily_requests: 2000, daily_tokens: 10000000, window_tokens: null, window_seconds: null, rpm: 30, concurrency: 4 }, monthly_credit_usd: 8, tiers: ['free', 'paid'] },
+    { id: 'max', name: 'Max', price: { usd_cents: 4000, inr_paise: 349900 }, limits: { daily_requests: 10000, daily_tokens: 50000000, window_tokens: null, window_seconds: null, rpm: 60, concurrency: 8 }, monthly_credit_usd: 35, tiers: ['free', 'paid'] },
   ];
   const expectedTopups = [
     { id: 'credits_5', credit_usd: 5, price: { usd_cents: 500, inr_paise: 44900 } },
@@ -537,22 +543,33 @@ try {
   db.policiesV2 = B1_POLICY_ROWS.map(row => row.plan === 'pro' ? { ...row, daily_requests: 2500, daily_tokens: '10000000',
     rpm_limit: 99, concurrency_limit: 9, allowed_tiers: ['free'], razorpay_plan_id_inr: 'plan_PROINR12345' } : row);
   checkPlans((await json(await request('/api/plans', { bindings: { ...env } }))).body,
-    { pro: { limits: { daily_requests: 2500, daily_tokens: 10000000, rpm: 99, concurrency: 9 }, tiers: ['free'] } });
+    { pro: { limits: { daily_requests: 2500, daily_tokens: 10000000, window_tokens: null, window_seconds: null, rpm: 99, concurrency: 9 }, tiers: ['free'] } });
+  // A database without the window migration has no window columns: no window is shown (the
+  // database, not the static catalogue, decides what is enforced).
+  {
+    const { window_tokens: _tokens, window_seconds: _seconds, ...oldRow } = B1_POLICY_ROWS.find(row => row.plan === 'free');
+    assert.deepEqual([_tokens, _seconds], [1000000, 18000], 'the seeded Free row has the 5-hour window');
+    const oldFree = catalogEntry(PLAN_CATALOG[0], { ...oldRow, daily_tokens: 500000 });
+    assert.deepEqual([oldFree.limits.daily_tokens, oldFree.limits.window_tokens, oldFree.limits.window_seconds], [500000, null, null]);
+  }
   db.fail.add('zerox_plan_policies_v2');
   checkPlans((await json(await request('/api/plans', { bindings: { ...env } }))).body);
   db.fail.delete('zerox_plan_policies_v2');
   db.policiesV2 = [];
 
   // ── 5. GET /api/account ──
-  Object.assign(db.accounts.get(userA.id), { credit_balance_microusd: 1234567, daily_requests: 7, daily_tokens_used: 7000 });
+  Object.assign(db.accounts.get(userA.id), { credit_balance_microusd: 1234567, daily_requests: 7, daily_tokens_used: 7000,
+    window_tokens_used: 6000, window_resets_at: `${dayOffset(1)}T03:30:00+05:00` });
   account = await json(await request('/api/account', { token: sessionToken }));
   assert.deepEqual(account.body, {
     user: { id: userA.id, email: 'alice@example.test', name: 'Alice Example', display_name: 'Alice Example', initials: 'AE',
       image_url: 'https://img.example.test/a.png' },
     session_expires_at: minted.body.expires_at,
     plan: { id: 'free', name: 'Free' },
-    limits: { daily_requests: 100, daily_tokens: 500000, rpm: 10, concurrency: 2 },
+    limits: { daily_requests: 100, daily_tokens: 5000000, rpm: 10, concurrency: 2, window_tokens: 1000000, window_seconds: 18000 },
     usage_today: { requests: 7, tokens: 7000, resets_at: `${dayOffset(1)}T00:00:00.000Z` },
+    usage_window: { tokens: 6000, limit_tokens: 1000000, remaining_tokens: 994000, window_seconds: 18000,
+      resets_at: `${dayOffset(0)}T22:30:00.000Z` },
     credits: { balance_usd: 1.234567, monthly_grant_usd: 0 },
     subscription: null,
     flags: { suspended: false },
@@ -561,13 +578,22 @@ try {
     cancel_at_period_end: false, provider_subscription_id: 'sub_TEST123456' } });
   account = await json(await request('/api/account', { token: sessionToken }));
   assert.deepEqual(account.body.plan, { id: 'pro', name: 'Pro' });
+  assert.equal(account.body.usage_window, null, 'Pro has no token window');
+  assert.deepEqual([account.body.limits.window_tokens, account.body.limits.window_seconds], [null, null]);
   assert.equal(account.body.credits.monthly_grant_usd, 8);
   assert.deepEqual(account.body.subscription, { status: 'active', current_period_end: '2026-11-16T00:00:00.000Z', cancel_at_period_end: false });
   // The overview's policy column is a zerox_plan_policies_v2 row: rpm_limit and
   // concurrency_limit edited in the database are what /api/account reports (review B3 P2).
   db.policyOverrides.pro = { rpm_limit: 99, concurrency_limit: 9, daily_requests: 2100 };
   account = await json(await request('/api/account', { token: sessionToken }));
-  assert.deepEqual(account.body.limits, { daily_requests: 2100, daily_tokens: 10000000, rpm: 99, concurrency: 9 });
+  assert.deepEqual(account.body.limits, { daily_requests: 2100, daily_tokens: 10000000, rpm: 99, concurrency: 9,
+    window_tokens: null, window_seconds: null });
+  // A plan opts in to a window by its two policy columns.
+  db.policyOverrides.pro = { window_tokens: 3000000, window_seconds: 7200 };
+  account = await json(await request('/api/account', { token: sessionToken }));
+  assert.deepEqual([account.body.limits.window_tokens, account.body.limits.window_seconds], [3000000, 7200]);
+  assert.deepEqual(account.body.usage_window, { tokens: 6000, limit_tokens: 3000000, remaining_tokens: 2994000, window_seconds: 7200,
+    resets_at: `${dayOffset(0)}T22:30:00.000Z` });
   db.policyOverrides = {};
   db.accounts.get(userA.id).suspended = true;
   assert.equal((await json(await request('/api/account', { token: sessionToken }))).body.flags.suspended, true);

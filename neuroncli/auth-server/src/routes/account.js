@@ -80,6 +80,16 @@ export async function accountPayload(env, caller, { token = '' } = {}) {
     }
     return plan.limits[name];
   };
+  // The rolling token window (migration 20261102000000): the policy row's columns when the row
+  // has them, else the catalogue's (which is null without the migration, see plan-policy.js).
+  const windowLimit = column => {
+    const value = column in policy ? policy[column] : plan.limits[column];
+    const number = Number(value);
+    return value !== null && value !== undefined && Number.isSafeInteger(number) && number > 0 ? number : null;
+  };
+  const windowTokens = windowLimit('window_tokens');
+  const windowSeconds = windowLimit('window_seconds');
+  const windowUsage = object(row.usage_window);
   const name = displayName(account, caller);
   return {
     user: {
@@ -97,12 +107,26 @@ export async function accountPayload(env, caller, { token = '' } = {}) {
       daily_tokens: limit('daily_tokens', 'daily_tokens'),
       rpm: limit('rpm', 'rpm_limit', 'rpm'),
       concurrency: limit('concurrency', 'concurrency_limit', 'concurrency'),
+      // Tokens per rolling window of window_seconds; null when the plan has no window. With a
+      // window, daily_tokens is the most the window allows in a UTC day and refuses nothing.
+      window_tokens: windowTokens && windowSeconds ? windowTokens : null,
+      window_seconds: windowTokens && windowSeconds ? windowSeconds : null,
     },
+    // Kept for released clients (the Neuron CLI shows "Tokens today"): today's UTC usage.
     usage_today: {
       requests: count(usage.requests ?? account.daily_requests),
       tokens: count(usage.tokens ?? usage.tokens_used ?? account.daily_tokens_used),
       resets_at: isoTime(usage.resets_at) ?? nextUtcMidnight(),
     },
+    // The current rolling window: tokens counted in it, its limit, what is left and when its
+    // oldest counted tokens leave it (null while it is empty). null without a window.
+    usage_window: windowTokens && windowSeconds ? {
+      tokens: count(windowUsage?.tokens),
+      limit_tokens: windowTokens,
+      remaining_tokens: windowUsage ? count(windowUsage.remaining_tokens) : windowTokens,
+      window_seconds: windowSeconds,
+      resets_at: isoTime(windowUsage?.resets_at),
+    } : null,
     credits: {
       balance_usd: microusdToUsd(credits.balance_microusd ?? row.credit_balance_microusd ?? 0),
       monthly_grant_usd: microusdToUsd(credits.monthly_grant_microusd ?? policy.monthly_credit_microusd ?? plan.monthly_credit_microusd),

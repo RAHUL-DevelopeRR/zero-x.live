@@ -78,6 +78,18 @@ export function progressTone(percent) {
   return percent >= 90 ? 'danger' : percent >= 75 ? 'warn' : 'ok';
 }
 
+/** "5-hour" for 18000 s, "90-minute" for 5400 s: the length of a rolling token window. */
+export function windowLabel(seconds) {
+  if (!Number.isFinite(seconds) || seconds < 60) return '';
+  return seconds % 3600 === 0 ? seconds / 3600 + '-hour' : Math.round(seconds / 60) + '-minute';
+}
+
+/** "Frees up in 2 h 5 min" for a rolling window's reset time; '' when nothing is counted. */
+export function formatFreesIn(resetsAt, now) {
+  const text = formatResetIn(resetsAt, now);
+  return text ? text.replace(/^Resets/, 'Frees up') : '';
+}
+
 /** "Resets in 5 h 12 min" for an ISO timestamp, relative to `now` (ms). */
 export function formatResetIn(resetsAt, now) {
   const at = Date.parse(resetsAt || '');
@@ -168,6 +180,9 @@ export function normalizeAccount(data) {
   const limits = source.limits && typeof source.limits === 'object' ? source.limits : {};
   const usage = source.usage_today && typeof source.usage_today === 'object' ? source.usage_today : {};
   const credits = source.credits && typeof source.credits === 'object' ? source.credits : {};
+  const win = source.usage_window && typeof source.usage_window === 'object' ? source.usage_window : null;
+  const windowLimit = win ? toNumber(win.limit_tokens) : null;
+  const windowSeconds = win ? toNumber(win.window_seconds) : null;
   const sub = source.subscription && typeof source.subscription === 'object' ? source.subscription : null;
   const planId = /^[a-z0-9_-]{1,32}$/.test(plan.id || '') ? plan.id : 'free';
   return {
@@ -176,8 +191,13 @@ export function normalizeAccount(data) {
     limits: {
       daily_requests: toNumber(limits.daily_requests), daily_tokens: toNumber(limits.daily_tokens),
       rpm: toNumber(limits.rpm), concurrency: toNumber(limits.concurrency),
+      window_tokens: toNumber(limits.window_tokens), window_seconds: toNumber(limits.window_seconds),
     },
     usage: { requests: toNumber(usage.requests) || 0, tokens: toNumber(usage.tokens) || 0, resets_at: text(usage.resets_at, 40) },
+    // Free's rolling token window (GET /api/account usage_window); null for plans without one.
+    window: windowLimit && windowSeconds ? {
+      tokens: toNumber(win.tokens) || 0, limit: windowLimit, seconds: windowSeconds, resets_at: text(win.resets_at, 40),
+    } : null,
     credits: { balance_usd: toNumber(credits.balance_usd), monthly_grant_usd: toNumber(credits.monthly_grant_usd) },
     subscription: sub ? { status: text(sub.status, 32), current_period_end: text(sub.current_period_end, 40), cancel_at_period_end: sub.cancel_at_period_end === true } : null,
     suspended: !!(source.flags && source.flags.suspended === true),
@@ -492,7 +512,7 @@ export function createDashboard({ doc = globalThis.document, win = globalThis.wi
     setText('ov-plan', plan.name);
     const summary = subscriptionSummary(subscription);
     setText('ov-plan-detail', plan.id === 'free'
-      ? 'Shared free model pools with daily caps.'
+      ? (account.window ? 'Shared free model pools; tokens count over a rolling ' + windowLabel(account.window.seconds) + ' window.' : 'Shared free model pools with daily caps.')
       : summary.periodLabel ? summary.label + ' · ' + summary.periodLabel.toLowerCase() + ' ' + summary.periodText : summary.label);
     $('ov-upgrade').hidden = plan.id !== 'free';
 
@@ -501,12 +521,28 @@ export function createDashboard({ doc = globalThis.document, win = globalThis.wi
     setProgress('ov-requests-bar', usage.requests, requestLimit, formatCount(usage.requests) + ' of ' + (requestLimit !== null ? formatCount(requestLimit) : 'unknown') + ' requests used today');
     setText('ov-requests-detail', requestLimit !== null ? formatCount(Math.max(0, requestLimit - usage.requests)) + ' requests left today' : 'Daily request limit unavailable');
 
-    const tokenLimit = limits.daily_tokens;
-    setText('ov-tokens', formatTokens(usage.tokens) + (tokenLimit !== null ? ' / ' + formatTokens(tokenLimit) : ''));
-    setProgress('ov-tokens-bar', usage.tokens, tokenLimit, formatCount(usage.tokens) + ' of ' + (tokenLimit !== null ? formatCount(tokenLimit) : 'unknown') + ' tokens used today');
-    setText('ov-tokens-detail', tokenLimit !== null ? formatTokens(Math.max(0, tokenLimit - usage.tokens)) + ' tokens left today' : 'Daily token limit unavailable');
+    const win = account.window;
+    if (win) {
+      // A rolling window (Free): its tokens, not today's, are what a request is checked against.
+      const length = windowLabel(win.seconds);
+      setText('ov-tokens-label', 'Tokens this ' + length + ' window');
+      setText('ov-tokens', formatTokens(win.tokens) + ' / ' + formatTokens(win.limit));
+      setProgress('ov-tokens-bar', win.tokens, win.limit, formatCount(win.tokens) + ' of ' + formatCount(win.limit) + ' tokens used in the current ' + length + ' window');
+      const freesIn = formatFreesIn(win.resets_at, now());
+      setText('ov-tokens-detail', formatTokens(Math.max(0, win.limit - win.tokens)) + ' tokens left' + (freesIn ? ' · ' + freesIn.charAt(0).toLowerCase() + freesIn.slice(1) : '') +
+        ' · ' + formatTokens(usage.tokens) + ' today');
+    } else {
+      const tokenLimit = limits.daily_tokens;
+      setText('ov-tokens-label', 'Tokens today');
+      setText('ov-tokens', formatTokens(usage.tokens) + (tokenLimit !== null ? ' / ' + formatTokens(tokenLimit) : ''));
+      setProgress('ov-tokens-bar', usage.tokens, tokenLimit, formatCount(usage.tokens) + ' of ' + (tokenLimit !== null ? formatCount(tokenLimit) : 'unknown') + ' tokens used today');
+      setText('ov-tokens-detail', tokenLimit !== null ? formatTokens(Math.max(0, tokenLimit - usage.tokens)) + ' tokens left today' : 'Daily token limit unavailable');
+    }
 
-    setText('ov-reset', formatResetIn(usage.resets_at, now()) || 'Daily limits reset at 00:00 UTC.');
+    const dailyReset = formatResetIn(usage.resets_at, now()) || 'Daily limits reset at 00:00 UTC.';
+    setText('ov-reset', win
+      ? dailyReset.replace(/\.?$/, '.') + ' Tokens free up ' + windowLabel(win.seconds).replace('-', ' ') + 's after use.'
+      : dailyReset);
     setText('ov-credits', formatUsd(credits.balance_usd));
     setText('ov-credits-detail', plan.id === 'free'
       ? 'Credits pay for Claude Sonnet 5.5, Claude Opus 5.5 and other paid capacity on Pro and Max.'
