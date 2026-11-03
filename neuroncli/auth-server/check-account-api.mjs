@@ -573,6 +573,9 @@ try {
     credits: { balance_usd: 1.234567, monthly_grant_usd: 0 },
     subscription: null,
     flags: { suspended: false },
+    // Contract section 14.1: Free has local connectors only.
+    policy: { connectors: { allowed: ['catalog:*'], denied: [], required: [], hosted: [], allow_unvetted: true,
+      catalog_version: '2026-11-03' } },
   });
   Object.assign(db.accounts.get(userA.id), { plan: 'pro', subscription: { status: 'active', current_period_end: '2026-11-16T00:00:00.000Z',
     cancel_at_period_end: false, provider_subscription_id: 'sub_TEST123456' } });
@@ -594,6 +597,43 @@ try {
   assert.deepEqual([account.body.limits.window_tokens, account.body.limits.window_seconds], [3000000, 7200]);
   assert.deepEqual(account.body.usage_window, { tokens: 6000, limit_tokens: 3000000, remaining_tokens: 2994000, window_seconds: 7200,
     resets_at: `${dayOffset(0)}T22:30:00.000Z` });
+  // Connector policy (migration 20261104000000, contract section 14.1). Pro's hosted connectors
+  // are seeded but reported only while hosted connectors are switched on.
+  const HOSTED = ['atlassian', 'github', 'linear', 'notion', 'slack'];
+  db.policyOverrides = {};
+  account = await json(await request('/api/account', { token: sessionToken }));
+  assert.deepEqual(account.body.policy, { connectors: { allowed: ['catalog:*'], denied: [], required: [], hosted: [],
+    allow_unvetted: true, catalog_version: '2026-11-03' } }, 'hosted connectors are off by default');
+  const hostedEnv = { ...env, HOSTED_CONNECTORS: 'true' };
+  account = await json(await request('/api/account', { token: sessionToken, bindings: hostedEnv }));
+  assert.deepEqual(account.body.policy.connectors.hosted, HOSTED, 'Pro gets the hosted connectors once they are on');
+  db.accounts.get(userA.id).plan = 'free';
+  account = await json(await request('/api/account', { token: sessionToken, bindings: hostedEnv }));
+  assert.deepEqual(account.body.policy.connectors.hosted, [], 'Free never gets hosted connectors');
+  db.accounts.get(userA.id).plan = 'pro';
+  // Operators edit the column by hand: ids are validated, de-duplicated and capped, deny wins over
+  // required and hosted, and a field left out restricts nothing.
+  db.policyOverrides.pro = { connector_policy: { allowed: ['github', 'GitHub', '../x', 'github', 7, 'catalog:*'],
+    denied: ['slack', 'bad id'], required: ['slack', 'codebase-memory'], hosted: ['slack', 'github', 'github'],
+    catalog_version: 'v 1' } };
+  account = await json(await request('/api/account', { token: sessionToken, bindings: hostedEnv }));
+  assert.deepEqual(account.body.policy, { connectors: { allowed: ['github', 'catalog:*'], denied: ['slack'],
+    required: ['codebase-memory'], hosted: ['github'], allow_unvetted: true, catalog_version: '2026-11-03' } });
+  db.policyOverrides.pro = { connector_policy: { allow_unvetted: false, required: Array.from({ length: 150 }, (_, i) => `c${i}`) } };
+  account = await json(await request('/api/account', { token: sessionToken, bindings: hostedEnv }));
+  assert.equal(account.body.policy.connectors.allow_unvetted, false);
+  assert.deepEqual(account.body.policy.connectors.allowed, ['catalog:*'], 'a policy without allowed allows the catalog');
+  assert.equal(account.body.policy.connectors.required.length, 100, 'lists are capped');
+  // No gateway policy: a plan whose policy is null or not an object, and a database without the
+  // column, leave the block out.
+  for (const connector_policy of [null, ['github'], 'not json', undefined]) {
+    db.policyOverrides.pro = { connector_policy };
+    account = await json(await request('/api/account', { token: sessionToken, bindings: hostedEnv }));
+    assert.ok(!('policy' in account.body), `no policy block for ${JSON.stringify(connector_policy)}`);
+  }
+  db.policyOverrides.pro = { connector_policy: JSON.stringify({ hosted: ['github'] }) };
+  account = await json(await request('/api/account', { token: sessionToken, bindings: hostedEnv }));
+  assert.deepEqual(account.body.policy.connectors.hosted, ['github'], 'a policy stored as JSON text is read too');
   db.policyOverrides = {};
   db.accounts.get(userA.id).suspended = true;
   assert.equal((await json(await request('/api/account', { token: sessionToken }))).body.flags.suspended, true);

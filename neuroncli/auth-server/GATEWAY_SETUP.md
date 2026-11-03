@@ -113,6 +113,7 @@ them in `zerox_plan_policy.razorpay_plan_id_inr/usd`.
 | `PAID_DAILY_SPEND_CAP_USD` | var | unset | A number above 0 lowers every paid pool's daily spend cap (upstream USD per UTC day) to at most this value; it can never raise one (contract §13.4). |
 | `CATALOG_SOURCE` | var | unset | Unset: the approved catalog rows when the database is configured, over the code catalog. `code`: kill switch, `src/catalog.js` only (contract §13.1). |
 | `CLOUDFLARE_PAID` | var | unset | `true` adds paid Workers AI pools (Workers Paid accounts only). |
+| `HOSTED_CONNECTORS` | var | unset = `false` | `true`: `/api/account` reports each plan's hosted connector ids (`policy.connectors.hosted`, contract section 14.1). Leave it unset until the hosted connector endpoint is deployed: with it unset every plan reports `hosted: []` and clients offer local connectors only. |
 | `NVIDIA_HOSTED` + `NVIDIA_API_KEY` | var + **secret** | unset = `false` (`"true"` in the lineup files) | `true`: the NVIDIA trial key serves users' free models, the owner's decision (2026-10-19, kept in the 2026-10-29 lineup; trial terms in [docs/PROVIDER_TERMS.md](docs/PROVIDER_TERMS.md)). `false`: NVIDIA is not offered. |
 | `OPENROUTER_HOSTED` + `OPENROUTER_API_KEY` | var + **secret** | unset = `false` (`"true"` in the lineup files) | `true`: the operator key serves the OpenRouter free models in `OPENROUTER_MODELS`, the owner's decision. `false`: users' own keys (BYOK) only, which work regardless. |
 | `OPENROUTER_MODELS` | var | `cohere/north-mini-code:free` (the lineup files add `minimax/minimax-m3.1-flash:free`) | Narrows the OpenRouter models offered, hosted and BYOK alike. |
@@ -199,6 +200,7 @@ and apply, in order (the ten catalog and app migrations were renumbered from 202
 10. `20261029000900_plan_features_claude.sql` (plan feature strings; tiers, limits and credits unchanged)
 11. `20261029001000_pool_concurrency.sql` (`p_pool.concurrency`: requests of a pool key running at once, for Z.ai's one-at-a-time free models)
 12. `20261102000000_free_token_window.sql` (Free: 1,000,000 tokens per rolling 5-hour window instead of 500K a day; see below)
+13. `20261104000000_connector_policy.sql` (connector policy per plan, `/api/account` `policy.connectors`; see below)
 
 **Free's 5-hour token window (`20261102000000_free_token_window.sql`).** Deploy the gateway that
 knows `user_window_tokens` (both runtimes: the Worker and the EC2 Node server) **before** pasting
@@ -232,6 +234,22 @@ says the same, so the two can be applied in either order. Verify:
 Roll back with `migrations/down/20261102000000_free_token_window.sql` (psql -X -v ON_ERROR_STOP=1 -f,
 or paste it): Free gets 500,000 tokens a day back. It must run before
 `down/20261029001000_pool_concurrency.sql` if both are rolled back.
+
+**Connector policy (`20261104000000_connector_policy.sql`).** Adds
+`zerox_plan_policy.connector_policy jsonb` (contract section 14.1) and recreates
+`zerox_plan_policies_v2` with that column (same arguments and grants). Free gets local connectors
+only; Pro, Max and ultrawork get the hosted connector ids, which `/api/account` reports only while
+`HOSTED_CONNECTORS=true`. A plan whose policy is already set keeps it, so the file is safe to
+re-run. The gateway works on either side of it (without the column, `/api/account` has no
+`policy` block), so it can be pasted before or after the deploy. Verify:
+
+- `SELECT plan, connector_policy->'hosted' FROM public.zerox_plan_policy ORDER BY sort;` returns free
+  `[]` and the five hosted ids for pro, max and ultrawork.
+
+Edit a plan's policy with `UPDATE public.zerox_plan_policy SET connector_policy = '{...}'::jsonb
+WHERE plan = 'pro';` (ids are connector catalog ids; `"catalog:*"` in `allowed` allows the whole
+catalog). Roll back with `migrations/down/20261104000000_connector_policy.sql`; it must run before
+`down/20261102000000_free_token_window.sql` if both are rolled back.
 
 `DATABASE_URL=… node scripts/apply-migrations.mjs --status`, then `--apply`; or run each file in the
 Supabase SQL editor followed by

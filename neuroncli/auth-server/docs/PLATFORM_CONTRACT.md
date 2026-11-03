@@ -1,6 +1,6 @@
 # Neuron × Zero-X platform contract
 
-Status: v1.8 (2026-10-25; amendments v1.1 to v1.8 in sections 6 to 13). This document is the source of truth shared by the Neuron CLI
+Status: v1.9 (2026-11-03; amendments v1.1 to v1.9 in sections 6 to 14). This document is the source of truth shared by the Neuron CLI
 (`RAHUL-DevelopeRR/neuron-v2`) and the Zero-X gateway + website
 (`RAHUL-DevelopeRR/zero-x.live`, `neuroncli/auth-server`). A copy lives in both repos;
 change both together.
@@ -171,7 +171,9 @@ credential (never an `nzx_` key). Session tokens are stored hashed (SHA-256) in 
   usage_today:{requests, tokens, resets_at}, usage_window:null|{tokens, limit_tokens, remaining_tokens,
   window_seconds, resets_at}, credits:{balance_usd, monthly_grant_usd},
   subscription:null|{status, current_period_end, cancel_at_period_end},
-  flags:{suspended}}` (`display_name`, `initials` and `session_expires_at`: §9.1)
+  flags:{suspended}, policy?:{connectors:{allowed, denied, required, hosted, allow_unvetted,
+  catalog_version}}}` (`display_name`, `initials` and `session_expires_at`: §9.1; `policy`: §14.1,
+  left out when the plan has no gateway policy)
 - `GET /api/usage?from=YYYY-MM-DD&to=YYYY-MM-DD` (max 92 days, default last 30) →
   `{from, to, series:[{day, requests, prompt_tokens, completion_tokens, cost_usd}],
   by_model:[{model, requests, prompt_tokens, completion_tokens, cost_usd}], totals:{requests,
@@ -244,7 +246,7 @@ All called through `rpc(env, name, args)` / `rpcRows(env, name, args)` in
 | `zerox_settle_v2` | `p_reservation_id uuid, p_prompt_tokens bigint, p_completion_tokens bigint, p_cost_microusd bigint, p_status text ('ok','error','refunded','failed_upstream'), p_latency_ms int, p_provider text, p_upstream_model text, p_error_code text, p_cache_read_tokens bigint = 0, p_cache_write_tokens bigint = 0` (cache tokens are part of `p_prompt_tokens`, section 13.4) | `{status:'settled'|'already_settled'|'not_found', credit_balance_microusd}`; reconciles the pool bucket stored on the reservation (model, tier, pool key) |
 | `zerox_renew_reservation` | `p_reservation_id uuid, p_lease_seconds int` (1-3600) | `boolean`: the lease now runs at least `p_lease_seconds` from now; `false` once the reservation is settled or released (section 8.5) |
 | `zerox_release_stale_reservations` | — | `{released}` |
-| `zerox_plan_policies_v2` | — | one row per plan: `plan, name, price_usd, price_usd_cents, price_inr_paise, daily_requests, daily_tokens, rpm_limit, concurrency_limit, allowed_tiers text[], monthly_credit_microusd, features, sort, public, highlighted, razorpay_plan_id_inr, razorpay_plan_id_usd, window_tokens, window_seconds` |
+| `zerox_plan_policies_v2` | — | one row per plan: `plan, name, price_usd, price_usd_cents, price_inr_paise, daily_requests, daily_tokens, rpm_limit, concurrency_limit, allowed_tiers text[], monthly_credit_microusd, features, sort, public, highlighted, razorpay_plan_id_inr, razorpay_plan_id_usd, window_tokens, window_seconds, connector_policy jsonb` (null = no connector policy, §14.1) |
 | `zerox_account_overview` | `p_user_id` | account + policy + credits + subscription + today usage + `usage_window` (`{window_seconds, limit_tokens, tokens, remaining_tokens, resets_at}` or null) (jsonb columns) |
 | `zerox_window_usage` | `p_user_id uuid, p_window_seconds int, p_now timestamptz = now()` | rows `{created_at, tokens}`: the user's reservations in the window and the tokens each counts |
 | `zerox_usage_series` | `p_user_id, p_from date, p_to date` | rows `{day, requests, prompt_tokens, completion_tokens, cost_microusd}` |
@@ -963,3 +965,59 @@ Code: `src/catalog-types.js`, `src/list-prices.js`, `src/catalog-guardrails.js`,
 Tiers, limits, prices and credits are unchanged (section 1). The plan features
 (`zerox_plan_policy.features`, `/api/plans`, the site fallback) name Claude Sonnet 5.5 and Claude
 Opus 5.5 billed from credits on Pro and Max, and say every plan has the same Neuron features.
+
+## 14. v1.9 amendments (connectors, agentic routing, prompt cache key, 2026-11-03)
+
+The neuron-v2 copy (`docs/GATEWAY_CONTRACT.md`) records the same changes as its v1.3 amendment;
+the CLI and the gateway implement exactly what follows. Code: `src/connector-policy.js`,
+`src/routes/account.js`; migration `20261104000000_connector_policy.sql` (down script in
+`migrations/down/`); checks `check-account-api.mjs`, `check-business-db.mjs`.
+
+### 14.1 Connector policy (`GET /api/account` `policy.connectors`)
+
+Connectors are MCP servers. There are no organisations yet, so gateway policy is per plan
+(`zerox_plan_policy.connector_policy jsonb`); machine policy is the CLI's `managed-settings.json`.
+
+```json
+"policy": {"connectors": {"allowed": ["catalog:*"], "denied": [], "required": [],
+  "hosted": [], "allow_unvetted": true, "catalog_version": "2026-11-03"}}
+```
+
+- `allowed`: connector catalog ids, or `"catalog:*"` for every entry of the catalog. `denied`: ids
+  the CLI must not start; deny wins over `allowed`, `required` and `hosted`. `required`: ids the
+  CLI starts with managed scope (also in one-shot runs) and the user cannot disable. `hosted`: ids
+  the plan may use through the hosted endpoint (section 14.4). `allow_unvetted`: whether servers
+  that are not in the catalog may run. `catalog_version`: the catalog version the ids were written
+  against.
+- A missing `policy` block (or `policy` without `connectors`) means no gateway policy: the CLI
+  applies its managed and user settings only. The gateway leaves it out when the plan's column is
+  null or not a JSON object, and against a database without the migration.
+- The gateway validates the stored value: ids are `^[a-z0-9][a-z0-9._-]{0,63}$` (others are
+  dropped), lists are de-duplicated and capped at 100, a denied id is removed from `required` and
+  `hosted`, a missing `allowed` is `["catalog:*"]`, a missing `allow_unvetted` is `true`, and a
+  missing or malformed `catalog_version` is the gateway's (`2026-11-03`). A policy only restricts
+  what it says.
+- `hosted` is reported only while the gateway serves hosted connectors (`HOSTED_CONNECTORS=true`,
+  off by default); otherwise it is `[]` whatever the plan allows.
+- Seed (migration `20261104000000_connector_policy.sql`, kept if an operator already set a
+  policy): every plan `allowed: ["catalog:*"]`, `denied: []`, `required: []`,
+  `allow_unvetted: true`, `catalog_version: "2026-11-03"`; Free `hosted: []` (local connectors
+  only); Pro, Max and ultrawork `hosted: ["atlassian", "github", "linear", "notion", "slack"]`
+  (vendors with an official remote MCP server). The ids must equal the CLI catalog's ids.
+- CLI behaviour (neuron-v2): the block is cached with its expiry; offline or when the gateway
+  cannot be reached, the CLI uses the last cached policy and warns (fail open), unless managed
+  settings set `mcpPolicy.failClosed: true`.
+
+
+### 14.4 Hosted connector endpoint (specified; not served by this gateway version)
+
+- `https://zero-x.live/mcp/<connector_id>`: Streamable HTTP (MCP 2025-06-18), `Authorization:
+  Bearer <ses_ session token or nzx_ key>`. Served only with `HOSTED_CONNECTORS=true` and only for
+  ids in the caller's `policy.connectors.hosted`.
+- `401` = sign in again. `403` with `{"error":"needs_connect","connect_url":"https://zero-x.live/dashboard#connectors"}`
+  = the user has not linked that connector.
+- A call to a destructive-tier tool must carry `x-neuron-confirmed: 1`, which the CLI sends only
+  after the user approved that call in its permission prompt; without it the proxy answers a
+  JSON-RPC error asking for confirmation.
+- Neuron settings name a hosted connector with server `type: "zerox"`. The managed-proxy type
+  string the CLI inherited stays only as a silent parse alias and appears in no docs or UI.

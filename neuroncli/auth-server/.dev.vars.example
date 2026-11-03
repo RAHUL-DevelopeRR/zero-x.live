@@ -101,6 +101,11 @@ OPENROUTER_MODELS=cohere/north-mini-code:free,minimax/minimax-m3.1-flash:free
 OPENROUTER_FREE_ONLY=
 OPENROUTER_CALLBACK_URL=https://zero-x.live/neuroncli/callback/
 
+# ── Hosted connectors (contract section 14.1) ──
+# true reports each plan's hosted connector ids in /api/account policy.connectors.hosted. Keep it
+# false until the hosted connector endpoint (/mcp/<id>) is deployed.
+HOSTED_CONNECTORS=false
+
 # ── Optional OpenAI-compatible upstreams ──
 OMNIROUTE_BASE_URL=
 OMNIROUTE_API_KEY=                  # SECRET

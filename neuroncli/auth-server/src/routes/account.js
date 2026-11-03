@@ -1,5 +1,6 @@
 import { rpc, rpcRows } from '../account-store.js';
 import { ApiError, ALL_CREDENTIALS, bearerToken, invalidSession, withCaller } from '../auth-context.js';
+import { connectorPolicyBlock } from '../connector-policy.js';
 import { normalizePlanId, planById } from '../plan-policy.js';
 import { sessionExpiry } from '../session-store.js';
 import { microusdToUsd } from './plans.js';
@@ -91,6 +92,9 @@ export async function accountPayload(env, caller, { token = '' } = {}) {
   const windowSeconds = windowLimit('window_seconds');
   const windowUsage = object(row.usage_window);
   const name = displayName(account, caller);
+  // The plan's connector policy (migration 20261104000000, contract section 14.1); left out when
+  // the plan has none or the database predates the column ("no gateway policy").
+  const connectors = connectorPolicyBlock(policy.connector_policy, env);
   return {
     user: {
       id: caller.user_id,
@@ -137,6 +141,7 @@ export async function accountPayload(env, caller, { token = '' } = {}) {
       cancel_at_period_end: subscription.cancel_at_period_end === true,
     } : null,
     flags: { suspended: caller.suspended === true || account.suspended === true || account.status === 'suspended' || row.suspended === true },
+    ...(connectors ? { policy: { connectors } } : {}),
   };
 }
 
