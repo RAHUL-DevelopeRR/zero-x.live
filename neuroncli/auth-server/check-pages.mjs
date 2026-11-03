@@ -562,6 +562,16 @@ assert.equal(limitLabel(PLAN_CATALOG.plans[1], 'window_tokens'), null, 'no windo
 assert.equal(pricing.windowLength(3600), 'hour');
 assert.equal(pricing.windowLength(5400), '90 minutes');
 assert.equal(pricing.tokenAllowance({limits: {daily_tokens: 500000, window_tokens: null}}), '500K per day', 'a catalog without a window');
+// Running text carries the whole phrase in one hydrated span, so a database without the window
+// (before migration 20261102000000) turns "1M tokens every 5 hours" into "500K tokens per day".
+assert.equal(limitLabel(PLAN_CATALOG.plans[0], 'token_phrase'), '1M tokens every 5 hours');
+assert.equal(limitLabel({limits: {daily_tokens: 500000, window_tokens: null, window_seconds: null}}, 'token_phrase'), '500K tokens per day');
+assert.equal(limitLabel(PLAN_CATALOG.plans[1], 'token_phrase'), '10M tokens per day');
+for (const page of ['index.html', 'neuron-cli.html', 'ai-coding-agent.html']) {
+  const html = read(page);
+  assert.doesNotMatch(html, /data-plan-limit="free:window_tokens"/, `${page}: no bare window number next to static "every 5 hours"`);
+  assert.match(html, /<span data-plan-limit="free:token_phrase">1M tokens every 5 hours<\/span>/, `${page}: the whole phrase is hydrated`);
+}
 assert.deepEqual(pricing.normalizeCatalog({plans: [{id: 'free', price: {usd_cents: 0, inr_paise: 0}, limits: {window_tokens: 1000000, window_seconds: 18000}}]}).plans[0].limits,
   {daily_requests: null, daily_tokens: null, window_tokens: 1000000, window_seconds: 18000, rpm: null, concurrency: null});
 assert.equal(limitLabel(PLAN_CATALOG.plans[1], 'daily_requests'), '2,000');

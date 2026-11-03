@@ -253,7 +253,7 @@ neuron</code></pre></div>
           </div>
           <ul class="zx-mt">
             <li>Daily caps reset at 00:00 UTC. Tokens are prompt plus completion tokens.</li>
-            <li>Free counts tokens over a rolling 5-hour window: each request's tokens count for 5 hours from when it started, and a running request counts with what it reserved (its prompt plus up to 1,024 output tokens) until it finishes. A request that would take the window past 1,000,000 tokens gets <code>insufficient_quota</code> with <code>resets_at</code> and <code>Retry-After</code> set to when enough of the window frees up. <code>GET /api/account</code> reports it as <code>usage_window</code>.</li>
+            <li>Free counts tokens over a rolling 5-hour window: each request's tokens count for 5 hours from when it started, and a running request counts with what it reserved (its prompt plus up to 1,024 output tokens) until it finishes. A request that would take the window past 1,000,000 tokens gets <code>insufficient_quota</code> with <code>resets_at</code> and <code>Retry-After</code> set to when enough of the window frees up; a single request larger than the whole window gets neither, since waiting does not make it fit. <code>GET /api/account</code> reports it as <code>usage_window</code>.</li>
             <li>Every free pool also has a global daily budget shared by all users; when it is spent you get <code>capacity_exhausted</code> even if your own cap has room.</li>
             <li>Groq's free tier allows about 8,000 tokens per minute, so large prompts go to models with more headroom.</li>
             <li>Paid-capacity requests cost credits at the upstream price plus 25%. Free-pool requests cost no credits.</li>

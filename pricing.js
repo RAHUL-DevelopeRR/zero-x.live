@@ -175,9 +175,26 @@ export function tokenAllowance(plan) {
   return Number.isFinite(limits.daily_tokens) ? formatTokens(limits.daily_tokens) + ' per day' : null;
 }
 
-/** Text for a [data-plan-limit="plan:field"] element; field "token_allowance" is tokenAllowance(). */
+/**
+ * The token allowance as a phrase for running text: "1M tokens every 5 hours" with a window,
+ * "500K tokens per day" without one. Static copy wraps the whole phrase in a
+ * [data-plan-limit="free:token_phrase"] span, so the hydrated page states what the database
+ * enforces (no window before migration 20261102000000 is applied) rather than a bare number.
+ */
+export function tokenPhrase(plan) {
+  const limits = plan && plan.limits ? plan.limits : {};
+  const length = windowLength(limits.window_seconds);
+  if (Number.isFinite(limits.window_tokens) && length) return formatTokens(limits.window_tokens) + ' tokens every ' + length;
+  return Number.isFinite(limits.daily_tokens) ? formatTokens(limits.daily_tokens) + ' tokens per day' : null;
+}
+
+/**
+ * Text for a [data-plan-limit="plan:field"] element; field "token_allowance" is tokenAllowance(),
+ * "token_phrase" is tokenPhrase().
+ */
 export function limitLabel(plan, field) {
   if (field === 'token_allowance') return tokenAllowance(plan);
+  if (field === 'token_phrase') return tokenPhrase(plan);
   const value = plan && plan.limits ? plan.limits[field] : null;
   if (value === null || value === undefined) return null;
   return field === 'daily_tokens' || field === 'window_tokens' ? formatTokens(value) : formatCount(value);

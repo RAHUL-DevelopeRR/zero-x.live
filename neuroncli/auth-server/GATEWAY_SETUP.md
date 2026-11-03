@@ -204,7 +204,19 @@ and apply, in order (the ten catalog and app migrations were renumbered from 202
 knows `user_window_tokens` (both runtimes: the Worker and the EC2 Node server) **before** pasting
 this migration: an older gateway answers that unknown reservation status with 503
 `service_unavailable` instead of 429 `insufficient_quota`. The new gateway works against the
-old database (no window columns: no window is shown or enforced). The migration adds
+old database (no window columns: no window is shown or enforced).
+
+The site ships in the same deploy: the Worker serves the repo root (`wrangler.toml` `[assets]
+directory = "../../"`), so the gateway deploy also publishes the "1M tokens every 5 hours" copy.
+**Paste the migration right after that deploy**, in the same sitting. Until it is applied the
+database still enforces 500K tokens per UTC day. In that gap the pricing table and the hydrated
+plan phrases (`data-plan-limit="free:token_phrase"`, `free:token_allowance`, the feature lists
+on the home, Neuron CLI and pricing pages) follow `/api/plans` and say "500K tokens per day".
+The text that is not hydrated still says 1M every 5 hours: `ai-coding-agent.html`, the docs
+limits section, `llms.txt`, the FAQ sentence on the home page, and the static fallback catalog
+(`src/plan-policy.js`, `pricing.js`) shown when `/api/plans` cannot be reached. To avoid the gap
+completely, deploy the gateway with the site copy of `main` first, paste the migration, then
+deploy this branch's site copy. The migration adds
 `zerox_plan_policy.window_tokens`/`window_seconds`, sets Free to 1,000,000 / 18,000 with
 `daily_tokens` 5,000,000 and the feature "100 requests per day and 1M tokens every 5 hours" (or
 "1M tokens every 5 hours" where the older seed strings are still in place), adds
