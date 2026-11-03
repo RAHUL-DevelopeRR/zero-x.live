@@ -145,13 +145,9 @@ neuron -p "Run the test suite and summarise the failures"</code></pre></div>
           <thead><tr><th scope="col">Model</th><th scope="col">ID</th><th scope="col">Provider</th><th scope="col" class="zx-num">Context</th><th scope="col">Tools</th><th scope="col">Plans</th></tr></thead>
           <tbody id="models-body">
             <tr><th scope="row">Auto (best available model)</th><td><code>auto</code></td><td>Zero-X</td><td class="zx-num">Fits request</td><td>Yes</td><td>All plans</td></tr>
-            <tr><th scope="row">Gemini 2.5 Flash</th><td><code>gemini/gemini-2.5-flash</code></td><td>Google Gemini</td><td class="zx-num">1,048,576</td><td>Yes</td><td>All plans</td></tr>
-            <tr><th scope="row">Gemini 3.5 Flash</th><td><code>gemini/gemini-3.5-flash</code></td><td>Google Gemini</td><td class="zx-num">1,048,576</td><td>Yes</td><td>All plans</td></tr>
-            <tr><th scope="row">Gemini 3.6 Flash</th><td><code>gemini/gemini-3.6-flash</code></td><td>Google Gemini</td><td class="zx-num">1,048,576</td><td>Yes</td><td>All plans</td></tr>
             <tr><th scope="row">GPT-OSS 120B (Groq)</th><td><code>groq/openai/gpt-oss-120b</code></td><td>Groq</td><td class="zx-num">131,072</td><td>Yes</td><td>All plans</td></tr>
             <tr><th scope="row">Qwen 3.8 27B (Groq)</th><td><code>groq/qwen/qwen3.8-27b</code></td><td>Groq</td><td class="zx-num">131,072</td><td>Yes</td><td>All plans</td></tr>
             <tr><th scope="row">GPT-OSS 20B (Groq)</th><td><code>groq/openai/gpt-oss-20b</code></td><td>Groq</td><td class="zx-num">131,072</td><td>Yes</td><td>All plans</td></tr>
-            <tr><th scope="row">Llama 3.3 70B (Workers AI)</th><td><code>@cf/meta/llama-3.3-70b-instruct-fp8-fast</code></td><td>Cloudflare Workers AI</td><td class="zx-num">24,000</td><td>Yes</td><td>All plans</td></tr>
             <tr><th scope="row">GPT-OSS 20B (NVIDIA)</th><td><code>nvidia/openai/gpt-oss-20b</code></td><td>NVIDIA</td><td class="zx-num">131,072</td><td>Yes</td><td>All plans</td></tr>
             <tr><th scope="row">Nemotron 3 Ultra 550B (NVIDIA)</th><td><code>nvidia/nvidia/nemotron-3-ultra-550b-a55b</code></td><td>NVIDIA</td><td class="zx-num">1,048,576</td><td>Yes</td><td>All plans</td></tr>
             <tr><th scope="row">Step 5 Preview (NVIDIA)</th><td><code>nvidia/stepfun-ai/step-5-preview</code></td><td>NVIDIA</td><td class="zx-num">131,072</td><td>Yes</td><td>All plans</td></tr>
@@ -162,7 +158,7 @@ neuron -p "Run the test suite and summarise the failures"</code></pre></div>
           </tbody>
         </table>
       </div>
-      <p class="zx-help">Groq's free tier accepts small prompts only; larger requests are routed to a model with room. Gemini's free pool is not offered to callers in the EEA, the UK or Switzerland.</p>
+      <p class="zx-help">Groq's free tier accepts small prompts only; larger requests are routed to a model with room.</p>
     </section>
 
     <section class="zx-container zx-section" id="pricing" aria-labelledby="pricing-teaser-title" data-pricing-root>

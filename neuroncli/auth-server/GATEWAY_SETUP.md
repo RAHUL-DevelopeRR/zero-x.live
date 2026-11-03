@@ -200,6 +200,7 @@ and apply, in order (the ten catalog and app migrations were renumbered from 202
 11. `20261029001000_pool_concurrency.sql` (`p_pool.concurrency`: requests of a pool key running at once, for Z.ai's one-at-a-time free models)
 12. `20261102000000_free_token_window.sql` (Free: 1,000,000 tokens per rolling 5-hour window instead of 500K a day; see below)
 13. `20261103000000_billing_details.sql` (billing profiles and consent records; see below)
+14. `20261103000100_free_plan_features_providers.sql` (the Free plan's first feature line names only the providers that are switched on; replaces its own text only, safe to re-run, applies after `20261029000900`)
 
 **Billing details (`20261103000000_billing_details.sql`).** Two new tables (`zerox_billing_profiles`,
 `zerox_billing_consents`) and four functions; nothing existing changes, and it does not depend on

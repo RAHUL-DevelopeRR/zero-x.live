@@ -25,6 +25,7 @@ function ok(name) { passed.push(name); console.log(`ok - ${name}`); }
 
 const CAPS = '20261029000800_paid_billing_caps.sql';
 const PLANS = '20261029000900_plan_features_claude.sql';
+const PROVIDERS = '20261103000100_free_plan_features_providers.sql';
 const migrationSql = file => readFile(join(root, 'migrations', file), 'utf8');
 const downSql = file => readFile(join(root, 'migrations', 'down', file.replace(/\.sql$/, '.down.sql')), 'utf8');
 
@@ -73,7 +74,7 @@ const columnsOf = async table => (await sql(`SELECT column_name FROM information
   WHERE table_schema = 'public' AND table_name = $1 ORDER BY column_name`, [table])).map(row => row.column_name);
 
 const PLAN_FEATURES = {
-  free: ['Free models from Groq, Google Gemini, Cloudflare Workers AI, NVIDIA and OpenRouter',
+  free: ['Free models from Groq, NVIDIA, OpenRouter and Z.ai',
     '100 requests per day and 1M tokens every 5 hours', '10 requests per minute, 2 at once', 'Every Neuron feature, the same on all plans'],
   pro: ['Claude Sonnet 5.5 and Claude Opus 5.5, billed from credits', '$8 of credits included every month',
     'Free models with higher limits: 2,000 requests and 10M tokens per day', '30 requests per minute, 4 at once',
@@ -90,7 +91,8 @@ try {
   const files = (await listMigrations()).map(migration => migration.file);
   assert.ok(files.indexOf(CAPS) > files.indexOf('20261029000500_credit_programs.sql') && files.indexOf(PLANS) === files.indexOf(CAPS) + 1,
     'the billing migrations come after the OIOP credit programs, caps before plans');
-  assert.ok(handle.applied.includes('20261029000800') && handle.applied.includes('20261029000900'));
+  assert.ok(handle.applied.includes('20261029000800') && handle.applied.includes('20261029000900') && handle.applied.includes('20261103000100'));
+  assert.ok(files.indexOf(PROVIDERS) > files.indexOf(PLANS), 'the Free provider line is replaced after the plan features are seeded');
   const settleFns = await functionRows('zerox_settle_v2');
   assert.equal(settleFns.length, 1, 'one zerox_settle_v2, so PostgREST never has to choose between overloads');
   assert.equal(settleFns[0].pronargs, 11);
@@ -328,6 +330,7 @@ try {
   await sql("UPDATE public.zerox_plan_policy SET allowed_tiers = ARRAY['free', 'paid'] WHERE plan = 'free'");
   const stamp = (await sql("SELECT updated_at FROM public.zerox_plan_policy WHERE plan = 'pro'"))[0].updated_at;
   await db.exec(await migrationSql(PLANS));
+  await db.exec(await migrationSql(PROVIDERS)); // the plans file seeds the old Free provider line; this file replaces it
   assert.deepEqual((await sql('SELECT plan, allowed_tiers FROM public.zerox_plan_policy ORDER BY sort')).map(row => [row.plan, row.allowed_tiers]),
     [['free', ['free']], ['pro', ['free', 'paid']], ['max', ['free', 'paid']], ['ultrawork', ['free', 'paid']]]);
   assert.equal((await sql("SELECT updated_at FROM public.zerox_plan_policy WHERE plan = 'pro'"))[0].updated_at.getTime(), stamp.getTime(),
@@ -361,6 +364,12 @@ try {
       has_function_privilege('anon', p.oid, 'EXECUTE') AS anon, has_function_privilege('authenticated', p.oid, 'EXECUTE') AS auth,
       has_function_privilege('service_role', p.oid, 'EXECUTE') AS service
     FROM pg_proc AS p JOIN pg_namespace AS n ON n.oid = p.pronamespace WHERE n.nspname = 'public' AND p.proname = ANY($1) ORDER BY 1, 2`, [names])).rows;
+  // The Free provider line: the down script puts the Gemini and Workers AI text back, and only that line.
+  const freeLine = async () => (await db.query(`SELECT features FROM public.zerox_plan_policy WHERE plan = 'free'`)).rows[0].features;
+  assert.equal((await freeLine())[0], PLAN_FEATURES.free[0], 'the Free card names the providers that are switched on');
+  await db.exec(await downSql(PROVIDERS));
+  assert.equal((await freeLine())[0], 'Free models from Groq, Google Gemini, Cloudflare Workers AI, NVIDIA and OpenRouter');
+  assert.deepEqual((await freeLine()).slice(1), PLAN_FEATURES.free.slice(1), 'the other Free lines are untouched');
   await db.exec(await readFile(join(root, 'migrations', 'down', '20261102000000_free_token_window.sql'), 'utf8'));
   await db.exec(await readFile(join(root, 'migrations', 'down', '20261029001000_pool_concurrency.sql'), 'utf8'));
   await db.exec(await downSql(PLANS));
@@ -379,6 +388,7 @@ try {
   for (let run = 0; run < 2; run += 1) {
     await db.exec(await migrationSql(CAPS));
     await db.exec(await migrationSql(PLANS));
+    await db.exec(await migrationSql(PROVIDERS));
   }
   handle.functions.clear();
   assert.equal((await functionRows('zerox_settle_v2')).length, 1);
@@ -391,6 +401,11 @@ try {
   assert.equal((await reserve(reverted, { p_tier: 'paid', p_cost_microusd: 1000, p_model: `${capModel}-again`, p_pool: { cpd: 1500 } })).status, 'pool_exhausted');
   await settle(again.reservation_id, { p_prompt_tokens: 100, p_cache_read_tokens: 90, p_cost_microusd: 400 });
   assert.equal((await eventFor(again.reservation_id)).cache_read_tokens, 90);
+  // An operator's own Free copy (no old provider text in it) is left as it is; other plans are never touched.
+  await db.exec(`UPDATE public.zerox_plan_policy SET features = '["Our own copy"]'::jsonb WHERE plan = 'free'`);
+  await db.exec(await migrationSql(PROVIDERS));
+  assert.deepEqual(await freeLine(), ['Our own copy'], 'the provider migration only replaces its own text');
+  await db.exec(`UPDATE public.zerox_plan_policy SET features = '${JSON.stringify(PLAN_FEATURES.free).replaceAll("'", "''")}'::jsonb WHERE plan = 'free'`);
   ok('down scripts restore the previous functions, columns, features and grants exactly; the up migrations re-apply cleanly twice');
 
   console.log(`PASS: ${passed.length} billing-cap checks`);
