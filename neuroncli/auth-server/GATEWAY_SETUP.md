@@ -199,6 +199,29 @@ and apply, in order (the ten catalog and app migrations were renumbered from 202
 10. `20261029000900_plan_features_claude.sql` (plan feature strings; tiers, limits and credits unchanged)
 11. `20261029001000_pool_concurrency.sql` (`p_pool.concurrency`: requests of a pool key running at once, for Z.ai's one-at-a-time free models)
 12. `20261102000000_free_token_window.sql` (Free: 1,000,000 tokens per rolling 5-hour window instead of 500K a day; see below)
+13. `20261103000000_billing_details.sql` (billing profiles and consent records; see below)
+
+**Billing details (`20261103000000_billing_details.sql`).** Two new tables (`zerox_billing_profiles`,
+`zerox_billing_consents`) and four functions; nothing existing changes, and it does not depend on
+`20261029000900_plan_features_claude.sql`. **Apply this migration before deploying the gateway
+that knows it**: that gateway answers checkout and top-up with 503 `service_unavailable` until the
+functions exist. (An older gateway keeps working against the new database. The old site script, which
+sends no `consent`, gets 409 `billing_profile_required` from the new gateway until the page is
+reloaded.) After the deploy:
+
+- the operator `/health` shows `plans_configured` `{inr: true, usd: true, missing: []}` once every paid
+  plan has its Razorpay plan id for both currencies (a `missing` entry such as `pro:USD` is what makes
+  checkout answer 503 `billing_plan_missing`; store the ids with the SQL `scripts/razorpay-bootstrap.mjs`
+  prints);
+- `BILLING_NO_GST_NOTICE` (a `[vars]` entry in `wrangler.toml` and `wrangler.api.toml`, commented out
+  by default) turns on the line "No GST charged" in the checkout order summary. Leave it off until the
+  owner has confirmed with the CA that no GST is charged; the checkout says nothing about GST before.
+
+Verify: `SELECT count(*) FROM pg_proc WHERE proname LIKE 'zerox_billing_%' AND proname IN
+('zerox_billing_profile_get', 'zerox_billing_profile_upsert', 'zerox_billing_record_consents',
+'zerox_billing_consents_latest');` returns 4. Roll back with
+`migrations/down/20261103000000_billing_details.down.sql` (psql -X -v ON_ERROR_STOP=1 -f, or paste
+it); that deletes every saved profile and consent record.
 
 **Free's 5-hour token window (`20261102000000_free_token_window.sql`).** Deploy the gateway that
 knows `user_window_tokens` (both runtimes: the Worker and the EC2 Node server) **before** pasting

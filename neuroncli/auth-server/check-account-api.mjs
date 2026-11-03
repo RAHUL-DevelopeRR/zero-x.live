@@ -353,7 +353,7 @@ try {
   assert.equal((await request('/api/usage', { token: apiKey })).status, 200, 'nzx_ keys read usage');
   assert.equal((await request('/api/usage/events', { token: apiKey })).status, 200);
   for (const [method, path, body] of [['GET', '/api/keys'], ['POST', '/api/keys', { name: 'x' }], ['DELETE', `/api/keys/${storedKey.id}`],
-    ['POST', '/api/sessions/revoke-all'], ['GET', '/api/sessions'], ['DELETE', `/api/sessions/${'a'.repeat(24)}`], ['GET', '/api/billing'], ['POST', '/api/billing/checkout', { plan: 'pro', currency: 'INR' }],
+    ['POST', '/api/sessions/revoke-all'], ['GET', '/api/sessions'], ['DELETE', `/api/sessions/${'a'.repeat(24)}`], ['GET', '/api/billing'], ['GET', '/api/billing/profile'], ['PUT', '/api/billing/profile', { full_name: 'x' }], ['POST', '/api/billing/checkout', { plan: 'pro', currency: 'INR' }],
     ['POST', '/api/billing/topup', { pack: 'credits_5', currency: 'INR' }], ['POST', '/api/billing/verify', {}], ['POST', '/api/billing/cancel']]) {
     const denied = await json(await request(path, { method, token: apiKey, body }));
     assertOpenAIError(denied, 403, 'api_key_not_allowed');

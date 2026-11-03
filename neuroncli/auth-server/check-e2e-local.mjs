@@ -592,13 +592,32 @@ try {
   }
 
   // ── 8. Pro checkout → signed verify → plan pro ──
-  const checkout = await call('/api/billing/checkout', { method: 'POST', token: ses, body: { plan: 'pro', currency: 'INR' } });
+  // Billing details first: checkout refuses a buyer without a saved profile and the current documents' agreement.
+  const detailsBefore = await call('/api/billing/profile', { token: ses });
+  assert.equal(detailsBefore.status, 200, redact(detailsBefore.text));
+  assert.deepEqual([detailsBefore.body.profile, detailsBefore.body.complete, detailsBefore.body.tax], [null, false, { no_gst_notice: false }]);
+  const consent = Object.fromEntries(Object.entries(detailsBefore.body.documents).map(([name, document]) => [name, document.version]));
+  const requestsBeforeGate = rzp.requests.length;
+  expectError(await call('/api/billing/checkout', { method: 'POST', token: ses, body: { plan: 'pro', currency: 'INR', consent } }), 409, 'billing_profile_required');
+  const savedDetails = await call('/api/billing/profile', { method: 'PUT', token: ses, body: { full_name: 'E2E Buyer', country: 'IN', state: 'Tamil Nadu',
+    city: 'Karur', postal_code: '639113', phone: '9876543210' } });
+  assert.equal(savedDetails.status, 200, redact(savedDetails.text));
+  assert.deepEqual([savedDetails.body.profile.state, savedDetails.body.profile.phone, savedDetails.body.complete], ['TN', '+919876543210', true]);
+  assert.deepEqual((await call('/api/billing/profile', { token: ses })).body.profile, savedDetails.body.profile, 'the profile is stored and read back');
+  const needsAgreement = expectError(await call('/api/billing/checkout', { method: 'POST', token: ses, body: { plan: 'pro', currency: 'INR' } }), 409, 'consent_required');
+  assert.deepEqual(needsAgreement.missing, ['terms', 'privacy', 'auto_renewal', 'refund']);
+  assert.equal(rzp.requests.length, requestsBeforeGate, 'nothing reaches Razorpay without details and agreement');
+  const checkout = await call('/api/billing/checkout', { method: 'POST', token: ses, body: { plan: 'pro', currency: 'INR', consent } });
   assert.equal(checkout.status, 200, redact(checkout.text));
+  assert.deepEqual(checkout.body.prefill, { email: checkout.body.prefill.email, name: 'E2E Buyer', contact: '+919876543210' }, 'Razorpay is prefilled with name, e-mail and phone only');
+  assert.equal(Object.keys(rzp.subscriptions.get(checkout.body.subscription_id).notes).sort().join(), 'plan,user_id', 'only ids in Razorpay notes');
+  const agreed = (await call('/api/billing/profile', { token: ses })).body.accepted;
+  assert.deepEqual(Object.entries(agreed).map(([name, entry]) => [name, entry.version, entry.current]).sort(), Object.entries(consent).map(([name, version]) => [name, version, true]).sort(), 'the agreements are recorded');
   assert.equal(checkout.body.provider, 'razorpay');
   assert.equal(checkout.body.key_id, RAZORPAY_KEY_ID);
   const subscriptionId = checkout.body.subscription_id;
   // A second tab reuses the unpaid checkout instead of creating a second subscription (review P2).
-  const secondTab = await call('/api/billing/checkout', { method: 'POST', token: ses, body: { plan: 'pro', currency: 'INR' } });
+  const secondTab = await call('/api/billing/checkout', { method: 'POST', token: ses, body: { plan: 'pro', currency: 'INR', consent: { auto_renewal: consent.auto_renewal } } });
   assert.equal(secondTab.status, 200, redact(secondTab.text));
   assert.equal(secondTab.body.subscription_id, subscriptionId, 'one payable subscription per account');
   assert.equal(rzp.requests.filter(entry => entry.method === 'POST' && entry.path === '/v1/subscriptions').length, 1);
@@ -614,10 +633,11 @@ try {
   assert.equal(verified.body.status, 'ok');
   assert.equal(verified.body.account.plan.id, 'pro');
   account = (await call('/api/account', { token: ses })).body;
+  assert.equal(account.credits.balance_usd, 8, "the first month's credits are granted at verify, before any webhook");
   assert.equal(account.plan.id, 'pro');
   assert.equal(account.subscription.status, 'active');
   assert.equal((await models(ses))['gemini/gemini-2.5-pro'].available, true, 'Pro unlocks the paid pool');
-  expectError(await call('/api/billing/checkout', { method: 'POST', token: ses, body: { plan: 'max', currency: 'USD' } }), 409, 'already_subscribed');
+  expectError(await call('/api/billing/checkout', { method: 'POST', token: ses, body: { plan: 'max', currency: 'USD', consent } }), 409, 'already_subscribed');
   step('Pro checkout -> verify', `subscription ${subscriptionId} (a second tab reuses it), bad signature -> 400, signed verify -> plan pro; gemini-2.5-pro now available; another checkout -> 409 already_subscribed`);
 
   // ── 9. subscription.charged grants the monthly credits exactly once ──
@@ -634,7 +654,7 @@ try {
   assert.deepEqual((await webhook(charged, 'evt_e2eCharged1')).body, { received: true, duplicate: true });
   assert.deepEqual((await webhook(charged, 'evt_e2eCharged2')).body, { received: true }, 'a new delivery id is processed');
   assert.equal((await call('/api/account', { token: ses })).body.credits.balance_usd, 8, 'credits are granted once per payment');
-  step('webhook subscription.charged', 'forged signature -> 400; valid HMAC -> $8 granted; replay -> duplicate; new event id for the same payment -> no second grant');
+  step('webhook subscription.charged', 'forged signature -> 400; valid HMAC for the payment verify already granted -> still $8; replay -> duplicate; new event id for the same payment -> no second grant');
 
   // ── 9b. A second subscription paid in parallel is cancelled at once and refunded (review P2) ──
   const proInrPlan = plans.find(row => row.plan === 'pro' && row.currency === 'INR').id;
@@ -680,6 +700,7 @@ try {
   step('paid-pool request', `gemini/gemini-2.5-pro on the paid key cost ${cost} micro-USD; balance ${account.credits.balance_usd} USD`);
 
   // ── 11. Top-up order → verify → credits ──
+  // Terms, privacy and refund were agreed to at the subscription checkout: no new agreement is needed (one click).
   const topup = await call('/api/billing/topup', { method: 'POST', token: ses, body: { pack: 'credits_5', currency: 'INR' } });
   assert.equal(topup.status, 200, redact(topup.text));
   assert.equal(topup.body.amount_minor, 44900);

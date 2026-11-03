@@ -7,7 +7,7 @@ import { callerCountry, catalogEntries, catalogWarnings, inheritCallerCountry, l
 import { refreshModelsDevFacts } from './oiop/models-dev.js';
 import { globalHealthTracker } from './provider-health.js';
 import { createChatHandler } from './chat-handler.js';
-import { loadPlanLimits } from './plan-policy.js';
+import { loadPlanCatalog, loadPlanLimits, PAID_PLAN_IDS } from './plan-policy.js';
 import { isOperator } from './operator-auth.js';
 import {
   persistentSessionStore, readRecord, writeRecord, deleteRecord, sealSession, sessionExpiry, sessionTtlSeconds,
@@ -567,6 +567,19 @@ function takePkceStart(address) {
 
 // ── Routes ──
 
+// Whether every paid plan has its Razorpay plan id stored for each currency (zerox_plan_policy
+// razorpay_plan_id_inr / _usd). Checkout answers billing_plan_missing for a currency that lacks one.
+// {inr, usd, missing: ['pro:USD', ...]}, or null when the catalogue cannot be read.
+async function plansConfigured(env) {
+  try {
+    const { plans } = await loadPlanCatalog(env);
+    const paid = plans.filter(plan => PAID_PLAN_IDS.includes(plan.id));
+    const missing = paid.flatMap(plan => [['INR', plan.razorpay_plan_id_inr], ['USD', plan.razorpay_plan_id_usd]]
+      .filter(([, id]) => !id).map(([currency]) => `${plan.id}:${currency}`));
+    return { inr: !missing.some(entry => entry.endsWith(':INR')), usd: !missing.some(entry => entry.endsWith(':USD')), missing };
+  } catch { return null; }
+}
+
 // 1. Health check: anonymous callers learn only that the service is up, and which commit runs
 // (GIT_COMMIT: deploy.yml's --var on the Worker, the release's REVISION file on EC2), so a deploy
 // can confirm the Worker and the Node server serve the same code. The repository is public. Once
@@ -586,6 +599,7 @@ api.get('/health', async (c) => {
     kv_bound: !!c.env.SESSIONS_KV,
     database_configured: databaseConfigured(c.env),
     billing_configured: razorpayConfigured(c.env),
+    plans_configured: await plansConfigured(c.env),
     webhook_configured: webhookConfigured(c.env),
     session_encryption: sessionEncryptionConfigured(c.env),
     provider_key_vault: vaultConfigured(c.env),

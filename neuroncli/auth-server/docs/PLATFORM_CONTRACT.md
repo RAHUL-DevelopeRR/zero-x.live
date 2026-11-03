@@ -192,7 +192,8 @@ credential (never an `nzx_` key). Session tokens are stored hashed (SHA-256) in 
   'subscription'|'topup', amount_minor, currency, status, created_at, invoice_url}]}`
 - `POST /api/billing/checkout {plan:'pro'|'max', currency:'INR'|'USD'}` → `{provider:
   'razorpay', key_id, subscription_id, name, description, prefill:{email,name}, notes}`
-  (409 `already_subscribed`, 503 `billing_not_configured`)
+  (409 `already_subscribed`, 503 `billing_not_configured`; section 14 adds the billing details
+  gate, `consent`, `billing_plan_missing` and the phone in `prefill`)
 - `POST /api/billing/topup {pack, currency}` → `{provider, key_id, order_id, amount_minor,
   currency, name, description, prefill}`
 - `POST /api/billing/verify {razorpay_payment_id, razorpay_signature,
@@ -963,3 +964,77 @@ Code: `src/catalog-types.js`, `src/list-prices.js`, `src/catalog-guardrails.js`,
 Tiers, limits, prices and credits are unchanged (section 1). The plan features
 (`zerox_plan_policy.features`, `/api/plans`, the site fallback) name Claude Sonnet 5.5 and Claude
 Opus 5.5 billed from credits on Pro and Max, and say every plan has the same Neuron features.
+
+## 14. v1.9 amendments (billing details, 2026-11-03)
+
+Migration `20261103000000_billing_details.sql`; code `src/billing/profile.js`,
+`src/billing/legal-versions.js`, `src/routes/billing-profile.js`; browser `billing-details.js`.
+
+### 14.1 Profile (`GET`/`PUT /api/billing/profile`, interactive credentials only)
+
+What a buyer gives Zero-X before Razorpay opens. Card, UPI and bank details are never collected
+here (they go into Razorpay's own window), and there is no tax id field: Zero-X is not registered
+for GST.
+
+- `GET` → `{profile: null | {customer_type: 'individual'|'business', full_name, business_name,
+  country (ISO 3166-1 alpha-2), state, city, postal_code, address_line1, address_line2, phone
+  (E.164)}, complete, missing: [field…], documents: {terms|privacy|refund|auto_renewal: {version:
+  'YYYY-MM-DD', path}}, accepted: {document: {version, accepted_at, current}}, tax:
+  {no_gst_notice}, options: {countries: [{code, name}] (India first), states: {IN: [{code,
+  name}]}, no_postal: [country…]}}`. `tax.no_gst_notice` is `BILLING_NO_GST_NOTICE=true`
+  (default off): the owner turns it on only once it is confirmed that no GST is charged; the
+  browser then shows "No GST charged" in the order summary, and says nothing about GST before.
+- `PUT {customer_type?, full_name, business_name?, country, state?, city, postal_code?,
+  address_line1?, address_line2?, phone?}` replaces the profile (absent optional fields are
+  cleared) → `{profile, complete: true, missing: []}`. Required: `full_name`, `country`, `city`,
+  `state` (a state or union territory of India, by code or name), `postal_code` (not in countries
+  without postal codes; per-country shape for common countries), and for `business`:
+  `business_name` and `address_line1`. The street address is optional for an individual. Unknown
+  fields are refused. A refusal is 400 `invalid_request` with `param` (the first field in form
+  order) and `fields` (`{field: message}`).
+
+### 14.2 Checkout gate
+
+`POST /api/billing/checkout` and `/topup` accept `consent: {document: version}` (the versions the
+buyer was shown) and refuse, before anything is created at Razorpay:
+
+- 409 `billing_profile_required` `{missing}`: no saved profile, or one that no longer meets the
+  rules;
+- 409 `consent_required` `{missing, documents}`: for each document the purchase needs (a
+  subscription: terms, privacy, auto_renewal, refund; a top-up: terms, privacy, refund) the current
+  version must be in `consent`, or, for terms, privacy and refund only, already agreed to at the
+  current version (`accepted`). `auto_renewal` is about this purchase and is always required in the
+  request. Versions are in `src/billing/legal-versions.js` and equal the "Effective date" of
+  `terms.html`, `privacy.html` and `refund.html` (a test fails otherwise).
+
+The agreements made in the request are appended to `zerox_billing_consents` (document, version,
+context, accepted_at; append-only) when a payable subscription or order is handed out. Razorpay
+Checkout is prefilled with `{email, name (at most 50 characters), contact?}` only; Razorpay `notes`
+stay `{user_id, plan}` / `{user_id, pack}` (they are copied back into `zerox_payments.raw`), and no
+address, state or business name is sent to Razorpay at all.
+
+### 14.3 Errors and health
+
+- 503 `billing_plan_missing`: the keys are set but the plan's Razorpay plan id for that currency is
+  not stored (`zerox_plan_policy.razorpay_plan_id_inr` / `_usd`); distinct from
+  `billing_not_configured` (keys missing). The gateway logs `Razorpay plan id missing` with the plan
+  and currency.
+- Operator `GET /health` adds `plans_configured: {inr, usd, missing: ['pro:USD', …]} | null`
+  (every paid plan has an id for the currency; `null` when the catalogue cannot be read).
+
+### 14.4 First month's credits
+
+`POST /api/billing/verify` grants the plan's monthly credits when the first payment of a
+subscription is `captured` (ledger `ref` = the Razorpay payment id, reason `subscription_<plan>`),
+instead of waiting for `subscription.charged`. The webhook for the same payment, and a second
+verify, grant nothing more (`zerox_credit_grant` is idempotent on `ref`); an `authorized` payment
+is granted by the webhook once captured.
+
+### 14.5 RPCs
+
+`zerox_billing_profile_get(user)`, `zerox_billing_profile_upsert(user, jsonb)`,
+`zerox_billing_record_consents(user, context, jsonb)`, `zerox_billing_consents_latest(user)`.
+Profiles and consents are deleted with their account (`ON DELETE CASCADE`), like the payment
+records (which means deleting an account also deletes its payment records; see the open items in
+the release notes).
+

@@ -85,6 +85,9 @@ ANTHROPIC_MODELS = "claude-sonnet-5-5,claude-opus-5-5"
 RAZORPAY_KEY_ID = "rzp_live_TK43zZbnvcWZa8"
 # Set to "true" once Content-Security-Policy-Report-Only shows no violations.
 CSP_ENFORCE = "false"
+# Checkout order summary: uncomment to show "No GST charged". Only after the owner has confirmed with
+# the CA that no GST is charged; until then the checkout says nothing about GST (GATEWAY_SETUP.md).
+# BILLING_NO_GST_NOTICE = "true"
 # Cloudflare Access application on dashboard.zero-x.live/admin (provider key vault and model
 # catalog pages, GATEWAY_SETUP.md step 5). With both set, the pages, /admin/providers/keys and
 # /admin/catalog/* also verify the Access JWT. The vault itself needs the Worker secret
