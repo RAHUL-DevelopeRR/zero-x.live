@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Terms of Service | Zero-X</title>
-  <meta name="description" content="Terms for Zero-X accounts, the Neuron CLI gateway, Free, Pro and Max plans, billing and renewal, credits, fair use, acceptable use and liability.">
+  <meta name="description" content="Terms for Zero-X accounts, the Neuron CLI gateway, Free, Pro and Max plans, alpha status, billing and automatic renewal, credits, fair use, acceptable use, AI output and liability.">
   <meta name="robots" content="index,follow,max-image-preview:large">
   <link rel="canonical" href="https://zero-x.live/terms">
   <meta name="theme-color" content="#0A0A0C">
@@ -42,8 +42,8 @@
   <main id="main" class="zx-container zx-legal zx-section--tight">
     <nav class="zx-breadcrumb" aria-label="Breadcrumb"><a href="/">Zero-X</a> / Terms of Service</nav>
     <h1>Terms of Service</h1>
-    <p class="zx-updated">Effective date: 25 October 2026. Replaces the terms dated 24 October 2026.</p>
-    <p>These terms are an agreement between you and Zero-X (6/2, N. Pugalur, Karur 639113, Tamil Nadu, India) for the Zero-X website, account dashboard, the gateway and API used by Neuron CLI, paid plans and the connected cloud features of NeuCockpit. By creating an account or using the services you accept them. Software distributed under its own licence, such as Neuron CLI, remains subject to that licence.</p>
+    <p class="zx-updated">Effective date: 3 November 2026. Replaces the terms dated 25 October 2026.</p>
+    <p>These terms are an agreement between you and Zero-X, a small business founded and run by Rahul S at 6/2, N. Pugalur, Karur 639113, Tamil Nadu, India. They cover the Zero-X website, account dashboard, the gateway and API used by Neuron CLI, paid plans and the connected cloud features of NeuCockpit. By creating an account or using the services you accept them. Software distributed under its own licence, such as Neuron CLI, remains subject to that licence.</p>
 
     <h2 id="eligibility">Eligibility and accounts</h2>
     <ul>
@@ -51,25 +51,30 @@
       <li>One person per account. Keep your sign-in, CLI sessions and API keys private; you are responsible for activity under your account. Tell us at <a href="mailto:support@zero-x.live">support@zero-x.live</a> if you suspect unauthorised access, and revoke affected sessions and keys in the dashboard.</li>
     </ul>
 
+    <h2 id="alpha">Alpha status</h2>
+    <p>Neuron 7.0.0-alpha.2 and parts of the services are pre-release software. Features, limits, models and prices can change, break or be withdrawn, and we may reset or remove data created during the alpha. Do not rely on the services for work that cannot tolerate interruption.</p>
+
     <h2 id="plans">Plans</h2>
-    <p>We offer a Free plan and paid Pro and Max plans. Each plan's price, daily request and token caps, per-minute and concurrency limits, model pools and included credits are listed on the <a href="/pricing">pricing page</a>, which forms part of these terms. We may change plans, prices and limits. A price change for a paid plan applies from your next renewal after we notify you, and you can cancel before it takes effect.</p>
+    <p>We offer a Free plan and paid Pro and Max plans. Each plan's price, request limits, token allowance, per-minute and concurrency limits, model pools and included credits are listed on the <a href="/pricing">pricing page</a>, which forms part of these terms. On the Free plan, tokens (prompt plus completion) are counted over a rolling 5-hour window, currently 1,000,000 tokens, with a daily cap on requests, currently 100. Paid plans have daily request and token caps. We may change plans, prices and limits. A price change for a paid plan applies from your next renewal after we notify you, and you can cancel before it takes effect.</p>
 
     <h2 id="free-tier">Free tier is best effort</h2>
     <p>The Free plan runs on free tiers of upstream providers that all Zero-X users share. Models, capacity and response quality can change or be unavailable at any time, some pools are not offered in some regions, and requests may fail with <code>capacity_exhausted</code> when a shared pool is used up. We may change Free plan limits or discontinue the Free plan. No uptime or service level is promised for the Free plan.</p>
+    <p>Some of those providers may keep requests, let people review them or use them to improve their models; the <a href="/privacy#processors">privacy policy</a> says what each one states. Do not send secrets, other people's personal data, or code you may not share, on the Free plan.</p>
 
     <h2 id="billing">Billing and renewal</h2>
     <ul>
-      <li>Paid plans are monthly subscriptions charged in USD or INR through Razorpay. The amount is shown at checkout before you pay.</li>
-      <li>Subscriptions renew automatically each month and you authorise Razorpay to charge your chosen payment method on each renewal until you cancel.</li>
-      <li>If a renewal payment fails, Razorpay may retry it. If the subscription ends unpaid, your account returns to the Free plan.</li>
-      <li>You can cancel at any time; access continues until the end of the paid period. Refunds are covered by the <a href="/refund">cancellation and refund policy</a>.</li>
+      <li>Paid plans are monthly subscriptions charged in USD or INR through Razorpay. Before you pay, checkout shows the amount, the renewal period and the date of the first renewal, asks for your billing details, and asks you to agree to these terms, the <a href="/privacy">privacy policy</a>, the renewal notice and the <a href="/refund">cancellation and refund policy</a>.</li>
+      <li>Subscriptions renew automatically each month and you authorise Razorpay to charge your chosen payment method on each renewal until you cancel. Your dashboard shows the date of the next renewal. Your bank or Razorpay may notify you before a recurring charge, and you can also cancel the recurring payment with your bank; please cancel in your dashboard as well so your account matches.</li>
+      <li>You can cancel at any time from the Billing tab of your dashboard. Cancelling stops future renewals; access continues until the end of the paid period. Refunds are covered by the <a href="/refund">cancellation and refund policy</a>.</li>
+      <li>If a renewal payment fails, Razorpay may retry it. If the subscription ends unpaid, your account returns to the Free plan, after a short grace period of up to 3 days past the end of the paid period.</li>
+      <li>Prices are the full amount you pay: no GST is charged on them. Razorpay emails you a receipt for each payment. A payment in a currency other than your bank's may carry a currency conversion or card fee from your bank, which we do not control.</li>
     </ul>
 
     <h2 id="credits">Credits</h2>
     <ul>
       <li>Credits are a prepaid balance, recorded in US dollars, that pays for requests served by paid-capacity models, including Claude Sonnet 5.5 and Claude Opus 5.5. Each paid-capacity request is charged at the upstream provider's price plus 25%, as shown per request in the dashboard. Free-pool requests do not use credits.</li>
       <li>Pro and Max include a monthly credit amount that is added at each successful renewal. You can buy additional credits as top-up packs.</li>
-      <li>Credits can only be used while you have an active Pro or Max plan. They have no cash value, cannot be transferred or exchanged, and are forfeited if the account is closed or terminated for breach of these terms.</li>
+      <li>Credits can only be used while you have an active Pro or Max plan. They have no cash value, cannot be transferred or exchanged, and are forfeited if the account is closed or terminated for breach of these terms. A top-up pack you have not used can still be refunded as the <a href="/refund">refund policy</a> says.</li>
       <li>When a request would need more credits than you have, it is refused with <code>insufficient_credits</code>; we do not charge beyond your balance.</li>
       <li>Before a paid request starts we hold the most it could cost, based on its prompt and its <code>max_tokens</code>, and release the unused part when it finishes. Held credits cannot pay for other requests while they are held. Each paid model also has a daily spending limit shared by all users.</li>
     </ul>
@@ -77,14 +82,18 @@
     <h2 id="fair-use">Fair use and daily caps</h2>
     <p>Daily caps and rate limits protect shared capacity. Do not try to get around them, for example by creating or rotating multiple accounts, sharing one account between several people, automating sign-ups, or running parallel clients to exceed your concurrency limit. We may throttle, pause or block traffic that harms other users or the service, even within your plan's caps.</p>
 
+    <h2 id="agent">Neuron on your computer</h2>
+    <p>Neuron runs on your computer. Depending on the permission mode you choose, it can read and edit files and run commands there, and in <code>danger-full-access</code> mode it runs any command without asking. You are responsible for what you allow, for keeping backups and for reviewing changes before you keep them. Zero-X does not run commands on your computer and receives only what Neuron includes in a request. See <a href="/docs/trust">Security and trust</a>.</p>
+
     <h2 id="acceptable-use">Acceptable use</h2>
     <p>Do not use the services to:</p>
     <ul>
       <li>break the law or infringe anyone's rights, including intellectual property and privacy rights;</li>
       <li>create or distribute malware, attack or probe systems you do not own, or send spam;</li>
       <li>generate content that sexually exploits minors, promotes violence, harasses people, or deceives people by impersonation;</li>
-      <li>process content you are not entitled to share with the upstream providers;</li>
-      <li>violate the usage policies of the upstream providers that serve your requests, including Anthropic, Groq, Google, Cloudflare, NVIDIA and OpenRouter;</li>
+      <li>process content you are not entitled to share with the upstream providers, including other people's personal data and secrets you have no right to send;</li>
+      <li>violate the usage policies of the upstream providers that serve your requests, including Anthropic, Groq, Google, Cloudflare, NVIDIA, OpenRouter and Z.ai;</li>
+      <li>use the services in breach of sanctions or export-control laws;</li>
       <li>extract provider credentials, interfere with the gateway, load test it, or reverse engineer it except where the law allows.</li>
     </ul>
 
@@ -92,22 +101,22 @@
     <p>Your plan is for your own use and, if you have accepted these terms for an organisation, that organisation's internal use. You may not resell, sublicense, rent or share access to the Zero-X gateway, its models or your API keys, or offer a product or service whose main purpose is to give others access to them. You may use the outputs you receive in your own work and products.</p>
 
     <h2 id="content">Your content and AI output</h2>
-    <p>You keep your rights in the code and content you submit and the outputs you receive. You give Zero-X and its providers the permission needed to process that content to provide the service. AI output can be wrong, insecure or incomplete: review code before you run, merge or deploy it, keep backups, and check important statements against reliable sources.</p>
+    <p>You keep your rights in the code and content you submit and the outputs you receive. You give Zero-X and its providers the permission needed to process that content to provide the service. AI output can be wrong, insecure or incomplete, and it can be similar to existing code, including open-source code that has its own licence. Review code and check licences before you run, merge, ship or deploy it, keep backups, and check important statements against reliable sources. We do not promise that output is original, secure or correct.</p>
 
     <h2 id="suspension">Suspension and termination</h2>
-    <p>We may suspend or terminate access, with notice where practical, if you breach these terms, fail to pay, create risk or legal exposure for us or other users, or if a provider or the law requires it. Suspended accounts receive <code>account_suspended</code> errors. You can stop using the services at any time and ask us to delete your account. Sections about credits, content, liability and governing law survive termination.</p>
+    <p>We may suspend or terminate access, with notice where practical, if you breach these terms, fail to pay, create risk or legal exposure for us or other users, or if a provider or the law requires it. Suspended accounts receive <code>account_suspended</code> errors. You can stop using the services at any time and ask us to delete your account; the <a href="/privacy#deletion">privacy policy</a> says what deletion removes. Sections about credits, content, liability and governing law survive termination.</p>
 
     <h2 id="third-parties">Third-party services</h2>
-    <p>Model providers, Supabase, Razorpay, Cloudflare and sign-in providers apply their own terms. We are not responsible for their services, but we choose them carefully and describe how they handle data in the <a href="/privacy">privacy policy</a>.</p>
+    <p>Model providers, Supabase, Razorpay, Cloudflare, Amazon Web Services and sign-in providers apply their own terms. We are not responsible for their services, but we choose them carefully and describe how they handle data in the <a href="/privacy">privacy policy</a>.</p>
 
     <h2 id="liability">Disclaimers and liability</h2>
-    <p>The services are provided "as is" and "as available". To the extent the law allows, Zero-X disclaims implied warranties of merchantability, fitness for a particular purpose and non-infringement, and is not liable for indirect, incidental, special or consequential damages, lost profits, lost data or business interruption. Our total liability for any claim relating to the services is limited to the amount you paid Zero-X in the 12 months before the event giving rise to the claim. Nothing in these terms limits liability that cannot be limited by law, or removes rights you have as a consumer.</p>
+    <p>The services are provided "as is" and "as available". We aim to keep paid plans available but do not promise a particular uptime or service level. To the extent the law allows, Zero-X disclaims implied warranties of merchantability, fitness for a particular purpose and non-infringement, and is not liable for indirect, incidental, special or consequential damages, lost profits, lost data or business interruption. Our total liability for any claim relating to the services is limited to the amount you paid Zero-X in the 12 months before the event giving rise to the claim. Nothing in these terms limits liability that cannot be limited by law, or removes rights you have as a consumer.</p>
 
     <h2 id="law">Governing law</h2>
     <p>These terms are governed by the laws of India. Courts in Tamil Nadu, India have jurisdiction, without affecting any mandatory right you have to bring a claim where you live.</p>
 
     <h2 id="changes">Changes and contact</h2>
-    <p>We will publish changes here with a new effective date and notify signed-in users of significant changes. Continuing to use the services after a change takes effect means you accept it. Questions: <a href="mailto:support@zero-x.live">support@zero-x.live</a>, or see the <a href="/contact">contact page</a>.</p>
+    <p>We will publish changes here with a new effective date and notify signed-in users of significant changes. When these terms, the privacy policy or the refund policy change, checkout asks you to agree to the new version. Continuing to use the services after a change takes effect means you accept it. Questions: <a href="mailto:support@zero-x.live">support@zero-x.live</a>, or see the <a href="/contact">contact page</a>.</p>
   </main>
 
   <footer class="zx-footer">
@@ -138,7 +147,7 @@
         <a href="/shipping">Shipping and delivery</a>
       </nav>
     </div>
-    <p class="zx-container zx-footer__legal">© 2026 Zero-X · <a href="mailto:support@zero-x.live">support@zero-x.live</a></p>
+    <p class="zx-container zx-footer__legal">© 2026 Zero-X · <a href="mailto:support@zero-x.live">support@zero-x.live</a> · <a href="/contact#grievance">Grievance officer</a></p>
   </footer>
 </body>
 </html>

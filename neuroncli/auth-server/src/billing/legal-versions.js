@@ -12,9 +12,9 @@
 // page; change its version whenever the wording of that notice changes.
 
 export const LEGAL_DOCUMENTS = Object.freeze({
-  terms: Object.freeze({ version: '2026-10-25', path: '/terms' }),
-  privacy: Object.freeze({ version: '2026-10-25', path: '/privacy' }),
-  refund: Object.freeze({ version: '2026-10-24', path: '/refund' }),
+  terms: Object.freeze({ version: '2026-11-03', path: '/terms' }),
+  privacy: Object.freeze({ version: '2026-11-03', path: '/privacy' }),
+  refund: Object.freeze({ version: '2026-11-03', path: '/refund' }),
   auto_renewal: Object.freeze({ version: '2026-11-03', path: '/terms#billing' }),
 });
 
