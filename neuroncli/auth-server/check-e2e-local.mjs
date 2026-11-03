@@ -538,23 +538,41 @@ try {
 
   // ── 7. Free's 5-hour token window → 429 insufficient_quota (no upstream call) ──
   // A reservation holds the prompt plus at most 1,024 output tokens (max_tokens alone no longer
-  // reaches the cap), so the request carries a ~60K-token prompt.
+  // reaches the cap). The request is sized to fit in the 50,000-token window but not in what the
+  // requests so far (steps 4 and 6) left of it, so the message names both figures.
   const callsBeforeCap = upstream.calls.length;
   const realBeforeCap = realCalls();
+  const windowNow = (await call('/api/account', { token: ses })).body.usage_window;
+  assert.ok(windowNow.tokens > 0 && windowNow.remaining_tokens === 50000 - windowNow.tokens, JSON.stringify(windowNow));
+  const target = windowNow.remaining_tokens + Math.ceil(windowNow.tokens / 2); // > left, <= 50,000
+  const sized = n => [{ role: 'user', content: 'x'.repeat(n) }];
+  let length = Math.floor((target - 1024) * 3.5);
+  while (estimatePromptTokens(sized(length)) + 1024 > target) length -= 1;
+  const needed = estimatePromptTokens(sized(length)) + 1024;
+  assert.ok(needed > windowNow.remaining_tokens && needed <= 50000, `sized request ${needed}`);
   const capResponse = await call('/v1/chat/completions', { method: 'POST', token: ses,
-    body: { model: 'gemini/gemini-2.5-flash', messages: [{ role: 'user', content: 'word '.repeat(42000) }], max_tokens: 4096 } });
+    body: { model: 'gemini/gemini-2.5-flash', messages: sized(length), max_tokens: 4096 } });
   const cap = expectError(capResponse, 429, 'insufficient_quota');
   assert.equal(cap.type, 'insufficient_quota');
   // Enough of the window frees once the requests made so far (steps 4 and 6) leave it.
   assert.ok(Date.parse(cap.resets_at) >= windowFrees && Date.parse(cap.resets_at) <= Date.now() + 18000000,
     `the window frees within 5 hours of the requests it counts (${cap.resets_at})`);
-  assert.match(cap.message, /^You've used your 50,000 tokens for this 5-hour window; it frees up at \d{2}:\d{2} UTC\.$/);
+  const fmt = value => value.toLocaleString('en-US');
+  assert.match(cap.message, new RegExp(`^This request needs ${fmt(needed)} tokens but only ${fmt(windowNow.remaining_tokens)} ` +
+    'of your 50,000 tokens for this 5-hour window are left; enough frees up at \\d{2}:\\d{2} UTC\\.$'), cap.message);
   assert.ok(cap.retry_after_seconds > 17000 && cap.retry_after_seconds <= 18000, `retry ${cap.retry_after_seconds}`);
   assert.equal(capResponse.headers.get('retry-after'), String(cap.retry_after_seconds), 'Retry-After until the window frees');
   assert.equal(cap.upgrade_url, 'https://zero-x.live/pricing');
+  // A request larger than the whole window (~60K tokens) never fits: no free-up time, no Retry-After.
+  const bigResponse = await call('/v1/chat/completions', { method: 'POST', token: ses,
+    body: { model: 'gemini/gemini-2.5-flash', messages: [{ role: 'user', content: 'word '.repeat(42000) }], max_tokens: 4096 } });
+  const big = expectError(bigResponse, 429, 'insufficient_quota');
+  assert.match(big.message, /^This request needs [\d,]+ tokens, more than the 50,000 tokens your plan allows in a 5-hour window, so it cannot run on this plan\./);
+  assert.ok(!big.resets_at && !big.retry_after_seconds, JSON.stringify(big));
+  assert.equal(bigResponse.headers.get('retry-after'), null);
   assert.equal(upstream.calls.length, callsBeforeCap);
   assert.equal(realCalls(), realBeforeCap, 'the cap is enforced before any upstream call');
-  step('5-hour token window', `429 insufficient_quota, resets_at ${cap.resets_at}, retry ${cap.retry_after_seconds} s, upgrade_url ${cap.upgrade_url}, no upstream call`);
+  step('5-hour token window', `429 insufficient_quota (needs ${needed}, ${windowNow.remaining_tokens} left), resets_at ${cap.resets_at}, retry ${cap.retry_after_seconds} s, upgrade_url ${cap.upgrade_url}; larger than the window: no resets_at or Retry-After; no upstream call`);
 
   // ── 7b. A model-side failure is refunded to the caller but kept in the shared pool budget ──
   // (review P2, integration: tool_use_failed and timeouts drained the free pools unseen)

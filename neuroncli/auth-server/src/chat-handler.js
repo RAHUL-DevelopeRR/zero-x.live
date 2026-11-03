@@ -677,7 +677,7 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
           if (row.status !== 'ok') {
             if (TERMINAL_RESERVE_STATUSES.has(row.status) || !RESERVE_ERRORS[row.status]) {
               stopLeases();
-              const error = reserveError(row);
+              const error = reserveError(row, Date.now(), args.p_tokens);
               return fail(error.code, error);
             }
             if (candidate === first) firstMiss = row.status;

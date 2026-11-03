@@ -4,7 +4,35 @@ import { pathToFileURL } from 'node:url';
 import { DEV_BOOTSTRAP_SQL } from './src/db/bootstrap.js';
 import { listMigrations } from './src/db/migrations.js';
 import { migrate } from './src/db/pglite.js';
-import { reservationArgs } from './src/capacity.js';
+import { reservationArgs, reserveSessionQuota, sessionDailyTokenCap } from './src/capacity.js';
+
+// Session-KV allocation (sessions without an account ledger: anonymous dev sessions and
+// owned-provider sessions). With Free's window (migration 20261102000000: daily_tokens 5,000,000,
+// window_tokens 1,000,000 per 18,000 s) such a session is held to 1,000,000 tokens a UTC day, not
+// to the 5,000,000 daily_tokens; a plan without a window keeps daily_tokens.
+{
+  const policies = {
+    free: { name: 'Free', daily_tokens: 5000000, daily_requests: 100, price_usd: 0, window_tokens: 1000000, window_seconds: 18000 },
+    pro: { name: 'Pro', daily_tokens: 10000000, daily_requests: 2000, price_usd: 10, window_tokens: null, window_seconds: null },
+  };
+  assert.equal(sessionDailyTokenCap(policies.free), 1000000);
+  assert.equal(sessionDailyTokenCap(policies.pro), 10000000);
+  assert.equal(sessionDailyTokenCap({ daily_tokens: 256000 }), 256000, 'a policy map from before the migration');
+  const writes = [];
+  const allocate = (session, tokens) => reserveSessionQuota({ c: { env: {} }, token: 'ses_kv', session, tokens,
+    planLimits: async () => policies, setSession: async (_env, _token, value) => { writes.push({ ...value }); }, provider: 'test' });
+  const session = { plan: 'free', requests: 0, tokens_used: 0 };
+  const first = await allocate(session, 900000);
+  assert.equal(first.ok, true);
+  assert.equal(first.remainingTokens, 100000, 'remaining is counted against the window cap, not 5M');
+  assert.equal((await allocate(session, 100001)).ok, false, 'a free session-KV allocation refuses above 1M a day');
+  assert.equal(session.tokens_used, 900000, 'a refused allocation spends nothing');
+  assert.equal((await allocate(session, 100000)).ok, true, 'up to exactly 1M is allowed');
+  assert.equal((await allocate({ plan: 'free', requests: 0, tokens_used: 0 }, 1000001)).ok, false);
+  assert.equal((await allocate({ plan: 'pro', requests: 0, tokens_used: 0 }, 5000000)).ok, true, 'Pro keeps its daily cap');
+  assert.ok(writes.length >= 3);
+  console.log('PASS: session-KV allocation holds a windowed plan to window_tokens per UTC day');
+}
 import { POOL_LIMITS, catalogEntry, poolKey } from './src/catalog.js';
 
 const entry = process.env.PGLITE_ENTRY;

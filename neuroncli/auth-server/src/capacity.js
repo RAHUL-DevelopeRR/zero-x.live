@@ -70,16 +70,45 @@ export function formatWindowTime(value, now = Date.now()) {
   return at.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }) + ', ' + clock;
 }
 
+const tokenCount = value => Number(value).toLocaleString('en-US');
+
+// Whether a refused request is larger than the plan's whole window, so it can never fit.
+export function exceedsWindow(row, tokens) {
+  const limit = Number(row?.window_tokens);
+  const needed = Number(tokens);
+  return Number.isSafeInteger(limit) && limit > 0 && Number.isSafeInteger(needed) && needed > limit;
+}
+
 // The message for user_window_tokens (zerox_reserve_v2 window_* columns, migration
-// 20261102000000): "You've used your 1,000,000 tokens for this 5-hour window; it frees up at 17:05 UTC."
-export function windowQuotaMessage(row, now = Date.now()) {
+// 20261102000000), from the window's count (window_used_tokens, without the refused request) and
+// the request's reserved tokens:
+// - used up: "You've used your 1,000,000 tokens for this 5-hour window; it frees up at 17:05 UTC."
+// - not enough left: "This request needs 30,000 tokens but only 10,000 of your 1,000,000 tokens
+//   for this 5-hour window are left; enough frees up at 17:05 UTC."
+// - larger than the window: no time is given, since waiting never makes it fit.
+export function windowQuotaMessage(row, now = Date.now(), tokens = null) {
   const limit = Number(row?.window_tokens);
   const length = windowLength(row?.window_seconds);
-  const at = formatWindowTime(row?.window_resets_at || row?.resets_at, now);
-  if (!Number.isSafeInteger(limit) || limit < 1 || !length || !at) {
-    return 'You have used the tokens of your current usage window. Retry after the indicated delay, or upgrade for more.';
+  if (!Number.isSafeInteger(limit) || limit < 1 || !length) {
+    return 'This request does not fit in the tokens left in your current usage window. Retry after the indicated delay, or upgrade for more.';
   }
-  return `You've used your ${limit.toLocaleString('en-US')} tokens for this ${length} window; it frees up at ${at}.`;
+  const needed = Number(tokens);
+  const knownNeed = Number.isSafeInteger(needed) && needed > 0;
+  if (exceedsWindow(row, tokens)) {
+    return `This request needs ${tokenCount(needed)} tokens, more than the ${tokenCount(limit)} tokens your plan allows in a ` +
+      `${length} window, so it cannot run on this plan. Shorten the conversation or lower max_tokens, or upgrade.`;
+  }
+  const at = formatWindowTime(row?.window_resets_at || row?.resets_at, now);
+  const used = Number(row?.window_used_tokens);
+  const knownUse = Number.isSafeInteger(used) && used >= 0;
+  if (!knownUse || used >= limit) {
+    return at ? `You've used your ${tokenCount(limit)} tokens for this ${length} window; it frees up at ${at}.`
+      : `You've used your ${tokenCount(limit)} tokens for this ${length} window. Retry after the indicated delay.`;
+  }
+  const left = tokenCount(limit - used);
+  const need = knownNeed ? `This request needs ${tokenCount(needed)} tokens but only` : 'This request needs more than the';
+  return `${need} ${left} of your ${tokenCount(limit)} tokens for this ${length} window are left; ` +
+    (at ? `enough frees up at ${at}.` : 'retry after the indicated delay.');
 }
 
 // Output tokens a reservation holds against the user's daily tokens and the shared pool budget
@@ -136,16 +165,20 @@ export async function reserveCapacity(env, args) {
   return row;
 }
 
-// Error code and details for a non-ok reservation status (unknown statuses fail closed).
-export function reserveError(row, now = Date.now()) {
+// Error code and details for a non-ok reservation status (unknown statuses fail closed). tokens
+// is the refused reservation's p_tokens, for the window message.
+export function reserveError(row, now = Date.now(), tokens = null) {
   const status = row?.status;
   const code = RESERVE_ERRORS[status] || 'service_unavailable';
   const retry = Number(row?.retry_after_seconds);
   if (status === 'user_window_tokens') {
+    const message = windowQuotaMessage(row, now, tokens);
+    // Larger than the whole window: no time makes it fit, so no resets_at or Retry-After.
+    if (exceedsWindow(row, tokens)) return { code, message, resetsAt: null, retryAfterSeconds: undefined };
     // A rolling window frees at a known time: resets_at and Retry-After say when.
     const resetsAt = row?.window_resets_at || row?.resets_at || null;
     const until = Math.ceil((Date.parse(resetsAt || '') - now) / 1000);
-    return { code, message: windowQuotaMessage(row, now), resetsAt,
+    return { code, message, resetsAt,
       retryAfterSeconds: retry > 0 ? retry : until > 0 ? until : undefined };
   }
   const options = { code, message: RESERVE_MESSAGES[status] };
@@ -211,12 +244,25 @@ export function runInBackground(c, promise) {
 
 // ── Session-KV allocation (anonymous/dev sessions without an account ledger) ──
 
+// The daily token cap of a session-KV allocation. These sessions keep no per-request history,
+// so a plan with a rolling window (zerox_plan_policies window_tokens, migration 20261102000000)
+// holds them to one window's tokens per UTC day rather than to daily_tokens (which for such a
+// plan is the most five windows allow in a day and refuses nothing in the ledger).
+export function sessionDailyTokenCap(limits) {
+  const daily = Number(limits?.daily_tokens);
+  const window = Number(limits?.window_tokens);
+  const seconds = Number(limits?.window_seconds);
+  return Number.isSafeInteger(window) && window > 0 && Number.isSafeInteger(seconds) && seconds > 0
+    ? Math.min(daily, window) : daily;
+}
+
 export async function reserveSessionQuota({ c, token, session, tokens, planLimits, setSession, provider }) {
   const policies = await planLimits(c.env);
   const limits = policies[session.plan] || policies.free;
   const requests = Number(session.requests || 0);
   const used = Number(session.tokens_used || 0);
-  if (requests >= limits.daily_requests || used + tokens > limits.daily_tokens) {
+  const cap = sessionDailyTokenCap(limits);
+  if (requests >= limits.daily_requests || used + tokens > cap) {
     return { ok: false, resetsAt: nextUtcMidnight() };
   }
   session.requests = requests + 1;
@@ -226,7 +272,7 @@ export async function reserveSessionQuota({ c, token, session, tokens, planLimit
   return {
     ok: true,
     remainingRequests: Math.max(0, limits.daily_requests - session.requests),
-    remainingTokens: Math.max(0, limits.daily_tokens - session.tokens_used),
+    remainingTokens: Math.max(0, cap - session.tokens_used),
   };
 }
 

@@ -1362,28 +1362,57 @@ try {
     const freesAt = frees.toISOString();
     reset({ 'rpc:zerox_plan_policies_v2': policiesRpc,
       'rpc:zerox_reserve_v2': () => Response.json([{ status: 'user_window_tokens', reservation_id: null, plan: 'free',
-        remaining_requests: 90, remaining_tokens: 2000, credit_balance_microusd: 0, resets_at: freesAt, retry_after_seconds: 10925,
-        window_tokens: 1000000, window_seconds: 18000, window_used_tokens: 998000, window_resets_at: freesAt }]) });
+        remaining_requests: 90, remaining_tokens: 500, credit_balance_microusd: 0, resets_at: freesAt, retry_after_seconds: 10925,
+        window_tokens: 1000000, window_seconds: 18000, window_used_tokens: 999500, window_resets_at: freesAt }]) });
     const response = await gw.call(accountEnv(), { model: 'groq/openai/gpt-oss-120b', messages }, { token: 'ses_pro' });
     assert.equal(response.headers.get('retry-after'), '10925');
     const error = await expectError(response, 429, 'insufficient_quota');
     const clock = new Date(Math.ceil(frees.getTime() / 60000) * 60000).toISOString().slice(11, 16);
-    assert.equal(error.message, `You've used your 1,000,000 tokens for this 5-hour window; it frees up at ${clock} UTC.`);
+    // 999,500 used: 500 left, and the request needs its prompt plus the reserved output tokens.
+    const needed = rpcCalls('zerox_reserve_v2')[0].body.p_tokens;
+    assert.ok(needed > 500, `the request needs more than what is left (${needed})`);
+    assert.equal(error.message, `This request needs ${needed.toLocaleString('en-US')} tokens but only 500 of your 1,000,000 tokens ` +
+      `for this 5-hour window are left; enough frees up at ${clock} UTC.`);
     assert.equal(error.resets_at, freesAt);
     assert.equal(error.retry_after_seconds, 10925);
     assert.ok(error.upgrade_url);
     assert.equal(rpcCalls('zerox_reserve_v2').length, 1, 'terminal: no failover to another pool');
     assert.equal(upstreamCalls().length, 0);
-    // Without a retry hint the wait is derived from the free-up time; without window columns the
-    // message stays generic.
     const now = Date.parse('2026-11-02T12:00:00Z');
+    const window = { status: 'user_window_tokens', window_tokens: 1000000, window_seconds: 18000,
+      window_resets_at: '2026-11-02T14:30:20Z', resets_at: '2026-11-02T14:30:20Z', retry_after_seconds: 9020 };
+    // A user with 10,000 tokens in the window is not told they used all 1,000,000.
+    assert.equal(reserveError({ ...window, window_used_tokens: 10000 }, now, 995000).message,
+      'This request needs 995,000 tokens but only 990,000 of your 1,000,000 tokens for this 5-hour window are left; ' +
+      'enough frees up at 14:31 UTC.');
+    // The "used your" wording only once the window is full.
+    assert.equal(reserveError({ ...window, window_used_tokens: 1000000 }, now, 3000).message,
+      "You've used your 1,000,000 tokens for this 5-hour window; it frees up at 14:31 UTC.");
+    // Larger than the whole window: waiting never makes it fit, so no time, no resets_at, no Retry-After.
+    const tooBig = reserveError({ ...window, resets_at: null, retry_after_seconds: null, window_used_tokens: 10000 }, now, 1200000);
+    assert.equal(tooBig.message, 'This request needs 1,200,000 tokens, more than the 1,000,000 tokens your plan allows in a ' +
+      '5-hour window, so it cannot run on this plan. Shorten the conversation or lower max_tokens, or upgrade.');
+    assert.deepEqual([tooBig.code, tooBig.resetsAt, tooBig.retryAfterSeconds], ['insufficient_quota', null, undefined]);
+    // Through the gateway: no Retry-After header and no resets_at for a request larger than the window.
+    reset({ 'rpc:zerox_plan_policies_v2': policiesRpc,
+      'rpc:zerox_reserve_v2': () => Response.json([{ status: 'user_window_tokens', reservation_id: null, plan: 'free',
+        remaining_requests: 90, remaining_tokens: 1000, credit_balance_microusd: 0, resets_at: null, retry_after_seconds: null,
+        window_tokens: 1000, window_seconds: 18000, window_used_tokens: 0, window_resets_at: freesAt }]) });
+    const bigResponse = await gw.call(accountEnv(), { model: 'groq/openai/gpt-oss-120b', messages }, { token: 'ses_pro' });
+    assert.equal(bigResponse.headers.get('retry-after'), null);
+    const bigError = await expectError(bigResponse, 429, 'insufficient_quota');
+    assert.match(bigError.message, /more than the 1,000 tokens your plan allows in a 5-hour window/);
+    assert.ok(!bigError.resets_at, 'no resets_at');
+    assert.ok(!bigError.retry_after_seconds, 'no retry_after_seconds');
+    // Without a retry hint the wait is derived from the free-up time; without the window's count
+    // the message keeps the window-full wording; without window columns it stays generic.
     const derived = reserveError({ status: 'user_window_tokens', resets_at: '2026-11-02T14:30:20Z', window_tokens: 1000000,
       window_seconds: 18000 }, now);
     assert.deepEqual([derived.code, derived.retryAfterSeconds, derived.resetsAt], ['insufficient_quota', 9020, '2026-11-02T14:30:20Z']);
     assert.equal(derived.message, "You've used your 1,000,000 tokens for this 5-hour window; it frees up at 14:31 UTC.");
     assert.match(reserveError({ status: 'user_window_tokens' }, now).message, /current usage window/);
     assert.equal(reserveError({ status: 'user_window_tokens', window_tokens: 50000, window_seconds: 5400,
-      window_resets_at: '2026-11-04T09:00:00Z' }, now).message,
+      window_used_tokens: 50000, window_resets_at: '2026-11-04T09:00:00Z' }, now).message,
     "You've used your 50,000 tokens for this 90-minute window; it frees up at Nov 4, 09:00 UTC.");
   });
 
