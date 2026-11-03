@@ -257,6 +257,25 @@ function freezeEntry(entry) {
   });
 }
 
+// Models that `auto` never picks for an agentic request (a tool-carrying request, or the CLI's
+// `x-neuron-route: agentic` hint; src/router.js), although they declare tools and still serve
+// when asked for by name. The catalog keeps no per-model tool-call rate (the HealthHub canary
+// records one probe per pool, not a rate over real requests), so this is an explicit list, matched
+// on the upstream model so that catalog rows of the same model are covered too. Evidence
+// (2026-11-03, Neuron alpha.3 bug sweep): on Free with `auto`, "build me a todo app in this
+// folder" was served by groq/openai/gpt-oss-120b, which answered with code in chat and called no
+// tool. The rest of the gpt-oss family (gpt-oss-20b on Groq and NVIDIA, gpt-oss-120b on Workers
+// AI) is listed with it: auto would otherwise hand the same request to its smaller sibling. That
+// the siblings behave the same is not separately measured. Remove an entry once a live multi-turn
+// build probe shows the model calling tools.
+export const POOR_TOOL_CALLERS = Object.freeze([
+  Object.freeze({ upstream: /(^|\/)gpt-oss-\d+b$/, reason: 'answers build requests in chat without calling tools' }),
+]);
+
+export function poorToolCaller(entry) {
+  return POOR_TOOL_CALLERS.some(rule => rule.upstream.test(String(entry?.upstream_model ?? '').toLowerCase()));
+}
+
 // position: the list order of /v1/models and of the catalog rows (10, 20, ...).
 export const CATALOG = Object.freeze(MODELS.map((entry, index) => freezeEntry({ position: (index + 1) * 10, ...entry })));
 export const AUTO_MODEL_ID = 'auto';

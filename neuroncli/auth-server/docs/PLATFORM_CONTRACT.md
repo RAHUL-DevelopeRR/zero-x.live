@@ -95,7 +95,8 @@ price and a daily spend cap (section 13.4); Claude prices add `cache_read_microu
 A pool is usable only when its key/binding is configured and `hosted` is not disabled.
 Routing for plan tiers `T`: prefer a usable `free` pool with remaining budget; otherwise a
 usable `paid` pool if `paid ∈ T` and the user has credits. `model: "auto"` picks the best
-tool-capable model whose context window fits the estimated request.
+tool-capable model whose context window fits the estimated request; for an agentic request it
+leaves out models with a poor tool-call record (section 14.2).
 
 Verified free catalog (live probe 2026-10-16): `groq/openai/gpt-oss-120b`,
 `groq/openai/gpt-oss-20b`, `groq/qwen/qwen3.8-27b` (Groq free org: 30 rpm, 1K rpd,
@@ -1008,6 +1009,23 @@ Connectors are MCP servers. There are no organisations yet, so gateway policy is
   cannot be reached, the CLI uses the last cached policy and warns (fail open), unless managed
   settings set `mcpPolicy.failClosed: true`.
 
+
+### 14.2 Agentic routing hint (`x-neuron-route: agentic`)
+
+- The Neuron CLI sends `x-neuron-route: agentic` on turns that attach tools when the model is
+  `auto`. The gateway treats a request as agentic when it carries that header (any case, trimmed)
+  or attaches at least one tool, whoever the client is.
+- For an agentic request `auto` considers only catalog models with `capabilities.tools = true`
+  and leaves out models with a poor tool-call record, including as fallbacks. The catalog keeps no
+  per-model tool-call rate, so the record is an explicit list in `src/catalog.js`
+  (`POOR_TOOL_CALLERS`, matched on the upstream model): today the gpt-oss family
+  (`groq/openai/gpt-oss-120b`, `groq/openai/gpt-oss-20b`, `nvidia/openai/gpt-oss-20b`,
+  `@cf/openai/gpt-oss-120b`), after `groq/openai/gpt-oss-120b` answered a build request in chat
+  without calling a tool (2026-11-03).
+- A model asked for by id is served as before, agentic or not. A request without tools and
+  without the header routes as before.
+- When no other tool-capable model is configured, the request answers 503 `service_unavailable`
+  ("No model that reliably calls tools is configured on this gateway; choose a model by name.").
 
 ### 14.4 Hosted connector endpoint (specified; not served by this gateway version)
 

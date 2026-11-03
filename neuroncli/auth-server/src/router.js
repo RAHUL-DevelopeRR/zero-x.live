@@ -1,6 +1,6 @@
 import { globalHealthTracker, HealthState } from './provider-health.js';
 import {
-  AUTO_MODEL_ID, loadPlanPolicies, offeredEntries, planPolicy, poolKey, poolVerdicts, resolveModelId,
+  AUTO_MODEL_ID, loadPlanPolicies, offeredEntries, planPolicy, poolKey, poolVerdicts, poorToolCaller, resolveModelId,
 } from './catalog.js';
 import { providerType } from './catalog-types.js';
 import { BYOK_OFFERS, offerById, servesOwnKeys } from './oiop/offers.js';
@@ -155,7 +155,11 @@ export class RoutingEngine {
   route({ env = {}, requestedModel, needsTools = false, needs = {}, promptTokens, maxTokens, maxTokensExplicit = true,
     tiers = ['free'], country = null, ownedCatalog = null, affinity = null, conversation = null, policy = DEFAULT_POLICY,
     sharedHealth = null, budgetState = null, now = Date.now() }) {
-    const required = { ...needs, tools: Boolean(needs.tools || needsTools) };
+    // An agentic request (tools attached, or the CLI's x-neuron-route: agentic hint) needs a
+    // tool-capable model, and auto leaves out the models known to answer such requests in chat
+    // (catalog.js POOR_TOOL_CALLERS). A model asked for by name serves as before.
+    const agentic = Boolean(needs.tools || needsTools || needs.agentic);
+    const required = { ...needs, tools: agentic };
     if (ownedCatalog) return this.routeOwned({ env, requestedModel, needs: required, maxTokens, ownedCatalog, policy });
     const resolved = resolveModelId(requestedModel, env);
     if (!resolved) return failure('model_not_found');
@@ -163,7 +167,8 @@ export class RoutingEngine {
     const offered = offeredEntries(env);
     let entries;
     if (auto) {
-      entries = offered.filter(entry => entry.auto_rank != null && !lacks(entry, required) && !cannotForce(entry, required))
+      entries = offered.filter(entry => entry.auto_rank != null && !lacks(entry, required) && !cannotForce(entry, required)
+        && !(agentic && poorToolCaller(entry)))
         .sort((left, right) => left.auto_rank - right.auto_rank);
     } else {
       const entry = offered.find(item => item.id === resolved);
@@ -206,7 +211,7 @@ export class RoutingEngine {
         candidates: usable.map(({ entry, pool, key, offer, maxTokens: max }) => ({ entry, pool, key, offer, maxTokens: max })),
       };
     }
-    return this.explain(evaluated, auto, now, policy);
+    return this.explain(evaluated, auto, now, policy, agentic);
   }
 
   // Remembers the model that served a conversation (`route().sticky`; chat-handler.js, after a
@@ -215,11 +220,13 @@ export class RoutingEngine {
     this.sticky.remember(sticky, model, now);
   }
 
-  explain(evaluated, auto, now, policy = DEFAULT_POLICY) {
+  explain(evaluated, auto, now, policy = DEFAULT_POLICY, agentic = false) {
     const served = evaluated.filter(item => item.configured);
     if (!served.length) {
       return auto
-        ? failure('service_unavailable', { message: 'No model is configured on this gateway.' })
+        ? failure('service_unavailable', { message: agentic
+          ? 'No model that reliably calls tools is configured on this gateway; choose a model by name.'
+          : 'No model is configured on this gateway.' })
         : failure('model_not_found', { message: 'This model is not available on this deployment.' });
     }
     // Everything that could serve is kept away by the caller's own data policy.

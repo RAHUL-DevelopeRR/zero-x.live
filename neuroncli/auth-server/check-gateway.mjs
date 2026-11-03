@@ -113,7 +113,9 @@ try {
     for (const pool of entry.pools) globalHealthTracker.recordFailure(poolKey(entry, pool), { kind: FailureKind.RATE_LIMITED, retryAfterSeconds: 60 });
   }
   const bindingRuns = [];
-  const parkedEnv = { ...env, ALLOW_UNKNOWN_COUNTRY: 'true',
+  // NVIDIA gpt-oss-20b is not an agentic auto candidate (catalog.js POOR_TOOL_CALLERS), so the
+  // NVIDIA fallback here is Nemotron 3 Ultra.
+  const parkedEnv = { ...env, ALLOW_UNKNOWN_COUNTRY: 'true', NVIDIA_MODELS: 'openai/gpt-oss-20b,nvidia/nemotron-3-ultra-550b-a55b',
     AI: { run: async model => { bindingRuns.push(model); throw new Error('5006: Invalid input'); } } };
   const parkedUpstreams = [];
   globalThis.fetch = async url => {

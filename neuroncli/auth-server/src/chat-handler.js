@@ -83,12 +83,16 @@ export function validateCompletionBody(body) {
 
 // What the request needs from a model (router.js lacks()). forcedTool: tool_choice "required" or
 // a named function (anything but "auto" and "none") forces a tool call, which auto gives only to
-// models that can be told so (router.js).
+// models that can be told so (router.js). agentic: the client marked the turn as agent work
+// (`x-neuron-route: agentic`, sent by the Neuron CLI on turns that attach tools when the model is
+// "auto"); auto then picks only tool-capable models with a good tool-call record, as it does for
+// any request that attaches tools (router.js, catalog.js POOR_TOOL_CALLERS).
 const IMAGE_PARTS = new Set(['image_url', 'input_image', 'image']);
-export function requestNeeds(body) {
+export function requestNeeds(body, routeHint = null) {
   const tools = Array.isArray(body.tools) && body.tools.length > 0;
   return {
     tools,
+    agentic: tools || (typeof routeHint === 'string' && routeHint.trim().toLowerCase() === 'agentic'),
     vision: body.messages.some(message => Array.isArray(message.content) &&
       message.content.some(part => IMAGE_PARTS.has(part?.type))),
     stream: body.stream === true,
@@ -281,7 +285,7 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
       route = router.route({
         env,
         requestedModel: body.model,
-        needs: requestNeeds(body),
+        needs: requestNeeds(body, c.req.header('x-neuron-route')),
         promptTokens,
         maxTokens: requestedMax,
         maxTokensExplicit: isSet(explicitMax),

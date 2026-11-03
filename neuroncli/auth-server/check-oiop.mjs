@@ -262,8 +262,10 @@ try {
     assert.equal(router.route({ ...base, env: freeKeys, policy: policy(null, 'false') }).error, 'policy_restricted');
     assert.equal(router.route({ ...base, policy: policy(null, 'false') }).error, 'upgrade_required',
       'with a paid pool that does not train, the caller is told to upgrade instead');
-    // llama-3.3 is explicit-only (auto never tries it), so auto has Workers AI once gpt-oss-120b is enabled.
-    const withWorkers = router.route({ ...base, env: { ...freeKeys, AI: {}, CLOUDFLARE_MODELS: '@cf/openai/gpt-oss-120b' },
+    // llama-3.3 is explicit-only (auto never tries it), so auto has Workers AI once gpt-oss-120b is
+    // enabled, for a request without tools (gpt-oss is no agentic auto candidate, catalog.js
+    // POOR_TOOL_CALLERS).
+    const withWorkers = router.route({ ...base, needs: {}, env: { ...freeKeys, AI: {}, CLOUDFLARE_MODELS: '@cf/openai/gpt-oss-120b' },
       policy: policy(null, 'false') });
     assert.ok(withWorkers.ok && models(withWorkers).every(id => id.startsWith('@cf/')), 'Workers AI (no training) still serves');
     const vision = router.route({ ...base, needs: { tools: true, vision: true } });
@@ -287,9 +289,9 @@ try {
 
     const sticky = router.route({ ...base, affinity: 'user-1', conversation: 'c:task-42' });
     assert.equal(sticky.sticky, 'user-1|c:task-42');
-    router.remember(sticky.sticky, 'groq/openai/gpt-oss-120b');
+    router.remember(sticky.sticky, 'groq/qwen/qwen3.8-27b');
     assert.equal(router.route({ ...base, affinity: 'user-1', conversation: 'c:task-42' }).candidates[0].entry.id,
-      'groq/openai/gpt-oss-120b', 'the conversation stays on the model that served it');
+      'groq/qwen/qwen3.8-27b', 'the conversation stays on the model that served it');
     assert.equal(router.route({ ...base, affinity: 'user-1', conversation: 'c:other' }).candidates[0].entry.id,
       'gemini/gemini-2.5-flash', 'other conversations are not affected');
     assert.equal(router.route({ ...base, affinity: 'user-1', conversation: 'c:task-42', tiers: ['free', 'paid'] })
@@ -366,7 +368,7 @@ try {
     const direct = await send({ [TRUST_HEADER]: 'T1' });
     assert.equal(direct.status, 200);
     assert.deepEqual([upstreamModels, direct.headers.get('x-oiop-offer'), direct.headers.get('x-oiop-fallback')],
-      [['openai/gpt-oss-120b'], 'groq.free', null], 'T1 only: served by Groq first, no fallback header');
+      [['qwen/qwen3.8-27b'], 'groq.free', null], 'T1 only: served by Groq first, no fallback header');
     const refused = await send({ [TRUST_HEADER]: 'T3' });
     assert.equal(refused.status, 403);
     assert.equal((await refused.json()).error.code, 'policy_restricted');
@@ -876,8 +878,9 @@ try {
     assert.deepEqual([row.samples, row.error_rate, row.p50_ms, row.p95_ms], [10, 0.2, 500, 800],
       'error rate over pool-level outcomes only (an invalid request is the caller\'s)');
     const router = new RoutingEngine(new ProviderHealthTracker());
+    // Without tools: gpt-oss is no agentic auto candidate (catalog.js POOR_TOOL_CALLERS).
     const routed = router.route({ env: { GROQ_API_KEY: 'k' }, requestedModel: 'auto', promptTokens: 1000, maxTokens: 2048,
-      needs: { tools: true }, sharedHealth: new Map([[key, { status: 'available', until: 0, samples: 20, error_rate: 0.3 }]]) });
+      needs: {}, sharedHealth: new Map([[key, { status: 'available', until: 0, samples: 20, error_rate: 0.3 }]]) });
     assert.notEqual(routed.candidates[0].entry.id, 'groq/openai/gpt-oss-120b', 'a pool failing 30% of recent requests goes after the others');
 
     const perDay = JSON.stringify({ error: { code: 429, status: 'RESOURCE_EXHAUSTED', message: 'quota', details: [
