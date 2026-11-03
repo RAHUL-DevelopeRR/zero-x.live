@@ -171,7 +171,7 @@ async function notFoundPage(c) {
 
 // Pages served from https://zero-x.live/<page> (clean URLs).
 const SITE_PAGES = ['/about', '/privacy', '/terms', '/find-files-by-content', '/wheres-that-file',
-  '/pricing', '/neuron-cli', '/docs', '/docs/trust', '/download', '/changelog', '/refund', '/contact', '/shipping',
+  '/pricing', '/neuron-cli', '/docs', '/docs/trust', '/docs/data', '/download', '/changelog', '/refund', '/contact', '/shipping',
   '/neucockpit', '/ai-coding-agent'];
 
 // Hostname-based subdomain routing middleware

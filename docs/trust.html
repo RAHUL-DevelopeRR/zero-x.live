@@ -100,14 +100,14 @@
           <ul>
             <li><strong>Your requests.</strong> Each turn sends your message, the conversation so far and whatever files or command output Neuron included, to the model provider you chose. When you sign in with Zero-X, that goes through the Zero-X gateway to the provider that serves the model. With your own provider key, it goes straight to that provider and never passes through Zero-X.</li>
             <li><strong>Sign-in.</strong> <code>neuron login</code> shows a short code that you approve on Zero-X in your browser, then stores a session token on your computer.</li>
-            <li><strong>No analytics.</strong> Neuron does not send usage analytics or crash reports to Zero-X. Sessions and history stay on your computer.</li>
-            <li><strong>Free model tiers.</strong> Some providers' free tiers may use prompts to improve their models and may let people review them. The <a href="/privacy#processors">privacy policy</a> lists every provider. Do not send secrets or code you may not share on the Free plan.</li>
+            <li><strong>No analytics.</strong> Neuron does not send usage analytics or crash reports to Zero-X. Sessions and history stay on your computer. If you use the phone app (not generally available yet), session traffic is encrypted between your computer and phone and passes through the Zero-X relay without being read or stored; phone notifications carry a fixed message and your computer's name, and are delivered through Expo, Apple and Google.</li>
+            <li><strong>Free model tiers.</strong> Some providers' free tiers may use prompts to improve their models and may let people review them, and for some we could not confirm the provider's position. The <a href="/privacy#processors">privacy policy</a> lists every provider and what each states, and <a href="/docs/data">Data and subprocessors</a> shows where a request goes. Do not send secrets or code you may not share on the Free plan.</li>
           </ul>
         </section>
 
         <section id="gateway" aria-labelledby="gateway-title">
           <h2 id="gateway-title">What Zero-X stores</h2>
-          <p>The gateway stores <strong>usage metadata only</strong>: time, model, provider, status, token counts, cost, latency and a request ID. It does not store the text of your prompts, files or the model's responses; request content is held in memory only while it is forwarded. Retention periods are in the <a href="/privacy#retention">privacy policy</a>.</p>
+          <p>The gateway stores <strong>usage metadata only</strong>: time, model, provider, status, token counts, cost, latency and a request ID. It does not store the text of your prompts, files or the model's responses; request content is held in memory only while it is forwarded, and by design is not written to our logs. Before a request leaves the gateway, credentials it recognises are replaced with placeholders; this is best effort and can miss a secret. Retention periods are in the <a href="/privacy#retention">privacy policy</a>.</p>
           <p>Provider API keys stay on the gateway and are never sent to Neuron or the website. CLI sessions and API keys are stored only as SHA-256 hashes.</p>
         </section>
 
@@ -157,7 +157,7 @@
         <a href="/shipping">Shipping and delivery</a>
       </nav>
     </div>
-    <p class="zx-container zx-footer__legal">© 2026 Zero-X · <a href="mailto:support@zero-x.live">support@zero-x.live</a></p>
+    <p class="zx-container zx-footer__legal">© 2026 Zero-X · <a href="mailto:support@zero-x.live">support@zero-x.live</a> · <a href="/contact#grievance">Grievance officer</a></p>
   </footer>
 </body>
 </html>

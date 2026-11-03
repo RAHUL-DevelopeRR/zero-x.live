@@ -53,6 +53,8 @@ for (const [url, target] of [
   ['https://neuron.zero-x.live/download', 'https://zero-x.live/download'],
   ['https://zero-x.live/docs/trust.html', 'https://zero-x.live/docs/trust'],
   ['https://zero-x.live/docs/trust/', 'https://zero-x.live/docs/trust'],
+  ['https://zero-x.live/docs/data.html', 'https://zero-x.live/docs/data'],
+  ['https://zero-x.live/docs/data/', 'https://zero-x.live/docs/data'],
   ['https://neuron.zero-x.live/find-files-by-content', 'https://zero-x.live/find-files-by-content'],
   ['https://zero-x.live/about/', 'https://zero-x.live/about'], ['https://zero-x.live/about.html', 'https://zero-x.live/about'],
   ['https://zero-x.live/ai-coding-agent.html', 'https://zero-x.live/ai-coding-agent'], ['https://www.zero-x.live/ai-coding-agent', 'https://zero-x.live/ai-coding-agent'],
@@ -65,7 +67,7 @@ for (const [url, target] of [
   }
 }
 // The Neuron download page and the trust page the apps link to (A6, A8) are served, not redirected.
-for (const [path, file] of [['/download', '/download.html'], ['/docs/trust', '/docs/trust.html']]) {
+for (const [path, file] of [['/download', '/download.html'], ['/docs/trust', '/docs/trust.html'], ['/docs/data', '/docs/data.html']]) {
   const response = await app.request('https://zero-x.live' + path, {}, env);
   assert.equal(response.status, 200, path);
   assert.equal(await response.text(), file);

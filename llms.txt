@@ -24,5 +24,9 @@
 
 - [About Zero-X](https://zero-x.live/about): what Zero-X builds, official links and contact address
 - [Contact](https://zero-x.live/contact): support@zero-x.live
-- [Privacy Policy](https://zero-x.live/privacy): what the gateway records and how prompts reach model providers
-- [Terms of Service](https://zero-x.live/terms)
+- [Privacy Policy](https://zero-x.live/privacy): what the gateway records, which providers receive prompts, retention periods and the grievance officer
+- [Terms of Service](https://zero-x.live/terms): plans, automatic renewal, credits, acceptable use and alpha status
+- [Cancellation and refunds](https://zero-x.live/refund): how to cancel and when payments are refunded
+- [Shipping and delivery](https://zero-x.live/shipping): digital delivery of plans and credits
+- [Security and trust](https://zero-x.live/docs/trust): folder trust, permission modes and what Neuron can do on your computer
+- [Data and subprocessors](https://zero-x.live/docs/data): where a request goes, what Zero-X stores and who receives your data

@@ -48,7 +48,7 @@ try {
   {
     for (const [path, file] of [
       ['/', '/index.html'], ['/pricing', '/pricing.html'], ['/about', '/about.html'], ['/neucockpit', '/neucockpit.html'],
-      ['/docs/trust', '/docs/trust.html'], ['/download', '/download.html'], ['/dashboard', '/dashboard.html'],
+      ['/docs/trust', '/docs/trust.html'], ['/docs/data', '/docs/data.html'], ['/download', '/download.html'], ['/dashboard', '/dashboard.html'],
       ['/device', '/neuroncli/device/index.html'], ['/device/?user_code=BDWP-HQPK', '/neuroncli/device/index.html'],
       ['/neuroncli/device/', '/neuroncli/device/index.html'], ['/neuroncli/login/?state=fixture', '/neuroncli/login/index.html'],
       ['/admin/keys', '/neuroncli/admin/keys/index.html'], ['/admin/models/', '/neuroncli/admin/models/index.html'],
