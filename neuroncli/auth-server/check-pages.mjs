@@ -11,7 +11,7 @@ const isFile = file => existsSync(new URL(file, root)) && statSync(new URL(file,
 
 const PUBLIC_PAGES = ['index.html', 'pricing.html', 'neuron-cli.html', 'docs.html', 'ai-coding-agent.html', 'docs/trust.html', 'download.html', 'changelog.html', 'refund.html', 'contact.html', 'shipping.html', 'privacy.html', 'terms.html'];
 const PRIVATE_PAGES = ['dashboard.html', '404.html', 'neuroncli/index.html'];
-const SITE_SCRIPTS = ['dashboard.js', 'pricing.js', 'billing-checkout.js', 'home.js', 'download.js', 'changelog.js'];
+const SITE_SCRIPTS = ['dashboard.js', 'pricing.js', 'billing-checkout.js', 'billing-details.js', 'home.js', 'download.js', 'changelog.js'];
 const RELEASE_MANIFESTS = ['releases/cli/latest.json', 'releases/desktop/latest.json'];
 const SITE_FILES = [...PUBLIC_PAGES, ...PRIVATE_PAGES, ...SITE_SCRIPTS, ...RELEASE_MANIFESTS, 'zx-tokens.css', 'home.css', 'zerox-auth.js', 'neuroncli/login/index.html', 'neuroncli/callback/index.html'];
 const BASES = {'dashboard.html': 'https://dashboard.zero-x.live/', '404.html': 'https://zero-x.live/404', 'neuroncli/index.html': 'https://zero-x.live/neuroncli/'};
@@ -132,6 +132,20 @@ for (const file of ['neuron-cli.html', 'docs.html', 'ai-coding-agent.html']) {
   assert.match(html, /<code id="qs-login">neuron login<\/code>/);
   assert.match(html, /https:\/\/zero-x\.live\/v1/);
   assert.doesNotMatch(read('dashboard.js'), /alert\(|confirm\(/, 'No alert()/confirm() dialogs');
+}
+
+/* The billing details step (billing-details.js) sits in front of every purchase: no payment starts without it */
+{
+  for (const file of ['pricing.js', 'dashboard.js']) {
+    const source = read(file);
+    assert.match(source, /from '\.\/billing-details\.js'/, file + ' imports the billing details step');
+    assert.match(source, /purchaseWithDetails\(/, file + ' runs purchases through it');
+    assert.doesNotMatch(source, /await start(?:Subscription|Topup)\(/, file + ': a purchase starts only inside purchaseWithDetails, after the details step');
+  }
+  assert.doesNotMatch(read('billing-details.js'), /startSubscription|startTopup|loadRazorpay|runCheckout/, 'the step never starts a payment');
+  // The dialog and its form controls are built by the script (labels, autocomplete, errors: check-dashboard.mjs), so the pages carry no copy of it.
+  for (const file of ['pricing.html', 'dashboard.html']) assert.doesNotMatch(read(file), /bd-form|bd-title|billing-details/, file + ': no markup of the step');
+  assert.ok(read('zx-tokens.css').includes('.zx-dialog--billing'), 'the dialog styles ship with the shared tokens');
 }
 
 /* ───────────── Links resolve to files or routes ───────────── */

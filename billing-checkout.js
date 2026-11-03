@@ -17,6 +17,9 @@ const FRIENDLY_MESSAGES = {
   invalid_session: 'Your sign-in has expired. Sign in again to continue.',
   already_subscribed: 'You already have an active subscription. Manage or cancel it from the Billing tab in your dashboard.',
   billing_not_configured: 'Online payments are not enabled yet. Email ' + SUPPORT_EMAIL + ' and we will upgrade your account manually.',
+  billing_plan_missing: 'Checkout for this plan is not set up yet. Email ' + SUPPORT_EMAIL + ' and we will activate your plan manually.',
+  billing_profile_required: 'Add your billing details to continue.',
+  consent_required: 'Review and accept the current terms to continue.',
   checkout_dismissed: 'Checkout closed. You have not been charged.',
   checkout_unavailable: 'The payment window could not load. Allow checkout.razorpay.com in your content blocker and try again.',
   payment_unverified: 'We could not confirm the payment in your browser. If you were charged, it will appear in Billing within a few minutes; otherwise email ' + SUPPORT_EMAIL + ' with your payment ID.',
@@ -40,7 +43,21 @@ export class ApiError extends Error {
     this.retryAfterSeconds = nonNegativeInteger(details.retry_after_seconds);
     this.resetsAt = typeof details.resets_at === 'string' ? details.resets_at : '';
     this.requestId = typeof details.request_id === 'string' ? details.request_id : '';
+    // The field a 400 is about, every field's message, and what a 409 says is missing (billing details step).
+    this.param = typeof details.param === 'string' ? details.param.slice(0, 40) : '';
+    this.fields = stringMap(details.fields);
+    this.missing = Array.isArray(details.missing) ? details.missing.filter(name => typeof name === 'string').map(name => name.slice(0, 40)).slice(0, 20) : [];
   }
+}
+
+function stringMap(value) {
+  const map = {};
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    for (const [key, message] of Object.entries(value).slice(0, 30)) {
+      if (/^[a-z0-9_]{1,40}$/.test(key) && typeof message === 'string') map[key] = message.slice(0, 200);
+    }
+  }
+  return map;
 }
 
 function nonNegativeInteger(value) {
@@ -201,6 +218,8 @@ export function checkoutOptions(payload, { onPayment, onDismiss } = {}) {
     handler: onPayment,
     modal: { ondismiss: onDismiss, escape: true, confirm_close: true },
   };
+  // The phone the buyer gave (E.164), so Razorpay does not ask again; never anything else of their profile.
+  if (typeof prefill.contact === 'string' && /^\+[1-9][0-9]{7,14}$/.test(prefill.contact)) options.prefill.contact = prefill.contact;
   if (PROVIDER_ID.test(payload.subscription_id || '')) {
     options.subscription_id = payload.subscription_id;
   } else if (PROVIDER_ID.test(payload.order_id || '')) {
@@ -344,22 +363,32 @@ export async function runCheckout(payload, deps = {}) {
   });
 }
 
-/** POST /api/billing/checkout → Razorpay subscription → verify. */
-export async function startSubscription({ plan, currency, ...deps }) {
+/** The documents the buyer agreed to in the billing details step, as {document: version}; nothing else is sent. */
+function consentField(consent) {
+  if (!consent || typeof consent !== 'object' || Array.isArray(consent)) return {};
+  const body = {};
+  for (const [name, version] of Object.entries(consent)) {
+    if (/^[a-z_]{1,20}$/.test(name) && /^\d{4}-\d{2}-\d{2}$/.test(version)) body[name] = version;
+  }
+  return { consent: body };
+}
+
+/** POST /api/billing/checkout → Razorpay subscription → verify. `consent` is what the billing details step returned. */
+export async function startSubscription({ plan, currency, consent, ...deps }) {
   if (!['pro', 'max'].includes(plan)) throw new ApiError('Choose the Pro or Max plan.', { code: 'invalid_request' });
   if (deps.onStatus) deps.onStatus('Preparing secure checkout…');
   const payload = await apiFetch('/api/billing/checkout', {
-    method: 'POST', body: { plan, currency: normalizeCurrency(currency) }, auth: deps.auth, fetchImpl: deps.fetchImpl,
+    method: 'POST', body: { plan, currency: normalizeCurrency(currency), ...consentField(consent) }, auth: deps.auth, fetchImpl: deps.fetchImpl,
   });
   return runCheckout(payload, deps);
 }
 
 /** POST /api/billing/topup → Razorpay order → verify. */
-export async function startTopup({ pack, currency, ...deps }) {
+export async function startTopup({ pack, currency, consent, ...deps }) {
   if (!PACK_ID.test(pack || '')) throw new ApiError('Choose a credit pack.', { code: 'invalid_request' });
   if (deps.onStatus) deps.onStatus('Preparing secure checkout…');
   const payload = await apiFetch('/api/billing/topup', {
-    method: 'POST', body: { pack, currency: normalizeCurrency(currency) }, auth: deps.auth, fetchImpl: deps.fetchImpl,
+    method: 'POST', body: { pack, currency: normalizeCurrency(currency), ...consentField(consent) }, auth: deps.auth, fetchImpl: deps.fetchImpl,
   });
   return runCheckout(payload, deps);
 }

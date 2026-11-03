@@ -314,6 +314,26 @@ li + li { margin-top: .35em; }
 .zx-dialog::backdrop { background: rgba(10, 10, 12, .72); }
 .zx-dialog h2 { font-size: 1.3rem; }
 
+/* Billing details dialog (billing-details.js): a long form that scrolls inside the dialog, readable at 320 px and 200% zoom. */
+.zx-dialog--billing { width: min(640px, calc(100% - 32px)); max-height: calc(100vh - 32px); max-height: calc(100dvh - 32px); overflow-y: auto; overscroll-behavior: contain; }
+.zx-dialog--billing h3 { font-size: 1.05rem; margin: 20px 0 8px; }
+.zx-dialog--billing form { display: flex; flex-direction: column; gap: 12px; }
+.zx-dialog--billing .zx-kv { margin: 0 0 8px; }
+.zx-dialog--billing .zx-kv dd { margin-bottom: 8px; }
+.zx-form-grid { display: grid; gap: 14px; grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 560px) { .zx-form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .zx-form-grid > .zx-fieldset, .zx-form-grid > #bd-full-name-field, .zx-form-grid > #bd-business-name-field, .zx-form-grid > #bd-address-line1-field, .zx-form-grid > #bd-address-line2-field, .zx-form-grid > #bd-phone-field { grid-column: 1 / -1; } }
+.zx-form-grid [hidden], .zx-dialog--billing [hidden] { display: none; }
+.zx-fieldset { border: 1px solid var(--zx-border); border-radius: var(--zx-radius); padding: 12px 14px; margin: 0; min-width: 0; }
+.zx-fieldset legend { padding: 0 6px; font-weight: 600; color: var(--zx-heading); font-size: .95rem; }
+.zx-check { display: inline-flex; align-items: flex-start; gap: 10px; min-height: 44px; padding: 8px 0; cursor: pointer; color: var(--zx-text); }
+.zx-check input { flex: none; width: 22px; height: 22px; margin: 0; accent-color: var(--zx-accent); }
+.zx-check input:focus-visible { outline: none; box-shadow: var(--zx-focus); }
+.zx-check a { overflow-wrap: anywhere; }
+.zx-check-row { display: flex; flex-direction: column; gap: 4px; }
+.zx-check-row .zx-field-error { margin-left: 32px; }
+.zx-select[aria-invalid="true"], .zx-check input[aria-invalid="true"] { outline: 2px solid var(--zx-danger); outline-offset: 2px; }
+.zx-dialog__actions { justify-content: flex-end; margin-top: 8px; }
+
 /* Dashboard shell */
 .zx-dash-head { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; padding-block: 32px 8px; }
 .zx-dash-head h1 { font-size: clamp(1.75rem, 5vw, 2.5rem); margin: 0; }
