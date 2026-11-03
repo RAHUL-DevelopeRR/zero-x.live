@@ -8,11 +8,12 @@ import { readFileSync } from 'node:fs';
 import { toClaudeRequest } from './src/anthropic-request.js';
 import { settlementArgs } from './src/capacity.js';
 import { catalogEntry } from './src/catalog.js';
-import { billableUsage } from './src/pricing.js';
+import { billableUsage, estimateOutputTokens, estimatePromptTokens } from './src/pricing.js';
+import { sharedShingles, shingles } from './scripts/check-style-originality.mjs';
 import { buildUpstreamPayload } from './src/providers.js';
 import app from './src/index.js';
 import {
-  applyHouseStyle, carriesMarker, creditPreface, HOUSE_STYLE_BYTES, HOUSE_STYLE_TEXT, HOUSE_STYLE_TOKENS, HOUSE_STYLE_VERSION,
+  applyHouseStyle, carriesMarker, clientEstimate, creditPreface, HOUSE_STYLE_BYTES, HOUSE_STYLE_TEXT, HOUSE_STYLE_TOKENS, HOUSE_STYLE_VERSION,
   houseStyleMode, houseStylePercent, houseStyleStatus, parseStyleHeader, rolloutBucket, STYLE_HEADER, styleDecision, usageCountsPreface,
 } from './src/house-style.js';
 
@@ -51,13 +52,27 @@ try {
     for (const heading of ['\nEconomy\n', '\nBuild discipline\n', '\nDesign taste (UI work)\n']) {
       assert.ok(HOUSE_STYLE_TEXT.includes(heading), `section ${heading.trim()}`);
     }
-    assert.ok(/standard library or platform/.test(HOUSE_STYLE_TEXT) && /need not exist/.test(HOUSE_STYLE_TEXT), 'economy ladder');
-    assert.ok(/small verified steps/.test(HOUSE_STYLE_TEXT) && /not invent APIs/.test(HOUSE_STYLE_TEXT), 'build discipline');
+    assert.ok(/the platform, the language's library or this codebase already covers the need/.test(HOUSE_STYLE_TEXT) && /whether it is a need at all/.test(HOUSE_STYLE_TEXT), 'economy: is it needed, does the platform, library or repo cover it');
+    assert.ok(!/(?:rung|ladder)/i.test(HOUSE_STYLE_TEXT), 'no ladder wording');
+    assert.ok(/small steps and verify each/.test(HOUSE_STYLE_TEXT) && /Never make up APIs/.test(HOUSE_STYLE_TEXT), 'build discipline');
     assert.ok(/design direction/.test(HOUSE_STYLE_TEXT) && /lorem ipsum/.test(HOUSE_STYLE_TEXT), 'design taste');
     assert.ok(!/\d{4}-\d{2}-\d{2}|\$\{|\{\{|<[a-z]/i.test(HOUSE_STYLE_TEXT), 'no date, template slot or markup in it');
     assert.ok(!/claude|anthropic/i.test(HOUSE_STYLE_TEXT), 'no vendor name in text users can read');
     // Nothing in the text is taken from the public projects: no long run of their words.
     for (const phrase of ['Ponytail', 'gstack', 'Hallmark', 'AntiSlop', 'anti-slop']) assert.ok(!HOUSE_STYLE_TEXT.includes(phrase), phrase);
+    // Names prove nothing about copied words, so the originality check compares four-word runs
+    // (scripts/check-style-originality.mjs). The skill files it is meant for live in the neuron
+    // repository: run `ZEROX_BUNDLED_SKILLS=<dir> node check-house-style.mjs` (or the script on its own) locally.
+    assert.deepEqual([...shingles('one two three four five')], ['one two three four', 'two three four five']);
+    assert.deepEqual(sharedShingles('Take the first step. Only then write code.', [{ name: 'a.md', text: 'Always take the first step today' }, { name: 'b.md', text: 'unrelated words here' }]),
+      [{ shingle: 'take the first step', sources: ['a.md'] }], 'the helper finds a shared four-word run and names its file');
+    assert.deepEqual(sharedShingles(HOUSE_STYLE_TEXT, [{ name: 'x.md', text: 'two words only' }]), []);
+    if (process.env.ZEROX_BUNDLED_SKILLS) {
+      const { loadSources } = await import('./scripts/check-style-originality.mjs');
+      const { delimiter } = await import('node:path');
+      const shared = sharedShingles(HOUSE_STYLE_TEXT, loadSources(process.env.ZEROX_BUNDLED_SKILLS.split(delimiter).filter(Boolean)));
+      assert.deepEqual(shared, [], 'no four-word run of the preface is in the bundled skills');
+    }
     ok(`the preface text: ${HOUSE_STYLE_BYTES} bytes (about ${HOUSE_STYLE_TOKENS} tokens), starts by saying the user and project win, three sections, plain ASCII, no date, template slot or vendor name`);
   }
 
@@ -238,6 +253,17 @@ try {
     // Estimates never held the preface: no usage, usage flagged estimate, a bare total.
     assert.equal(args(undefined, { styleTokens: HOUSE_STYLE_TOKENS }).p_prompt_tokens, 900, 'no usage: the estimate from the client messages');
     assert.equal(args({ prompt_tokens: 900, completion_tokens: 0, estimate: true }, { styleTokens: HOUSE_STYLE_TOKENS }).p_prompt_tokens, 900);
+    // normalizeCompletion flags its usage-less fallback `estimated`: the same, not reduced.
+    assert.equal(args({ prompt_tokens: 900, completion_tokens: 3, total_tokens: 903, estimated: true }, { styleTokens: HOUSE_STYLE_TOKENS }).p_prompt_tokens, 900);
+    assert.equal(args({ prompt_tokens: 120, completion_tokens: 3, total_tokens: 123, estimated: true }, { styleTokens: HOUSE_STYLE_TOKENS }).p_prompt_tokens, 120, 'a small estimate does not floor to 0');
+    assert.equal(usageCountsPreface({ prompt_tokens: 5, estimated: true }), false);
+    assert.equal(usageCountsPreface({ prompt_tokens: 5, estimated: false }), true);
+    // clientEstimate pins an estimate to the client's prompt (the Workers AI adapter estimates from the payload it sent, preface included).
+    assert.deepEqual(clientEstimate({ prompt_tokens: 1000, completion_tokens: 7, total_tokens: 1007, estimated: true }, 650), { prompt_tokens: 650, completion_tokens: 7, total_tokens: 657, estimated: true });
+    assert.deepEqual(clientEstimate({ prompt_tokens: 1000, completion_tokens: 7, estimate: true }, 650).prompt_tokens, 650);
+    const provider = { prompt_tokens: 1000, completion_tokens: 7, total_tokens: 1007 };
+    assert.equal(clientEstimate(provider, 650), provider, 'provider usage is returned as it is');
+    assert.equal(clientEstimate(undefined, 650), undefined);
     assert.equal(args({ total_tokens: 13 }, { styleTokens: HOUSE_STYLE_TOKENS }).p_prompt_tokens, 13, 'a bare total is not reduced below what was sent');
     assert.ok(usageCountsPreface({ prompt_tokens: 1 }) && usageCountsPreface({ total_tokens: 5, completion_tokens: 1 }));
     assert.ok(!usageCountsPreface({ total_tokens: 5 }) && !usageCountsPreface(null) && !usageCountsPreface({ estimate: true, prompt_tokens: 5 }));
@@ -247,7 +273,7 @@ try {
     assert.deepEqual(creditPreface(billed, usage, 100), { ...billed, prompt_tokens: 1900, total_tokens: 2200 });
     assert.equal(creditPreface(billed, usage, 0), billed);
     assert.equal(creditPreface(billableUsage(undefined, { prompt_tokens: 900 }), undefined, 345).prompt_tokens, 900);
-    ok('accounting: the preface tokens come off the prompt side of settlement and credits (floor 0, cache split clamped); estimates, bare totals and refunds are not reduced; same bill as the request without it');
+    ok('accounting: the preface tokens come off the prompt side of settlement and credits (floor 0, cache split clamped); estimates (either flag spelling), bare totals and refunds are not reduced; same bill as the request without it');
   }
 
   // ── Through the gateway ──
@@ -287,6 +313,12 @@ try {
     const applied = await post(body());
     assert.equal(applied.status, 200);
     assert.equal(applied.headers.get(STYLE_HEADER), 'v1', 'the response header says it was added');
+    // A browser client can read the header and send the opt-out: CORS allows and exposes it.
+    assert.match(applied.headers.get('access-control-expose-headers') ?? '', /x-neuron-style/i, 'the response header is exposed to browsers');
+    const preflight = await app.request('https://zero-x.live/v1/chat/completions', { method: 'OPTIONS', headers: {
+      Origin: 'https://app.example.com', 'Access-Control-Request-Method': 'POST', 'Access-Control-Request-Headers': 'authorization,content-type,x-neuron-style' } }, env);
+    assert.ok(preflight.status < 300, `preflight status ${preflight.status}`);
+    assert.match(preflight.headers.get('access-control-allow-headers') ?? '', /x-neuron-style/i, 'the opt-out request header passes a browser preflight');
     const appliedBody = upstream();
     assert.equal(appliedBody.messages[0].content, `${HOUSE_STYLE_TEXT}\n\n${system}`);
     assert.equal(appliedBody.messages.length, 2);
@@ -423,6 +455,142 @@ try {
     ok('ledger: settlement subtracts the preface from the prompt tokens, the reservation is unchanged, a failover attempt sends the same preface');
   }
 
+  // ── Estimates, client aborts, failed attempts and context fit through the gateway ──
+  {
+    const day = new Date().toISOString().slice(0, 10);
+    const accountId = '12345678-1234-4234-8234-123456789abc';
+    const { planPolicyRows } = await import('./contract-rows.mjs');
+    const policyRows = await planPolicyRows();
+    const store = new Map([['ses_acct', JSON.stringify({ created: Date.now(), plan: 'free', requests: 0, tokens_used: 0, usage_day: day,
+      user_id: accountId, account_backed: true })]]);
+    for (const token of ['ses_kv_styled', 'ses_kv_off', 'ses_cf_styled', 'ses_cf_off', 'ses_fit_styled', 'ses_fit_off']) {
+      store.set(token, JSON.stringify({ created: Date.now(), plan: 'free', requests: 0, tokens_used: 0, usage_day: day }));
+    }
+    const kv = { get: async key => store.get(key), put: async (key, value) => store.set(key, value), delete: async key => store.delete(key) };
+    const ledgerEnv = { ALLOW_ANONYMOUS_SESSIONS: 'true', GROQ_API_KEY: 'groq-test', SUPABASE_URL: 'https://test.supabase.co', SUPABASE_SECRET_KEY: 'sb_secret_test', SESSIONS_KV: kv };
+    const aiRuns = [];
+    const kvEnv = { ALLOW_ANONYMOUS_SESSIONS: 'true', GROQ_API_KEY: 'groq-test', SESSIONS_KV: kv,
+      AI: { run: async (model, payload) => { aiRuns.push({ model, payload }); return { response: 'done' }; } } };
+    const rpcCalls = [];
+    let upstream = 'no_usage';
+    globalThis.fetch = async (url, options = {}) => {
+      if (String(url).includes('/rest/v1/rpc/')) {
+        const rpc = String(url).split('/').at(-1);
+        const args = JSON.parse(options.body);
+        rpcCalls.push([rpc, args]);
+        if (rpc === 'zerox_get_account') return Response.json([{ clerk_id: accountId, plan: 'free', daily_requests: 1, daily_tokens_used: 0, last_usage_reset: day }]);
+        if (rpc === 'zerox_plan_policies_v2') return Response.json(policyRows);
+        if (rpc === 'zerox_reserve_v2') return Response.json([{ status: 'ok', reservation_id: `res-${rpcCalls.length}`, plan: 'free', remaining_requests: 90, remaining_tokens: 400000 }]);
+        if (rpc === 'zerox_settle_v2') return Response.json([{ status: 'settled' }]);
+        throw new Error(`Unexpected RPC ${rpc}`);
+      }
+      if (!String(url).startsWith('https://api.groq.com/')) throw new Error(`Unexpected outbound request: ${url}`);
+      if (upstream === 'hang') {
+        return new Promise((_, reject) => options.signal?.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))));
+      }
+      if (upstream === 'model_error') return new Response('{"error":{"code":"tool_use_failed","message":"Failed to call a function"}}', { status: 400, headers: { 'Content-Type': 'application/json' } });
+      // A reply with no usage block at all (some OpenAI-compatible hosts).
+      return Response.json({ id: 'up', choices: [{ index: 0, message: { role: 'assistant', content: 'done' }, finish_reason: 'stop' }] });
+    };
+    const MODEL = 'groq/openai/gpt-oss-120b';
+    const CF = '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
+    const messages = [{ role: 'system', content: 'Acme.' }, user];
+    const post = (extra, { token = 'ses_acct', headers = {}, bindings = ledgerEnv, signal } = {}) => app.request('https://zero-x.live/v1/chat/completions', {
+      method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...headers },
+      body: JSON.stringify({ model: MODEL, messages, tools, ...extra }), signal }, bindings);
+    const off = { [STYLE_HEADER]: 'off' };
+    // Settlement arguments without the per-request id and the measured latency.
+    const settles = () => rpcCalls.filter(([rpc]) => rpc === 'zerox_settle_v2').map(([, args]) => ({ ...args, p_reservation_id: null, p_latency_ms: 0 }));
+    const tokensOf = token => JSON.parse(store.get(token)).tokens_used;
+    const clientPrompt = estimatePromptTokens(messages, tools);
+    assert.ok(clientPrompt < HOUSE_STYLE_TOKENS, 'a small prompt: taking the preface off an estimate would floor it to 0');
+
+    // 1. A non-streaming reply with no usage block: normalizeCompletion estimates it from the
+    //    client's messages, which never held the preface. Settled prompt = the client estimate.
+    rpcCalls.length = 0;
+    assert.equal((await post({})).status, 200);
+    assert.equal((await post({}, { headers: off })).status, 200);
+    const [estStyled, estOff] = settles();
+    assert.equal(estStyled.p_prompt_tokens, clientPrompt, 'ledger: the styled prompt is the client estimate, not the estimate less the preface');
+    assert.deepEqual(estStyled, estOff, 'and the whole settlement equals the unstyled request\'s');
+    // The KV path.
+    const bill = async (token, headers = {}) => { const before = tokensOf(token); await post({}, { token, bindings: kvEnv, headers }); return tokensOf(token) - before; };
+    const kvStyled = await bill('ses_kv_styled');
+    const kvOff = await bill('ses_kv_off', off);
+    assert.equal(kvStyled, kvOff, 'KV: no usage block, the same bill with and without the preface');
+    assert.ok(kvStyled >= clientPrompt, 'KV: never below the client prompt estimate');
+
+    // 2. Workers AI estimates from the payload it sent, which holds the preface: pinned back to
+    //    the client's prompt (clientEstimate), so the bill is the same with and without it.
+    const cfBill = async (token, headers = {}) => {
+      const before = tokensOf(token);
+      aiRuns.length = 0;
+      const response = await post({ model: CF }, { token, bindings: kvEnv, headers });
+      assert.equal(response.status, 200, `${CF}: ${response.status}`);
+      return { billed: tokensOf(token) - before, sent: aiRuns[0].payload.messages[0].content };
+    };
+    const cfStyled = await cfBill('ses_cf_styled');
+    const cfOff = await cfBill('ses_cf_off', off);
+    assert.ok(cfStyled.sent.startsWith('Zero-X house style v1.') && cfOff.sent === 'Acme.', 'Workers AI was sent the preface only when styled');
+    assert.equal(cfStyled.billed, cfOff.billed, 'Workers AI estimate: the preface is not charged, and not credited twice');
+    assert.ok(cfStyled.billed >= clientPrompt);
+
+    // 3. A client abort before the first byte settles the processed prompt: the full client
+    //    estimate, never reduced by a preface the estimate does not hold.
+    upstream = 'hang';
+    rpcCalls.length = 0;
+    for (const headers of [{}, off]) {
+      const client = new AbortController();
+      setTimeout(() => client.abort(), 40);
+      const response = await post({}, { headers, signal: client.signal });
+      assert.ok(response.status >= 400, 'the aborted request fails');
+    }
+    await new Promise(resolve => setTimeout(resolve, 20));
+    const [abortStyled, abortOff] = settles();
+    assert.equal(abortStyled.p_status, 'error');
+    assert.equal(abortStyled.p_prompt_tokens, clientPrompt, 'abort: the full client estimate is billed');
+    assert.deepEqual(abortStyled, abortOff, 'abort: the same settlement with and without the preface');
+
+    // 4. A model-side failure after the upstream ran the model (failed_upstream) settles the
+    //    prompt it processed: again the client estimate, not less.
+    upstream = 'model_error';
+    rpcCalls.length = 0;
+    await post({});
+    await post({}, { headers: off });
+    const failed = settles();
+    assert.equal(failed.length, 2);
+    assert.equal(failed[0].p_status, 'failed_upstream');
+    assert.equal(failed[0].p_prompt_tokens, clientPrompt, 'failed attempt: the full client estimate');
+    assert.deepEqual(failed[0], failed[1], 'failed attempt: the same settlement with and without the preface');
+
+    // 5. Context fit counts the preface: a prompt that leaves room for 1,024 output tokens without
+    //    it but not with it is not sent to a 24,000-token model at all.
+    const entry = catalogEntry(CF);
+    assert.equal(entry.context_window, 24000, 'the model this test is sized for');
+    const sized = target => {
+      let length = Math.floor(target * 3.5);
+      const build = () => [{ role: 'system', content: 'Acme.' }, { role: 'user', content: 'x'.repeat(length) }];
+      while (estimatePromptTokens(build(), tools) > target) length--;
+      while (estimatePromptTokens(build(), tools) < target) length++;
+      return build();
+    };
+    const nearLimit = sized(entry.context_window - 1100);
+    const room = entry.context_window - estimatePromptTokens(nearLimit, tools);
+    assert.ok(room >= 1024, 'it fits without the preface');
+    assert.ok(room - HOUSE_STYLE_TOKENS < 1024, 'and does not with it');
+    aiRuns.length = 0;
+    const fitsOff = await post({ model: CF, messages: nearLimit, max_tokens: 2000 }, { token: 'ses_fit_off', bindings: kvEnv, headers: off });
+    assert.equal(fitsOff.status, 200, 'without the preface the request is served');
+    assert.equal(aiRuns.length, 1);
+    aiRuns.length = 0;
+    const tooBig = await post({ model: CF, messages: nearLimit, max_tokens: 2000 }, { token: 'ses_fit_styled', bindings: kvEnv });
+    assert.ok(tooBig.status >= 400 && tooBig.status < 500, `with the preface counted the request is refused before any upstream call (status ${tooBig.status})`);
+    assert.equal(tooBig.headers.get(STYLE_HEADER), null);
+    assert.equal(aiRuns.length, 0, 'the model was never asked');
+    globalThis.fetch = async input => { throw new Error(`Unexpected outbound request: ${String(input?.url ?? input)}`); };
+    ok('regressions: a reply with no usage block (Groq-style and Workers AI) is billed the client estimate with and without the preface; a client abort and a failed attempt settle the full client estimate; the context-window fit counts the preface');
+  }
+
   // ── The A/B harness (scripts/style-ab.mjs): safe by default, offline ──
   {
     const { buildPlan, describePlan, execute, HARD_MAX_REQUESTS, loadTarget, main, parseArgs, summarize } = await import('./scripts/style-ab.mjs');
@@ -511,10 +679,10 @@ try {
         const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
         const optedOut = req.headers['x-neuron-style'] === 'off';
         const styled = apply && !optedOut;
-        const id = Object.keys(answers).find(key => body.messages[1].content.includes(key.replace('go-reverse', 'Reverse').replace('py-pagination', 'paginate'))) || 'go-reverse';
+        const id = Object.keys(answers).find(key => body.messages.at(-1).content.includes(key.replace('go-reverse', 'Reverse').replace('py-pagination', 'paginate'))) || 'go-reverse';
         const code = answers[id][styled ? 1 : 0];
         json(200, { choices: [{ index: 0, message: { role: 'assistant', content: null, tool_calls: [{ id: 'c1', type: 'function', function: { name: 'write_file', arguments: JSON.stringify({ path: 'f', content: code }) } }] }, finish_reason: 'tool_calls' }],
-          usage: { prompt_tokens: 1000 + (styled ? HOUSE_STYLE_TOKENS : 0), completion_tokens: styled ? 60 : 100, total_tokens: 0 } }, styled ? { 'x-neuron-style': 'v1' } : {});
+          usage: { prompt_tokens: (body.messages.length > 3 ? Math.ceil(JSON.stringify(body.messages).length / 3.5) : 1000) + (styled ? HOUSE_STYLE_TOKENS : 0), completion_tokens: styled ? 60 : 100, total_tokens: 0 } }, styled ? { 'x-neuron-style': 'v1' } : {});
       });
     });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -551,6 +719,19 @@ try {
       assert.ok(!output.lines.join('').includes(KEY));
       assert.equal(JSON.parse(readFileSync(file, 'utf8')).plan.runs, undefined);
       (await import('node:fs')).rmSync(file, { force: true });
+      // Both shapes in one run: the loop shape carries a long prior conversation, so the preface is a small share of its cost.
+      chats = 0;
+      const both = await main(argv(['--models', MODEL, '--shapes', 'single,loop', '--context-tokens', '8000', '--execute', '--confirm', 'local']), { env: { ZEROX_AB_TOKEN: KEY }, stdout: sink(), ledger: false });
+      assert.equal(both.code, 0);
+      assert.equal(chats, 16, '2 tasks x 2 shapes x 2 arms x 2 repeats');
+      const [single, loop] = both.report.summary;
+      assert.deepEqual([single.shape, loop.shape, single.pairs, loop.pairs], ['single', 'loop', 4, 4]);
+      assert.ok(single.B_over_A.cost_tokens > 1.2, `single-shot: the preface looks expensive on a tiny prompt (${single.B_over_A.cost_tokens})`);
+      assert.ok(loop.B_over_A.cost_tokens > 1.02 && loop.B_over_A.cost_tokens < 1.08, `loop: the preface is a few percent of a long prompt (${loop.B_over_A.cost_tokens})`);
+      assert.ok(loop.B_over_A.billed_tokens < 1 && loop.A.prompt_tokens > 7000, 'loop: billed is cheaper (the preface is left out, completions shorter) on a real-sized prompt');
+      assert.notEqual(single.reading, loop.reading);
+      assert.ok(!('gate' in both.report) && !JSON.stringify(both.report.summary).includes('"gate"'), 'no gate is computed');
+      assert.match(both.report.note, /No gate is computed/);
       // The gateway under test is not applying the preface: the run stops at the first mismatch.
       apply = false;
       chats = 0;
@@ -574,8 +755,42 @@ try {
     const [summary] = summarize(rows);
     assert.deepEqual([summary.B.n, summary.B.errors, summary.B.pass_rate, summary.B_over_A.pass_rate_points], [2, 1, 0, -100]);
     assert.equal(summary.B_over_A.lines, 0.5);
+    // The loop shape: the same task after a long, fixed prior conversation, for cost.
+    {
+      const { buildLoopRequest, LOOP_MAX_TOKENS, LOOP_MIN_TOKENS } = await import('./scripts/style-ab-tasks.mjs');
+      for (const target of [LOOP_MIN_TOKENS, 8000, LOOP_MAX_TOKENS]) {
+        const loop = buildLoopRequest(task('go-reverse'), MODEL, { contextTokens: target });
+        const estimate = estimatePromptTokens(loop.messages, loop.tools);
+        assert.ok(Math.abs(estimate - target) / target < 0.03, `${target}: the prior conversation is about ${target} tokens (got ${estimate})`);
+        assert.equal(JSON.stringify(loop), JSON.stringify(buildLoopRequest(task('go-reverse'), MODEL, { contextTokens: target })), 'byte-identical every time (a cacheable prefix)');
+        assert.equal(loop.messages[0].role, 'system');
+        assert.equal(loop.messages.at(-1).content, task('go-reverse').prompt, 'the task is the last turn');
+        assert.ok(loop.messages.some(message => message.role === 'tool') && Array.isArray(loop.tools) && loop.tool_choice === 'auto');
+        assert.ok(!/Ponytail:|AntiSlop:|house style|claude|anthropic/i.test(JSON.stringify(loop)), 'no marker and no vendor name in the transcript');
+      }
+      assert.throws(() => buildLoopRequest(task('go-reverse'), MODEL, { contextTokens: 4999 }), /contextTokens/);
+      assert.throws(() => buildLoopRequest(task('go-reverse'), MODEL, { contextTokens: LOOP_MAX_TOKENS + 1 }), /contextTokens/);
+      const both = buildPlan({ models: MODEL, tasks: 'go-reverse', shapes: 'single,loop' }, { target: staging });
+      assert.deepEqual([both.total, both.shapes, both.contextTokens], [4, ['single', 'loop'], 8000]);
+      assert.deepEqual(new Set(both.runs.map(run => run.shape)), new Set(['single', 'loop']));
+      assert.deepEqual(buildPlan({ models: MODEL, tasks: 'go-reverse' }, { target: staging }).shapes, ['single'], 'single-shot is the default');
+      assert.throws(() => buildPlan({ models: MODEL, shapes: 'long' }, { target: staging }), /unknown shape/);
+      assert.throws(() => buildPlan({ models: MODEL, shapes: 'loop', 'context-tokens': '30000' }, { target: staging }), /--context-tokens/);
+      assert.throws(() => buildPlan({ models: MODEL, shapes: 'single,loop', repeat: '2' }, { target: staging }), /above the cap of 40/, 'both shapes count against the cap');
+      assert.match(describePlan(both), /loop \(about 8000 prompt tokens each, read cost here\)/);
+    }
+    // A pair whose arm A produced no code stays in the comparison: a failed pass, a no_code count,
+    // and only the lines ratio is left out.
+    {
+      const [kept] = summarize([
+        { model: 'm', shape: 'single', arm: 'A', task: 't', round: 0, kind: 'code', pass: false, prompt_tokens: 100, completion_tokens: 10, billed_total: 110, lines: 0 },
+        { model: 'm', shape: 'single', arm: 'B', task: 't', round: 0, kind: 'code', pass: true, prompt_tokens: 450, completion_tokens: 40, billed_total: 140, lines: 6 }]);
+      assert.deepEqual([kept.pairs, kept.A.no_code, kept.A.pass_rate, kept.B.pass_rate, kept.B_over_A.lines, kept.B_over_A.pass_rate_points], [1, 1, 0, 1, null, 100]);
+      assert.equal(kept.B_over_A.billed_tokens, Number((140 / 110).toFixed(3)));
+      assert.match(kept.reading, /Output length and pass rate only/);
+    }
     assert.ok(typeof execute === 'function');
-    ok('A/B harness: dry run by default (no socket, no credential); credentials, URLs and unknown flags refused; production, http, IP and port targets refused; the cap is hard and refuses instead of trimming; only free listed models; arm and header must agree or the run stops; billed and provider-cost token bases; the report never holds the credential');
+    ok('A/B harness: single and loop shapes (loop: a long fixed prior conversation, cost read there); no gate; pairs with no arm A code kept; dry run by default (no socket, no credential); credentials, URLs and unknown flags refused; production, http, IP and port targets refused; the cap is hard and refuses instead of trimming; only free listed models; arm and header must agree or the run stops; billed and provider-cost token bases; the report never holds the credential');
   }
 
   // ── Published text, notices and env examples match the code ──
@@ -585,15 +800,21 @@ try {
     assert.ok(docs.includes(HOUSE_STYLE_TEXT), 'docs.html publishes the verbatim preface text');
     assert.ok(docs.includes('x-neuron-style') && docs.includes('x-neuron-style: off'), 'docs.html lists the header and the opt-out');
     assert.ok(/not (?:counted|charged)/i.test(docs.slice(docs.indexOf('id="house-style"'))), 'docs say it is not charged');
-    for (const source of ['Ponytail', 'gstack', 'Nutlope/hallmark']) assert.ok(docs.includes(source), `docs credit ${source}`);
+    for (const source of ['Ponytail', 'gstack', 'Nutlope/hallmark', 'miqdadbadjuber/anti-slop']) assert.ok(docs.includes(source), `docs credit ${source}`);
+    assert.ok(!/All are MIT/i.test(docs) && /MIT licensed according to its project page/.test(docs), 'docs do not claim a Hallmark licence file they did not check');
     const trust = read('../../docs/trust.html');
     assert.ok(/house style/i.test(trust) && /not (?:counted|charged)/i.test(trust) && trust.includes('x-neuron-style'), 'the trust page discloses it');
     for (const page of ['privacy.html', 'terms.html']) assert.ok(/style preface/i.test(read(`../../${page}`)), `${page} mentions the style preface`);
     const notice = read('../../NOTICE');
-    for (const source of ['DietrichGebert/ponytail', 'dkfish/ponytail', 'garrytan/gstack', 'Nutlope/hallmark', 'anti-slop', 'MIT']) {
+    for (const source of ['DietrichGebert/ponytail', 'dkfish/ponytail', 'garrytan/gstack', 'Nutlope/hallmark', 'miqdadbadjuber/anti-slop', '388cbe3', 'MIT']) {
       assert.ok(notice.includes(source), `NOTICE credits ${source}`);
     }
     assert.ok(notice.includes('own words'), 'NOTICE says the text is our own');
+    const flat = notice.split(/\s+/).join(' ');
+    assert.ok(flat.includes('check-style-originality.mjs') && flat.includes('four words'), 'NOTICE says how the originality claim was checked');
+    assert.ok(!/copies no text/i.test(flat), 'NOTICE does not claim more than the check shows');
+    assert.ok(flat.includes('MIT licence according to its project page'), 'NOTICE says what is known about the Hallmark licence');
+    assert.ok(read('docs/HOUSE_STYLE.md').includes('check-style-originality.mjs'), 'HOUSE_STYLE.md documents the originality check');
     const contract = read('docs/PLATFORM_CONTRACT.md');
     assert.ok(contract.includes('x-neuron-style'), 'the contract lists the header');
     const guide = read('docs/HOUSE_STYLE.md');

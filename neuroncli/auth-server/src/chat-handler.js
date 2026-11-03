@@ -17,7 +17,7 @@ import { exhaustedBudget, notePoolExhausted, notePoolReserved, poolBudgetState }
 import { loadOffers, offerIdFor } from './oiop/offers.js';
 import { callerPolicy } from './oiop/policy.js';
 import { scrubMode, scrubRequest, scrubsOffer, SecretRestorer } from './oiop/scrub.js';
-import { applyHouseStyle, creditPreface, HOUSE_STYLE_TOKENS, HOUSE_STYLE_VERSION, STYLE_HEADER, styleDecision } from './house-style.js';
+import { applyHouseStyle, clientEstimate, creditPreface, HOUSE_STYLE_TOKENS, HOUSE_STYLE_VERSION, STYLE_HEADER, styleDecision } from './house-style.js';
 import {
   PAID_DENIED_STATUSES, RESERVATION_LEASE_SECONDS, RESERVATION_RENEW_MS, RESERVE_ERRORS, TERMINAL_RESERVE_STATUSES,
   renewCapacity, reservationArgs, reserveCapacity, reserveError, reserveSessionQuota, runInBackground, sessionTiers,
@@ -529,6 +529,8 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
         let completion;
         try {
           completion = restorer.completion(normalizeCompletion(started.json, entry.id, sent.body.messages, body.tools, { onToolSignature }));
+          // An estimate (no usage block upstream) is the client's own prompt, never the preface's (clientEstimate).
+          if (style.apply) completion = { ...completion, usage: clientEstimate(completion.usage, promptTokens) };
         } catch {
           recordFailure(key, FailureKind.SERVER, null, started.latencyMs);
           console.error('Neuron upstream returned an invalid completion', log);

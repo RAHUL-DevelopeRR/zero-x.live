@@ -11,7 +11,9 @@
 //     later system instruction win.
 //   - It is added once per request, after secret scrubbing (src/oiop/scrub.js) and before the
 //     provider adapters build their payload (chat-handler.js attempt()).
-//   - It is not charged to the user (creditPreface, capacity.js settlementArgs).
+//   - It is not charged to the user (creditPreface, capacity.js settlementArgs). The shared pool
+//     counters are settled from the same figure, so they run about HOUSE_STYLE_TOKENS below what the
+//     provider metered per styled request (docs/HOUSE_STYLE.md, Shared pool budgets drift).
 //
 // The three sections follow the ideas of the public Ponytail (economy), gstack (build
 // discipline) and anti-slop UI design (design taste) projects, in Zero-X's own words (NOTICE).
@@ -24,19 +26,19 @@ export const HOUSE_STYLE_TEXT = [
   "Zero-X house style v1. Defaults only: anything the user, the project (AGENTS.md, rules files) or a later system message says overrides them.",
   "",
   "Economy",
-  "- Give the shortest correct answer and the least code that works. Before writing code, take the first rung that holds: it need not exist; the repo already does it; the standard library or platform does it; an installed dependency does it; only then new code.",
-  "- Read what you will touch first. Make the smallest diff that fixes the cause. No new dependencies, config or abstractions unless asked.",
-  "- No filler, no restating. End with a few lines: what changed, what you skipped, how to verify.",
+  "- Use the fewest words and the least correct code. Before adding code or a dependency, check whether the platform, the language's library or this codebase already covers the need, and whether it is a need at all.",
+  "- Read the code you will change first. Fix the cause with the smallest diff. Add no layers, settings or packages nobody asked for.",
+  "- No filler, no repeating the question. Close with a few lines: the change, anything left out, how to check it.",
   "",
   "Build discipline",
-  "- Work in small verified steps. Run the tests or build when you can; add a small check for new logic. Never claim an unverified result.",
-  "- Never cut validation at trust boundaries, data-loss handling, security or accessibility.",
-  "- Leave unrelated code alone. Do not invent APIs, paths or facts; say when unsure.",
+  "- Work in small steps and verify each: run the tests or build when possible; add a small test for new logic. Report only results you checked.",
+  "- Shortening must never remove handling of untrusted input, protection against data loss, security or accessibility.",
+  "- Leave unrelated code alone. Never make up APIs, paths or facts; say when unsure.",
   "",
   "Design taste (UI work)",
-  "- Pick one design direction from the product's purpose and audience before coding; keep to it, and to the project's own design system.",
-  "- Avoid default AI page patterns: gradient heroes, three identical feature cards, stock testimonials, invented numbers, an eyebrow above every heading.",
-  "- Every control works. Readable text, visible focus, layouts sound from phone width up. Real content, not lorem ipsum.",
+  "- Settle on one design direction for the product and its audience before coding, then follow it and the repo's design system.",
+  "- Avoid the stock AI page look: a gradient hero, three matching feature cards, made-up testimonials or figures, an eyebrow label over every heading.",
+  "- Every control must work. Readable text, visible focus, layouts that hold from phone width up. Real content, no lorem ipsum.",
 ].join("\n");
 
 export const HOUSE_STYLE_BYTES = new TextEncoder().encode(HOUSE_STYLE_TEXT).byteLength;
@@ -185,11 +187,26 @@ const reported = value => value !== undefined && value !== null;
 
 // Whether `usage` came from the provider and so counts the preface: it has a prompt count, or a
 // total with a completion count to take it from. Not an estimate built from the client's own
-// messages (flagged `estimate`, or no usage at all), and not a bare total (billableUsage then
-// takes the smaller of the total and that estimate as the prompt).
+// messages (no usage at all, or flagged: `estimate` by the aborted and failed-attempt fallbacks in
+// chat-handler.js, `estimated` by normalizeCompletion when a reply carries no usage block), and
+// not a bare total (billableUsage then takes the smaller of the total and that estimate as the
+// prompt). Both spellings count: an estimate that went through the gateway as a usage block still
+// has a prompt figure, and taking the preface off it would credit tokens it never held.
 export function usageCountsPreface(usage) {
-  if (!usage || usage.estimate === true) return false;
+  if (!usage || usage.estimate === true || usage.estimated === true) return false;
   return reported(usage.prompt_tokens) || (reported(usage.total_tokens) && reported(usage.completion_tokens));
+}
+
+// The usage block of a non-streaming reply, with any estimate pinned to the client's own prompt
+// estimate. normalizeCompletion builds its estimate from the messages it is given: the gateway
+// gives it the client's, but the Workers AI adapter (src/cloudflare-adapter.js) gives it the
+// payload it sent, which holds the preface. Either way an estimate is what the client's messages
+// would cost, so a styled request is charged the same as an unstyled one. Provider usage is
+// returned as is.
+export function clientEstimate(usage, promptTokens) {
+  if (!usage || (usage.estimated !== true && usage.estimate !== true)) return usage;
+  const prompt = whole(promptTokens);
+  return { ...usage, prompt_tokens: prompt, total_tokens: prompt + whole(usage.completion_tokens) };
 }
 
 /**

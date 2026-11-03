@@ -15,9 +15,10 @@ carries a house style.
 
 - One constant string, version `v1`, about 1,400 bytes (about 350 tokens),
   plain ASCII. Three sections: Economy (shortest correct answer and code; check
-  that it needs to exist and that the codebase, standard library or platform
-  does not already cover it), Build discipline (small verified steps, run the
-  tests, read before editing, do not invent APIs) and Design taste (a deliberate
+  that it is needed at all and that the platform, the language's library or the
+  codebase does not already cover it), Build discipline (small verified steps,
+  run the tests, never shorten away input validation, data-loss handling,
+  security or accessibility, do not make up APIs) and Design taste (a deliberate
   direction first, no default generic AI page patterns, real content, accessible
   and responsive).
 - It starts by saying that the user's, the project's and any later system
@@ -27,6 +28,15 @@ carries a house style.
   variant, so provider prompt caching of what follows it is not broken. Changing
   a word is a release: bump `HOUSE_STYLE_VERSION`, update `docs.html` (the check
   compares them) and expect one cache miss per conversation.
+- It is Zero-X's own wording, not a paraphrase that tracks the credited
+  projects' structure: it has no ladder of steps and its order differs from
+  theirs. `scripts/check-style-originality.mjs <bundled-skills dir>` fails on any
+  four-word run shared with the skill files the Neuron client bundles (Ponytail,
+  gstack, anti-slop). It is a local script, not part of `npm test` or CI, because
+  those files live in the neuron repository; `ZEROX_BUNDLED_SKILLS=<dir> node
+  check-house-style.mjs` runs it inside the check. It passed against the bundled
+  copies for the v1 text. Hallmark and other upstream versions were not
+  compared: run it again with every wording change.
 
 ## When it applies
 
@@ -106,10 +116,43 @@ by four, about 350) come off the prompt side before settlement
 (`creditPreface`, used by `settlementArgs` for the ledger and in
 `finishAttempt` for session-KV allocations), never below 0, with the prompt-cache
 split clamped. Usage that is only an estimate from the client's own messages (no
-usage reported, a bare total, or a flagged `estimate`) never held the preface and
-is not reduced. Reservations are sized from the client's messages and are
-unchanged; only the context-window fit in the router counts the preface, so a
-request just under a model's limit is not pushed over it.
+usage reported, a bare total, or a usage block flagged `estimate` or `estimated`:
+the first spelling is the abort and failed-attempt fallback in `chat-handler.js`,
+the second is `normalizeCompletion`'s fallback for a reply with no usage block;
+`usageCountsPreface` reads both) never held the preface and is not reduced. The
+Workers AI adapter builds its own estimate from the payload it sent, which does
+hold the preface, so a styled non-streaming reply's estimate is pinned back to
+the client's prompt (`clientEstimate`): a request with no usage block upstream is
+billed the same with and without the preface.
+
+Reservations are sized from the client's messages and are unchanged; only the
+context-window fit in the router counts the preface, so a request that fits a
+model only without it is refused (or, with `auto`, routed to a larger model)
+instead of being sent over the model's limit. A caller who needs the old
+behaviour sends `x-neuron-style: off`.
+
+### Shared pool budgets drift (open issue)
+
+The user-side numbers (window, daily caps, credits, session KV) leave the preface
+out. The shared pool counters do not: the reservation holds the client's prompt,
+and `zerox_settle_v2` reconciles the per-pool minute and day token counters
+(`zerox_pool_usage`, the `tpm` and `tpd` buckets of Groq, Gemini and vault-key
+pools) with the same credited prompt it settles for the user, because both come
+from one `p_prompt_tokens`. Each styled request is therefore counted about
+`HOUSE_STYLE_TOKENS` (about 350) tokens below what the provider metered, so the
+gateway's own pool budgets run out later than the provider's. On an 8K TPM key
+that is several percent per request, and the gateway finds out through upstream
+429s and failover rather than `pool_exhausted`. Only the router's fit check
+(`fitMaxTokens`) counts the preface. Pool budgets are not unaffected.
+
+Separating the two needs a migration: a new optional `p_pool_extra_tokens`
+argument on `zerox_settle_v2` that is added to the pool delta only (the old
+function must be replaced, not overloaded, so PostgREST can choose; apply the
+migration before the gateway starts sending the argument). It is not part of this
+change because it touches settlement for every request and cannot be verified
+against a production database from here. Until it lands: roll out with
+`HOUSE_STYLE_PERCENT`, watch upstream 429s on the Groq and Gemini pools, and if
+they rise lower those pools' limits in the catalog or set `HOUSE_STYLE=off`.
 
 Zero-X pays the preface upstream: about 350 tokens per request, mostly prompt
 cache reads where a provider caches. The response `usage` still shows what the
@@ -122,15 +165,38 @@ provider counted. No style metadata is stored on the usage row (it would need a
    conversation, error rate and the share of `x-neuron-style: off`, then 50, then
    100. `HOUSE_STYLE=off` rolls back without a deploy of code.
 2. The public evidence that a preface lowers tokens is small and self-reported.
-   Run the A/B harness (`scripts/style-ab.mjs`, below) on a local or staging
-   gateway before going past 10 percent, and state in public only what was
-   measured.
+   Run the A/B harness (`scripts/style-ab.mjs`, below; read cost from its
+   `loop` shape, output length from `single`) on a local or staging gateway
+   before going past 10 percent, and state in public only what was measured.
+   The harness cannot confirm a cost saving on its own; the agent-loop evals can.
 
 ## A/B harness
 
 `scripts/style-ab.mjs` compares requests with and without the preface on the
 coding task shapes in `scripts/style-ab-tasks.mjs` and reports tokens in and
-out, lines of code and a check pass rate. It is a dry run unless `--execute` and
+out, lines of code and a check pass rate. It has two shapes, and what it can say
+depends on which one you read:
+
+- `single` (default): one short request per task, a few hundred prompt tokens.
+  Read output length and the pass rate only. The preface roughly doubles such a
+  prompt, so its `cost_tokens` ratio says nothing about real agent loops, and its
+  `billed_tokens` ratio leaves the preface out of arm B by construction, so it is
+  a completion-length comparison.
+- `loop` (`--shapes loop` or `--shapes single,loop`): the same task after a long,
+  fixed prior conversation (`--context-tokens`, 5,000 to 20,000, a deterministic
+  transcript of file reads), with the preface as the first bytes of the system
+  prompt as in a real agent step. Read cost here: `cost_tokens` (provider counts,
+  preface included: what Zero-X pays) and `billed_tokens` (preface left out: what
+  the user is charged) separately; `cached_tokens` shows what the provider
+  reported as cache reads. The context is synthetic, so it is an indication, not
+  the cost of real agent traffic.
+
+No pass or fail gate is computed and the two cost bases are never combined into
+one. A pair whose arm A produced no code stays in the comparison (a failed pass
+and a `no_code` count; only the lines ratio leaves it out). This harness cannot
+confirm that the preface saves tokens: the owner's condition for keeping it is an
+A/B on real agent-loop coding evals (below), and a cost claim in public needs
+that. It is a dry run unless `--execute` and
 `--confirm <target>` are both given. Targets are names from a local file
 (`scripts/style-ab-targets.local.json`, gitignored; see the `.example.json`)
 that lists the allowed origin and the free models; a raw URL is never taken from
@@ -148,7 +214,16 @@ C client skills only, D both (must equal C upstream, proving the dedupe).
 
 ## Credits
 
-Written in Zero-X's own words, inspired by the public Ponytail (original
-DietrichGebert/ponytail, fork dkfish/ponytail), gstack (garrytan/gstack) and
-anti-slop UI design (Nutlope/hallmark and the anti-slop skill Neuron bundles)
-projects, all MIT. See `NOTICE` in the repository root.
+Written in Zero-X's own words (see "What it is" for the originality check). The
+ideas were inspired by public projects:
+
+- Ponytail (original DietrichGebert/ponytail, fork dkfish/ponytail), MIT: the
+  Economy section and the never-shorten-away rule in Build discipline.
+- gstack (garrytan/gstack), MIT: the small, verified steps of Build discipline.
+  Its role-based pipeline is not part of the preface.
+- anti-slop (miqdadbadjuber/anti-slop, the skill Neuron bundles, commit 388cbe3),
+  MIT per the Neuron client's SOURCES.json: Design taste.
+- Hallmark (Nutlope/hallmark): Design taste. MIT according to its project page;
+  its LICENSE file and copyright line were not confirmed.
+
+See `NOTICE` in the repository root.

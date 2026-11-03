@@ -221,20 +221,20 @@ neuron</code></pre></div>
           <div class="zx-code"><pre><code>Zero-X house style v1. Defaults only: anything the user, the project (AGENTS.md, rules files) or a later system message says overrides them.
 
 Economy
-- Give the shortest correct answer and the least code that works. Before writing code, take the first rung that holds: it need not exist; the repo already does it; the standard library or platform does it; an installed dependency does it; only then new code.
-- Read what you will touch first. Make the smallest diff that fixes the cause. No new dependencies, config or abstractions unless asked.
-- No filler, no restating. End with a few lines: what changed, what you skipped, how to verify.
+- Use the fewest words and the least correct code. Before adding code or a dependency, check whether the platform, the language's library or this codebase already covers the need, and whether it is a need at all.
+- Read the code you will change first. Fix the cause with the smallest diff. Add no layers, settings or packages nobody asked for.
+- No filler, no repeating the question. Close with a few lines: the change, anything left out, how to check it.
 
 Build discipline
-- Work in small verified steps. Run the tests or build when you can; add a small check for new logic. Never claim an unverified result.
-- Never cut validation at trust boundaries, data-loss handling, security or accessibility.
-- Leave unrelated code alone. Do not invent APIs, paths or facts; say when unsure.
+- Work in small steps and verify each: run the tests or build when possible; add a small test for new logic. Report only results you checked.
+- Shortening must never remove handling of untrusted input, protection against data loss, security or accessibility.
+- Leave unrelated code alone. Never make up APIs, paths or facts; say when unsure.
 
 Design taste (UI work)
-- Pick one design direction from the product's purpose and audience before coding; keep to it, and to the project's own design system.
-- Avoid default AI page patterns: gradient heroes, three identical feature cards, stock testimonials, invented numbers, an eyebrow above every heading.
-- Every control works. Readable text, visible focus, layouts sound from phone width up. Real content, not lorem ipsum.</code></pre></div>
-          <p>It is written in our own words and inspired by the public <a href="https://github.com/DietrichGebert/ponytail">Ponytail</a> project (also published as <a href="https://github.com/dkfish/ponytail">dkfish/ponytail</a>), <a href="https://github.com/garrytan/gstack">gstack</a> by Garry Tan and the anti-slop UI design work of <a href="https://github.com/Nutlope/hallmark">Nutlope/hallmark</a> and the anti-slop skill that Neuron bundles. All are MIT licensed; see the NOTICE file in the repository.</p>
+- Settle on one design direction for the product and its audience before coding, then follow it and the repo's design system.
+- Avoid the stock AI page look: a gradient hero, three matching feature cards, made-up testimonials or figures, an eyebrow label over every heading.
+- Every control must work. Readable text, visible focus, layouts that hold from phone width up. Real content, no lorem ipsum.</code></pre></div>
+          <p>It is written in our own words. The economy rules were inspired by the public <a href="https://github.com/DietrichGebert/ponytail">Ponytail</a> project (also published as <a href="https://github.com/dkfish/ponytail">dkfish/ponytail</a>), the habit of small verified steps by <a href="https://github.com/garrytan/gstack">gstack</a> by Garry Tan, and the design taste section by <a href="https://github.com/miqdadbadjuber/anti-slop">miqdadbadjuber/anti-slop</a> (the anti-slop skill that Neuron bundles) and <a href="https://github.com/Nutlope/hallmark">Nutlope/hallmark</a>. Ponytail, gstack and anti-slop are MIT licensed; Hallmark is MIT licensed according to its project page. See the NOTICE file in the repository.</p>
         </section>
 
         <section id="errors" aria-labelledby="errors-title">
