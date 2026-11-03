@@ -423,6 +423,161 @@ try {
     ok('ledger: settlement subtracts the preface from the prompt tokens, the reservation is unchanged, a failover attempt sends the same preface');
   }
 
+  // ── The A/B harness (scripts/style-ab.mjs): safe by default, offline ──
+  {
+    const { buildPlan, describePlan, execute, HARD_MAX_REQUESTS, loadTarget, main, parseArgs, summarize } = await import('./scripts/style-ab.mjs');
+    const { TASKS, buildRequest, countLines, extractCode, grade, slopCount } = await import('./scripts/style-ab-tasks.mjs');
+    const KEY = `nzx_${'a'.repeat(43)}`;
+    const sink = () => { const lines = []; return { lines, write: text => { lines.push(String(text)); return true; } }; };
+    const throws = async (fn, pattern, what) => { await assert.rejects(async () => fn(), pattern, what); };
+    const MODEL = 'free/model';
+    const targetsFile = body => ({ read: () => JSON.stringify(body) });
+
+    // Arguments: a credential or a URL never goes on the command line.
+    for (const argv of [['--token', KEY], [`--token=${KEY}`], [KEY], ['--api-key', 'x']]) assert.throws(() => parseArgs(argv), /credential never goes on the command line|unexpected argument/, argv.join(' '));
+    assert.throws(() => parseArgs(['--target', 'local', '--bogus', '1']), /unknown flag/);
+    assert.throws(() => loadTarget('https://staging.example.com'), /never a URL/);
+    assert.throws(() => loadTarget('http://127.0.0.1:8787'), /never a URL/);
+
+    // Targets: production in every spelling, plain http, IPs, missing allow-list.
+    const entry = base => ({ staging: { base, models: [MODEL] } });
+    for (const base of ['https://zero-x.live', 'https://ZERO-X.LIVE.', 'https://www.zero-x.live', 'https://neuron.zero-x.live', 'https://aws.zero-x.live', 'http://zero-x.live',
+      'https://user@staging.example.com', 'https://staging.example.com:8443', 'https://203.0.113.5', 'https://gateway.example.com', 'http://staging.example.com']) {
+      assert.throws(() => loadTarget('staging', targetsFile(entry(base))), /production host|https only|no userinfo|no port|no IP|not a staging host|not a loopback/, base);
+    }
+    assert.throws(() => loadTarget('staging', targetsFile({ staging: { base: 'https://gateway-staging.example.com' } })), /allow-list/);
+    assert.throws(() => loadTarget('absent', targetsFile(entry('https://gateway-staging.example.com'))), /no target absent/);
+    assert.equal(loadTarget('staging', targetsFile(entry('https://gateway-staging.example.com'))).origin, 'https://gateway-staging.example.com');
+    assert.equal(loadTarget('local', { port: 9099 }).origin, 'http://127.0.0.1:9099');
+    assert.equal(loadTarget('staging', targetsFile({ staging: { base: 'https://staging.example.com', models: [MODEL], max_requests: 9999 } })).maxRequests, HARD_MAX_REQUESTS, 'the file cannot raise the hard cap');
+
+    // The plan: counts, alternation, caps, allow-list.
+    const staging = loadTarget('staging', targetsFile(entry('https://gateway-staging.example.com')));
+    const plan = buildPlan({ models: MODEL, tasks: 'py-pagination,go-reverse', repeat: '2' }, { target: staging });
+    assert.equal(plan.total, 2 * 1 * 2 * 2);
+    assert.deepEqual(plan.runs.map(run => run.arm), ['A', 'B', 'B', 'A', 'A', 'B', 'B', 'A'], 'the first arm alternates');
+    assert.deepEqual(new Set(plan.runs.map(run => run.model)), new Set([MODEL]));
+    assert.throws(() => buildPlan({ models: 'other/model' }, { target: staging }), /allow-list/);
+    assert.throws(() => buildPlan({}, { target: staging }), /--models/);
+    assert.throws(() => buildPlan({ models: MODEL, tasks: 'nope' }, { target: staging }), /unknown task/);
+    assert.throws(() => buildPlan({ models: MODEL, repeat: '3' }, { target: staging }), /above the cap of 40/, 'the default cap is 40 and a plan above it is refused, not trimmed');
+    assert.throws(() => buildPlan({ models: MODEL, 'max-requests': '401' }, { target: staging }), /between|from 1 to 400/);
+    assert.throws(() => buildPlan({ models: MODEL, repeat: '11', tasks: 'go-reverse' }, { target: staging }), /--repeat/);
+    assert.equal(buildPlan({ models: MODEL, 'max-requests': '22' }, { target: staging }).total, 22);
+    assert.ok(describePlan(plan).startsWith('DRY RUN: nothing was sent'));
+
+    // A dry run opens no socket and reads no credential (fetch throws, no token anywhere).
+    const out = sink();
+    const dry = await main(['--target', 'local', '--models', MODEL, '--tasks', 'go-reverse'], { env: {}, stdout: out, prompt: async () => { throw new Error('asked for a credential'); } });
+    assert.equal(dry.code, 0);
+    assert.match(out.lines.join(''), /DRY RUN/);
+    await throws(() => main(['--target', 'local', '--models', MODEL, '--tasks', 'go-reverse', '--execute'], { env: {}, stdout: sink() }), /--confirm must name the target/);
+    await throws(() => main(['--target', 'local', '--models', MODEL, '--tasks', 'go-reverse', '--execute', '--confirm', 'staging'], { env: {}, stdout: sink() }), /--confirm must name the target/);
+    await throws(() => main(['--target', 'local', '--models', MODEL, '--tasks', 'go-reverse', '--execute', '--confirm', 'local'], { env: { ZEROX_AB_TOKEN: 'ses_abc' }, stdout: sink(), ledger: false }), /session token/);
+
+    // The tasks: every code task fails on its own starter text, and a good answer passes.
+    for (const task of TASKS.filter(item => item.kind === 'code')) assert.equal(grade(task, { content: task.prompt }).pass, false, `${task.id} is not already satisfied by its prompt`);
+    const task = id => TASKS.find(item => item.id === id);
+    const write = content => ({ tool_calls: [{ function: { name: 'write_file', arguments: JSON.stringify({ path: 'f', content }) } }] });
+    assert.equal(grade(task('py-pagination'), write('def paginate(items, page, per_page):\n    if page < 1:\n        raise ValueError("page")\n    start = (page - 1) * per_page\n    return items[start:start + per_page]\n')).pass, true);
+    assert.equal(grade(task('py-pagination'), write('def paginate(items, page, per_page):\n    return items[page * per_page:]\n')).pass, false);
+    assert.equal(grade(task('js-long-file'), write('const DEFAULTS = { timeout: 5000 };\nexport function post(path) {}\n')).pass, true);
+    assert.equal(grade(task('go-reverse'), write('func Reverse(s string) string {\n\tr := []rune(s)\n\treturn string(r)\n}\n')).pass, true);
+    assert.equal(grade(task('go-reverse'), { content: 'no code at all' }).pass, false);
+    assert.equal(grade(task('py-timeout-units'), { content: '```python\ndef fetch_report(client, url, timeout=5):\n    return client.get(url, timeout=timeout * 1000)\n```' }).pass, true, 'fenced code is read too');
+    assert.equal(countLines('# c\n\nx = 1\n// c\ny = 2\n  \n'), 2);
+    assert.equal(extractCode({ tool_calls: [{ function: { arguments: '{bad' } }] }), '');
+    assert.ok(slopCount('Lorem ipsum, revolutionize your seamless day, linear-gradient(red, blue)') >= 4);
+    assert.equal(slopCount('A plain page for Trailhead.'), 0);
+    const request = buildRequest(task('go-reverse'), MODEL);
+    assert.deepEqual([Array.isArray(request.tools), request.tool_choice, request.max_tokens > 256], [true, 'auto', true], 'a tools request the gateway treats as a coding-agent request');
+    assert.ok(!/Ponytail:|AntiSlop:|house style/i.test(JSON.stringify(request)), 'the request carries no marker');
+
+    // A local stub gateway on loopback: arm B gets the header and a shorter answer when it "applies" the preface.
+    const { createServer } = await import('node:http');
+    let apply = true;
+    let chats = 0;
+    const answers = { 'go-reverse': ['func Reverse(s string) string {\n\tr := []rune(s)\n\tfor i, j := 0, len(r)-1; i < j; i, j = i+1, j-1 {\n\t\tr[i], r[j] = r[j], r[i]\n\t}\n\treturn string(r)\n}\n', 'func Reverse(s string) string {\n\tr := []rune(s)\n\tfor i, j := 0, len(r)-1; i < j; i, j = i+1, j-1 {\n\t\tr[i], r[j] = r[j], r[i]\n\t}\n\treturn string(r)\n}\n'],
+      'py-pagination': ['def paginate(items, page, per_page):\n    """Return one page."""\n    if page < 1:\n        raise ValueError("page must be at least 1")\n    start = (page - 1) * per_page\n    end = start + per_page\n    return items[start:end]\n', 'def paginate(items, page, per_page):\n    if page < 1:\n        raise ValueError("page")\n    return items[(page - 1) * per_page:][:per_page]\n'] };
+    const server = createServer((req, res) => {
+      const chunks = [];
+      req.on('data', chunk => chunks.push(chunk));
+      req.on('end', () => {
+        const json = (status, body, headers = {}) => { res.writeHead(status, { 'Content-Type': 'application/json', ...headers }); res.end(JSON.stringify(body)); };
+        if (req.url === '/v1/models') {
+          return json(200, { data: [{ id: MODEL, tiers: ['free'], available: true }, { id: 'paid/model', tiers: ['free', 'paid'], available: true }, { id: 'both/model', tiers: ['paid'], available: true }] });
+        }
+        chats++;
+        const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        const optedOut = req.headers['x-neuron-style'] === 'off';
+        const styled = apply && !optedOut;
+        const id = Object.keys(answers).find(key => body.messages[1].content.includes(key.replace('go-reverse', 'Reverse').replace('py-pagination', 'paginate'))) || 'go-reverse';
+        const code = answers[id][styled ? 1 : 0];
+        json(200, { choices: [{ index: 0, message: { role: 'assistant', content: null, tool_calls: [{ id: 'c1', type: 'function', function: { name: 'write_file', arguments: JSON.stringify({ path: 'f', content: code }) } }] }, finish_reason: 'tool_calls' }],
+          usage: { prompt_tokens: 1000 + (styled ? HOUSE_STYLE_TOKENS : 0), completion_tokens: styled ? 60 : 100, total_tokens: 0 } }, styled ? { 'x-neuron-style': 'v1' } : {});
+      });
+    });
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const port = server.address().port;
+    globalThis.fetch = realFetch;
+    try {
+      const argv = extra => ['--target', 'local', '--port', String(port), '--tasks', 'go-reverse,py-pagination', '--repeat', '2', '--delay-ms', '0', ...extra];
+      // Paid or unlisted models are refused before the first chat request.
+      for (const model of ['paid/model', 'both/model', 'unlisted/model']) {
+        chats = 0;
+        await throws(() => main(argv(['--models', model, '--execute', '--confirm', 'local']), { env: { ZEROX_AB_TOKEN: KEY }, stdout: sink(), ledger: false }), /not a free, available model/, model);
+        assert.equal(chats, 0, `${model}: nothing was sent`);
+      }
+      // A real run: 2 tasks x 1 model x 2 arms x 2 repeats.
+      chats = 0;
+      const output = sink();
+      const file = `${process.env.TEMP || process.env.TMPDIR || '.'}/style-ab-check-${process.pid}.json`;
+      const result = await main(argv(['--models', MODEL, '--execute', '--confirm', 'local', '--out', file]), { env: { ZEROX_AB_TOKEN: KEY }, stdout: output, ledger: false });
+      assert.equal(result.code, 0);
+      assert.equal(chats, 8);
+      assert.equal(result.report.rows.length, 8);
+      assert.ok(result.report.rows.every(row => row.pass && (row.arm === 'B') === (row.style_header === 'v1')), 'arm B carried the header, arm A did not');
+      const [row] = result.report.summary;
+      assert.equal(row.model, MODEL);
+      assert.deepEqual([row.A.n, row.B.n, row.pairs], [4, 4, 4]);
+      assert.equal(row.A.pass_rate, 1);
+      assert.equal(row.A.prompt_tokens, 1000);
+      assert.equal(row.B.prompt_tokens, 1000 + HOUSE_STYLE_TOKENS, 'provider basis counts the preface');
+      assert.equal(row.B.billed_total, 1000 + 60, 'billed basis leaves it out');
+      assert.equal(row.A.billed_total, 1100);
+      assert.ok(row.B_over_A.billed_tokens < 1 && row.B_over_A.cost_tokens > 1, 'cheaper billed, dearer for Zero-X');
+      assert.ok(row.B_over_A.lines <= 1 && row.B_over_A.pass_rate_points === 0);
+      assert.ok(!JSON.stringify(result.report).includes(KEY), 'the credential is never in the report');
+      assert.ok(!output.lines.join('').includes(KEY));
+      assert.equal(JSON.parse(readFileSync(file, 'utf8')).plan.runs, undefined);
+      (await import('node:fs')).rmSync(file, { force: true });
+      // The gateway under test is not applying the preface: the run stops at the first mismatch.
+      apply = false;
+      chats = 0;
+      const stopped = await main(argv(['--models', MODEL, '--execute', '--confirm', 'local']), { env: { ZEROX_AB_TOKEN: KEY }, stdout: sink(), ledger: false });
+      assert.equal(stopped.code, 2);
+      assert.match(stopped.report.invalid, /arm B got x-neuron-style: \(absent\)/);
+      assert.equal(chats, 2, 'two requests, not eight');
+      // The fetch guard: only the target's origin is reachable during a run.
+      await assert.rejects(async () => {
+        const release = (await import('../../deploy/aws/abtest-guard.mjs')).installFetchGuard([`http://127.0.0.1:${port}`]);
+        try { await fetch('https://example.com/'); } finally { release(); }
+      }, /not one of this run's origins/);
+    } finally {
+      await new Promise(resolve => server.close(resolve));
+      globalThis.fetch = async input => { throw new Error(`Unexpected outbound request: ${String(input?.url ?? input)}`); };
+    }
+    // summarize on its own: a failed request is an error, not a pass or a zero.
+    const rows = [{ model: 'm', arm: 'A', task: 't', round: 0, kind: 'code', pass: true, prompt_tokens: 100, completion_tokens: 10, billed_total: 110, lines: 10 },
+      { model: 'm', arm: 'B', task: 't', round: 0, kind: 'code', pass: false, prompt_tokens: 450, completion_tokens: 5, billed_total: 105, lines: 5 },
+      { model: 'm', arm: 'B', task: 'u', round: 0, error: 'HTTP 503' }];
+    const [summary] = summarize(rows);
+    assert.deepEqual([summary.B.n, summary.B.errors, summary.B.pass_rate, summary.B_over_A.pass_rate_points], [2, 1, 0, -100]);
+    assert.equal(summary.B_over_A.lines, 0.5);
+    assert.ok(typeof execute === 'function');
+    ok('A/B harness: dry run by default (no socket, no credential); credentials, URLs and unknown flags refused; production, http, IP and port targets refused; the cap is hard and refuses instead of trimming; only free listed models; arm and header must agree or the run stops; billed and provider-cost token bases; the report never holds the credential');
+  }
+
   // ── Published text, notices and env examples match the code ──
   {
     const docs = read('../../docs.html');
@@ -447,6 +602,8 @@ try {
       const text = read(file);
       assert.ok(/HOUSE_STYLE/.test(text), `${file} documents HOUSE_STYLE`);
     }
+    assert.ok(read('../../.gitignore').includes('neuroncli/auth-server/scripts/style-ab-targets.local.json'), 'the local targets file is gitignored');
+    assert.ok(JSON.parse(read('scripts/style-ab-targets.example.json')).staging.models.length, 'the example targets file lists an allow-list');
     const pkg = JSON.parse(read('package.json'));
     assert.ok(pkg.scripts['check:server'].includes('check-house-style.mjs'), 'check:server runs this check');
     ok('the published text is the code\'s text; docs, trust, privacy, terms, NOTICE, the contract, HOUSE_STYLE.md and the env examples say what the gateway does; npm run check:server includes this check');

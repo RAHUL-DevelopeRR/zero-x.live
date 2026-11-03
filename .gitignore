@@ -40,4 +40,5 @@ wrangler.log
 
 # The A/B harness's staging targets and Worker config (deploy/aws/AB-TEST.md)
 deploy/aws/abtest-targets.local.json
+neuroncli/auth-server/scripts/style-ab-targets.local.json
 neuroncli/auth-server/wrangler.staging.toml
