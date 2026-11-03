@@ -115,3 +115,7 @@ AZURE_OPENAI_ENDPOINT=
 AZURE_API_VERSION=2024-05-01-preview
 AZURE_OPENAI_API_KEY=               # SECRET
 AZURE_MODELS=
+
+# Zero-X house style: a short style preface on coding-agent requests (docs/HOUSE_STYLE.md).
+# HOUSE_STYLE=auto            # auto | on | off (off is the kill switch)
+# HOUSE_STYLE_PERCENT=100     # 0 to 100, share of callers that get it

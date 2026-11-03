@@ -1,0 +1,32 @@
+Zero-X notices
+==============
+
+Zero-X house style (neuroncli/auth-server/src/house-style.js)
+-------------------------------------------------------------
+The short style preface that the Zero-X gateway adds to coding-agent requests
+(docs.html#house-style, neuroncli/auth-server/docs/HOUSE_STYLE.md) is original
+text written in Zero-X's own words. It copies no text from the projects below.
+Its ideas were inspired by their public descriptions:
+
+- Ponytail, a rule set that makes a coding agent write the least code that
+  works: https://github.com/DietrichGebert/ponytail (original) and the fork
+  https://github.com/dkfish/ponytail. MIT licence.
+  Inspired the "Economy" section (does it need to exist, does the repository,
+  standard library or platform already cover it, only then new code).
+- gstack by Garry Tan, role-based workflows for planning, building, review and
+  shipping: https://github.com/garrytan/gstack. MIT licence.
+  Inspired the "Build discipline" section (small verified steps, run the tests,
+  read before editing).
+- Hallmark by Nutlope, an anti-slop UI design skill:
+  https://github.com/Nutlope/hallmark, and the anti-slop skill that the Neuron
+  client bundles. MIT licence.
+  Inspired the "Design taste" section (choose a deliberate direction first,
+  avoid default generic AI page patterns, real content, accessible layouts).
+
+Because no text from these projects is copied or vendored here, their licence
+notices are not required for this code. If text from any of them is ever added
+to the gateway, its licence file and copyright line must be added to this
+notice in the same change. The Neuron client bundles those skills, with their
+licences, in its own repository.
+
+The names above belong to their authors. Zero-X is not affiliated with them.

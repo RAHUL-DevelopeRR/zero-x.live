@@ -54,6 +54,7 @@
           <li><a href="#cli">CLI commands</a></li>
           <li><a href="#configuration">Configuration</a></li>
           <li><a href="#api">API reference</a></li>
+          <li><a href="#house-style">House style</a></li>
           <li><a href="#errors">Error codes</a></li>
           <li><a href="#limits">Limits</a></li>
           <li><a href="#api-keys">API keys</a></li>
@@ -203,8 +204,37 @@ neuron</code></pre></div>
             <li><code>x-neuron-model</code>: the model that served the request (useful with <code>auto</code>).</li>
             <li><code>x-neuron-plan</code>: your plan.</li>
             <li><code>x-neuron-quota-remaining-requests</code>, <code>x-neuron-quota-remaining-tokens</code>: what is left today.</li>
+            <li><code>x-neuron-style</code>: <code>v1</code> when Zero-X added its <a href="#house-style">house style</a> to the prompt; absent when it did not.</li>
           </ul>
           <p>Any OpenAI-compatible SDK works; set its base URL to <code>https://zero-x.live/v1</code> and its API key to your <code>nzx_</code> key.</p>
+        </section>
+
+        <section id="house-style" aria-labelledby="house-style-title">
+          <h2 id="house-style-title">House style</h2>
+          <p>For coding-agent requests (requests that include <code>tools</code>), Zero-X adds a short, fixed style note at the start of the system prompt. It asks the model to write less code, keep validation, security and accessibility checks, and avoid generic design patterns. The note is the same for everyone, contains none of your data, is not counted against your token limits or credits, and your own instructions always override it. Plain chat, forced tool calls, JSON mode and very short requests are left alone.</p>
+          <ul>
+            <li>The response header <code>x-neuron-style: v1</code> shows it was added. No header means it was not.</li>
+            <li>Turn it off for a request by sending the request header <code>x-neuron-style: off</code>.</li>
+            <li>A client that already applies its own house style (Neuron's bundled skills) sends <code>x-neuron-style: client</code>, or carries the line <code>Neuron house style</code> in its system prompt, and Zero-X then adds nothing, so the same rules are never paid for twice.</li>
+          </ul>
+          <p>The full text, version v1:</p>
+          <div class="zx-code"><pre><code>Zero-X house style v1. Defaults only: anything the user, the project (AGENTS.md, rules files) or a later system message says overrides them.
+
+Economy
+- Give the shortest correct answer and the least code that works. Before writing code, take the first rung that holds: it need not exist; the repo already does it; the standard library or platform does it; an installed dependency does it; only then new code.
+- Read what you will touch first. Make the smallest diff that fixes the cause. No new dependencies, config or abstractions unless asked.
+- No filler, no restating. End with a few lines: what changed, what you skipped, how to verify.
+
+Build discipline
+- Work in small verified steps. Run the tests or build when you can; add a small check for new logic. Never claim an unverified result.
+- Never cut validation at trust boundaries, data-loss handling, security or accessibility.
+- Leave unrelated code alone. Do not invent APIs, paths or facts; say when unsure.
+
+Design taste (UI work)
+- Pick one design direction from the product's purpose and audience before coding; keep to it, and to the project's own design system.
+- Avoid default AI page patterns: gradient heroes, three identical feature cards, stock testimonials, invented numbers, an eyebrow above every heading.
+- Every control works. Readable text, visible focus, layouts sound from phone width up. Real content, not lorem ipsum.</code></pre></div>
+          <p>It is written in our own words and inspired by the public <a href="https://github.com/DietrichGebert/ponytail">Ponytail</a> project (also published as <a href="https://github.com/dkfish/ponytail">dkfish/ponytail</a>), <a href="https://github.com/garrytan/gstack">gstack</a> by Garry Tan and the anti-slop UI design work of <a href="https://github.com/Nutlope/hallmark">Nutlope/hallmark</a> and the anti-slop skill that Neuron bundles. All are MIT licensed; see the NOTICE file in the repository.</p>
         </section>
 
         <section id="errors" aria-labelledby="errors-title">

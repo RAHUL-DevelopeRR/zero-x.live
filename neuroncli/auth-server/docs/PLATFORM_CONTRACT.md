@@ -135,7 +135,9 @@ credential (never an `nzx_` key). Session tokens are stored hashed (SHA-256) in 
 - `POST /v1/chat/completions` — OpenAI body; `model` may be `auto`. Streaming SSE with
   `data: [DONE]`. Every streamed `tool_calls[]` delta carries `index`. Response headers:
   `x-request-id`, `x-neuron-plan`, `x-neuron-model` (resolved public id),
-  `x-neuron-quota-remaining-requests`, `x-neuron-quota-remaining-tokens`.
+  `x-neuron-quota-remaining-requests`, `x-neuron-quota-remaining-tokens`, and `x-neuron-style: v1` when the
+  gateway added its house style preface (absent otherwise; request header `x-neuron-style: off|client`,
+  `docs/HOUSE_STYLE.md`).
 
 ### 3.3 Errors
 

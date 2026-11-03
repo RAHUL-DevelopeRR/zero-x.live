@@ -108,6 +108,7 @@
         <section id="gateway" aria-labelledby="gateway-title">
           <h2 id="gateway-title">What Zero-X stores</h2>
           <p>The gateway stores <strong>usage metadata only</strong>: time, model, provider, status, token counts, cost, latency and a request ID. It does not store the text of your prompts, files or the model's responses; request content is held in memory only while it is forwarded. Retention periods are in the <a href="/privacy#retention">privacy policy</a>.</p>
+          <p id="house-style">For coding-agent requests (requests that include tools), the gateway adds a short, fixed house style note to the start of the prompt. It is the same for everyone, contains none of your data, is not counted against your token limits or credits, and your own instructions override it. The response header <code>x-neuron-style: v1</code> shows when it was added, and the request header <code>x-neuron-style: off</code> turns it off. The <a href="/docs#house-style">full text is published in the docs</a>.</p>
           <p>Provider API keys stay on the gateway and are never sent to Neuron or the website. CLI sessions and API keys are stored only as SHA-256 hashes.</p>
         </section>
 

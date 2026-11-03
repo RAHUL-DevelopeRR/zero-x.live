@@ -1,6 +1,7 @@
 // The Zero-X house style (src/house-style.js, docs/HOUSE_STYLE.md), offline: the frozen text, the
 // pure decision function, the system-message merge for every adapter, the accounting that leaves
-// the preface out of what a user is charged, the response header and /health.
+// the preface out of what a user is charged, the response header and /health, and that the
+// published text, notices and env examples match the code. No outbound request is possible.
 //   node check-house-style.mjs
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -422,7 +423,36 @@ try {
     ok('ledger: settlement subtracts the preface from the prompt tokens, the reservation is unchanged, a failover attempt sends the same preface');
   }
 
-  console.log(`PASS: house style (${passed.length} groups): frozen ${HOUSE_STYLE_BYTES}-byte text, decision and rollout, merge per adapter, accounting, headers, /health`);
+  // ── Published text, notices and env examples match the code ──
+  {
+    const docs = read('../../docs.html');
+    assert.ok(docs.includes('id="house-style"'), 'docs.html has the House style section');
+    assert.ok(docs.includes(HOUSE_STYLE_TEXT), 'docs.html publishes the verbatim preface text');
+    assert.ok(docs.includes('x-neuron-style') && docs.includes('x-neuron-style: off'), 'docs.html lists the header and the opt-out');
+    assert.ok(/not (?:counted|charged)/i.test(docs.slice(docs.indexOf('id="house-style"'))), 'docs say it is not charged');
+    for (const source of ['Ponytail', 'gstack', 'Nutlope/hallmark']) assert.ok(docs.includes(source), `docs credit ${source}`);
+    const trust = read('../../docs/trust.html');
+    assert.ok(/house style/i.test(trust) && /not (?:counted|charged)/i.test(trust) && trust.includes('x-neuron-style'), 'the trust page discloses it');
+    for (const page of ['privacy.html', 'terms.html']) assert.ok(/style preface/i.test(read(`../../${page}`)), `${page} mentions the style preface`);
+    const notice = read('../../NOTICE');
+    for (const source of ['DietrichGebert/ponytail', 'dkfish/ponytail', 'garrytan/gstack', 'Nutlope/hallmark', 'anti-slop', 'MIT']) {
+      assert.ok(notice.includes(source), `NOTICE credits ${source}`);
+    }
+    assert.ok(notice.includes('own words'), 'NOTICE says the text is our own');
+    const contract = read('docs/PLATFORM_CONTRACT.md');
+    assert.ok(contract.includes('x-neuron-style'), 'the contract lists the header');
+    const guide = read('docs/HOUSE_STYLE.md');
+    for (const name of ['HOUSE_STYLE', 'HOUSE_STYLE_PERCENT', 'x-neuron-style', 'client']) assert.ok(guide.includes(name), `HOUSE_STYLE.md covers ${name}`);
+    for (const file of ['.env.example', '.dev.vars.example', '../../deploy/aws/gateway.env.example']) {
+      const text = read(file);
+      assert.ok(/HOUSE_STYLE/.test(text), `${file} documents HOUSE_STYLE`);
+    }
+    const pkg = JSON.parse(read('package.json'));
+    assert.ok(pkg.scripts['check:server'].includes('check-house-style.mjs'), 'check:server runs this check');
+    ok('the published text is the code\'s text; docs, trust, privacy, terms, NOTICE, the contract, HOUSE_STYLE.md and the env examples say what the gateway does; npm run check:server includes this check');
+  }
+
+  console.log(`PASS: house style (${passed.length} groups): frozen ${HOUSE_STYLE_BYTES}-byte text, decision and rollout, merge per adapter, accounting, headers, /health, published copy`);
 } finally {
   globalThis.fetch = realFetch;
 }
