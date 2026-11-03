@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { Hono } from 'hono';
-import { conversationKey, createChatHandler, MAX_OUTPUT_TOKENS, requestNeeds } from './src/chat-handler.js';
+import { conversationKey, createChatHandler, MAX_OUTPUT_TOKENS, requestNeeds, scopedPromptCacheKey, validateCompletionBody } from './src/chat-handler.js';
 import { RoutingEngine, fitMaxTokens } from './src/router.js';
 import { FailureKind, HealthState, ProviderHealthTracker } from './src/provider-health.js';
 import {
@@ -19,7 +19,7 @@ import {
 import { errorBody, errorResponse } from './src/errors.js';
 import { RESERVED_OUTPUT_TOKENS, reservationArgs, reservedTokens, reserveError, settlementArgs } from './src/capacity.js';
 import { exhaustedBudget, poolBudgetState, resetPoolBudgets } from './src/pool-budget.js';
-import { buildUpstreamPayload, classifyUpstreamFailure, listModelsForSession, retryAfterSeconds } from './src/providers.js';
+import { PROVIDER_PARAMS, buildUpstreamPayload, classifyUpstreamFailure, listModelsForSession, retryAfterSeconds } from './src/providers.js';
 import { resetHubClientCache } from './src/health-hub-client.js';
 import { planPolicyRows } from './contract-rows.mjs';
 
@@ -638,6 +638,58 @@ try {
     // A different conversation (the sticky choice is per conversation) without tools or the hint.
     assert.deepEqual(await served({ messages: [{ role: 'user', content: 'what is a closure?' }] }, {}),
       ['groq/openai/gpt-oss-120b', ['openai/gpt-oss-120b']]);
+  });
+
+  // Contract section 14.3: the CLI may send prompt_cache_key (a hash of its session id). The
+  // gateway forwards a caller-scoped hash of it to the upstreams that accept the field (OpenRouter)
+  // and drops it for the others; quota accounting does not change.
+  await test('prompt_cache_key: validated, scoped to the caller, sent to OpenRouter only, quota unchanged', async () => {
+    const NUL = String.fromCharCode(0);
+    const expected = (caller, key) => createHash('sha256').update(`zx-cache:${caller}${NUL}${key}`).digest('hex').slice(0, 32);
+    assert.equal(await scopedPromptCacheKey('user-1', 'sess-hash'), expected('user-1', 'sess-hash'));
+    assert.notEqual(await scopedPromptCacheKey('user-2', 'sess-hash'), await scopedPromptCacheKey('user-1', 'sess-hash'),
+      'two callers sending the same key never share one upstream');
+    const valid = { model: 'auto', messages };
+    assert.equal(validateCompletionBody({ ...valid, prompt_cache_key: 'a1B2.c3_d4:e5-f6' }), null);
+    assert.equal(validateCompletionBody({ ...valid, prompt_cache_key: 'k'.repeat(128) }), null);
+    for (const bad of ['', 'k'.repeat(129), 'has space', 'semi;colon', 42, {}, ['k']]) {
+      assert.match(validateCompletionBody({ ...valid, prompt_cache_key: bad }), /prompt_cache_key must be/, JSON.stringify(bad));
+    }
+    assert.equal(validateCompletionBody({ ...valid, prompt_cache_key: null }), null, 'null is no key');
+
+    // Request shaping: only OpenRouter keeps the field.
+    assert.deepEqual(Object.keys(PROVIDER_PARAMS).filter(provider => PROVIDER_PARAMS[provider].includes('prompt_cache_key')), ['openrouter']);
+    const body = { messages, prompt_cache_key: 'scoped' };
+    for (const id of ['groq/openai/gpt-oss-120b', 'gemini/gemini-2.5-flash', 'nvidia/openai/gpt-oss-20b', '@cf/openai/gpt-oss-120b',
+      'zai/glm-4.7-flash', 'anthropic/claude-sonnet-5-5']) {
+      assert.ok(!('prompt_cache_key' in buildUpstreamPayload(catalogEntry(id), body, 100)), `${id}: dropped`);
+    }
+    assert.equal(buildUpstreamPayload(catalogEntry('cohere/north-mini-code:free'), body, 100).prompt_cache_key, 'scoped');
+
+    // Through the chat handler.
+    const env = lineupEnv();
+    const gw = gateway();
+    gw.addSession('ses_anon', {});
+    const send = async (model, extra) => {
+      reset({ groq: () => completion({ content: 'ok' }), openrouter: () => completion({ content: 'ok' }) });
+      const before = gw.session('ses_anon');
+      const response = await gw.call(env, { model, messages, ...extra }, { country: 'US' });
+      assert.equal(response.status, 200);
+      const after = gw.session('ses_anon');
+      return { upstream: upstreamCalls()[0].body, requests: after.requests - before.requests, tokens: after.tokens_used - before.tokens_used };
+    };
+    const openrouter = await send('cohere/north-mini-code:free', { prompt_cache_key: 'session-hash-1' });
+    assert.equal(openrouter.upstream.prompt_cache_key, expected('ses_anon', 'session-hash-1'), 'OpenRouter gets the caller-scoped key');
+    assert.ok(!JSON.stringify(openrouter.upstream).includes('session-hash-1'), 'the key as sent never leaves the gateway');
+    assert.equal((await send('cohere/north-mini-code:free', { prompt_cache_key: 'session-hash-1' })).upstream.prompt_cache_key,
+      openrouter.upstream.prompt_cache_key, 'stable for the conversation');
+    const groq = await send('groq/openai/gpt-oss-120b', { prompt_cache_key: 'session-hash-1' });
+    assert.ok(!('prompt_cache_key' in groq.upstream), 'Groq never sees it');
+    const plain = await send('cohere/north-mini-code:free', {});
+    assert.ok(!('prompt_cache_key' in plain.upstream));
+    assert.deepEqual([openrouter.requests, openrouter.tokens], [plain.requests, plain.tokens], 'quota accounting is unchanged');
+    await expectError(await gw.call(env, { model: 'auto', messages, prompt_cache_key: 'no spaces allowed' }, { country: 'US' }),
+      400, 'invalid_request');
   });
 
   // The same lineup wherever the gateway is configured: wrangler.api.toml (the API-only

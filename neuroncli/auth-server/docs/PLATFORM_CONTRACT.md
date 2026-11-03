@@ -971,8 +971,10 @@ Opus 5.5 billed from credits on Pro and Max, and say every plan has the same Neu
 
 The neuron-v2 copy (`docs/GATEWAY_CONTRACT.md`) records the same changes as its v1.3 amendment;
 the CLI and the gateway implement exactly what follows. Code: `src/connector-policy.js`,
-`src/routes/account.js`; migration `20261104000000_connector_policy.sql` (down script in
-`migrations/down/`); checks `check-account-api.mjs`, `check-business-db.mjs`.
+`src/routes/account.js` (14.1), `src/router.js` and `src/catalog.js` `POOR_TOOL_CALLERS` (14.2),
+`src/chat-handler.js` and `src/providers.js` `PROVIDER_PARAMS` (14.2, 14.3); migration
+`20261104000000_connector_policy.sql` (down script in `migrations/down/`); checks
+`check-account-api.mjs`, `check-business-db.mjs`, `check-routing-v2.mjs`.
 
 ### 14.1 Connector policy (`GET /api/account` `policy.connectors`)
 
@@ -1026,6 +1028,21 @@ Connectors are MCP servers. There are no organisations yet, so gateway policy is
   without the header routes as before.
 - When no other tool-capable model is configured, the request answers 503 `service_unavailable`
   ("No model that reliably calls tools is configured on this gateway; choose a model by name.").
+
+### 14.3 `prompt_cache_key` (`POST /v1/chat/completions`)
+
+- The CLI may send `prompt_cache_key` in an OpenAI-compatible chat body: a hash of its session
+  id, never the raw id. The gateway accepts 1 to 128 characters of `[A-Za-z0-9._:-]` (otherwise
+  400 `invalid_request`).
+- The gateway never forwards the key as sent. It forwards `SHA-256("zx-cache:" + caller + NUL +
+  key)` (the first 32 hex digits; caller = the account id, or the session for sessions without
+  an account), which is stable for the conversation and cannot collide with or reveal another
+  caller's key on the shared upstream account.
+- It goes only to upstreams that accept the field: OpenRouter (its sticky routing key, which
+  keeps the conversation on the provider that holds its prompt cache). It is stripped for Groq,
+  Gemini (its OpenAI-compatible endpoint answers 400 to unknown fields), NVIDIA, Workers AI, Z.ai
+  and Claude (whose adapter caches with its own `cache_control` blocks).
+- Quota accounting is unchanged: cached input tokens count like other prompt tokens.
 
 ### 14.4 Hosted connector endpoint (specified; not served by this gateway version)
 
