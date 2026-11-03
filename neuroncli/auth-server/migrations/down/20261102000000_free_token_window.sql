@@ -9,7 +9,8 @@ SET LOCAL lock_timeout = '5s';
 -- zerox_plan_policies_v2 and zerox_account_overview as 20261016000100_business_quota.sql left
 -- them (dropped and created again, since their results lose columns; the grants are restored).
 -- Free gets its daily token cap back (500,000 tokens per UTC day) and its previous feature
--- strings; the window columns and zerox_window_usage are dropped. Roll the gateway back first or
+-- strings; zerox_plan_policies loses its window keys; the window columns and zerox_window_usage
+-- are dropped. Roll the gateway back first or
 -- together: a gateway that reads usage_window and window_* only loses those fields, but this
 -- rollback has to come before 20261029001000's own down script, which cannot change the
 -- function's result back. The history row is removed so the runner can apply the migration again.
@@ -296,6 +297,16 @@ GRANT EXECUTE ON FUNCTION
   TO service_role;
 
 DROP FUNCTION IF EXISTS public.zerox_window_usage(uuid, integer, timestamptz);
+
+-- zerox_plan_policies as 20261006042028_plan_policies.sql left it (no window keys); it must not
+-- read the window columns once they are dropped below. Same result type, so replaced in place.
+CREATE OR REPLACE FUNCTION public.zerox_plan_policies()
+RETURNS TABLE (policies jsonb) LANGUAGE sql SECURITY INVOKER SET search_path = '' AS $$
+  SELECT coalesce(jsonb_object_agg(plan, jsonb_build_object(
+    'name', name, 'daily_tokens', daily_tokens,
+    'daily_requests', daily_requests, 'price_usd', price_usd)), '{}'::jsonb)
+  FROM public.zerox_plan_policy;
+$$;
 
 UPDATE public.zerox_plan_policy AS p SET daily_tokens = 500000,
   features = coalesce((SELECT jsonb_agg(CASE f.value

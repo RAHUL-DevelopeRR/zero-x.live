@@ -17,12 +17,14 @@ SET LOCAL lock_timeout = '5s';
 -- zerox_window_usage reads them through zerox_reservations_user_created_idx (user_id,
 -- created_at DESC) and the unique index on zerox_usage_events.reservation_id, so the cost is the
 -- user's own requests in the window (at most a few hundred on Free). zerox_reserve_v2 holds the
--- account row FOR UPDATE while it counts, so two reservations of one user cannot both take the
--- last tokens of a window.
+-- account row FOR UPDATE while it counts, and the count has no upper bound on created_at (a
+-- reservation committed by a later-started transaction that locked first is counted too), so two
+-- reservations of one user cannot both take the last tokens of a window.
 --
 -- A refused reservation answers status user_window_tokens with resets_at (and window_resets_at)
 -- set to when enough of the window has expired for this request to fit, and
--- retry_after_seconds until then. Deploy the gateway that knows user_window_tokens before
+-- retry_after_seconds until then; window_used_tokens is the window's count without the request.
+-- A request larger than window_tokens never fits: resets_at and retry_after_seconds are null. Deploy the gateway that knows user_window_tokens before
 -- applying this migration: an older gateway answers an unknown status with 503.
 --
 -- Free's daily_tokens becomes 5,000,000, the most five back-to-back windows can spend in one UTC
@@ -30,7 +32,8 @@ SET LOCAL lock_timeout = '5s';
 -- ceiling. Free's feature strings say "1M tokens every 5 hours".
 --
 -- zerox_reserve_v2, zerox_plan_policies_v2 and zerox_account_overview gain result columns, so
--- they are dropped and created again (same arguments, same grants). Roll back with
+-- they are dropped and created again (same arguments, same grants); zerox_plan_policies (the map
+-- the session-KV allocation reads) gains window_tokens and window_seconds keys. Roll back with
 -- migrations/down/20261102000000_free_token_window.sql (psql -X -v ON_ERROR_STOP=1 -f).
 
 ALTER TABLE public.zerox_plan_policy
@@ -54,7 +57,10 @@ UPDATE public.zerox_plan_policy AS p SET window_tokens = 1000000, window_seconds
   WHERE p.plan = 'free';
 
 -- The tokens each of a user's reservations in the last p_window_seconds counts against a
--- rolling window (see above), with when it was made.
+-- rolling window (see above), with when it was made. There is deliberately no upper bound on
+-- created_at: now() is when the caller's transaction began, and a reservation of the same user
+-- committed by a transaction that began later but took the account row lock first carries a
+-- later created_at. Leaving it out would let both reservations take the last tokens of a window.
 DROP FUNCTION IF EXISTS public.zerox_window_usage(uuid, integer, timestamptz);
 CREATE FUNCTION public.zerox_window_usage(p_user_id uuid, p_window_seconds integer, p_now timestamptz DEFAULT now())
 RETURNS TABLE (created_at timestamptz, tokens bigint)
@@ -64,8 +70,20 @@ LANGUAGE sql STABLE SECURITY INVOKER SET search_path = '' AS $$
       ELSE r.reserved_tokens END
   FROM public.zerox_reservations AS r
   LEFT JOIN public.zerox_usage_events AS e ON e.reservation_id = r.id
-  WHERE r.user_id = p_user_id AND r.created_at > p_now - make_interval(secs => p_window_seconds)
-    AND r.created_at <= p_now;
+  WHERE r.user_id = p_user_id AND r.created_at > p_now - make_interval(secs => p_window_seconds);
+$$;
+
+-- The session-KV allocation (sessions without an account ledger, src/capacity.js
+-- reserveSessionQuota) reads this map; it gains window_tokens and window_seconds so such a
+-- session of a plan with a window is held to window_tokens a day, not to daily_tokens. Same
+-- result type, so it is replaced in place.
+CREATE OR REPLACE FUNCTION public.zerox_plan_policies()
+RETURNS TABLE (policies jsonb) LANGUAGE sql SECURITY INVOKER SET search_path = '' AS $$
+  SELECT coalesce(jsonb_object_agg(plan, jsonb_build_object(
+    'name', name, 'daily_tokens', daily_tokens,
+    'daily_requests', daily_requests, 'price_usd', price_usd,
+    'window_tokens', window_tokens, 'window_seconds', window_seconds)), '{}'::jsonb)
+  FROM public.zerox_plan_policy;
 $$;
 
 -- The result gains window_tokens, window_seconds, window_used_tokens and window_resets_at, so the
@@ -201,20 +219,20 @@ BEGIN
     -- reservation must fit in window_tokens.
     SELECT coalesce(sum(w.tokens), 0)::bigint, min(w.created_at) INTO v_window_used, v_window_oldest
       FROM public.zerox_window_usage(p_user_id, v_policy.window_seconds, v_now) AS w;
-    IF v_window_used + p_tokens > v_policy.window_tokens THEN
+    IF p_tokens > v_policy.window_tokens THEN
+      -- Larger than the whole window: it never fits, so there is no time to retry at (resets_at
+      -- and retry_after_seconds are null); window_resets_at is the window as it stands.
+      v_status := 'user_window_tokens';
+      v_window_resets := coalesce(v_window_oldest, v_now) + make_interval(secs => v_policy.window_seconds);
+    ELSIF v_window_used + p_tokens > v_policy.window_tokens THEN
       v_status := 'user_window_tokens';
       -- The first moment enough of the window has expired for this request: the made-at time of
       -- the earliest reservation whose expiry (with all older ones) frees enough tokens, plus the
-      -- window. A request larger than the whole window never fits; it is told the time the last
-      -- counted tokens expire.
+      -- window. Such a reservation always exists, since this request alone fits in the window.
       SELECT min(q.created_at) INTO v_window_resets FROM (
         SELECT w.created_at, sum(w.tokens) OVER (ORDER BY w.created_at ROWS UNBOUNDED PRECEDING) AS freed
         FROM public.zerox_window_usage(p_user_id, v_policy.window_seconds, v_now) AS w) AS q
         WHERE v_window_used - q.freed + p_tokens <= v_policy.window_tokens;
-      IF v_window_resets IS NULL THEN
-        SELECT max(w.created_at) INTO v_window_resets
-          FROM public.zerox_window_usage(p_user_id, v_policy.window_seconds, v_now) AS w;
-      END IF;
       v_window_resets := coalesce(v_window_resets, v_now) + make_interval(secs => v_policy.window_seconds);
       v_retry := greatest(1, ceil(extract(epoch FROM v_window_resets - v_now)))::integer;
     END IF;
@@ -333,7 +351,8 @@ BEGIN
       THEN greatest(0, v_policy.window_tokens - v_window_used)
       ELSE greatest(0, v_policy.daily_tokens - v_account.daily_tokens_used) END::bigint,
     v_account.credit_balance_microusd,
-    CASE WHEN v_status = 'user_window_tokens' THEN v_window_resets ELSE v_resets END,
+    CASE WHEN v_status <> 'user_window_tokens' THEN v_resets
+      WHEN p_tokens <= v_policy.window_tokens THEN v_window_resets END,
     v_retry,
     CASE WHEN v_window THEN v_policy.window_tokens END,
     CASE WHEN v_window THEN v_policy.window_seconds END,

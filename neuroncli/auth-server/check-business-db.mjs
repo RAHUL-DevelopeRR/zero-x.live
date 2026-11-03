@@ -19,7 +19,7 @@ import { createChatHandler } from './src/chat-handler.js';
 import { RoutingEngine } from './src/router.js';
 import { ProviderHealthTracker } from './src/provider-health.js';
 import { estimatePromptTokens } from './src/pricing.js';
-import { RESERVED_OUTPUT_TOKENS } from './src/capacity.js';
+import { RESERVED_OUTPUT_TOKENS, sessionDailyTokenCap } from './src/capacity.js';
 import { resetPoolBudgets } from './src/pool-budget.js';
 import { v1ModelsPayload } from './src/routes/plans.js';
 
@@ -200,6 +200,12 @@ try {
   const legacy = (await rpc(env, 'zerox_plan_policies', {})).policies;
   assert.deepEqual(Object.keys(legacy).sort(), ['free', 'max', 'pro', 'ultrawork'], 'legacy policy RPC includes max');
   assert.equal(legacy.max.daily_tokens, 50000000);
+  // The session-KV allocation (src/capacity.js reserveSessionQuota) reads this map: Free carries its
+  // window, so a session without an account ledger is held to 1M a day, not to daily_tokens (5M).
+  assert.deepEqual([legacy.free.daily_tokens, legacy.free.window_tokens, legacy.free.window_seconds], [5000000, 1000000, 18000]);
+  assert.deepEqual([legacy.pro.window_tokens, legacy.pro.window_seconds], [null, null]);
+  assert.equal(sessionDailyTokenCap(legacy.free), 1000000, 'session-KV cap of Free from the database map');
+  assert.equal(sessionDailyTokenCap(legacy.pro), 10000000, 'a plan without a window keeps daily_tokens');
   await assert.rejects(sql(`INSERT INTO public.zerox_plan_policy (plan, name, daily_tokens, daily_requests, price_usd)
     VALUES ('enterprise', 'Enterprise', 1, 1, 1)`), /zerox_plan_policy_plan_check/);
   ok('plans seeded exactly per contract section 1 (free/pro/max/ultrawork) with features and legacy RPC compatibility');
@@ -376,7 +382,10 @@ try {
     near(needsOne.resets_at, ages[0] + WINDOW * 1000, '200K needs the oldest slice to expire (in 1 h)');
     const tooBig = await reserve(rollUser, { p_tokens: 1000001 });
     assert.equal(tooBig.status, 'user_window_tokens', 'a request larger than the window never fits');
-    near(tooBig.resets_at, ages[2] + WINDOW * 1000, 'and is told when the last counted tokens expire');
+    assert.equal(tooBig.resets_at, null, 'no time makes it fit: no resets_at');
+    assert.equal(tooBig.retry_after_seconds, null, 'and no retry_after_seconds');
+    assert.equal(tooBig.window_used_tokens, 900000);
+    near(tooBig.window_resets_at, ages[0] + WINDOW * 1000, 'window_resets_at is the window as it stands');
     assert.equal((await reserve(rollUser, { p_tokens: 100000 })).status, 'ok', 'what fits is admitted');
 
     // The account overview shows the current window next to today's usage.
@@ -393,6 +402,28 @@ try {
     await assert.rejects(sql("UPDATE public.zerox_plan_policy SET window_tokens = 5 WHERE plan = 'pro'"), /zerox_plan_policy_window_check/);
     await assert.rejects(sql("UPDATE public.zerox_plan_policy SET window_tokens = 5, window_seconds = 10 WHERE plan = 'pro'"), /window_seconds_check/);
 
+    // Lock order is not start order: under PostgREST each RPC is BEGIN; ...; SELECT fn(), so a
+    // transaction that began first (its now() is earlier) can take the account row lock after a
+    // later one committed a reservation whose created_at is after that now(). The window still
+    // counts it. Simulated in one transaction: a 1,000,000-token reservation made "after" now().
+    const raceUser = await newUser('free');
+    const raced = await db.transaction(async tx => {
+      await tx.query(`INSERT INTO public.zerox_reservations (user_id, request_id, model, tier, plan, reserved_tokens,
+          reserved_cost_microusd, usage_day, pool_minute, pool_day, pool_key, created_at, lease_expires_at)
+        VALUES ($1, 'req_later_started', 'test/model', 'free', 'free', 1000000, 0, (now() AT TIME ZONE 'UTC')::date,
+          date_trunc('minute', now(), 'UTC'), date_trunc('day', now(), 'UTC'), '',
+          now() + interval '5 milliseconds', now() + interval '90 seconds')`, [raceUser]);
+      const later = (await tx.query("SELECT created_at > now() AS after FROM public.zerox_reservations WHERE request_id = 'req_later_started'")).rows[0];
+      assert.equal(later.after, true, 'the simulated reservation is made after this transaction\'s now()');
+      const row = (await tx.query(`SELECT * FROM public.zerox_reserve_v2($1, 'req_earlier_started', 'test/model', 'free',
+        900000, 0, NULL)`, [raceUser])).rows[0];
+      await tx.rollback();
+      return row;
+    });
+    assert.equal(raced.status, 'user_window_tokens', 'a reservation made after now() still counts: no 1.8M window');
+    assert.equal(Number(raced.window_used_tokens), 1000000);
+    assert.equal(raced.reservation_id, null);
+
     // The window count reads the reservations through (user_id, created_at) and usage events
     // through their reservation_id, never a table scan.
     await sql('SET enable_seqscan = off');
@@ -401,7 +432,7 @@ try {
           THEN coalesce(e.prompt_tokens + e.completion_tokens, r.prompt_tokens + r.completion_tokens, r.reserved_tokens)
           ELSE r.reserved_tokens END
         FROM public.zerox_reservations AS r LEFT JOIN public.zerox_usage_events AS e ON e.reservation_id = r.id
-        WHERE r.user_id = $1 AND r.created_at > now() - make_interval(secs => 18000) AND r.created_at <= now()`, [rollUser]))
+        WHERE r.user_id = $1 AND r.created_at > now() - make_interval(secs => 18000)`, [rollUser]))
         .map(row => row['QUERY PLAN']).join('\n');
       assert.match(plan, /zerox_reservations_user_created_idx/, plan);
       assert.match(plan, /zerox_usage_events_reservation_id_key/, plan);
