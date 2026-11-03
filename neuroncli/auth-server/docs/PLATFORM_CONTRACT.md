@@ -38,10 +38,27 @@ hours. A window counts each reservation from when it was made for `window_second
 with the tokens they were charged (refunds count 0), running and released ones with what they
 reserved. With a window, `daily_tokens` refuses nothing; it is the most the window allows in a
 UTC day (five windows, 5,000,000 on Free), kept so clients that show tokens per day stay
-truthful. `daily_requests`, rpm, concurrency and credits apply as before. A refusal is
-`user_window_tokens` → 429 `insufficient_quota` "You've used your 1,000,000 tokens for this
-5-hour window; it frees up at HH:MM UTC.", `resets_at` and `Retry-After` = when enough of the
-window has expired for that request. Any plan can opt in by setting both columns.
+well-formed. `daily_requests`, rpm, concurrency and credits apply as before. A refusal is
+`user_window_tokens` → 429 `insufficient_quota`, `resets_at` and `Retry-After` = when enough of
+the window has expired for that request. The message names the figures: "You've used your
+1,000,000 tokens for this 5-hour window; it frees up at HH:MM UTC." once the window is full, else
+"This request needs N tokens but only R of your 1,000,000 tokens for this 5-hour window are left;
+enough frees up at HH:MM UTC.". A request larger than the whole window never fits: its message
+says so and it carries no `resets_at` or `Retry-After`. The window counts every reservation of
+the user made after now minus `window_seconds`, with no upper bound, so a reservation committed
+by a transaction that began later but locked the account first is counted too. Any plan can opt
+in by setting both columns. Sessions without an account ledger (anonymous dev sessions,
+owned-provider sessions; session-KV allocation) cannot count a rolling window: a plan with a
+window holds them to `window_tokens` per UTC day (`zerox_plan_policies` carries the window
+keys).
+
+Released clients: Neuron CLI alpha.2 shows `/api/account` `usage_today.tokens / limits.daily_tokens`
+as "Tokens today" with a 00:00 UTC reset, which for Free reads e.g. "1,000,000 / 5,000,000"
+while the window refuses requests. Those fields stay true for the UTC day; clients should show
+`usage_window` (and `limits.window_tokens`) when it is not null. `quota.remaining` of `/auth/me`,
+`/auth/sync`, sign-in, `/auth/session` and `/auth/usage` is what can be spent now (the window's
+remaining tokens for a windowed plan), and `quota.window` / `limits.window_tokens` describe the
+window.
 
 Credits are stored in micro-USD (`1 USD = 1_000_000`). Paid-pool usage is billed at the
 catalog price (upstream cost × 1.25 markup). Free-pool usage costs 0 credits but counts
@@ -210,7 +227,11 @@ canary can read it on any host.
 `/health`, `/ready`, `/auth/config`, `/auth/cli/session`, `/auth/session` (GET/DELETE),
 `/auth/usage`, `/auth/plan`, `/auth/sync`, `/auth/me`, CLI loopback login
 (`/neuroncli/login/?callback_url=http://127.0.0.1:<port>/callback&state=…`).
-`/auth/session` additionally returns `expires_at`.
+`/auth/session` additionally returns `expires_at`. Their `quota` gains `window` (null, or
+`{limit_tokens, window_seconds, tokens, remaining_tokens, resets_at}`; `tokens` and `resets_at`
+are null when the live count is not available) and their `limits` gains `window_tokens` and
+`window_seconds` (null without a window); for a windowed plan `quota.remaining` is the window's
+remaining tokens (at most the day's).
 
 ## 4. Database RPCs (Postgres, `SECURITY INVOKER`, `service_role` only)
 

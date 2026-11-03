@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import { accountRpc, databaseConfigured } from './account-store.js';
+import { accountRpc, databaseConfigured, rpc } from './account-store.js';
+import { sessionDailyTokenCap, usesLedger } from './capacity.js';
 import { modelCatalog, resolveModelCatalog, providerHealth, providerConfiguration } from './providers.js';
 import { callerCountry, catalogEntries, catalogWarnings, inheritCallerCountry, loadCatalog } from './catalog.js';
 import { refreshModelsDevFacts } from './oiop/models-dev.js';
@@ -321,18 +322,60 @@ function normalizePlan(plan) {
   return ["free", "pro", "max", "ultrawork"].includes(key) ? key : "free";
 }
 
-async function planQuota(c, plan, used = 0, requests = 0) {
+// The account's current rolling token window (zerox_account_overview usage_window, migration
+// 20261102000000), or null when it cannot be read; quota answers then fall back to the limits.
+async function currentWindowUsage(env, userId) {
+  if (!userId || !databaseConfigured(env)) return null;
+  try {
+    const row = await rpc(env, 'zerox_account_overview', { p_user_id: userId });
+    const usage = row?.usage_window;
+    return usage && typeof usage === 'object' && Number.isFinite(Number(usage.remaining_tokens)) ? usage : null;
+  } catch {
+    return null;
+  }
+}
+
+// The quota block of /auth/me, /auth/sync, sign-in, /auth/session and /auth/usage. daily_limit,
+// used and limits.tokens stay the UTC-day figures released clients read. For a plan with a
+// rolling token window, quota.remaining is what can still be spent now (the window's remaining
+// tokens, never more than the day's) and quota.window describes the window; userId (an
+// account-backed caller) reads the window's live count.
+async function planQuota(c, plan, used = 0, requests = 0, { userId = null } = {}) {
   const key = normalizePlan(plan);
   const policies = await loadPlanLimits(c.env);
   const limits = policies[key] || (key === 'ultrawork' && policies.pro) || policies.free;
+  const windowTokens = Number(limits.window_tokens);
+  const windowSeconds = Number(limits.window_seconds);
+  const windowed = Number.isSafeInteger(windowTokens) && windowTokens > 0 && Number.isSafeInteger(windowSeconds) && windowSeconds > 0;
+  let remaining = Math.max(0, limits.daily_tokens - used);
+  let window = null;
+  if (windowed) {
+    const live = await currentWindowUsage(c.env, userId);
+    if (live) {
+      remaining = Math.min(remaining, Math.max(0, Number(live.remaining_tokens)));
+    } else {
+      // No live count (a session without an account ledger, or the read failed): at most one
+      // window's tokens a day, the cap such a session is held to (capacity.js sessionDailyTokenCap).
+      remaining = Math.max(0, sessionDailyTokenCap(limits) - used);
+    }
+    const resets = live?.resets_at ? Date.parse(live.resets_at) : NaN;
+    window = {
+      limit_tokens: windowTokens,
+      window_seconds: windowSeconds,
+      tokens: live ? Math.max(0, Math.round(Number(live.tokens) || 0)) : null,
+      remaining_tokens: remaining,
+      resets_at: Number.isFinite(resets) ? new Date(resets).toISOString() : null,
+    };
+  }
   return {
     plan: key,
     plan_name: limits.name,
     quota: {
       daily_limit: limits.daily_tokens,
       used,
-      remaining: Math.max(0, limits.daily_tokens - used),
+      remaining,
       resets_at: new Date((Math.floor(Date.now() / 86400000) + 1) * 86400000).toISOString(),
+      window,
     },
     usage: {
       requests,
@@ -341,6 +384,8 @@ async function planQuota(c, plan, used = 0, requests = 0) {
     limits: {
       tokens: limits.daily_tokens,
       requests: limits.daily_requests,
+      window_tokens: windowed ? windowTokens : null,
+      window_seconds: windowed ? windowSeconds : null,
     },
   };
 }
@@ -386,7 +431,7 @@ async function userResponse(c, user, fallbackUserId = "") {
   const plan = normalizePlan(user?.plan || "free");
   const tokensUsed = Number(user?.daily_tokens_used || 0);
   const requests = Number(user?.daily_requests || 0);
-  const quota = await planQuota(c, plan, tokensUsed, requests);
+  const quota = await planQuota(c, plan, tokensUsed, requests, { userId: user?.clerk_id || null });
   return {
     user_id: user?.clerk_id || fallbackUserId,
     email: user?.email || "",
@@ -734,7 +779,8 @@ const verifySessionHandler = async (c) => {
   const { session } = valid;
   const stored = !session.credential;
   const expiresAt = stored ? sessionExpiry(c.env, session) : null;
-  const quota = await planQuota(c, session.plan, Number(session.tokens_used || 0), Number(session.requests || 0));
+  const quota = await planQuota(c, session.plan, Number(session.tokens_used || 0), Number(session.requests || 0),
+    { userId: usesLedger(c.env, session) ? session.user_id : null });
 
   return c.json({
     created: new Date(session.created).toISOString(),
@@ -771,7 +817,8 @@ api.get('/auth/usage', async (c) => {
   const valid = await validateSession(c);
   if (!valid) return invalidSessionResponse(c);
   const session = valid.session;
-  const quota = await planQuota(c, normalizePlan(session.plan), Number(session.tokens_used || 0), Number(session.requests || 0));
+  const quota = await planQuota(c, normalizePlan(session.plan), Number(session.tokens_used || 0), Number(session.requests || 0),
+    { userId: usesLedger(c.env, session) ? session.user_id : null });
   return c.json({ user_id: session.user_id, ...quota });
 });
 
