@@ -82,3 +82,56 @@ export function grade(task, message) {
   const failed = task.checks.filter(([, test]) => !test(code)).map(([name]) => name);
   return { pass: Boolean(code.trim()) && failed.length === 0, failed, lines: countLines(code), slop: task.kind === 'ui' ? slopCount(code) : 0 };
 }
+
+// ── The loop shape: a long, fixed prior conversation ──
+// A real agent step re-sends 5K to 20K tokens of earlier turns and file contents, with the preface
+// (when present) as the first bytes of the system prompt, so a provider caches it with the rest of
+// the prefix. The single-shot tasks above cannot show that: their prompts are a few hundred tokens,
+// which the preface roughly doubles. The loop shape puts the same task after a deterministic
+// transcript of file reads (generated filler code, byte-identical in every request, no vendor name
+// and no style text), so the cost of the preface can be read against a realistic prompt size.
+export const LOOP_MIN_TOKENS = 5000;
+export const LOOP_MAX_TOKENS = 20000;
+export const LOOP_DEFAULT_TOKENS = 8000;
+const BYTES_PER_TOKEN = 3.5; // the gateway's own prompt estimate (src/pricing.js estimatePromptTokens)
+const FILE_BYTES = 3000;
+
+export function fillerFile(index, bytes) {
+  const parts = [`// module ${index}: fixed filler text for the cost measurement`];
+  let size = parts[0].length;
+  for (let n = 0; size < bytes; n++) {
+    const text = `export function helper${index}x${n}(value, limit = ${(n * 7 + index) % 97}) {\n  const next = Number(value) + ${n};\n  return next > limit ? limit : next;\n}`;
+    parts.push(text);
+    size += text.length + 1;
+  }
+  return parts.join('\n');
+}
+
+// The same task after about `contextTokens` tokens of earlier turns: file reads and their results.
+export function buildLoopRequest(task, model, { contextTokens = LOOP_DEFAULT_TOKENS, maxTokens = 2048 } = {}) {
+  if (!Number.isInteger(contextTokens) || contextTokens < LOOP_MIN_TOKENS || contextTokens > LOOP_MAX_TOKENS) {
+    throw new Error(`contextTokens must be a whole number from ${LOOP_MIN_TOKENS} to ${LOOP_MAX_TOKENS}`);
+  }
+  const build = fillerBytes => {
+    const files = Math.max(1, Math.ceil(fillerBytes / FILE_BYTES));
+    const messages = [{ role: 'system', content: AGENT_SYSTEM }, { role: 'user', content: 'Before the next task, read the modules you may need.' }];
+    for (let index = 0; index < files; index++) {
+      const id = `call_${index}`;
+      messages.push({ role: 'assistant', content: null, tool_calls: [{ id, type: 'function', function: { name: 'read_file', arguments: JSON.stringify({ path: `src/module${index}.js` }) } }] });
+      messages.push({ role: 'tool', tool_call_id: id, content: fillerFile(index, Math.floor(fillerBytes / files)) });
+    }
+    messages.push({ role: 'assistant', content: 'I have read the modules.' });
+    messages.push({ role: 'user', content: task.prompt });
+    return { model, max_tokens: maxTokens, messages, tools: TOOLS, tool_choice: 'auto' };
+  };
+  // The JSON of the conversation and the tool schemas is what a provider counts (about 3.5 bytes a
+  // token): size the filler so that, escapes and message framing included, it lands on the target.
+  const tokensOf = request => (JSON.stringify(request.messages).length + JSON.stringify(request.tools).length) / BYTES_PER_TOKEN;
+  let fillerBytes = Math.round(contextTokens * BYTES_PER_TOKEN);
+  let request = build(fillerBytes);
+  for (let pass = 0; pass < 4; pass++) {
+    fillerBytes = Math.max(FILE_BYTES, Math.round(fillerBytes - (tokensOf(request) - contextTokens) * BYTES_PER_TOKEN));
+    request = build(fillerBytes);
+  }
+  return request;
+}
