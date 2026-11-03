@@ -244,7 +244,7 @@ assert.deepEqual(details.valuesFromProfile({ ...publicProfile(row), gstin: 'x', 
   assert.deepEqual(details.consentText('terms'), ['I have read and agree to the ', 'Terms of Service', '.']);
   assert.match(details.consentText('privacy')[2], /how Zero-X uses my billing details/);
   assert.match(details.consentText('auto_renewal', { planName: 'Pro', price: '₹899' })[0], /Pro plan renews every month at ₹899 until I cancel.*authorise Razorpay.*cancel any time from Billing/);
-  assert.match(details.RENEWAL_NOTICE, /renews monthly until you cancel.*bank or Razorpay will notify you before each charge/);
+  assert.match(details.RENEWAL_NOTICE, /renews monthly until you cancel.*bank or Razorpay may notify you before each charge/);
   assert.match(details.PROCESSOR_NOTICE, /Zero-X never sees your card details/);
   assert.ok(!/gst|tax/i.test(details.DATA_NOTICE + details.RENEWAL_NOTICE + details.ONE_TIME_NOTICE + details.PROCESSOR_NOTICE), 'no tax claims in the fixed texts');
 }

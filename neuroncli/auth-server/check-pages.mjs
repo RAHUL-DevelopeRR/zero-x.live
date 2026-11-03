@@ -347,6 +347,26 @@ const ADDRESS = '6/2, N. Pugalur, Karur 639113, Tamil Nadu, India';
     assert.equal(privacy.includes(phrase), off, 'privacy says ' + variable + (off ? ' is switched off' : ' is on') + ' (wrangler.toml; change both together)');
   }
   assert.match(privacy, /Amazon Web Services/);
+  // Statements the system cannot back up stay out of the public text (review of 2026-11-03): the consent record is
+  // described as the code writes it, the production host is hedged, no notice or receipt is promised on a third
+  // party's behalf, and the static Free-plan line and model lists follow what is switched on.
+  assert.doesNotMatch(text('privacy.html'), /Each time you start a payment/);
+  assert.match(text('privacy.html'), /no new record is made for it/);
+  assert.match(text('privacy.html'), /may also run on a server we operate on Amazon Web Services/);
+  assert.match(text('privacy.html'), /A record is made when the payment window is prepared, not when the payment goes through/);
+  for (const file of ['terms.html', 'pricing.html', 'docs.html', 'refund.html']) {
+    assert.doesNotMatch(text(file), /Razorpay (also )?emails (you )?a receipt|(bank or Razorpay|Razorpay or your bank) will notify/, file + ' promises no receipt or notice from Razorpay');
+  }
+  assert.match(text('terms.html'), /Razorpay may email you a receipt for a payment/);
+  const switchedOff = variable => new RegExp('^' + variable + ' = ""', 'm').test(wrangler);
+  if (switchedOff('GEMINI_MODELS') && switchedOff('CLOUDFLARE_MODELS')) {
+    for (const file of ['pricing.html', 'pricing.js', 'neuroncli/auth-server/src/plan-policy.js']) {
+      assert.ok(!read(file).includes('Free models from Groq, Google Gemini'), file + ': the Free plan line names only providers that are switched on');
+    }
+    for (const file of ['index.html', 'neuron-cli.html']) {
+      assert.ok(!/gemini\/gemini-|@cf\//.test(read(file)), file + ': the static model list has no Gemini or Workers AI row while they are switched off');
+    }
+  }
   assert.match(privacy, /Microsoft/);
   assert.match(privacy, /Expo/);
   assert.match(privacy, /text message to your phone number/);

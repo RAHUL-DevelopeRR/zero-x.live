@@ -66,7 +66,7 @@
           <ol>
             <li><strong>Your computer.</strong> Neuron decides what to include: your message, the conversation so far, and the files or command output it read. You choose the folder, the permission mode and the commands.</li>
             <li><strong>Cloudflare.</strong> The request reaches <code>zero-x.live/v1</code> over HTTPS. Cloudflare sees it in transit and runs part of the gateway.</li>
-            <li><strong>Our server on Amazon Web Services, Mumbai</strong> (when it serves the request). Cloudflare passes the request over a private tunnel, with the caller's IP address and approximate location.</li>
+            <li><strong>Our own server</strong>, which may be hosted on Amazon Web Services in Mumbai (only when it serves the request, and the host can change). Cloudflare passes the request over a private tunnel, with the caller's IP address and approximate location.</li>
             <li><strong>The gateway.</strong> It checks your session, plan and quota, replaces credentials it recognises with placeholders, keeps the text in memory only, and writes usage metadata to the database.</li>
             <li><strong>Supabase.</strong> Our database holds the account, usage, session (as hashes) and billing records.</li>
             <li><strong>The model provider.</strong> The one you chose, or the one <code>auto</code> picked among those switched on. The answer comes back the same way.</li>
@@ -113,7 +113,7 @@
                 <tr><th scope="row">Z.ai</th><td>Free GLM Flash models</td><td>Singapore</td><td>Says it does not store API content; training not clearly stated, not confirmed</td></tr>
                 <tr><th scope="row">Google (Gemini API)</th><td>Gemini models, only if switched on (not at the moment)</td><td>United States</td><td>Free tier: may train and human review; paid tier: no</td></tr>
                 <tr><th scope="row">Cloudflare</th><td>Website, API and relay traffic; Workers AI only if switched on (not at the moment)</td><td>Global network</td><td>States it does not train on or retain Workers AI inputs and outputs for standard requests</td></tr>
-                <tr><th scope="row">Amazon Web Services</th><td>Our gateway server</td><td>Mumbai, India</td><td>Server logs at most 14 days; no prompt text by design</td></tr>
+                <tr><th scope="row">Amazon Web Services</th><td>Our gateway server, when it is in use</td><td>Mumbai, India</td><td>Server logs at most 14 days; no prompt text by design</td></tr>
                 <tr><th scope="row">Supabase</th><td>Authentication and database</td><td>Not stated here</td><td>Records until the account is deleted, plus backups for a limited time</td></tr>
                 <tr><th scope="row">Razorpay</th><td>Payments</td><td>India</td><td>Keeps its own payment records under its policy and the law</td></tr>
                 <tr><th scope="row">Expo, Apple, Google</th><td>Phone notifications</td><td>Global</td><td>Their own policies; notification text only</td></tr>
@@ -151,7 +151,7 @@
 
         <section id="changes" aria-labelledby="changes-title">
           <h2 id="changes-title">Changes to this page</h2>
-          <p>When a provider is added or removed, or a retention period changes, this page and the privacy policy change together, with a new effective date on the policy. 3 November 2026: Z.ai and Amazon Web Services added, Gemini and Workers AI marked as switched off, billing details and agreement records added, retention table extended.</p>
+          <p>When a provider is added or removed, or a retention period changes, this page and the privacy policy change together, with a new effective date on the policy. 3 November 2026: Z.ai and Amazon Web Services (our own server, when in use) added, Gemini and Workers AI marked as switched off, billing details and agreement records added, retention table extended.</p>
         </section>
       </article>
     </div>

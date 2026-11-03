@@ -8,14 +8,14 @@
 // checkout (billing_consents keeps what each one agreed to and when).
 //
 // auto_renewal is the notice shown beside the Subscribe button (billing-details.js: the monthly
-// charge, how to cancel, and that the bank or Razorpay notifies before each charge). It is not a
+// charge, how to cancel, and that the bank or Razorpay may notify before each charge). It is not a
 // page; change its version whenever the wording of that notice changes.
 
 export const LEGAL_DOCUMENTS = Object.freeze({
   terms: Object.freeze({ version: '2026-11-03', path: '/terms' }),
   privacy: Object.freeze({ version: '2026-11-03', path: '/privacy' }),
   refund: Object.freeze({ version: '2026-11-03', path: '/refund' }),
-  auto_renewal: Object.freeze({ version: '2026-11-03', path: '/terms#billing' }),
+  auto_renewal: Object.freeze({ version: '2026-11-04', path: '/terms#billing' }),
 });
 
 export const CONSENT_DOCUMENTS = Object.freeze(Object.keys(LEGAL_DOCUMENTS));

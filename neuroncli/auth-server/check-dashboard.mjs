@@ -855,7 +855,7 @@ for (const scenario of ['live', 'offline']) {
     assert.equal(rows[2].querySelectorAll('td')[4].textContent, 'Pro and Max');
     assert.match(doc.getElementById('models-status').textContent, /Live catalog from the Zero-X gateway: 3 models/);
   } else {
-    assert.equal(rows.length, 15, 'The static catalog (14 models plus auto) stays when /v1/models is unreachable');
+    assert.equal(rows.length, 11, 'The static catalog (10 models plus auto, none of them Gemini or Workers AI while those are switched off) stays when /v1/models is unreachable');
     assert.deepEqual(rows.slice(-2).map(row => [...row.querySelectorAll('td')].map(cell => cell.textContent)), [
       ['anthropic/claude-sonnet-5-5', 'Anthropic', '200,000', 'Yes', 'Pro and Max'],
       ['anthropic/claude-opus-5-5', 'Anthropic', '200,000', 'Yes', 'Pro and Max']], 'the static catalog lists Claude for Pro and Max');
@@ -1156,7 +1156,7 @@ async function loadAuth({hostname, config, session = makeStorage(), sdk = true})
     assert.equal(rows.Billing, 'Monthly, renews until you cancel');
     assert.match(rows['First renewal'], /^About \d{1,2} \w+ 20\d\d, then monthly$/);
     assert.ok(!('Tax' in rows) && !/GST/i.test(dialog.textContent), 'the page does not mention GST until the owner turns the notice on');
-    assert.match(field(doc, 'bd-notice').textContent, /renews monthly until you cancel.*Your bank or Razorpay will notify you before each charge.*Zero-X never sees your card details/);
+    assert.match(field(doc, 'bd-notice').textContent, /renews monthly until you cancel.*Your bank or Razorpay may notify you before each charge.*Zero-X never sees your card details/);
     assert.equal(dialog.querySelectorAll('input[type="checkbox"]').length, 4, 'terms, privacy, renewal notice and refund policy, all unticked');
     assert.ok(dialog.querySelectorAll('input[type="checkbox"]').every(box => !box.checked));
     assert.match(field(doc, 'bd-consent-auto-renewal').parentNode.textContent, /Pro plan renews every month at ₹899 until I cancel.*authorise Razorpay/);

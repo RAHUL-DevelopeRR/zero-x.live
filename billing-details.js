@@ -35,7 +35,7 @@ export function consentText(document, { planName = 'plan', price = '' } = {}) {
     'Billing and renewal terms', '.'];
 }
 
-export const RENEWAL_NOTICE = 'Your subscription renews monthly until you cancel. Cancel any time in Billing in your dashboard. Your bank or Razorpay will notify you before each charge.';
+export const RENEWAL_NOTICE = 'Your subscription renews monthly until you cancel. Cancel any time in Billing in your dashboard. Your bank or Razorpay may notify you before each charge.';
 export const ONE_TIME_NOTICE = 'This is a one-time payment. It does not renew.';
 export const PROCESSOR_NOTICE = 'Payments are processed by Razorpay. Zero-X never sees your card details.';
 export const DATA_NOTICE = 'Zero-X keeps these details with your account for billing records and support. Razorpay receives only your name, e-mail address and phone number, to fill in its payment window.';
