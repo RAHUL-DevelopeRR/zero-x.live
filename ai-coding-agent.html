@@ -80,7 +80,7 @@
     <h2 id="models">Which model runs it, and who sees your code</h2>
     <p>The agent is the loop and its tools; the model decides each step. Neuron can use:</p>
     <ul>
-      <li>Hosted models through Zero-X after <code>neuron login</code>, from providers including Google Gemini, Groq, NVIDIA, OpenRouter and Cloudflare Workers AI. Choose <code>auto</code> and Neuron picks a tool-capable model whose context window fits the request. See the <a href="/neuron-cli#models">current model list</a>.</li>
+      <li>Hosted models through Zero-X after <code>neuron login</code>, from providers including Anthropic (Claude, Pro and Max), Groq, NVIDIA, OpenRouter and Z.ai. Choose <code>auto</code> and Neuron picks a tool-capable model whose context window fits the request. See the <a href="/neuron-cli#models">current model list</a>.</li>
       <li>Your own provider. Set <code>OPENAI_API_KEY</code> and <code>OPENAI_BASE_URL</code> for any OpenAI-compatible endpoint, or connect your own OpenRouter account.</li>
     </ul>
     <p>The files and messages an agent includes in a request go to the provider serving the model. Free tiers of some providers may use prompts to improve their models. The Zero-X gateway records usage metadata (model, tokens, cost, latency) and is not designed to store prompt or response text. Read the <a href="/privacy">privacy policy</a> before you point an agent at code you cannot share.</p>
@@ -169,7 +169,7 @@ neuron</code></pre></div>
         <a href="/shipping">Shipping and delivery</a>
       </nav>
     </div>
-    <p class="zx-container zx-footer__legal">© 2026 Zero-X · <a href="mailto:support@zero-x.live">support@zero-x.live</a></p>
+    <p class="zx-container zx-footer__legal">© 2026 Zero-X · <a href="mailto:support@zero-x.live">support@zero-x.live</a> · <a href="/contact#grievance">Grievance officer</a></p>
   </footer>
 </body>
 </html>

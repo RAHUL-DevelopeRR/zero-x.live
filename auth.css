@@ -9,3 +9,6 @@
 .zerox-auth .zerox-github-button { display: flex; align-items: center; justify-content: center; gap: 10px; }
 .zerox-github-icon { width: 28px; height: 28px; object-fit: contain; flex: none; }
 .zerox-auth :focus-visible { outline: 3px solid #00e5ff; outline-offset: 4px; }
+.zerox-auth .zerox-auth__agreement { margin: 20px 0 0; font-size: 13px; line-height: 1.5; color: #a6a6b2; }
+.zerox-auth .zerox-auth__agreement a { color: #00e5ff; text-underline-offset: 3px; }
+.zerox-auth .zerox-auth__agreement a:hover { color: #fff; }
