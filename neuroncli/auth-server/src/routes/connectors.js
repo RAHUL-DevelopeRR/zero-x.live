@@ -208,7 +208,7 @@ async function revokeAtVendor(config, token) {
   const body = new URLSearchParams({ token, client_id: config.clientId });
   if (config.clientSecret) body.set('client_secret', config.clientSecret);
   try {
-    await fetch(config.revokeUrl, { method: 'POST', body, redirect: 'error', signal: AbortSignal.timeout(10000),
+    await fetch(config.revokeUrl, { method: 'POST', body, redirect: 'manual', signal: AbortSignal.timeout(10000),
       headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' } });
   } catch {
     console.warn('Connector revocation at the vendor failed', { connector: config.id });

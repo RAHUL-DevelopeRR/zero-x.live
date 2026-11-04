@@ -80,7 +80,7 @@ export async function requestTokens(config, params, now = Date.now()) {
   let response;
   try {
     response = await fetch(config.tokenUrl, {
-      method: 'POST', redirect: 'error', body, signal: AbortSignal.timeout(15000),
+      method: 'POST', redirect: 'manual', body, signal: AbortSignal.timeout(15000),
       headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
     });
   } catch {

@@ -322,7 +322,7 @@ async function callVendor(c, { connector, config, base, init }) {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     let response;
     try {
-      response = await fetch(config.mcpUrl, { ...init(current.token), redirect: 'error', signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS) });
+      response = await fetch(config.mcpUrl, { ...init(current.token), redirect: 'manual', signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS) });
     } catch {
       return { failure: fail(502, 'upstream_unreachable', `${connector.name} could not be reached. Retry shortly.`) };
     }
