@@ -22,8 +22,11 @@ export function formatContext(tokens, id) {
 }
 
 /**
- * How a model is shown: `tone` drives the dot and dimming (ok, warn, busy, off, locked),
+ * How a model is shown: `tone` drives the dot and dimming (ok, warn, busy, unknown, off, locked),
  * `label` is the visible status. Unavailable models stay listed, greyed out, with the reason.
+ * The gateway's health checker reports `unknown` for a model nobody has confirmed lately
+ * (`stale_after_seconds`); it is never shown as available. `blurred` is the older word for
+ * `unavailable`.
  */
 export function modelState(model, now = Date.now()) {
   if (!model || typeof model !== 'object') return { tone: 'off', label: 'Unavailable' };
@@ -34,7 +37,8 @@ export function modelState(model, now = Date.now()) {
   }
   if (model.status === 'degraded') return { tone: 'warn', label: 'Slower than usual' };
   if (model.status === 'busy') return { tone: 'busy', label: 'Busy, retry soon' };
-  if (model.status === 'blurred') {
+  if (model.status === 'unknown') return { tone: 'unknown', label: 'Not checked recently' };
+  if (model.status === 'blurred' || model.status === 'unavailable') {
     const until = Date.parse(model.available_again_at || '');
     if (Number.isFinite(until) && until > now) {
       const minutes = Math.max(1, Math.ceil((until - now) / 60000));
@@ -42,7 +46,8 @@ export function modelState(model, now = Date.now()) {
     }
     return { tone: 'off', label: 'Temporarily unavailable' };
   }
-  return { tone: 'ok', label: 'Available' };
+  if (model.status === 'available') return { tone: 'ok', label: 'Available' };
+  return { tone: 'unknown', label: 'Not checked recently' };
 }
 
 /** Validated rows from a GET /v1/models payload; null when the payload is unusable. */
@@ -63,7 +68,7 @@ export function modelRows(payload) {
       paidOnly: tiers.length > 0 && !tiers.includes('free'),
       available: model.available !== false,
       unavailable_reason: typeof model.unavailable_reason === 'string' ? model.unavailable_reason : null,
-      status: typeof model.status === 'string' ? model.status : 'available',
+      status: typeof model.status === 'string' ? model.status : 'unknown',
       available_again_at: typeof model.available_again_at === 'string' ? model.available_again_at : null,
     });
     if (rows.length === MAX_MODELS) break;
@@ -82,7 +87,7 @@ export function applyStatus(rows, payload) {
       ...row,
       available: entry.available !== false,
       unavailable_reason: typeof entry.unavailable_reason === 'string' ? entry.unavailable_reason : null,
-      status: typeof entry.status === 'string' ? entry.status : 'available',
+      status: typeof entry.status === 'string' ? entry.status : 'unknown',
       available_again_at: typeof entry.available_again_at === 'string' ? entry.available_again_at : null,
     };
   });

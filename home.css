@@ -141,7 +141,7 @@
 .zx-home-legend li::before { content: ''; width: 9px; height: 9px; border-radius: 50%; background: var(--zx-tone, var(--zx-success)); }
 [data-tone="ok"] { --zx-tone: var(--zx-success); }
 [data-tone="warn"], [data-tone="busy"] { --zx-tone: var(--zx-warning); }
-[data-tone="off"] { --zx-tone: var(--zx-faint); }
+[data-tone="off"], [data-tone="unknown"] { --zx-tone: var(--zx-faint); }
 [data-tone="locked"] { --zx-tone: var(--zx-purple); }
 
 .zx-models {

@@ -729,6 +729,12 @@ assert.equal(checkout.normalizeCurrency('EUR'), 'USD');
   assert.equal(state({available: true, status: 'busy'}).tone, 'busy');
   assert.deepEqual(state({available: true, status: 'blurred', available_again_at: '2026-10-20T10:04:10Z'}), {tone: 'off', label: 'Back in about 5 min'});
   assert.equal(state({available: true, status: 'blurred', available_again_at: null}).label, 'Temporarily unavailable');
+  // The gateway's health checker (contract section 15): unavailable replaces blurred, and a model
+  // nobody confirmed lately is unknown, never shown as available.
+  assert.deepEqual(state({available: true, status: 'unavailable', available_again_at: '2026-10-20T10:04:10Z'}), {tone: 'off', label: 'Back in about 5 min'});
+  assert.deepEqual(state({available: true, status: 'unknown'}), {tone: 'unknown', label: 'Not checked recently'});
+  assert.equal(state({available: true}).tone, 'unknown', 'no status: not shown as available');
+  assert.equal(state({available: true, status: 'something-new'}).tone, 'unknown');
   assert.deepEqual(state({available: false, unavailable_reason: 'upgrade_required'}), {tone: 'locked', label: 'Pro and Max plans'});
   assert.equal(state({available: false, unavailable_reason: 'region_unavailable'}).label, 'Not offered in your region');
   assert.equal(state({available: false, unavailable_reason: 'not_configured'}).tone, 'off');
