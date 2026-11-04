@@ -84,12 +84,17 @@ const entry = id => CATALOG.find(item => item.id === id);
 {
   const now = Date.parse('2026-11-04T12:48:00Z');
   const stale = healthStaleMs({});
-  const row = { pool: 'p', status: 'available', base_status: 'available', checked_at: now - 60_000, until: null };
+  const row = { pool: 'p', status: 'available', base_status: 'available', verdict_at: now - 60_000, checked_at: now - 60_000, until: null };
   assert.equal(probeView(row, now, stale).status, 'available');
   assert.equal(probeView(row, now + stale, stale).status, 'unknown', 'no confirmation within the stale window: unknown');
   const busy = { ...row, status: 'busy', until: now + 30_000 };
   assert.deepEqual([probeView(busy, now, stale).status, probeView(busy, now, stale).until], ['busy', now + 30_000]);
   assert.equal(probeView(busy, now + 31_000, stale).status, 'available', 'a busy slot that freed reads the last verdict');
+  assert.equal(probeView({ ...busy, verdict_at: now - stale }, now + 31_000, stale).status, 'unknown',
+    'a freed slot does not refresh an old verdict: it is judged by when the verdict was made');
+  // A model list only shows the model is still offered: an old verdict stays old.
+  const listedOnly = { ...row, verdict_at: now - 7 * 3600_000, checked_at: now - 7 * 3600_000, listed_at: now - 60_000, source: 'list' };
+  assert.equal(probeView(listedOnly, now, stale).status, 'unknown', 'listed, last test 7 h ago: unknown');
   const delisted = { ...row, status: 'unavailable', base_status: 'unavailable', until: null, failure_class: 'delisted' };
   assert.equal(probeView(delisted, now, stale).status, 'blurred');
   assert.equal(probeView(delisted, now, stale).until, row.checked_at + stale, 'routing skips it only until the verdict goes stale');
@@ -120,6 +125,21 @@ const entry = id => CATALOG.find(item => item.id === id);
   merged = await withHealth(env, { data: [{ id: 'a', available: true }] }, () => ['pa'],
     { tracker, probeRows: fresh, now: realNow + 10, readRows: async () => new Map() });
   assert.equal(merged.data[0].status, 'available', 'a newer passing test request brightens it again');
+
+  // 2026-11-04 review: a list check one minute after a real failure must not win over it. The last
+  // passing test request was 7 h ago; the list saw the model just now; a real request failed
+  // moments before (its circuit is still open).
+  const listTracker = new ProviderHealthTracker();
+  listTracker.recordFailure('pl', { kind: FailureKind.MODEL_UNAVAILABLE });
+  const listed = new Map([['pl', { pool: 'pl', status: 'available', base_status: 'available', source: 'probe',
+    verdict_at: realNow - 7 * 3600_000, checked_at: realNow - 7 * 3600_000, listed_at: realNow + 5 }]]);
+  merged = await withHealth(env, { data: [{ id: 'l', available: true }] }, () => ['pl'],
+    { tracker: listTracker, probeRows: listed, now: realNow + 10, readRows: async () => new Map() });
+  assert.equal(merged.data[0].status, 'unavailable', 'the real failure wins over a later list check');
+  merged = await withHealth(env, { data: [{ id: 'l', available: true }] }, () => ['pl'],
+    { probeRows: listed, now: realNow + 10, readRows: async () => new Map() });
+  assert.deepEqual([merged.data[0].status, merged.data[0].checked_at], ['unknown', null],
+    'another instance (no failure of its own) says unknown, not available with a fresh checked_at');
   ok('stale rows read unknown; the freshest of real traffic and test requests wins');
 }
 
@@ -277,7 +297,30 @@ try {
   await sql(`UPDATE public.zerox_reservations SET status = 'settled', outcome = 'ok', settled_at = now() WHERE id = $1`, [held.reservation_id]);
   await tickA();
   assert.equal(prober.rows.get(GLM_47).status, 'available', 'the slot freed: the last verdict applies again');
+  assert.equal(prober.rows.get(GLM_47).checked_at, prober.rows.get(GLM_47).verdict_at, 'dated by the verdict, not by the slot check');
   ok('busy slot -> busy with available_again_at, without spending a request; back once it frees');
+
+  // ── A test request holds GLM's one slot while it runs, like a user's request ──
+  await clockHeadroom(20);
+  const slotUser = await newUser();
+  const reserveGlm = () => rpc(env, 'zerox_reserve_v2', { p_user_id: slotUser, p_request_id: `req_${randomUUID()}`,
+    p_model: 'zai/glm-4.7-flash', p_tier: 'free', p_tokens: 100, p_cost_microusd: 0,
+    p_pool: { rpm: null, rpd: null, tpm: null, tpd: null, concurrency: 1 } });
+  let duringProbe = null;
+  behaviour['glm-4.7-flash'] = async body => { duringProbe = await reserveGlm(); return completion(body); };
+  makeDue(GLM_47);
+  await tickA();
+  delete behaviour['glm-4.7-flash'];
+  assert.ok(duringProbe, 'the test request was sent');
+  assert.equal(duringProbe.status, 'pool_exhausted', 'a user arriving during the test request waits for the slot instead of a 429');
+  assert.equal((await sql(`SELECT count(*)::int AS n FROM public.zerox_reservations WHERE user_id IS NULL AND status = 'active'`))[0].n, 0,
+    'the test request freed its slot when it ended');
+  const after = await reserveGlm();
+  assert.equal(after.status, 'ok', 'and the next user request gets it');
+  await sql(`UPDATE public.zerox_reservations SET status = 'settled', outcome = 'ok', settled_at = now() WHERE id = $1`, [after.reservation_id]);
+  await assert.rejects(sql(`INSERT INTO public.zerox_reservations (request_id, model, tier, plan, reserved_tokens, usage_day,
+    pool_minute, pool_day) VALUES ('req_x', 'm', 'free', 'free', 1, current_date, now(), now())`), undefined, 'only probe slots may lack a user');
+  ok('a test request on a one-at-a-time pool holds its slot and frees it at once');
 
   // ── Recovery: two failures make a model unavailable, a passing request brings it back ──
   behaviour['openai/gpt-oss-120b'] = () => json({ error: { message: 'upstream down', type: 'server_error' } }, 503);
@@ -353,14 +396,72 @@ try {
   const trafficUser = await newUser();
   const served = await rpc(env, 'zerox_reserve_v2', { p_user_id: trafficUser, p_request_id: `req_${randomUUID()}`,
     p_model: 'nvidia/openai/gpt-oss-20b', p_tier: 'free', p_tokens: 100, p_cost_microusd: 0, p_pool: POOL_LIMITS.nvidia_trial });
-  await sql(`UPDATE public.zerox_reservations SET status = 'settled', outcome = 'ok', settled_at = now() WHERE id = $1`, [served.reservation_id]);
+  const [{ settled_at: settledAt }] = await sql(`UPDATE public.zerox_reservations SET status = 'settled', outcome = 'ok',
+    settled_at = now() - interval '4 minutes' WHERE id = $1 RETURNING settled_at`, [served.reservation_id]);
+  // The prober's clock runs `offset` ahead of the database: its own last test of this pool would
+  // otherwise look newer than the user's success.
+  prober.rows.get(NVIDIA_20B).verdict_at = null;
   const nvidiaBefore = chats().filter(call => call.url.startsWith('https://integrate.api.nvidia.com') && call.model === 'openai/gpt-oss-20b').length;
   makeDue(NVIDIA_20B);
   await tickA();
   assert.equal(prober.rows.get(NVIDIA_20B).source, 'traffic', 'a recent user success counts');
+  assert.equal(prober.rows.get(NVIDIA_20B).checked_at, new Date(settledAt).getTime(), "dated by the user's request, not by the check");
+  assert.equal(prober.rows.get(NVIDIA_20B).probed_at, new Date(settledAt).getTime());
   assert.equal(chats().filter(call => call.url.startsWith('https://integrate.api.nvidia.com') && call.model === 'openai/gpt-oss-20b').length,
     nvidiaBefore, 'and no test request is spent');
   ok('quota-aware: daily caps, OpenRouter account cap, busy pools skipped, spent budgets reported, real traffic reused');
+
+  // ── A list check never refreshes a verdict; users' upstream failures reach the shared row ──
+  {
+    const NEMO_POOL = key('nvidia/nvidia/nemotron-3-ultra-550b-a55b');
+    const nemoItem = entry('nvidia/nvidia/nemotron-3-ultra-550b-a55b');
+    const nemoPlan = probePlan(nemoItem, nemoItem.pools[0]);
+    const old = clock() - 7 * 3600_000;
+    // The last passing test was 7 h ago and no test may run today (its cap is spent).
+    Object.assign(prober.rows.get(NEMO_POOL), { status: 'available', base_status: 'available', until: null, verdict_at: old,
+      checked_at: old, probed_at: clock(), probe_day: today(), probe_count: nemoPlan.dailyCap });
+    prober.lists = {};
+    await tickA();
+    const listedRow = prober.rows.get(NEMO_POOL);
+    assert.equal(listedRow.checked_at, old, 'the list check left checked_at alone');
+    assert.ok(listedRow.listed_at > old, 'and recorded that the model is still listed');
+    assert.equal(probeView(prober.cache.get(NEMO_POOL), clock()).status, 'unknown', 'listed, tested 7 h ago: unknown on every instance');
+    // Users' requests on it fail upstream (404 model_unavailable), on any instance.
+    const failingUser = await newUser();
+    for (let i = 0; i < 3; i++) {
+      const attempt = await rpc(env, 'zerox_reserve_v2', { p_user_id: failingUser, p_request_id: `req_${randomUUID()}`,
+        p_model: 'nvidia/nvidia/nemotron-3-ultra-550b-a55b', p_tier: 'free', p_tokens: 100, p_cost_microusd: 0, p_pool: POOL_LIMITS.nvidia_trial });
+      assert.equal(attempt.status, 'ok');
+      const settled = await rpc(env, 'zerox_settle_v2', { p_reservation_id: attempt.reservation_id, p_prompt_tokens: 0,
+        p_completion_tokens: 0, p_cost_microusd: 0, p_status: 'refunded', p_latency_ms: 120, p_provider: 'nvidia',
+        p_upstream_model: 'nvidia/nemotron-3-ultra-550b-a55b', p_error_code: 'model_unavailable' });
+      assert.equal(settled.status, 'settled');
+    }
+    const nemoCalls = () => chats().filter(call => call.model === 'nvidia/nemotron-3-ultra-550b-a55b').length;
+    const nemoBefore = nemoCalls();
+    prober.trafficChecks = {};
+    await tickA();
+    const failing = prober.rows.get(NEMO_POOL);
+    assert.deepEqual([failing.status, failing.failure_class, failing.source], ['unavailable', 'upstream_errors', 'traffic'],
+      "three users' upstream failures and no success: unavailable");
+    assert.ok(failing.checked_at < clock() && failing.checked_at === failing.verdict_at, "dated by the users' last failure");
+    assert.equal(failing.probed_at, null, 'its next chat test is due now');
+    assert.equal(nemoCalls(), nemoBefore, 'within the daily cap of the pool');
+    await other.tick();
+    assert.equal(probeView(other.cache.get(NEMO_POOL), clock()).status, 'blurred', 'the follower reads the failure too');
+    status = await statusRows();
+    assert.equal(status.by['nvidia/nvidia/nemotron-3-ultra-550b-a55b'].status, 'unavailable');
+    // With test requests left for the day, the failure brings the chat test forward, which decides.
+    prober.rows.get(NEMO_POOL).probe_count = 0;
+    await tickA();
+    assert.equal(nemoCalls(), nemoBefore + 1, 'the next chat test came at once');
+    assert.deepEqual([prober.rows.get(NEMO_POOL).status, prober.rows.get(NEMO_POOL).source], ['available', 'probe'],
+      'it passed: available again');
+    prober.trafficChecks = {};
+    await tickA();
+    assert.equal(prober.rows.get(NEMO_POOL).status, 'available', "the older users' failures do not flip it back");
+  }
+  ok("list checks never refresh a verdict; users' upstream failures are shared and bring the next test forward");
 
   // ── Tool calls, less often ──
   offset += 6 * 3600_000;
@@ -427,7 +528,7 @@ try {
 
   // ── A database without the migration: the prober logs once and stays idle ──
   const missing = { lease: async () => { throw new AccountDatabaseError('Could not find the function', { code: 'PGRST202' }); },
-    rows: async () => [], put: async () => {}, take: async () => ({}) };
+    rows: async () => [], put: async () => {}, take: async () => ({}), release: async () => false };
   const warned = [];
   const orphan = new HealthProber(env, { store: missing, holder: 'x', log: { info() {}, warn: (...a) => warned.push(a) } });
   assert.equal((await orphan.tick()).leader, false);

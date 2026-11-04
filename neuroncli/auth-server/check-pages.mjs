@@ -715,6 +715,15 @@ assert.equal(checkout.normalizeCurrency('EUR'), 'USD');
   assert.match(html, /<main id="main" data-pricing-root>/, 'pricing.js hydrates the homepage');
   for (const button of tags(html, 'button').filter(b => 'data-copy-target' in b)) assert.ok(ids(html).includes(button['data-copy-target']), 'copy target ' + button['data-copy-target']);
   assert.ok(ids(html).includes('models-list') && ids(html).includes('models-note'), 'live model list slots');
+  // The built-in list (before JavaScript, without it, or when the gateway cannot be reached)
+  // checked nothing: no row says Available, no switched-off or removed model, no route provider.
+  const staticList = html.slice(html.indexOf('id="models-list"'), html.indexOf('</ul>', html.indexOf('id="models-list"')));
+  const staticRows = staticList.match(/<li class="zx-model"[^>]*>/g) || [];
+  assert.ok(staticRows.length >= 5, 'index.html: a built-in model list');
+  assert.ok(staticRows.every(row => row.includes('data-tone="unknown"')), 'index.html: built-in rows are not checked');
+  assert.doesNotMatch(staticList, />Available</, 'index.html: a built-in row never claims Available');
+  assert.doesNotMatch(staticList, /MiniMax|Gemini|Workers AI|@cf\/|\(Groq\)|\(NVIDIA\)|OpenRouter|groq\//, 'index.html: only offered models, by their makers');
+  assert.match(html, /<li data-tone="unknown">Not checked recently<\/li>/, 'index.html: the legend names the not-checked state');
   assert.match(html, /NeuCockpit local AI/, 'NeuCockpit stays on the homepage');
 
   const home = await import(new URL('home.js', root));

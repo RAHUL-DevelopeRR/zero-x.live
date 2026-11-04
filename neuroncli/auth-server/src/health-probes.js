@@ -21,7 +21,8 @@
  *      Groq, Gemini and Anthropic with each key (a rejected key marks that key's pools
  *      unavailable: auth), NVIDIA and OpenRouter once (public), plus OpenRouter's key endpoint.
  *      A model missing from its provider's list is unavailable (delisted) until it is listed
- *      again; a listed model counts as an observation (checked_at) without changing its verdict.
+ *      again. A listed model only records that it is still offered (listed_at): a list says
+ *      nothing about whether requests succeed, so it never refreshes a verdict's checked_at.
  *   2. One-at-a-time slots (Z.ai's free GLM Flash), every tick, from Postgres only: while users'
  *      requests hold every slot the model is busy until the first lease lapses
  *      (available_again_at). No upstream request is spent on it.
@@ -30,13 +31,19 @@
  *      12 s and 24 s timeouts. Before each one the leader asks zerox_probe_take, which
  *        - reports users' settled outcomes of the last ten minutes on that pool from any instance:
  *          a recent success with no newer upstream failure is the observation, and no test
- *          request is sent;
+ *          request is sent. Users' outcomes are also read every minute for every pool
+ *          (TRAFFIC_CHECK_MS): an upstream failure newer than any success (a missing model, a
+ *          5xx, a timeout, a rejected key) makes the pool degraded (unavailable after three with no
+ *          success) and brings its next chat test forward, so both instances report it at once
+ *          instead of the old verdict until the next scheduled test;
  *        - refuses while the pool is busy with users (its slot is taken, or users already used
  *          half of the minute's requests or tokens), or when the request would pass the pool's
  *          budget (the model is then busy until the next minute, or unavailable until 00:00 UTC);
  *        - otherwise counts the test request in the pool's shared minute and day buckets, the
  *          ones users' reservations are checked against, so test requests never let users'
- *          requests pass the upstream's limits.
+ *          requests pass the upstream's limits. On a one-at-a-time pool it also holds the slot
+ *          (a reservation without a user, freed by zerox_probe_release when the request ends), so
+ *          a user's request that arrives meanwhile waits for the slot instead of getting a 429.
  *
  * Quota math (requests per pool per UTC day; the published budgets are catalog.js POOL_LIMITS):
  *   Groq free (1,000 a day per model and key, 30 a minute): chat hourly (24) + tools every 6 h (4)
@@ -62,7 +69,9 @@
  * Verdicts per pool (row.status): available; busy (a slot or rate limit in use, with
  * available_again_at); degraded (slow: a 3-token answer took over 8 s, a first 5xx or timeout, or
  * tool calls stopped working); unavailable (two failures in a row, delisted, key rejected, quota
- * spent). Readers (probeView) turn a row nobody has confirmed for HEALTH_STALE_SECONDS into
+ * spent). Each row keeps when its request-level verdict was made (verdict_at) apart from when its
+ * current state was observed (checked_at) and when a list last showed the model (listed_at).
+ * Readers (probeView) turn a row whose state nobody has observed for HEALTH_STALE_SECONDS into
  * unknown, never available, and merge it with what real requests taught this instance
  * (health-share.js withHealth): the freshest observation wins, so a real failure still flips a
  * model at once.
@@ -109,6 +118,10 @@ const PROBES_PER_TICK = 2;
 const SLOT_WRITE_MS = MINUTE;
 const LIST_TIMEOUT_MS = 8_000;
 const ROWS_SINCE_SECONDS = 86_400;
+// Users' settled outcomes are read for every pool at most this often (one Postgres call each).
+export const TRAFFIC_CHECK_MS = MINUTE;
+// Users' upstream failures in ten minutes, with no success, that make a pool unavailable.
+const USER_FAILURES_UNAVAILABLE = 3;
 
 const CHAT_MESSAGES = Object.freeze([{ role: 'user', content: 'Reply with the single word OK.' }]);
 const TOOL_MESSAGES = Object.freeze([
@@ -176,7 +189,8 @@ function fromDb(row) {
     last_failure_at: ms(row.last_failure_at), failure_class: row.failure_class ?? null,
     consecutive_failures: Number(row.consecutive_failures) || 0, tool_ok: row.tool_ok ?? null,
     tool_checked_at: ms(row.tool_checked_at), probed_at: ms(row.probed_at), probe_day: row.probe_day ?? null,
-    probe_count: Number(row.probe_count) || 0, source: row.source, checked_at: ms(row.checked_at),
+    probe_count: Number(row.probe_count) || 0, source: row.source, verdict_at: ms(row.verdict_at),
+    listed_at: ms(row.listed_at), checked_at: ms(row.checked_at),
   };
 }
 
@@ -187,7 +201,7 @@ function toDb(row) {
     last_success_at: iso(row.last_success_at), last_failure_at: iso(row.last_failure_at), failure_class: row.failure_class,
     consecutive_failures: row.consecutive_failures, tool_ok: row.tool_ok, tool_checked_at: iso(row.tool_checked_at),
     probed_at: iso(row.probed_at), probe_day: row.probe_day, probe_count: row.probe_count, source: row.source,
-    checked_at: iso(row.checked_at),
+    verdict_at: iso(row.verdict_at), listed_at: iso(row.listed_at), checked_at: iso(row.checked_at),
   };
 }
 
@@ -200,9 +214,13 @@ export function databaseProbeStore(env) {
       const row = await rpc(env, 'zerox_health_lease', { p_holder: holder, p_ttl_seconds: ttlSeconds });
       return row?.leader === true;
     },
-    async take({ model, tier, poolKey: key, budget, tokens, costMicrousd, take }) {
+    async take({ model, tier, poolKey: key, budget, tokens, costMicrousd, take, leaseSeconds = 60 }) {
       return rpc(env, 'zerox_probe_take', { p_model: model, p_tier: tier, p_pool_key: key ?? null, p_pool: budget,
-        p_tokens: tokens, p_cost_microusd: costMicrousd, p_take: take });
+        p_tokens: tokens, p_cost_microusd: costMicrousd, p_take: take, p_lease_seconds: leaseSeconds });
+    },
+    // Frees the one-at-a-time slot a test request held (zerox_probe_take slot_id).
+    async release(slotId) {
+      return rpc(env, 'zerox_probe_release', { p_slot_id: slotId });
     },
     async put(rows) {
       for (let index = 0; index < rows.length; index += 500) {
@@ -236,6 +254,7 @@ export class HealthProber {
     this.loaded = false;        // the leader read the stored rows (counts, last probe times)
     this.lists = {};            // list or key check id -> last run
     this.slotWrites = {};       // pool key -> last slot-check write
+    this.trafficChecks = {};    // pool key -> last read of users' outcomes
     this.disabled = null;       // why the prober stopped for good (missing migration)
     this.running = null;
     this.timer = null;
@@ -289,7 +308,8 @@ export class HealthProber {
     if (!row) {
       row = { pool: item.key, model: item.entry.id, tier: item.pool.tier, status: 'unknown', base_status: 'unknown', until: null,
         latency_ms: null, last_success_at: null, last_failure_at: null, failure_class: null, consecutive_failures: 0,
-        tool_ok: null, tool_checked_at: null, probed_at: null, probe_day: null, probe_count: 0, source: 'probe', checked_at: null };
+        tool_ok: null, tool_checked_at: null, probed_at: null, probe_day: null, probe_count: 0, source: 'probe',
+        verdict_at: null, listed_at: null, checked_at: null };
       this.rows.set(item.key, row);
     }
     return row;
@@ -307,9 +327,9 @@ export class HealthProber {
     const lists = await this.checkLists(pools, changed);
     const slots = await this.checkSlots(pools, changed);
     const probes = await this.runProbes(pools, changed);
-    // A row never confirmed (its first test request was refused as a request) is kept in memory
-    // until it has an observation to store.
-    const rows = [...changed].map(key => this.rows.get(key)).filter(row => row.checked_at).map(toDb);
+    // A row with neither an observation nor a list entry (its first test request was refused as a
+    // request) is kept in memory until it has something to store.
+    const rows = [...changed].map(key => this.rows.get(key)).filter(row => row.checked_at || row.listed_at).map(toDb);
     if (rows.length) await this.store.put(rows);
     return { lists, slots, probes, written: rows.length };
   }
@@ -390,10 +410,12 @@ export class HealthProber {
       }
       if (row.failure_class === 'delisted' || (row.failure_class === 'auth' && row.status === 'unavailable')) {
         // Listed again (or the key works again): the verdict waits for a test request, due now.
-        Object.assign(row, { status: 'unknown', base_status: 'unknown', until: null, probed_at: null, consecutive_failures: 0 });
+        Object.assign(row, { status: 'unknown', base_status: 'unknown', until: null, probed_at: null, consecutive_failures: 0,
+          verdict_at: null, checked_at: null, source: 'list' });
       }
-      row.checked_at = now;
-      row.source = 'list';
+      // Still offered, which says nothing about whether requests succeed: the verdict and its
+      // checked_at stay as they are, and go stale on their own.
+      row.listed_at = now;
       changed.add(item.key);
     }
   }
@@ -408,12 +430,12 @@ export class HealthProber {
   }
 
   // A timed state over the row's base verdict (busy or unavailable until `until`, or unavailable
-  // until the next list says otherwise when until is null).
+  // until the next list says otherwise when until is null), observed now.
   markOverlay(item, now, status, failureClass, until, changed, source, base = null) {
     const row = this.row(item);
     row.status = status;
     row.until = until;
-    if (base) row.base_status = base;
+    if (base) { row.base_status = base; row.verdict_at = now; }
     if (failureClass) {
       row.failure_class = failureClass;
       row.last_failure_at = now;
@@ -449,10 +471,12 @@ export class HealthProber {
           this.slotWrites[item.key] = now;
         }
       } else if (row.status === 'busy' && row.source === 'budget') {
-        // The slot is free again: the last request-level verdict applies.
+        // The slot is free again: the last request-level verdict applies, as old as it is (a free
+        // slot says nothing about whether requests succeed).
         row.status = row.base_status;
         row.until = null;
-        row.checked_at = now;
+        row.checked_at = row.verdict_at;
+        row.source = 'probe';
         changed.add(item.key);
       }
     }
@@ -473,10 +497,13 @@ export class HealthProber {
 
   take(item, budget, maxTokens, messages, tools, take) {
     const prompt = estimatePromptTokens(messages, tools);
+    // A one-at-a-time slot is held for the request's timeout and a margin (it is freed sooner).
+    const timeoutMs = tools ? this.settings.toolTimeoutMs : this.settings.chatTimeoutMs;
     return this.store.take({
       model: item.entry.id, tier: item.pool.tier, poolKey: item.pool.key_id ? item.key : null, budget: budget ?? null,
       tokens: reservedTokens(prompt, maxTokens),
       costMicrousd: item.pool.tier === 'paid' ? reserveCostMicrousd(item.pool.price, prompt, maxTokens) : 0, take,
+      leaseSeconds: Math.min(300, Math.max(5, Math.ceil(timeoutMs / 1000) + 10)),
     });
   }
 
@@ -506,6 +533,8 @@ export class HealthProber {
       const row = this.row(item);
       providerUse.set(item.entry.provider, (providerUse.get(item.entry.provider) || 0) + this.usedToday(row, today));
     }
+    // Users' outcomes on the pools that are not due: a failure brings the pool's chat test forward.
+    await this.watchTraffic(pools.filter(item => !this.due(item, now)), now, changed);
     const due = pools.map(item => ({ item, kind: this.due(item, now) })).filter(({ kind }) => kind)
       .sort((a, b) => (this.row(a.item).probed_at || 0) - (this.row(b.item).probed_at || 0));
     let sent = 0;
@@ -521,9 +550,11 @@ export class HealthProber {
       const tools = kind === 'tool' ? [TEST_TOOL] : null;
       let ticket;
       try {
-        // Users' traffic first: a recent success anywhere is the observation, for free.
+        // Users' traffic first: a recent success anywhere is the observation, for free (a recent
+        // failure is recorded, and the test request confirms it).
         const seen = await this.take(item, budget, maxTokens, messages, tools, false);
-        if (this.observeTraffic(item, seen, now, changed) && kind === 'chat') continue;
+        this.trafficChecks[item.key] = now;
+        if (this.observeTraffic(item, seen, now, changed) === 'ok' && kind === 'chat') continue;
         ticket = await this.take(item, budget, maxTokens, messages, tools, true);
       } catch (error) {
         if (missingFunction(error)) throw error;
@@ -538,25 +569,65 @@ export class HealthProber {
       row.probe_day = today;
       row.probe_count = this.usedToday(row, today) + 1;
       providerUse.set(item.entry.provider, (providerUse.get(item.entry.provider) || 0) + 1);
-      if (kind === 'tool') await this.toolProbe(item, changed);
-      else await this.chatProbe(item, changed);
+      try {
+        if (kind === 'tool') await this.toolProbe(item, changed);
+        else await this.chatProbe(item, changed);
+      } finally {
+        // The one-at-a-time slot the test request held goes back to users at once.
+        if (ticket.slot_id) {
+          await this.store.release(ticket.slot_id).catch(error => {
+            this.log.warn('Health probe slot release failed', { pool: item.key, name: error?.name ?? null });
+          });
+        }
+      }
     }
     return sent;
   }
 
-  // Users' settled outcomes of the last ten minutes (zerox_probe_take recent_*): a success with no
-  // newer upstream failure proves the pool answers. Returns true when it counted.
+  // Reads users' outcomes for pools whose last read is TRAFFIC_CHECK_MS old (nothing is counted).
+  async watchTraffic(pools, now, changed) {
+    for (const item of pools) {
+      const row = this.row(item);
+      if (row.status === 'unavailable' && ['delisted', 'auth'].includes(row.failure_class)) continue;
+      if (now - (this.trafficChecks[item.key] || 0) < TRAFFIC_CHECK_MS) continue;
+      const budget = this.budget(item);
+      if (budget === undefined) continue;
+      this.trafficChecks[item.key] = now;
+      try {
+        this.observeTraffic(item, await this.take(item, budget, CHAT_MAX_TOKENS, CHAT_MESSAGES, null, false), now, changed);
+      } catch (error) {
+        if (missingFunction(error)) throw error;
+      }
+    }
+  }
+
+  // Users' settled outcomes of the last ten minutes (zerox_probe_take recent_* and last_*_at), when
+  // newer than the row's verdict. A success with no newer upstream failure proves the pool answers
+  // ('ok'); an upstream failure newer than any success makes it degraded, or unavailable after
+  // USER_FAILURES_UNAVAILABLE with no success, and makes its next chat test due now ('failed').
+  // The observation is dated by the users' request, never by this check. Returns null otherwise.
   observeTraffic(item, seen, now, changed) {
     const lastOk = ms(seen?.last_ok_at);
     const lastFailed = ms(seen?.last_failed_at);
-    if (!lastOk || (lastFailed && lastFailed > lastOk) || Number(seen?.recent_ok) < 1) return false;
     const row = this.row(item);
-    if (row.last_failure_at && row.last_failure_at > lastOk) return false;
+    const overlay = (row.status === 'busy' || row.status === 'unavailable') && row.until > now;
+    if (lastFailed && Number(seen?.recent_failed) >= 1 && lastFailed > (lastOk || 0)) {
+      if (row.verdict_at && row.verdict_at >= lastFailed) return null;
+      const down = !lastOk && Number(seen.recent_failed) >= USER_FAILURES_UNAVAILABLE;
+      Object.assign(row, { base_status: down ? 'unavailable' : 'degraded', failure_class: 'upstream_errors',
+        last_failure_at: Math.max(row.last_failure_at || 0, lastFailed), verdict_at: lastFailed, source: 'traffic',
+        probed_at: null });
+      if (!overlay) Object.assign(row, { status: row.base_status, until: null, checked_at: lastFailed });
+      changed.add(item.key);
+      return 'failed';
+    }
+    if (!lastOk || Number(seen?.recent_ok) < 1) return null;
+    if ((row.last_failure_at && row.last_failure_at > lastOk) || (row.verdict_at && row.verdict_at >= lastOk)) return null;
     Object.assign(row, { base_status: 'available', consecutive_failures: 0, last_success_at: Math.max(row.last_success_at || 0, lastOk),
-      probed_at: now, source: 'traffic', checked_at: now });
-    if (!(row.status === 'busy' && row.until > now)) { row.status = 'available'; row.until = null; }
+      probed_at: Math.max(row.probed_at || 0, lastOk), source: 'traffic', verdict_at: lastOk });
+    if (!overlay) Object.assign(row, { status: 'available', until: null, checked_at: lastOk });
     changed.add(item.key);
-    return true;
+    return 'ok';
   }
 
   // zerox_probe_take refused: the pool's slot or budget is what users would hit as well.
@@ -631,12 +702,13 @@ export class HealthProber {
         row.failure_class = 'tool_call';
         row.last_failure_at = now;
       }
+      row.verdict_at = now;
       if (!(row.until && row.until > now && (row.status === 'busy' || row.status === 'unavailable'))) {
         row.status = row.base_status;
         row.until = null;
+        row.checked_at = now;
       }
       row.source = 'probe';
-      row.checked_at = now;
     } else {
       this.failed(item, row, outcome, now);
     }
@@ -656,6 +728,7 @@ export class HealthProber {
     row.last_success_at = now;
     row.consecutive_failures = 0;
     row.source = 'probe';
+    row.verdict_at = now;
     row.checked_at = now;
   }
 
@@ -688,6 +761,7 @@ export class HealthProber {
       row.failure_class = kind === FailureKind.AUTH ? 'auth' : 'model_unavailable';
       row.base_status = 'unavailable';
       row.status = 'unavailable';
+      row.verdict_at = now;
       // Rejected keys wait for the next list or key check; a missing model is asked again after
       // the failure interval (some providers answer 404 while a model is being redeployed).
       row.until = null;
@@ -698,6 +772,7 @@ export class HealthProber {
     row.failure_class = kind === FailureKind.TIMEOUT ? 'timeout' : 'server';
     row.consecutive_failures++;
     row.base_status = row.consecutive_failures >= 2 ? 'unavailable' : 'degraded';
+    row.verdict_at = now;
     row.status = row.base_status;
     row.until = null;
   }

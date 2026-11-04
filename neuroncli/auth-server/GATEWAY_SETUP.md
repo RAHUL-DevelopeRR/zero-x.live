@@ -173,7 +173,16 @@ call of 160 tokens less often; 12 s and 24 s timeouts). `zerox_probe_take` count
 request in the pool's shared minute and day budgets (the ones users' reservations are checked
 against), refuses it while users are busy on the pool (its slot is taken, or users already used
 half the minute's requests or tokens), and reports users' outcomes of the last ten minutes from
-any instance: a recent success is the observation and no test request is sent.
+any instance: a recent success is the observation and no test request is sent. The leader also
+reads users' outcomes of every pool once a minute: an upstream failure newer than any success (a
+missing model, a 5xx, a timeout, a rejected key) makes the model `degraded` (`unavailable` after
+three with no success, `last_failure_class` `upstream_errors`) on both instances, and its next chat
+test is due at once, within the daily cap. A model list only records that a model is still
+offered (`listed_at`); it never renews a verdict, so a listed model whose last test request is
+older than `HEALTH_STALE_SECONDS` reports `unknown`. On a one-at-a-time pool (Z.ai's GLM Flash) a
+test request holds the slot like a user's request (a reservation without a user, plan `probe`,
+freed by `zerox_probe_release` as soon as the request ends), so a user who arrives meanwhile waits
+for the slot instead of getting Z.ai's 429.
 
 | Pool | Published free budget | Chat test | Tool-call test | Requests a day | Share |
 |---|---|---|---|---|---|
@@ -193,8 +202,9 @@ restart or a new leader continues them.
 
 Verdicts: `available`; `busy` (a slot or rate limit in use, with `available_again_at`);
 `degraded` (a 3-token answer slower than 8 s, a first 5xx or timeout, or tool calls that stopped
-working); `unavailable` (two failures in a row, delisted, the key rejected, the quota spent). A
-model whose newest observation (a test request, a list check, real traffic) is older than
+working, or users' requests failing upstream); `unavailable` (two failures in a row, delisted,
+the key rejected, the quota spent, or three users' upstream failures and no success). A model
+whose newest observation (a test request, real traffic, a slot or rate limit in use) is older than
 `HEALTH_STALE_SECONDS` reports `unknown`, never `available`; a real failure on an instance still
 flips its model at once, since the freshest observation wins. Routing on the Node gateway skips
 busy and unavailable pools from the same rows. Logs are metadata only (`Health probe` with the
@@ -306,17 +316,20 @@ cache arguments. Verify:
 - `SELECT plan, allowed_tiers, monthly_credit_microusd, jsonb_array_length(features) FROM public.zerox_plan_policy ORDER BY sort;`
   returns free `{free}` 0 4, pro `{free,paid}` 8000000 5, max `{free,paid}` 35000000 5, ultrawork `{free,paid}` 8000000 5.
 
-**Active health checks (`20261104000000_health_probes.sql`).** New tables and functions only
+**Active health checks (`20261104000000_health_probes.sql`).** New tables and functions
 (the tables `zerox_pool_health` and `zerox_health_lease`; the functions `zerox_health_lease`, `zerox_probe_take`,
-`zerox_pool_health_put`, `zerox_pool_health_get`, service_role only); nothing existing changes, so
-it can be pasted before or after the deploy. A gateway that runs before it is applied logs
+`zerox_probe_release`, `zerox_pool_health_put`, `zerox_pool_health_get`, service_role only), and two
+metadata-only changes to `zerox_reservations` so a test request can hold a one-at-a-time slot:
+`user_id` allows null, and the check constraint `zerox_reservations_user_or_probe` (`NOT VALID`, so
+no scan) allows it only for probe rows (plan `probe`). Every per-user query filters by `user_id`,
+so it can be pasted before or after the deploy. A gateway that runs before it is applied logs
 "Health probes need migration 20261104000000_health_probes.sql" once and reports models without
 recent traffic as `unknown` until the migration is applied and the gateway restarts. Verify:
 
-- `SELECT count(*) FROM pg_proc WHERE proname IN ('zerox_health_lease', 'zerox_probe_take', 'zerox_pool_health_put', 'zerox_pool_health_get');` returns 4;
+- `SELECT count(*) FROM pg_proc WHERE proname IN ('zerox_health_lease', 'zerox_probe_take', 'zerox_probe_release', 'zerox_pool_health_put', 'zerox_pool_health_get');` returns 5;
 - after the next deploy, `SELECT holder, expires_at FROM public.zerox_health_lease;` names one
   instance (`<host>:<pid>:<id>`) with an expiry under 90 s ahead, and
-  `SELECT pool, status, failure_class, checked_at FROM public.zerox_pool_health ORDER BY pool;`
+  `SELECT pool, status, failure_class, checked_at, listed_at FROM public.zerox_pool_health ORDER BY pool;`
   fills within a few minutes.
 
 Roll back with `migrations/down/20261104000000_health_probes.sql` after setting `HEALTH_PROBES=off`

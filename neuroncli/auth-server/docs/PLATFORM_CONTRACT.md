@@ -1090,15 +1090,17 @@ nobody had used counted as available.
 
 `status` on `/v1/models`, `/v1/models/status` and `/v1/models/stream` is one of:
 
-- `available`: the newest observation (a test request, a model list, real traffic) says it answers.
+- `available`: the newest observation (a test request or real traffic) says it answers. A model
+  list only shows the model is still offered; it never renews a verdict.
 - `degraded`: it answers, but slowly (a 3-token test answer over 8 s), after a first 5xx or
-  timeout, or without calling tools any more.
+  timeout, without calling tools any more, or users' requests failed upstream more recently than
+  one succeeded.
 - `busy`: a one-at-a-time slot or a rate limit is in use; `available_again_at` says when it frees.
   Keep the model selectable and show the wait.
 - `unknown`: no observation within `stale_after_seconds` (`HEALTH_STALE_SECONDS`, 1,200 by default).
   Never reported as `available`. Selectable; routing still tries it after the known-good routes.
-- `unavailable` (was `blurred`): failing (two failures in a row), delisted by its provider, its
-  key rejected or its quota spent; grey it out until `available_again_at` when there is one.
+- `unavailable` (was `blurred`): failing (two failures in a row, or three users' upstream failures
+  in ten minutes with no success), delisted by its provider, its key rejected or its quota spent; grey it out until `available_again_at` when there is one.
   Clients written for v1.3 should treat any status other than `available`, `degraded` and `busy`
   as not available.
 
@@ -1111,13 +1113,15 @@ an unknown one is tried), and that route's `available_again_at`, `checked_at`, `
 
 Every model on `/v1/models` and every row of `/v1/models/status` (and its stream) adds:
 
-- `checked_at`: when the verdict in `status` was last confirmed (null: never). Per model, not the
-  newest observation of any of its routes.
+- `checked_at`: when the verdict in `status` was last confirmed by a test request, real traffic or
+  a slot or rate limit in use (null: never); a model list never moves it, and an observation from
+  users' traffic carries the time of their request. Per model, not the newest observation of any
+  of its routes.
 - `latency_ms`: the latency of the last test request (or real attempt on this instance), or null.
 - `last_success_at`: the last successful test request or user request, or null.
 - `last_failure_class`: the class of the last failure, or null: `rate_limited`, `quota`,
-  `delisted`, `model_unavailable`, `auth`, `server`, `timeout`, `slow` or `tool_call`. Never a
-  provider name or message.
+  `delisted`, `model_unavailable`, `auth`, `server`, `timeout`, `slow`, `tool_call` or
+  `upstream_errors` (users' requests failed upstream). Never a provider name or message.
 
 `/v1/models/status` adds `stale_after_seconds` at the top level. `checked_at`, `latency_ms` and
 `last_success_at` stay out of the ETag, so `If-None-Match` answers `304` while the verdicts are
@@ -1131,7 +1135,9 @@ lists every 10 minutes, one-at-a-time slots every tick (from Postgres, without a
 test requests on a schedule sized to each pool's free quota (GATEWAY_SETUP.md, "Active model health
 checks"): 3 output tokens for a chat test, 160 for a tool-call test. `zerox_probe_take` counts each
 test request in the pool's shared budget (`zerox_pool_usage`), refuses it while users are busy on
-the pool, and reports users' outcomes of the last ten minutes, which count as observations. Verdicts
+the pool, and reports users' outcomes of the last ten minutes, which count as observations (read
+for every pool once a minute; an upstream failure newer than any success brings the next test
+forward). On a one-at-a-time pool a test request holds the slot until it ends. Verdicts
 are stored in `zerox_pool_health` and read by every instance; the freshest of a verdict and this
 instance's own attempts wins, so a real failure flips a model at once. Routing on the Node gateway
 skips pools the verdicts mark busy or unavailable until their time ends. `HEALTH_PROBES=off` turns
@@ -1142,7 +1148,8 @@ the checker off. The Worker keeps its HealthHub (section 8.1) with the same stat
 | Function | Arguments → result |
 |---|---|
 | `zerox_health_lease` | `(p_holder text, p_ttl_seconds int)` → `{leader, holder, expires_at}`. Takes or renews the lease; `p_ttl_seconds = 0` releases it. |
-| `zerox_probe_take` | `(p_model, p_tier, p_pool_key, p_pool jsonb, p_tokens, p_cost_microusd, p_take boolean)` → `{status: ok \| pool_full \| pool_exhausted \| pool_busy, retry_after_seconds, running, minute_requests, minute_tokens, day_requests, recent_ok, recent_failed, last_ok_at, last_failed_at}`. `p_take` counts the request when `ok`. |
-| `zerox_pool_health_put` | `(p_rows jsonb)` → rows written (at most 500; rows unchecked for 7 days are deleted). |
-| `zerox_pool_health_get` | `(p_since_seconds int)` → the rows checked within that time. |
+| `zerox_probe_take` | `(p_model, p_tier, p_pool_key, p_pool jsonb, p_tokens, p_cost_microusd, p_take boolean, p_lease_seconds int = 60)` → `{status: ok \| pool_full \| pool_exhausted \| pool_busy, retry_after_seconds, running, minute_requests, minute_tokens, day_requests, recent_ok, recent_failed, last_ok_at, last_failed_at, slot_id}`. `p_take` counts the request when `ok`; on a pool with a concurrency limit it also holds a slot for `p_lease_seconds` (5-300), `slot_id`. `recent_failed` counts users' attempts whose error code is `model_unavailable`, `upstream_error`, `upstream_timeout` or `upstream_auth`. |
+| `zerox_probe_release` | `(p_slot_id uuid)` → true when the test request's slot was still held and is now free. |
+| `zerox_pool_health_put` | `(p_rows jsonb)` → rows written (at most 500; rows not written for 7 days are deleted). A row carries `verdict_at` (the last request-level verdict), `checked_at` (when the state in `status` was observed) and `listed_at` (the last model list that showed it). |
+| `zerox_pool_health_get` | `(p_since_seconds int)` → the rows written within that time. |
 

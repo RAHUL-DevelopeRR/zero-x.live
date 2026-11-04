@@ -361,6 +361,8 @@ try {
       has_function_privilege('anon', p.oid, 'EXECUTE') AS anon, has_function_privilege('authenticated', p.oid, 'EXECUTE') AS auth,
       has_function_privilege('service_role', p.oid, 'EXECUTE') AS service
     FROM pg_proc AS p JOIN pg_namespace AS n ON n.oid = p.pronamespace WHERE n.nspname = 'public' AND p.proname = ANY($1) ORDER BY 1, 2`, [names])).rows;
+  // 20261104000000 lets probe slots leave zerox_reservations.user_id null; its down script requires it again.
+  await db.exec(await readFile(join(root, 'migrations', 'down', '20261104000000_health_probes.sql'), 'utf8'));
   await db.exec(await readFile(join(root, 'migrations', 'down', '20261102000000_free_token_window.sql'), 'utf8'));
   await db.exec(await readFile(join(root, 'migrations', 'down', '20261029001000_pool_concurrency.sql'), 'utf8'));
   await db.exec(await downSql(PLANS));

@@ -25,20 +25,23 @@ export function healthStaleMs(env = {}) {
 /**
  * A checker row now, in the pool-row shape health-share.js and the router use:
  * { status: available | degraded | busy | blurred | unknown, until, at, latency_ms,
- *   last_success_at, failure_class }. A timed state that has ended gives way to the row's last
- * request-level verdict (base_status); a row nobody confirmed within staleMs is unknown. An
- * unavailable pool (blurred) without an end time is held for staleMs from its last confirmation,
- * so routing never skips a pool forever on one verdict.
+ *   last_success_at, failure_class }. `at` is when the state was observed: checked_at for the
+ * row's state, or verdict_at once a timed state has ended and the row's last request-level
+ * verdict (base_status) applies again. A model list never moves either (it only sets listed_at),
+ * so a listed model whose last test request is older than staleMs is unknown. An unavailable pool
+ * (blurred) without an end time is held for staleMs from its observation, so routing never skips
+ * a pool forever on one verdict.
  */
 export function probeView(row, now = Date.now(), staleMs = healthStaleMs()) {
   if (!row) return null;
-  const at = timeMs(row.checked_at);
   const until = timeMs(row.until ?? row.available_again_at);
+  let at = timeMs(row.checked_at);
   let status = row.status;
   let end = until;
   if (status !== 'unknown' && until && until <= now) {
     status = row.base_status || 'unknown';
     end = null;
+    at = timeMs(row.verdict_at);
   }
   if (!at || now - at > staleMs) status = 'unknown';
   if (!['available', 'degraded', 'busy', 'unavailable', 'unknown'].includes(status)) status = 'unknown';

@@ -10,10 +10,16 @@ SET LOCAL lock_timeout = '5s';
 
 DROP FUNCTION IF EXISTS public.zerox_pool_health_get(integer);
 DROP FUNCTION IF EXISTS public.zerox_pool_health_put(jsonb);
-DROP FUNCTION IF EXISTS public.zerox_probe_take(text, text, text, jsonb, bigint, bigint, boolean);
+DROP FUNCTION IF EXISTS public.zerox_probe_release(uuid);
+DROP FUNCTION IF EXISTS public.zerox_probe_take(text, text, text, jsonb, bigint, bigint, boolean, integer);
 DROP FUNCTION IF EXISTS public.zerox_health_lease(text, integer);
 DROP TABLE IF EXISTS public.zerox_health_lease;
 DROP TABLE IF EXISTS public.zerox_pool_health;
+-- Probe slot rows have no user: remove them before user_id is required again (this scans
+-- zerox_reservations once).
+DELETE FROM public.zerox_reservations AS r WHERE r.user_id IS NULL;
+ALTER TABLE public.zerox_reservations DROP CONSTRAINT IF EXISTS zerox_reservations_user_or_probe;
+ALTER TABLE public.zerox_reservations ALTER COLUMN user_id SET NOT NULL;
 
 DELETE FROM supabase_migrations.schema_migrations WHERE version = '20261104000000';
 
