@@ -582,7 +582,10 @@ try {
     // The default list names the maker, never the serving provider.
     const family = (await (await app.request('https://zero-x.live/v1/models', {}, env)).json()).data.find(model => model.id === 'openai/gpt-oss-120b');
     assert.deepEqual([family.provider.id, family.provider.name, family.owned_by, family.display_name], ['openai', 'OpenAI', 'openai', 'GPT-OSS 120B']);
-    assert.deepEqual(family.offers, groq.offers, 'the offers of its routes stay listed for data policy');
+    // The data-policy fields of its routes' offers stay listed, without the offer id that names the
+    // provider; models_dev_id (provider-qualified) is null.
+    assert.deepEqual(family.offers, groq.offers.map(({ id: _id, ...offer }) => offer), 'the offers of its routes stay listed for data policy');
+    assert.equal(family.models_dev_id, null);
     assert.equal(before.data.find(model => model.id === 'gemini/gemini-2.5-flash').provider.logo_url, 'https://models.dev/logos/google.svg');
     const t1 = await list({ [TRUST_HEADER]: 'T1' });
     const flash = t1.data.find(model => model.id === 'gemini/gemini-2.5-flash');
@@ -610,6 +613,9 @@ try {
       models_dev_id: 'groq/openai/gpt-oss-120b', name: 'GPT OSS 120B', family: 'gpt-oss', canonical_model_id: null,
       release_date: '2025-08-05', knowledge: '2024-06', open_weights: true, reasoning: true, structured_output: true,
       modalities: { input: ['text'], output: ['text'] }, list_price_per_million: { input: 0.15, output: 0.6 } });
+    const familyFacts = (await (await app.request('https://zero-x.live/v1/models', {}, env)).json()).data
+      .find(model => model.id === 'openai/gpt-oss-120b').facts;
+    assert.deepEqual([familyFacts.name, familyFacts.models_dev_id], ['GPT OSS 120B', null], 'family facts without the provider-qualified id');
     const day = Date.now() + 25 * 3600_000;
     const warn = console.warn;
     console.warn = () => {};

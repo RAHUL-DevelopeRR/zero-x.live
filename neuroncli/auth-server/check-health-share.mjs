@@ -172,6 +172,25 @@ console.log('ok - slow_until: kept while it lasts, published to KV and cleared b
   assert.ok(Object.values(families).every(model => !/\((groq|nvidia|openrouter|workers ai|z\.ai)/i.test(model.display_name)),
     'no provider in a family name');
   assert.equal(families.auto.context_window, byId.auto.context_window);
+  // Nothing in the default /v1/models JSON names a serving provider (contract 14.3): no offer ids,
+  // no models.dev ids, no route ids. Only ?routes=1 does. NVIDIA is also a maker (Nemotron), so
+  // its own family's identity fields may say nvidia.
+  const wide = { ...env, AI: { run: async () => ({}) }, GLM_API_KEY: 'glm-test',
+    CLOUDFLARE_MODELS: '@cf/openai/gpt-oss-120b,@cf/meta/llama-3.3-70b-instruct-fp8-fast' };
+  const wc = { env: wide, req: { raw: new Request('https://zero-x.live/v1/models') } };
+  const providerWords = /groq|nvidia|openrouter|cloudflare|@cf|workers|\bzai\./i;
+  const plain = (await v1ModelsPayload(wc, {})).data;
+  assert.ok(['meta/llama-3.3-70b', 'zhipu/glm-4.7-flash', 'nvidia/nemotron-3-ultra-550b'].every(id => plain.some(model => model.id === id)));
+  for (const model of plain) {
+    const { id: _id, family: _family, owned_by: _owner, maker, maker_name: _name, provider: _provider, display_name: _display,
+      model_name: _model, ...rest } = model;
+    assert.doesNotMatch(JSON.stringify(maker === 'nvidia' ? rest : model), providerWords, `${model.id}: no provider in the default list`);
+  }
+  assert.doesNotMatch(JSON.stringify((await v1ModelStatusPayload(wc, {})).body.data
+    .filter(model => model.maker !== 'nvidia')), providerWords, 'nor in /v1/models/status');
+  const routeText = JSON.stringify((await v1ModelsPayload(wc, {}, { routes: true })).data);
+  assert.ok(['groq.free', 'nvidia.free', 'openrouter.free', 'cloudflare.free', '@cf/'].every(word => routeText.includes(word)),
+    '?routes=1 still names the routes');
 
   const first = await v1ModelStatusPayload(c, {});
   assert.match(first.etag, /^W\/"[0-9a-f]{24}"$/);
@@ -240,7 +259,14 @@ console.log('ok - slow_until: kept while it lasts, published to KV and cleared b
   let family = (await v1ModelsPayload(rc, {})).data.filter(model => model.id === 'openai/gpt-oss-20b');
   assert.equal(family.length, 1, 'one entry for the Groq and NVIDIA routes');
   assert.equal(family[0].status, 'available', 'the NVIDIA route still serves it');
+  assert.equal(family[0].context_window, 131072, "NVIDIA's window while it serves");
+  // The window follows the routes that can serve now: NVIDIA busy, Groq free takes about 8K.
+  resetPoolBudgets();
   notePoolExhausted(nvidia20, { budget: 'rpm|tpm', retryAfterSeconds: 90, now: Date.now() });
+  family = (await v1ModelStatusPayload(rc, {})).body.data.find(model => model.id === 'openai/gpt-oss-20b');
+  assert.deepEqual([family.status, family.context_window, family.native_context_window], ['available', 8000, 131072],
+    'a busy route does not advertise a window the available one cannot serve');
+  notePoolExhausted(pool('groq/openai/gpt-oss-20b'), { budget: 'rpm|tpm', retryAfterSeconds: 30, now: Date.now() });
   family = (await v1ModelStatusPayload(rc, {})).body.data.find(model => model.id === 'openai/gpt-oss-20b');
   assert.equal(family.status, 'busy', 'every route busy: the family is busy');
   assert.ok(Date.parse(family.available_again_at) <= Date.now() + 31_000, 'available again when the first route frees up');

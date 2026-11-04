@@ -1007,8 +1007,13 @@ Every route has an identity derived from its `upstream_model` (database rows inc
   can):
   - `id` = `family`; `display_name` = `model_name`; `owned_by` = `maker`;
     `provider` = `{id: maker, name: maker_name, logo_url: null, logo_fallback_url: null}`.
-  - `context_window`, `native_context_window`, `max_output_tokens`: the largest of those routes
-    (the router skips routes a request does not fit).
+  - `context_window` (and `context_length`): the largest window of those routes that can serve
+    now, that is, routes not `busy` or `blurred` (when every route is, the routes with the best
+    status). The router skips routes a request does not fit, so a busy route never advertises a
+    window the healthy ones cannot serve: GPT-OSS 20B with NVIDIA busy shows Groq free's 8,000,
+    not 131,072. `max_output_tokens`: the largest of the same routes, at most `context_window`.
+    `native_context_window`: the largest of all those routes (the model's own window does not
+    change with health).
   - `capabilities`: a capability any of those routes has; `tiers`, `reasoning_efforts`: the union.
   - `available`: true when any route is usable; otherwise `unavailable_reason` is the first of
     `upgrade_required`, `region_unavailable`, `policy_restricted`, `not_configured` that a route
@@ -1016,8 +1021,12 @@ Every route has an identity derived from its `upstream_model` (database rows inc
   - `status`: the best route status (`available` > `degraded` > `busy` > `blurred`), with that
     route's `available_again_at` (the earliest among equals); `checked_at`: the newest observation.
     One busy route therefore does not grey out a model another route still serves.
-  - `pricing`: the highest-priced usable route (credits are never under-held); `offers`: the
-    offers of those routes (data policy, section 12), unchanged.
+  - `pricing`: the highest-priced usable route (credits are never under-held).
+  - Nothing names a serving provider. `offers`: the data-policy fields of those routes' offers
+    (section 12.4: `{tier, owner, trust_tier, trains_on_inputs}`, duplicates removed) without the
+    offer `id`, which names the provider (`groq.free`). `models_dev_id` is `null` (models.dev ids
+    are provider-qualified, `groq/openai/gpt-oss-120b`), and so is `facts.models_dev_id`. Route
+    ids, offer ids and models.dev ids stay on `?routes=1`.
 - `auto` carries `maker: 'zero-x'`, `maker_name: 'Zero-X'`, `family: 'auto'`, `model_name: 'Auto'`.
 - `?routes=1` (also `true`, `yes`) lists the routes instead, for diagnostics: one entry per route
   with its route id, provider and display name, plus `maker`, `maker_name`, `family` and
@@ -1037,6 +1046,15 @@ changed. The website's model list polls this endpoint every `poll_interval_secon
 - `model` in `/v1/chat/completions` may be a family id. Lookup order: route
   id, then family id, then alias; all case-insensitive, with the optional `openai/` transport
   prefix. Route ids keep working and keep their route (old clients).
+- An alias equal to the leaf of its route's family names the model, not that route:
+  `gpt-oss-20b`, `gpt-oss-120b`, `qwen3.8-27b`, `gemini-2.5-flash`, `glm-4.7-flash` and
+  `llama-3.3-70b` resolve to their families (`openai/gpt-oss-20b`, ...). This matters because the
+  `openai/` transport prefix and the `openai/` family prefix look alike: Neuron strips `openai/`
+  (and `xai/`) before sending, so the listed family `openai/gpt-oss-20b` arrives as
+  `gpt-oss-20b`, and must fall back from a rate-limited or too-small Groq route to NVIDIA like the
+  family id does. A bare name that is no route, family or alias resolves to the family
+  `openai/<name>` or `xai/<name>` when one exists. Provider-qualified aliases
+  (`workers-ai/gpt-oss-120b`, `openrouter/cohere/north-mini-code:free`) keep their route.
 - A family id is served by every offered route of the family that has the capabilities the
   request needs (routes that can force a tool call first when the request forces one), ranked by
   `auto_rank` (routes `auto` never picks after the others, then catalog order). The usual order

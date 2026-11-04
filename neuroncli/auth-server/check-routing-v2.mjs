@@ -276,12 +276,21 @@ try {
   // ── Catalog ──
   await test('explicit alias table, openai/ transport prefix and no fuzzy matching', () => {
     assert.equal(resolveModelId('openai/gemini/gemini-2.5-flash'), 'gemini/gemini-2.5-flash');
-    assert.equal(resolveModelId('gemini-2.5-flash'), 'gemini/gemini-2.5-flash');
     // A family id (contract section 14) resolves to itself: the router serves it from the best
     // healthy route. Route ids still resolve to their route.
     assert.equal(resolveModelId('openai/gpt-oss-120b'), 'openai/gpt-oss-120b');
     assert.equal(resolveModelId('openai/openai/gpt-oss-20b'), 'openai/gpt-oss-20b');
     assert.equal(resolveModelId('Groq/OpenAI/GPT-OSS-120B'), 'groq/openai/gpt-oss-120b');
+    // A bare alias equal to its family's leaf names the model, not one route (contract 14.5):
+    // Neuron strips the openai/ prefix, so the listed family openai/gpt-oss-20b arrives as
+    // gpt-oss-20b and must not be pinned to Groq. Provider-qualified aliases keep their route.
+    const leaves = {
+      'gpt-oss-20b': 'openai/gpt-oss-20b', 'gpt-oss-120b': 'openai/gpt-oss-120b', 'qwen3.8-27b': 'qwen/qwen3.8-27b',
+      'gemini-2.5-flash': 'google/gemini-2.5-flash', 'glm-4.7-flash': 'zhipu/glm-4.7-flash', 'llama-3.3-70b': 'meta/llama-3.3-70b',
+      'openai/gemini-2.5-flash': 'google/gemini-2.5-flash', 'claude-sonnet-5-5': 'anthropic/claude-sonnet-5-5',
+      'workers-ai/gpt-oss-120b': '@cf/openai/gpt-oss-120b', 'openrouter/cohere/north-mini-code:free': 'cohere/north-mini-code:free',
+    };
+    for (const [value, id] of Object.entries(leaves)) assert.equal(resolveModelId(value), id, value);
     assert.equal(resolveModelId('default'), 'auto');
     assert.equal(resolveModelId('openai/auto'), 'auto');
     for (const value of ['openai', 'groq', 'gpt-oss', 'gemini', 'openai/', '', 'x'.repeat(300), null]) {
@@ -749,6 +758,32 @@ try {
     const route = withIdentity(routes.find(model => model.id === 'nvidia/openai/gpt-oss-20b'), env);
     assert.deepEqual([route.id, route.family, route.maker, route.model_name, route.display_name],
       ['nvidia/openai/gpt-oss-20b', 'openai/gpt-oss-20b', 'openai', 'GPT-OSS 20B', 'GPT-OSS 20B (NVIDIA)']);
+    // The default list names no serving provider: offers keep their data-policy fields without the
+    // offer id, models_dev_id is null (both name the provider on ?routes=1).
+    for (const model of families) {
+      const { id: _id, family: _family, owned_by: _owner, maker, maker_name: _makerName, provider: _provider,
+        display_name: _display, model_name: _name, ...rest } = model;
+      const text = maker === 'nvidia' ? JSON.stringify(rest) : JSON.stringify(model);
+      assert.doesNotMatch(text, /groq|nvidia|openrouter|cloudflare|@cf|workers/i, `${model.id} names no provider`);
+      assert.ok((model.offers || []).every(offer => !('id' in offer)), `${model.id}: offers without ids`);
+    }
+    assert.deepEqual(gpt20.offers, [{ tier: 'free', owner: 'operator', trust_tier: 'T1', trains_on_inputs: 'unknown' }]);
+    assert.equal(gpt20.models_dev_id, null);
+    // The context window comes from the routes that can serve now: a busy NVIDIA route next to an
+    // available Groq route offers Groq's 8K, not NVIDIA's 131K; a degraded route still serves.
+    const gpt20Routes = status => routes.map(model => (model.id === 'nvidia/openai/gpt-oss-20b' ? { ...model, status }
+      : model.id === 'groq/openai/gpt-oss-20b' ? { ...model, status: 'available' } : model));
+    const rolled = status => familyModels(gpt20Routes(status), env).find(model => model.id === 'openai/gpt-oss-20b');
+    const groqWindow = routes.find(model => model.id === 'groq/openai/gpt-oss-20b').context_window;
+    assert.ok(groqWindow < 131072);
+    for (const [status, window] of [['busy', groqWindow], ['blurred', groqWindow], ['degraded', 131072], ['available', 131072]]) {
+      const model = rolled(status);
+      assert.deepEqual([model.status, model.context_window, model.context_length, model.native_context_window], ['available', window, window, 131072], status);
+      assert.ok(model.max_output_tokens <= window, `${status}: output within the window`);
+    }
+    const allBusy = familyModels(gpt20Routes('busy').map(model => (model.id === 'groq/openai/gpt-oss-20b' ? { ...model, status: 'busy' } : model)), env)
+      .find(model => model.id === 'openai/gpt-oss-20b');
+    assert.deepEqual([allBusy.status, allBusy.context_window], ['busy', 131072], 'every route busy: the window once they free up');
   });
 
   await test('family ids route to the best healthy route of the model; route ids keep their route', () => {
@@ -766,12 +801,17 @@ try {
     assert.deepEqual([ids(explicit), explicit.family, explicit.model], [['groq/openai/gpt-oss-20b#free'], null, 'groq/openai/gpt-oss-20b']);
     // A request too large for Groq's 8K free budget goes to the route that takes it.
     assert.deepEqual(ids(router.route({ ...base, requestedModel: 'openai/gpt-oss-20b', promptTokens: 20000 })), ['nvidia/openai/gpt-oss-20b#free']);
+    assert.deepEqual(ids(router.route({ ...base, requestedModel: 'gpt-oss-20b', promptTokens: 20000 })), ['nvidia/openai/gpt-oss-20b#free'],
+      'the bare name too');
     assert.equal(router.route({ ...base, requestedModel: 'groq/openai/gpt-oss-20b', promptTokens: 20000 }).error, 'context_length_exceeded');
     // A rate-limited route is skipped; the family is still served.
     const groq = catalogEntry('groq/openai/gpt-oss-20b');
     tracker.recordFailure(poolKey(groq, groq.pools[0]), { kind: FailureKind.RATE_LIMITED, retryAfterSeconds: 30 });
     assert.deepEqual(ids(router.route({ ...base, requestedModel: 'openai/gpt-oss-20b' })), ['nvidia/openai/gpt-oss-20b#free']);
     assert.equal(router.route({ ...base, requestedModel: 'groq/openai/gpt-oss-20b' }).error, 'capacity_exhausted');
+    // The bare name Neuron sends after stripping openai/ is the family too: it falls back to NVIDIA.
+    const bare = router.route({ ...base, requestedModel: 'gpt-oss-20b' });
+    assert.deepEqual([ids(bare), bare.family], [['nvidia/openai/gpt-oss-20b#free'], 'openai/gpt-oss-20b'], 'gpt-oss-20b falls back from Groq');
     const nvidia = catalogEntry('nvidia/openai/gpt-oss-20b', env);
     tracker.recordFailure(poolKey(nvidia, nvidia.pools[0]), { kind: FailureKind.RATE_LIMITED, retryAfterSeconds: 12 });
     assert.equal(router.route({ ...base, requestedModel: 'openai/gpt-oss-20b' }).error, 'capacity_exhausted', 'every route down: the family is busy');
@@ -1798,7 +1838,8 @@ try {
     const parked = await captureLogs(async () => gw.call(accountEnv(), { model: 'gpt-oss-20b', messages }, { token: 'ses_pro' }));
     await expectError(parked.result, 503, 'capacity_exhausted');
     const cooled = parked.logs.warn.find(([message]) => message === 'Neuron pools rate limited upstream');
-    assert.deepEqual(cooled?.[1], { pools: ['groq:openai/gpt-oss-20b:free'], model: 'groq/openai/gpt-oss-20b',
+    // The bare name is the family (contract 14.5); here Groq is its only configured route.
+    assert.deepEqual(cooled?.[1], { pools: ['groq:openai/gpt-oss-20b:free'], model: 'openai/gpt-oss-20b',
       retry_after_seconds: 20, request_id: parked.result.headers.get('x-request-id') });
     resetPoolBudgets();
   });

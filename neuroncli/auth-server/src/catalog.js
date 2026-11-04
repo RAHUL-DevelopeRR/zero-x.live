@@ -312,11 +312,32 @@ export function isFamilyId(id, env) {
   return !snapshot.byId.has(id.toLowerCase()) && familyIndex(snapshot).has(id.toLowerCase());
 }
 
-// Route ids first (old clients keep the route they asked for), then family ids, then aliases.
+// Family prefixes an OpenAI-compatible client may strip before sending: Neuron's
+// strip_routing_prefix removes openai/ and xai/, so the family "openai/gpt-oss-20b" arrives as
+// "gpt-oss-20b".
+const CLIENT_STRIPPED_FAMILY_PREFIXES = Object.freeze(['openai/', 'xai/']);
+
+// An alias equal to its route's family leaf ("gpt-oss-20b" for openai/gpt-oss-20b) names the
+// model, not one route: it resolves to the family, so the request can fall back to another route.
+// Provider-qualified aliases ("workers-ai/gpt-oss-120b") keep their route.
+function aliasTarget(snapshot, index, value) {
+  const routeId = snapshot.aliases.get(value);
+  if (!routeId) return null;
+  const entry = snapshot.byId.get(routeId.toLowerCase());
+  const family = entry ? familyOf(entry).toLowerCase() : null;
+  if (!family || !index.has(family) || family.slice(family.indexOf('/') + 1) !== value) return routeId;
+  return index.get(family).id;
+}
+
+// Route ids first (old clients keep the route they asked for), then family ids, then aliases (a
+// family-leaf alias names its family), then a bare name a client stripped a family prefix from.
 function lookup(value, env) {
   if (value === AUTO_MODEL_ID) return AUTO_MODEL_ID;
   const snapshot = catalogSnapshot(env);
-  return snapshot.byId.get(value)?.id ?? familyIndex(snapshot).get(value)?.id ?? snapshot.aliases.get(value) ?? null;
+  const index = familyIndex(snapshot);
+  const found = snapshot.byId.get(value)?.id ?? index.get(value)?.id ?? aliasTarget(snapshot, index, value);
+  if (found || value.includes('/')) return found ?? null;
+  return CLIENT_STRIPPED_FAMILY_PREFIXES.map(prefix => index.get(prefix + value)?.id).find(Boolean) ?? null;
 }
 
 // Resolves a requested model to a public id ('auto' included): a route id, or a family id
@@ -743,19 +764,43 @@ export function withIdentity(model, env) {
 const time = value => (value ? Date.parse(value) || 0 : 0);
 const union = lists => [...new Set(lists.flat())];
 
+// Routes that can take a request now: not busy or blurred (a route without an observation is
+// available). When every route is busy or blurred, the ones with the best status (the window the
+// model takes once they free up).
+function servingRoutes(listed) {
+  const rank = model => STATUS_RANK[model.status ?? 'available'] ?? STATUS_RANK.available;
+  const now = listed.filter(model => rank(model) <= STATUS_RANK.degraded);
+  if (now.length) return now;
+  const best = Math.min(...listed.map(rank));
+  return listed.filter(model => rank(model) === best);
+}
+
+// The data-policy fields of the routes' offers. An offer id names the serving provider
+// ("groq.free"), so the family view lists the fields without it; ?routes=1 keeps the ids.
+function familyOffers(listed) {
+  const offers = listed.flatMap(model => model.offers || []).map(offer => ({
+    tier: offer.tier, owner: offer.owner, trust_tier: offer.trust_tier, trains_on_inputs: offer.trains_on_inputs,
+  }));
+  return [...new Map(offers.map(offer => [JSON.stringify(offer), offer])).values()];
+}
+
 // One family entry from its described routes (with their runtime health when withHealth ran).
-// Only the routes the caller can use count (all routes when none can): the context window is the
-// largest any of them takes (the router skips routes a request does not fit), the status the best
-// of theirs, checked_at the newest observation.
+// Only the routes the caller can use count (all routes when none can). The context window is the
+// largest the routes that can serve now take (servingRoutes; the router skips routes a request
+// does not fit), so a busy route never advertises a window the healthy ones cannot serve. The
+// status is the best of theirs, checked_at the newest observation. Nothing names the serving
+// provider: provider is the maker, offers carry no ids, models_dev_id is null.
 function describeFamily(identity, routes) {
   const usable = routes.filter(model => model.available);
   const listed = usable.length ? usable : routes;
-  const largest = key => Math.max(0, ...listed.map(model => Number(model[key]) || 0));
+  const serving = servingRoutes(listed);
+  const largest = (key, from = listed) => Math.max(0, ...from.map(model => Number(model[key]) || 0));
   const any = key => listed.some(model => Boolean(model.capabilities?.[key]));
   const reasons = routes.map(model => model.unavailable_reason);
   const priced = listed.filter(model => model.pricing)
     .sort((a, b) => (b.pricing.input_per_mtok_usd ?? 0) - (a.pricing.input_per_mtok_usd ?? 0))[0];
-  const offers = [...new Map(listed.flatMap(model => model.offers || []).map(offer => [offer.id, offer])).values()];
+  const window = largest('context_window', serving);
+  const facts = listed.map(model => model.facts).find(Boolean);
   const family = {
     id: identity.family,
     object: 'model',
@@ -766,10 +811,11 @@ function describeFamily(identity, routes) {
     maker: identity.maker,
     maker_name: identity.maker_name,
     family: identity.family,
-    context_window: largest('context_window'),
-    context_length: largest('context_window'),
+    context_window: window,
+    context_length: window,
+    // The model's own window does not change with route health.
     native_context_window: largest('native_context_window'),
-    max_output_tokens: largest('max_output_tokens'),
+    max_output_tokens: Math.min(largest('max_output_tokens', serving), window),
     capabilities: { tools: any('tools'), streaming: any('streaming'), vision: any('vision'), reasoning: any('reasoning') },
     reasoning_efforts: union(listed.map(model => model.reasoning_efforts || [])),
     tiers: union(listed.map(model => model.tiers || [])),
@@ -778,10 +824,11 @@ function describeFamily(identity, routes) {
     pricing: priced?.pricing ?? null,
     // The family has no single serving provider: the block names the maker.
     provider: { id: identity.maker, name: identity.maker_name, logo_url: null, logo_fallback_url: null },
-    offers,
-    models_dev_id: listed.map(model => model.models_dev_id).find(Boolean) ?? null,
+    offers: familyOffers(listed),
+    // A models.dev id names a provider ("groq/openai/gpt-oss-120b"): routes only.
+    models_dev_id: null,
   };
-  if (routes.some(model => 'facts' in model)) family.facts = listed.map(model => model.facts).find(Boolean) ?? null;
+  if (routes.some(model => 'facts' in model)) family.facts = facts ? { ...facts, models_dev_id: null } : null;
   const observed = listed.filter(model => model.status);
   if (observed.length) {
     const best = [...observed].sort((a, b) => STATUS_RANK[a.status] - STATUS_RANK[b.status]
