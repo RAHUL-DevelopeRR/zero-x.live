@@ -1846,7 +1846,7 @@ try {
   // check-catalog-db.mjs).
   const downFiles = (await readdir(join(root, 'migrations/down'))).filter(file => !file.endsWith('.down.sql')).sort();
   assert.deepEqual(downFiles, ['20261028000000_reservation_leases.sql', '20261029001000_pool_concurrency.sql',
-    '20261102000000_free_token_window.sql', '20261104000000_connector_policy.sql']);
+    '20261102000000_free_token_window.sql', '20261104000000_connector_policy.sql', '20261104000100_connector_accounts.sql']);
   for (const file of downFiles) {
     const migration = migrations.find(candidate => candidate.file === file);
     assert.ok(migration, `${file} undoes a migration of the same name`);
