@@ -14,6 +14,7 @@ import {
   JSONRPC_CONFIRMATION_REQUIRED, JSONRPC_TOO_LARGE, TIER_META_KEY, mcpAuditSettled, resetMcpRateLimits,
 } from './src/mcp-proxy.js';
 import { runScheduledMaintenance } from './src/routes/admin.js';
+import { sessionActivitySettled } from './src/session-activity.js';
 
 const base = 'http://127.0.0.1:8787';
 const passed = [];
@@ -464,6 +465,9 @@ try {
 
   console.log(`\n${passed.length} connector checks passed`);
 } finally {
+  // Audit rows are written after the response; PGlite must not close under a pending write.
+  await mcpAuditSettled();
+  await sessionActivitySettled();
   globalThis.fetch = realFetch;
   await closeAllPglite();
 }
