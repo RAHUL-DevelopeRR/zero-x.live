@@ -757,7 +757,8 @@ try {
     assert.ok(!JSON.stringify(warnings).includes('groq-free-test-key'), 'no key in the logs');
     // /v1/models shows the spent budget until the next minute.
     const listed = await v1ModelsPayload({ env: chatEnv, req: { raw: new Request('http://127.0.0.1/v1/models') } }, session);
-    const groqModel = listed.data.find(model => model.id === 'groq/openai/gpt-oss-120b');
+    // The family entry (contract section 14) rolls up the Groq route, its only route here.
+    const groqModel = listed.data.find(model => model.id === 'openai/gpt-oss-120b');
     assert.equal(groqModel.status, 'busy');
     assert.ok(Math.abs(Date.parse(groqModel.available_again_at) - (Date.now() + refused.retry_after_seconds * 1000)) < 2000);
     resetPoolBudgets();

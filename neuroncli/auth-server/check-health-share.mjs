@@ -136,7 +136,8 @@ console.log('ok - slow_until: kept while it lasts, published to KV and cleared b
   kv.store.set(`health:v1:${poolKey(entry, freePool)}`,
     JSON.stringify({ status: 'blurred', until: Date.now() + 600_000, at: Date.now() }));
 
-  const models = await v1ModelsPayload(c, {});
+  // ?routes=1 (contract section 14): one row per route, as the router sees them.
+  const models = await v1ModelsPayload(c, {}, { routes: true });
   const byId = Object.fromEntries(models.data.map(model => [model.id, model]));
   assert.equal(byId['gemini/gemini-3.6-flash'].status, 'blurred');
   assert.ok(byId['gemini/gemini-3.6-flash'].available_again_at);
@@ -155,19 +156,39 @@ console.log('ok - slow_until: kept while it lasts, published to KV and cleared b
     && catalogEntry(model.id)?.auto_rank != null && model.context_window >= AGENT_MIN_CONTEXT).map(model => model.context_window));
   assert.equal(byId.auto.context_window, smallest, 'auto advertises the smallest candidate window that holds a coding session');
   assert.equal(byId.auto.status, 'available');
+  assert.equal(byId['groq/openai/gpt-oss-120b'].family, 'openai/gpt-oss-120b');
+  assert.equal(byId['groq/openai/gpt-oss-120b'].maker, 'openai');
+
+  // The default list: one entry per family, with the maker's clean name and the status rolled up.
+  const families = Object.fromEntries((await v1ModelsPayload(c, {})).data.map(model => [model.id, model]));
+  assert.ok(!families['groq/openai/gpt-oss-120b'] && !families['cohere/north-mini-code:free'], 'route ids are not listed');
+  assert.equal(families['google/gemini-3.6-flash'].status, 'blurred');
+  assert.ok(families['google/gemini-3.6-flash'].available_again_at);
+  assert.deepEqual([families['openai/gpt-oss-120b'].display_name, families['openai/gpt-oss-120b'].maker,
+    families['openai/gpt-oss-120b'].context_window, families['openai/gpt-oss-120b'].native_context_window], ['GPT-OSS 120B', 'openai', 8000, 131072]);
+  assert.deepEqual([families['cohere/north-mini-code'].display_name, families['cohere/north-mini-code'].maker_name], ['North Mini Code', 'Cohere']);
+  assert.equal(families['nvidia/nemotron-3-ultra-550b'].display_name, 'Nemotron 3 Ultra 550B');
+  assert.equal(families['stepfun/step-5-preview'].maker, 'stepfun');
+  assert.ok(Object.values(families).every(model => !/\((groq|nvidia|openrouter|workers ai|z\.ai)/i.test(model.display_name)),
+    'no provider in a family name');
+  assert.equal(families.auto.context_window, byId.auto.context_window);
 
   const first = await v1ModelStatusPayload(c, {});
   assert.match(first.etag, /^W\/"[0-9a-f]{24}"$/);
   assert.equal(first.body.poll_interval_seconds, 30);
-  const row = first.body.data.find(model => model.id === 'gemini/gemini-3.6-flash');
-  assert.deepEqual(Object.keys(row).sort(), ['available', 'available_again_at', 'id', 'status', 'unavailable_reason']);
+  const row = first.body.data.find(model => model.id === 'google/gemini-3.6-flash');
+  assert.deepEqual(Object.keys(row).sort(), ['available', 'available_again_at', 'checked_at', 'context_window', 'display_name', 'family',
+    'id', 'maker', 'native_context_window', 'status', 'unavailable_reason']);
+  assert.deepEqual([row.status, row.family, row.maker, row.display_name], ['blurred', 'google/gemini-3.6-flash', 'google', 'Gemini 3.6 Flash']);
+  const routeRow = (await v1ModelStatusPayload(c, {}, { routes: true })).body.data.find(model => model.id === 'gemini/gemini-3.6-flash');
+  assert.deepEqual([routeRow.status, routeRow.family], ['blurred', 'google/gemini-3.6-flash']);
   const again = await v1ModelStatusPayload(c, {});
   assert.equal(again.etag, first.etag, 'unchanged state, same ETag');
   kv.store.delete(`health:v1:${poolKey(entry, freePool)}`);
   resetSharedHealthCache();
   const changed = await v1ModelStatusPayload(c, {});
   assert.notEqual(changed.etag, first.etag, 'a recovered model changes the ETag');
-  console.log('ok - routes: status on every model, vision/reasoning/context_length, NVIDIA + OpenRouter hosted, auto window, ETag');
+  console.log('ok - routes: status on every model, vision/reasoning/context_length, NVIDIA + OpenRouter hosted, auto window, ETag; families by default');
 }
 
 // 5. Spent pool budgets (E2E finding 2026-10-21: a model stayed "available" while its pool refused
@@ -183,7 +204,7 @@ console.log('ok - slow_until: kept while it lasts, published to KV and cleared b
   notePoolExhausted(pool('groq/openai/gpt-oss-120b'), { budget: 'rpm|tpm', retryAfterSeconds: 40, now: at });
   notePoolExhausted(pool('groq/qwen/qwen3.8-27b'), { budget: 'rpd|tpd', retryAfterSeconds: 3600, now: at });
   notePoolExhausted(pool('groq/openai/gpt-oss-20b'), { budget: 'rpm|tpm', retryAfterSeconds: 5, now: at - 10_000 });
-  const byId = Object.fromEntries((await v1ModelsPayload(c, {})).data.map(model => [model.id, model]));
+  const byId = Object.fromEntries((await v1ModelsPayload(c, {}, { routes: true })).data.map(model => [model.id, model]));
   const gptOss = byId['groq/openai/gpt-oss-120b'];
   assert.deepEqual(gptOss.tiers, ['free', 'paid'], 'the paid pool is configured');
   assert.equal(gptOss.status, 'busy', 'a free caller cannot use the paid pool, so the spent free budget decides');
@@ -193,8 +214,10 @@ console.log('ok - slow_until: kept while it lasts, published to KV and cleared b
   assert.equal(byId['groq/qwen/qwen3.8-27b'].available_again_at, new Date(at + 3_600_000).toISOString());
   assert.equal(byId['groq/openai/gpt-oss-20b'].status, 'available', 'a budget that has reset no longer counts');
   const status = await v1ModelStatusPayload(c, {});
-  assert.deepEqual(status.body.data.find(model => model.id === 'groq/openai/gpt-oss-120b'), { id: 'groq/openai/gpt-oss-120b',
-    available: true, unavailable_reason: null, status: 'busy', available_again_at: new Date(at + 40_000).toISOString() });
+  assert.deepEqual(status.body.data.find(model => model.id === 'openai/gpt-oss-120b'), { id: 'openai/gpt-oss-120b',
+    family: 'openai/gpt-oss-120b', maker: 'openai', display_name: 'GPT-OSS 120B', context_window: 8000, native_context_window: 131072,
+    available: true, unavailable_reason: null, status: 'busy', available_again_at: new Date(at + 40_000).toISOString(),
+    checked_at: new Date(at).toISOString() });
 
   // A caller that can also use the paid pool still has a way through it.
   const both = { object: 'list', data: [{ id: 'gpt-oss', available: true }] };
@@ -204,8 +227,23 @@ console.log('ok - slow_until: kept while it lasts, published to KV and cleared b
   notePoolReserved(pool('groq/openai/gpt-oss-120b'));
   resetSharedHealthCache();
   const cleared = await v1ModelStatusPayload(c, {});
-  assert.equal(cleared.body.data.find(model => model.id === 'groq/openai/gpt-oss-120b').status, 'available');
+  assert.equal(cleared.body.data.find(model => model.id === 'openai/gpt-oss-120b').status, 'available');
   assert.notEqual(cleared.etag, status.etag, 'the ETag follows the budget state');
+
+  // A family rolls up its routes: one busy route does not grey out a model another route serves,
+  // and the family is busy only when every route the caller can use is.
+  resetSharedHealthCache();
+  const routed = { ...env, NVIDIA_API_KEY: 'nvidia-test', NVIDIA_HOSTED: 'true' };
+  const rc = { env: routed, req: { raw: new Request('https://zero-x.live/v1/models') } };
+  const nvidia20 = poolKey(catalogEntry('nvidia/openai/gpt-oss-20b', routed), catalogEntry('nvidia/openai/gpt-oss-20b', routed).pools[0]);
+  notePoolExhausted(pool('groq/openai/gpt-oss-20b'), { budget: 'rpm|tpm', retryAfterSeconds: 30, now: Date.now() });
+  let family = (await v1ModelsPayload(rc, {})).data.filter(model => model.id === 'openai/gpt-oss-20b');
+  assert.equal(family.length, 1, 'one entry for the Groq and NVIDIA routes');
+  assert.equal(family[0].status, 'available', 'the NVIDIA route still serves it');
+  notePoolExhausted(nvidia20, { budget: 'rpm|tpm', retryAfterSeconds: 90, now: Date.now() });
+  family = (await v1ModelStatusPayload(rc, {})).body.data.find(model => model.id === 'openai/gpt-oss-20b');
+  assert.equal(family.status, 'busy', 'every route busy: the family is busy');
+  assert.ok(Date.parse(family.available_again_at) <= Date.now() + 31_000, 'available again when the first route frees up');
   resetPoolBudgets();
   console.log('ok - spent pool budgets: busy (per minute) or blurred (daily) with available_again_at, usable tiers only, cleared on reserve');
 }

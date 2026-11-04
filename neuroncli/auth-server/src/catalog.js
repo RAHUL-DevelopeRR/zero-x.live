@@ -19,8 +19,9 @@ import {
 import { effectiveSpendCapUsd, entryFromSpec } from './catalog-guardrails.js';
 import { CLAUDE_MODEL_SPECS } from './catalog-claude.js';
 import { catalogSnapshot, loadCatalog, loadCatalogDbModels } from './catalog-db.js';
+import { familyOf, modelIdentity } from './model-families.js';
 
-export { loadCatalog, loadCatalogDbModels };
+export { loadCatalog, loadCatalogDbModels, familyOf, modelIdentity };
 
 // EU-27 plus Iceland, Liechtenstein and Norway.
 export const EEA_COUNTRIES = Object.freeze(['AT', 'BE', 'BG', 'HR', 'CY', 'CZ', 'DK', 'EE', 'FI', 'FR',
@@ -280,14 +281,47 @@ export function catalogEntry(id, env) {
   return typeof id === 'string' ? catalogSnapshot(env).byId.get(id.toLowerCase()) ?? null : null;
 }
 
+// Family id (lower case) -> { id, members } of a served snapshot, members in list order
+// (src/model-families.js; contract section 14).
+const familyIndexes = new WeakMap();
+function familyIndex(snapshot) {
+  let index = familyIndexes.get(snapshot);
+  if (index) return index;
+  index = new Map();
+  for (const entry of snapshot.entries) {
+    const family = familyOf(entry);
+    const key = family.toLowerCase();
+    if (!index.has(key)) index.set(key, { id: family, members: [] });
+    index.get(key).members.push(entry);
+  }
+  familyIndexes.set(snapshot, index);
+  return index;
+}
+
+// The served routes of a family, in list order ([] for an unknown family id).
+export function familyMembers(familyId, env) {
+  if (typeof familyId !== 'string') return [];
+  return familyIndex(catalogSnapshot(env)).get(familyId.toLowerCase())?.members ?? [];
+}
+
+// True when `id` names a family rather than one route. A family whose id is also a route id (one
+// route whose own id is already clean, like Claude's) resolves to that route.
+export function isFamilyId(id, env) {
+  if (typeof id !== 'string' || id === AUTO_MODEL_ID) return false;
+  const snapshot = catalogSnapshot(env);
+  return !snapshot.byId.has(id.toLowerCase()) && familyIndex(snapshot).has(id.toLowerCase());
+}
+
+// Route ids first (old clients keep the route they asked for), then family ids, then aliases.
 function lookup(value, env) {
   if (value === AUTO_MODEL_ID) return AUTO_MODEL_ID;
   const snapshot = catalogSnapshot(env);
-  return snapshot.byId.get(value)?.id ?? snapshot.aliases.get(value) ?? null;
+  return snapshot.byId.get(value)?.id ?? familyIndex(snapshot).get(value)?.id ?? snapshot.aliases.get(value) ?? null;
 }
 
-// Resolves a requested model to a public id ('auto' included). An `openai/` transport
-// prefix (added by OpenAI-compatible clients) is accepted when the remainder resolves.
+// Resolves a requested model to a public id ('auto' included): a route id, or a family id
+// (isFamilyId) that src/router.js serves from the best healthy route of the family. An `openai/`
+// transport prefix (added by OpenAI-compatible clients) is accepted when the remainder resolves.
 // Catalog rows resolve only for an `env` whose catalog was loaded (loadCatalog).
 export function resolveModelId(requested, env) {
   if (typeof requested !== 'string') return null;
@@ -688,4 +722,96 @@ export function listModelsForCaller(env = {}, { plan = 'free', country = null, t
   const code = normalizeCountry(country);
   const data = offeredEntries(env).map(entry => describeEntry(env, entry, allowed, code, policy));
   return { object: 'list', data: [describeAuto(data, env), ...data] };
+}
+
+// ── Model families on /v1/models (contract section 14) ──
+// GET /v1/models lists one entry per family (src/model-families.js): the routes of a model
+// rolled up for the caller. Route ids stay listed under ?routes=1, each with its identity.
+const STATUS_RANK = Object.freeze({ available: 0, degraded: 1, busy: 2, blurred: 3 });
+const REASON_ORDER = Object.freeze(['upgrade_required', 'region_unavailable', 'policy_restricted', 'not_configured']);
+const AUTO_IDENTITY = Object.freeze({ maker: 'zero-x', maker_name: 'Zero-X', family: AUTO_MODEL_ID, model_name: 'Auto' });
+
+// A described route (listModelsForCaller item) plus maker, maker_name, family and model_name.
+export function withIdentity(model, env) {
+  if (model.id === AUTO_MODEL_ID) return { ...model, ...AUTO_IDENTITY };
+  const entry = catalogEntry(model.id, env);
+  if (!entry) return model;
+  const { maker, maker_name: makerName, family, name } = modelIdentity(entry);
+  return { ...model, maker, maker_name: makerName, family, model_name: name };
+}
+
+const time = value => (value ? Date.parse(value) || 0 : 0);
+const union = lists => [...new Set(lists.flat())];
+
+// One family entry from its described routes (with their runtime health when withHealth ran).
+// Only the routes the caller can use count (all routes when none can): the context window is the
+// largest any of them takes (the router skips routes a request does not fit), the status the best
+// of theirs, checked_at the newest observation.
+function describeFamily(identity, routes) {
+  const usable = routes.filter(model => model.available);
+  const listed = usable.length ? usable : routes;
+  const largest = key => Math.max(0, ...listed.map(model => Number(model[key]) || 0));
+  const any = key => listed.some(model => Boolean(model.capabilities?.[key]));
+  const reasons = routes.map(model => model.unavailable_reason);
+  const priced = listed.filter(model => model.pricing)
+    .sort((a, b) => (b.pricing.input_per_mtok_usd ?? 0) - (a.pricing.input_per_mtok_usd ?? 0))[0];
+  const offers = [...new Map(listed.flatMap(model => model.offers || []).map(offer => [offer.id, offer])).values()];
+  const family = {
+    id: identity.family,
+    object: 'model',
+    created: 0,
+    owned_by: identity.maker,
+    display_name: identity.name,
+    model_name: identity.name,
+    maker: identity.maker,
+    maker_name: identity.maker_name,
+    family: identity.family,
+    context_window: largest('context_window'),
+    context_length: largest('context_window'),
+    native_context_window: largest('native_context_window'),
+    max_output_tokens: largest('max_output_tokens'),
+    capabilities: { tools: any('tools'), streaming: any('streaming'), vision: any('vision'), reasoning: any('reasoning') },
+    reasoning_efforts: union(listed.map(model => model.reasoning_efforts || [])),
+    tiers: union(listed.map(model => model.tiers || [])),
+    available: usable.length > 0,
+    unavailable_reason: usable.length ? null : REASON_ORDER.find(reason => reasons.includes(reason)) ?? 'not_configured',
+    pricing: priced?.pricing ?? null,
+    // The family has no single serving provider: the block names the maker.
+    provider: { id: identity.maker, name: identity.maker_name, logo_url: null, logo_fallback_url: null },
+    offers,
+    models_dev_id: listed.map(model => model.models_dev_id).find(Boolean) ?? null,
+  };
+  if (routes.some(model => 'facts' in model)) family.facts = listed.map(model => model.facts).find(Boolean) ?? null;
+  const observed = listed.filter(model => model.status);
+  if (observed.length) {
+    const best = [...observed].sort((a, b) => STATUS_RANK[a.status] - STATUS_RANK[b.status]
+      || time(a.available_again_at) - time(b.available_again_at))[0];
+    const checked = observed.map(model => model.checked_at).filter(Boolean).sort((a, b) => time(b) - time(a))[0];
+    Object.assign(family, { status: best.status, available_again_at: best.available_again_at ?? null, checked_at: checked ?? null });
+  }
+  return family;
+}
+
+/**
+ * Rolls described routes (listModelsForCaller(...).data, after withHealth) up into one entry per
+ * family, in the order each family first appears. `auto` stays as it is, with its identity.
+ */
+export function familyModels(models, env) {
+  const groups = new Map();
+  const order = [];
+  for (const model of models) {
+    const entry = model.id === AUTO_MODEL_ID ? null : catalogEntry(model.id, env);
+    if (!entry) {
+      order.push(withIdentity(model, env));
+      continue;
+    }
+    const identity = modelIdentity(entry);
+    const key = identity.family.toLowerCase();
+    if (!groups.has(key)) {
+      groups.set(key, { identity, routes: [] });
+      order.push(groups.get(key));
+    }
+    groups.get(key).routes.push(model);
+  }
+  return order.map(item => (item.identity && item.routes ? describeFamily(item.identity, item.routes) : item));
 }

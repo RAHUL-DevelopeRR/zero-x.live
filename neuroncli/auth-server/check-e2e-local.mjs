@@ -351,9 +351,10 @@ try {
   step('dev token -> POST /auth/cli/session', `ses_ session for the dev identity ${userId} (auth.users row provisioned on PGlite), 720 h TTL`);
 
   // ── 3. /v1/models with plan-aware availability ──
+  // One entry per model family (contract section 14), named by its maker: no route or provider.
   const modelKeys = ['available', 'available_again_at', 'capabilities', 'checked_at', 'context_length', 'context_window',
-    'created', 'display_name', 'facts', 'id', 'max_output_tokens', 'models_dev_id', 'native_context_window', 'object', 'offers',
-    'owned_by', 'pricing',
+    'created', 'display_name', 'facts', 'family', 'id', 'maker', 'maker_name', 'max_output_tokens', 'model_name', 'models_dev_id',
+    'native_context_window', 'object', 'offers', 'owned_by', 'pricing',
     'provider', 'reasoning_efforts', 'status', 'tiers', 'unavailable_reason'];
   const models = async token => {
     const listed = await call('/v1/models', { token });
@@ -367,19 +368,24 @@ try {
   const free = await models(ses);
   for (const view of [anonymous, free]) {
     assert.equal(view.auto.available, true);
-    assert.equal(view['groq/openai/gpt-oss-120b'].available, true);
-    assert.equal(view['gemini/gemini-2.5-flash'].available, true);
-    assert.equal(view['gemini/gemini-2.5-pro'].available, false);
-    assert.equal(view['gemini/gemini-2.5-pro'].unavailable_reason, 'upgrade_required');
+    assert.equal(view['openai/gpt-oss-120b'].available, true);
+    assert.deepEqual([view['openai/gpt-oss-120b'].display_name, view['openai/gpt-oss-120b'].maker], ['GPT-OSS 120B', 'openai']);
+    assert.equal(view['google/gemini-2.5-flash'].available, true);
+    assert.equal(view['google/gemini-2.5-pro'].available, false);
+    assert.equal(view['google/gemini-2.5-pro'].unavailable_reason, 'upgrade_required');
     // Free plan: Groq's free pool takes 8K tokens per minute, so that is the usable window.
-    assert.deepEqual([view['groq/openai/gpt-oss-120b'].context_window, view['groq/openai/gpt-oss-120b'].native_context_window], [8000, 131072]);
+    assert.deepEqual([view['openai/gpt-oss-120b'].context_window, view['openai/gpt-oss-120b'].native_context_window], [8000, 131072]);
+    assert.ok(!view['groq/openai/gpt-oss-120b'], 'route ids are listed only under ?routes=1');
   }
+  const routeList = await call('/v1/models?routes=1', { token: ses });
+  assert.ok(routeList.body.data.some(model => model.id === 'groq/openai/gpt-oss-120b' && model.family === 'openai/gpt-oss-120b'));
   assert.ok(!Object.values(free).some(model => ['nvidia', 'openrouter'].includes(model.owned_by)), 'non-hosted providers are not listed');
   assert.ok(Object.values(free).every(model => model.status === 'available'), 'no failures yet: every model is available');
   const status = await call('/v1/models/status', { token: ses });
   assert.equal(status.status, 200);
   assert.equal(status.body.poll_interval_seconds, 30);
   assert.equal(status.body.data.length, Object.keys(free).length);
+  assert.deepEqual(status.body.data.find(row => row.id === 'openai/gpt-oss-120b')?.display_name, 'GPT-OSS 120B');
   const etag = status.headers.get('etag');
   assert.match(etag, /^W\/"[0-9a-f]{24}"$/);
   const unchanged = await call('/v1/models/status', { token: ses, headers: { 'If-None-Match': etag } });
@@ -459,6 +465,11 @@ try {
   assert.equal(keyChat.headers.get('x-neuron-model'), 'groq/openai/gpt-oss-20b');
   assert.equal(keyChat.body.object, 'chat.completion');
   if (!LIVE) assert.equal(upstream.calls.at(-1).key, 'e2e-groq-free');
+  // A family id (contract section 14) is served by the best healthy route of the model.
+  const familyChat = await call('/v1/chat/completions', { method: 'POST', token: apiKey,
+    body: { model: 'openai/gpt-oss-20b', messages: [{ role: 'user', content: 'Reply with the single word pong.' }], max_tokens: 64 } });
+  assert.equal(familyChat.status, 200, redact(familyChat.text).slice(0, 400));
+  assert.equal(familyChat.headers.get('x-neuron-model'), 'groq/openai/gpt-oss-20b', 'the route that served it');
   expectError(await call('/api/keys', { method: 'POST', token: apiKey, body: { name: 'nested' } }), 403, 'api_key_not_allowed');
   assert.equal((await call('/api/account', { token: apiKey })).status, 200);
   const listedKeys = (await call('/api/keys', { token: ses })).body.keys;
@@ -619,7 +630,7 @@ try {
   account = (await call('/api/account', { token: ses })).body;
   assert.equal(account.plan.id, 'pro');
   assert.equal(account.subscription.status, 'active');
-  assert.equal((await models(ses))['gemini/gemini-2.5-pro'].available, true, 'Pro unlocks the paid pool');
+  assert.equal((await models(ses))['google/gemini-2.5-pro'].available, true, 'Pro unlocks the paid pool');
   expectError(await call('/api/billing/checkout', { method: 'POST', token: ses, body: { plan: 'max', currency: 'USD' } }), 409, 'already_subscribed');
   step('Pro checkout -> verify', `subscription ${subscriptionId} (a second tab reuses it), bad signature -> 400, signed verify -> plan pro; gemini-2.5-pro now available; another checkout -> 409 already_subscribed`);
 

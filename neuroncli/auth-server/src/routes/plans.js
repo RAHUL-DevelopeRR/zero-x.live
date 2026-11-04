@@ -1,7 +1,7 @@
 import { loadPlanCatalog, TOPUP_PACKS } from '../plan-policy.js';
 import {
-  AUTO_MODEL_ID, callerCountry, catalogEntry, entryPools, listModelsForCaller, loadCatalog, loadPlanPolicies,
-  planPolicy, poolKey,
+  AUTO_MODEL_ID, callerCountry, catalogEntry, entryPools, familyModels, listModelsForCaller, loadCatalog, loadPlanPolicies,
+  planPolicy, poolKey, withIdentity,
 } from '../catalog.js';
 import { catalogStatus } from '../catalog-db.js';
 import { isOwnedSession, listModelsForSession } from '../providers.js';
@@ -46,12 +46,20 @@ export function registerPlanRoutes(api) {
   });
 }
 
-// GET /v1/models (contract §3.2): every offered model with availability computed for the
-// caller's plan (anonymous = free) and country. Database plan tiers apply (loaded first, 60 s
-// cache); paid tiers count only for sessions with an account ledger, exactly as routing does.
+// `?routes=1` (or true/yes) on /v1/models, /v1/models/status and /v1/models/stream lists the
+// routes (one per provider type) instead of the model families (contract section 14).
+export function wantsRoutes(c) {
+  const value = c?.req?.query?.('routes') ?? (c?.req?.raw?.url ? new URL(c.req.raw.url).searchParams.get('routes') : null);
+  return ['1', 'true', 'yes'].includes(String(value ?? '').trim().toLowerCase());
+}
+
+// GET /v1/models (contract §3.2, section 14): one entry per model family with availability
+// computed for the caller's plan (anonymous = free) and country, rolled up from the routes that
+// serve it; `routes: true` lists the routes themselves. Database plan tiers apply (loaded first,
+// 60 s cache); paid tiers count only for sessions with an account ledger, exactly as routing does.
 // The country comes from Cloudflare (CF-IPCountry only with TRUST_CF_IPCOUNTRY=true). Sessions
 // on the caller's own OpenRouter key (BYOK) list their own models.
-export async function v1ModelsPayload(c, session = {}) {
+export async function v1ModelsPayload(c, session = {}, { routes = wantsRoutes(c) } = {}) {
   const env = c.env || {};
   const country = callerCountry(c.req.raw, env);
   if (isOwnedSession(session)) return listModelsForSession(env, { session, country });
@@ -74,12 +82,15 @@ export async function v1ModelsPayload(c, session = {}) {
     const usable = listed.filter(pool => tiers.includes(pool.tier));
     return (usable.length ? usable : listed).map(pool => poolKey(entry, pool));
   };
-  return withHealth(env, payload, poolKeysFor, {
+  await withHealth(env, payload, poolKeysFor, {
     tracker: globalHealthTracker, autoId: AUTO_MODEL_ID,
     isAutoCandidate: model => catalogEntry(model.id, env)?.auto_rank != null,
     readRows: keys => hubHealthRows(env, keys),
     budgetState: poolBudgetState,
   });
+  // Health is read per route (pool keys belong to routes), then rolled up per family.
+  payload.data = routes ? payload.data.map(model => withIdentity(model, env)) : familyModels(payload.data, env);
+  return payload;
 }
 
 // GET /v1/models/status: the part of /v1/models that changes at runtime, small enough for
@@ -87,14 +98,21 @@ export async function v1ModelsPayload(c, session = {}) {
 // catalog_version (src/catalog-db.js) changes with every approved catalog revision, so an approved
 // change that keeps availability (a new price or display name) still changes the ETag and
 // /v1/models/stream emits catalog.updated: clients then reload /v1/models.
-export async function v1ModelStatusPayload(c, session = {}) {
-  const models = await v1ModelsPayload(c, session);
+// Each row also names the model (family, maker, display_name) and its usable context window, so a
+// page can draw the live list from this endpoint alone; checked_at is the row's newest observation.
+export async function v1ModelStatusPayload(c, session = {}, options = {}) {
+  const models = await v1ModelsPayload(c, session, options);
   const data = models.data.map(model => ({
-    id: model.id, available: model.available !== false, unavailable_reason: model.unavailable_reason ?? null,
+    id: model.id, family: model.family ?? null, maker: model.maker ?? null, display_name: model.display_name ?? model.id,
+    context_window: model.context_window ?? null, native_context_window: model.native_context_window ?? null,
+    available: model.available !== false, unavailable_reason: model.unavailable_reason ?? null,
     status: model.status ?? 'available', available_again_at: model.available_again_at ?? null,
+    checked_at: model.checked_at ?? null,
   }));
   const catalogVersion = catalogStatus(c.env || {}).version;
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify({ v: catalogVersion, data })));
+  // checked_at moves with every observation, so it stays out of the ETag (as the top-level one did).
+  const stable = data.map(({ checked_at: _checked, ...row }) => row);
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify({ v: catalogVersion, data: stable })));
   const etag = `W/"${[...new Uint8Array(digest).slice(0, 12)].map(byte => byte.toString(16).padStart(2, '0')).join('')}"`;
   const checked = models.data.map(model => model.checked_at).filter(Boolean).sort().at(-1) ?? null;
   return { etag, body: { object: 'list', checked_at: checked, poll_interval_seconds: 30, catalog_version: catalogVersion, data } };

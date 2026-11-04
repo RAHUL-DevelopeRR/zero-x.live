@@ -10,8 +10,10 @@ import { RoutingEngine, fitMaxTokens } from './src/router.js';
 import { FailureKind, HealthState, ProviderHealthTracker } from './src/provider-health.js';
 import {
   AGENT_MIN_CONTEXT, BUILTIN_PLANS, CATALOG, EEA_COUNTRIES, MODEL_ALIASES, POOL_LIMITS, callerCountry, catalogEntry, catalogWarnings,
-  expandCountries, listModelsForCaller, loadPlanPolicies, planPolicy, poolConfigured, poolKey, resolveModelId,
+  expandCountries, familyMembers, familyModels, isFamilyId, listModelsForCaller, loadPlanPolicies, modelIdentity, planPolicy,
+  poolConfigured, poolKey, resolveModelId, withIdentity,
 } from './src/catalog.js';
+import { cleanModelName, MAKERS } from './src/model-families.js';
 import {
   LIST_PRICES, billableUsage, costMicrousd, dailyCapMicrousd, estimatePromptTokens, priceFromCost, priceFromList, publicPricing,
   reserveCostMicrousd,
@@ -275,8 +277,10 @@ try {
   await test('explicit alias table, openai/ transport prefix and no fuzzy matching', () => {
     assert.equal(resolveModelId('openai/gemini/gemini-2.5-flash'), 'gemini/gemini-2.5-flash');
     assert.equal(resolveModelId('gemini-2.5-flash'), 'gemini/gemini-2.5-flash');
-    assert.equal(resolveModelId('openai/gpt-oss-120b'), 'groq/openai/gpt-oss-120b');
-    assert.equal(resolveModelId('openai/openai/gpt-oss-20b'), 'groq/openai/gpt-oss-20b');
+    // A family id (contract section 14) resolves to itself: the router serves it from the best
+    // healthy route. Route ids still resolve to their route.
+    assert.equal(resolveModelId('openai/gpt-oss-120b'), 'openai/gpt-oss-120b');
+    assert.equal(resolveModelId('openai/openai/gpt-oss-20b'), 'openai/gpt-oss-20b');
     assert.equal(resolveModelId('Groq/OpenAI/GPT-OSS-120B'), 'groq/openai/gpt-oss-120b');
     assert.equal(resolveModelId('default'), 'auto');
     assert.equal(resolveModelId('openai/auto'), 'auto');
@@ -674,6 +678,117 @@ try {
     assert.equal(router.route({ ...base, requestedModel: 'openai', tiers: ['free'] }).error, 'model_not_found');
     assert.equal(router.route({ ...base, requestedModel: 'nvidia/openai/gpt-oss-20b', tiers: ['free'], env: { NVIDIA_API_KEY: 'n' } }).error, 'model_not_found');
     assert.equal(router.route({ ...base, requestedModel: '@cf/meta/llama-3.3-70b-instruct-fp8-fast', tiers: ['free'] }).error, 'model_not_found');
+  });
+
+  // ── Model families (contract section 14) ──
+  await test('model identity: maker, clean name and family id for every catalog route', () => {
+    const expected = {
+      'groq/openai/gpt-oss-120b': ['openai', 'GPT-OSS 120B', 'openai/gpt-oss-120b'],
+      '@cf/openai/gpt-oss-120b': ['openai', 'GPT-OSS 120B', 'openai/gpt-oss-120b'],
+      'groq/qwen/qwen3.8-27b': ['alibaba', 'Qwen 3.8 27B', 'qwen/qwen3.8-27b'],
+      'nvidia/openai/gpt-oss-20b': ['openai', 'GPT-OSS 20B', 'openai/gpt-oss-20b'],
+      'nvidia/nvidia/nemotron-3-ultra-550b-a55b': ['nvidia', 'Nemotron 3 Ultra 550B', 'nvidia/nemotron-3-ultra-550b'],
+      'nvidia/stepfun-ai/step-5-preview': ['stepfun', 'Step 5 Preview', 'stepfun/step-5-preview'],
+      'cohere/north-mini-code:free': ['cohere', 'North Mini Code', 'cohere/north-mini-code'],
+      '@cf/meta/llama-3.3-70b-instruct-fp8-fast': ['meta', 'Llama 3.3 70B', 'meta/llama-3.3-70b'],
+      'gemini/gemini-2.5-flash': ['google', 'Gemini 2.5 Flash', 'google/gemini-2.5-flash'],
+      'anthropic/claude-sonnet-5-5': ['anthropic', 'Claude Sonnet 5.5', 'anthropic/claude-sonnet-5-5'],
+      'zai/glm-4.7-flash': ['zhipu', 'GLM-4.7 Flash', 'zhipu/glm-4.7-flash'],
+    };
+    for (const [id, [maker, name, family]] of Object.entries(expected)) {
+      const identity = modelIdentity(catalogEntry(id));
+      assert.deepEqual([identity.maker, identity.name, identity.family], [maker, name, family], id);
+      assert.equal(identity.maker_name, MAKERS[maker]);
+    }
+    for (const entry of CATALOG) {
+      const { maker, name, family } = modelIdentity(entry);
+      assert.ok(maker !== 'other', `${entry.id} has a known maker`);
+      assert.doesNotMatch(name, /\(|groq|nvidia|openrouter|workers ai|z\.ai|, free/i, `${entry.id}: no route in the name`);
+      assert.match(family, /^[a-z0-9-]+\/[a-z0-9._-]+$/, `${entry.id}: family id`);
+    }
+    assert.deepEqual(['GPT-OSS 120B (Groq)', 'North Mini Code (OpenRouter, free)', 'Claude Sonnet 5.5', 'GLM-4.7-Flash (Z.ai, free)']
+      .map(cleanModelName), ['GPT-OSS 120B', 'North Mini Code', 'Claude Sonnet 5.5', 'GLM-4.7-Flash']);
+    const hosted = { NVIDIA_API_KEY: 'n', NVIDIA_HOSTED: 'true', GROQ_API_KEY: 'g' };
+    assert.deepEqual(familyMembers('openai/gpt-oss-20b', hosted).map(entry => entry.id), ['groq/openai/gpt-oss-20b', 'nvidia/openai/gpt-oss-20b']);
+    assert.equal(isFamilyId('openai/gpt-oss-20b', hosted), true);
+    assert.equal(isFamilyId('anthropic/claude-sonnet-5-5', hosted), false, 'a family whose id is its only route id is that route');
+    assert.equal(isFamilyId('groq/openai/gpt-oss-20b', hosted), false);
+  });
+
+  await test('/v1/models families: one entry per model, rolled up from its routes for the caller', () => {
+    const env = { GROQ_API_KEY: 'g', NVIDIA_API_KEY: 'n', NVIDIA_HOSTED: 'true', OPENROUTER_API_KEY: 'o', OPENROUTER_HOSTED: 'true' };
+    const routes = listModelsForCaller(env, { plan: 'free', country: 'US' }).data;
+    const families = familyModels(routes, env);
+    const byId = Object.fromEntries(families.map(model => [model.id, model]));
+    assert.equal(families[0].id, 'auto');
+    assert.deepEqual([families[0].maker, families[0].family], ['zero-x', 'auto']);
+    assert.equal(new Set(families.map(model => model.id)).size, families.length, 'one entry per family');
+    assert.equal(families.filter(model => model.family === 'openai/gpt-oss-20b').length, 1);
+    for (const model of families) {
+      assert.equal(model.id, model.family);
+      for (const key of ['maker', 'maker_name', 'model_name', 'display_name', 'context_window', 'native_context_window', 'available']) {
+        assert.ok(key in model, `${model.id}: ${key}`);
+      }
+      assert.ok(!routes.some(route => route.id === model.id) || model.id === 'auto' || model.id.startsWith('anthropic/'),
+        `${model.id}: no route id`);
+    }
+    // Groq's free pool takes 8K per minute; NVIDIA's free route of the same model takes the whole
+    // window, and the router skips routes a request does not fit: the family offers the larger.
+    const gpt20 = byId['openai/gpt-oss-20b'];
+    assert.deepEqual([gpt20.display_name, gpt20.maker, gpt20.owned_by, gpt20.context_window, gpt20.native_context_window],
+      ['GPT-OSS 20B', 'openai', 'openai', 131072, 131072]);
+    assert.deepEqual(gpt20.provider, { id: 'openai', name: 'OpenAI', logo_url: null, logo_fallback_url: null }, 'the maker, not the provider');
+    assert.deepEqual([byId['openai/gpt-oss-120b'].context_window, byId['openai/gpt-oss-120b'].native_context_window], [8000, 131072]);
+    assert.equal(byId['cohere/north-mini-code'].display_name, 'North Mini Code');
+    assert.equal(byId['nvidia/nemotron-3-ultra-550b'].display_name, 'Nemotron 3 Ultra 550B');
+    // Unusable for the caller: the reason of the closest route.
+    assert.deepEqual([byId['google/gemini-2.5-pro'].available, byId['google/gemini-2.5-pro'].unavailable_reason], [false, 'not_configured']);
+    const free = familyModels(listModelsForCaller({ ...KEYS }, { plan: 'free', country: 'US' }).data, KEYS);
+    assert.equal(free.find(model => model.id === 'google/gemini-2.5-pro').unavailable_reason, 'upgrade_required');
+    // ?routes=1 keeps the routes, each with its identity.
+    const route = withIdentity(routes.find(model => model.id === 'nvidia/openai/gpt-oss-20b'), env);
+    assert.deepEqual([route.id, route.family, route.maker, route.model_name, route.display_name],
+      ['nvidia/openai/gpt-oss-20b', 'openai/gpt-oss-20b', 'openai', 'GPT-OSS 20B', 'GPT-OSS 20B (NVIDIA)']);
+  });
+
+  await test('family ids route to the best healthy route of the model; route ids keep their route', () => {
+    const tracker = new ProviderHealthTracker();
+    const router = new RoutingEngine(tracker);
+    const env = { GROQ_API_KEY: 'g', NVIDIA_API_KEY: 'n', NVIDIA_HOSTED: 'true' };
+    const base = { env, needsTools: true, promptTokens: 500, maxTokens: 2000, tiers: ['free'], country: 'US' };
+    const family = router.route({ ...base, requestedModel: 'openai/gpt-oss-20b' });
+    assert.deepEqual([family.ok, family.auto, family.family, family.model], [true, false, 'openai/gpt-oss-20b', 'openai/gpt-oss-20b']);
+    assert.deepEqual(ids(family), ['groq/openai/gpt-oss-20b#free', 'nvidia/openai/gpt-oss-20b#free'], 'ranked like auto');
+    assert.deepEqual(ids(router.route({ ...base, requestedModel: 'OpenAI/GPT-OSS-20B' })), ids(family), 'case-insensitive');
+    assert.deepEqual(ids(router.route({ ...base, requestedModel: 'openai/openai/gpt-oss-20b' })), ids(family), 'openai/ transport prefix');
+    // The route id keeps the route an old client asked for.
+    const explicit = router.route({ ...base, requestedModel: 'groq/openai/gpt-oss-20b' });
+    assert.deepEqual([ids(explicit), explicit.family, explicit.model], [['groq/openai/gpt-oss-20b#free'], null, 'groq/openai/gpt-oss-20b']);
+    // A request too large for Groq's 8K free budget goes to the route that takes it.
+    assert.deepEqual(ids(router.route({ ...base, requestedModel: 'openai/gpt-oss-20b', promptTokens: 20000 })), ['nvidia/openai/gpt-oss-20b#free']);
+    assert.equal(router.route({ ...base, requestedModel: 'groq/openai/gpt-oss-20b', promptTokens: 20000 }).error, 'context_length_exceeded');
+    // A rate-limited route is skipped; the family is still served.
+    const groq = catalogEntry('groq/openai/gpt-oss-20b');
+    tracker.recordFailure(poolKey(groq, groq.pools[0]), { kind: FailureKind.RATE_LIMITED, retryAfterSeconds: 30 });
+    assert.deepEqual(ids(router.route({ ...base, requestedModel: 'openai/gpt-oss-20b' })), ['nvidia/openai/gpt-oss-20b#free']);
+    assert.equal(router.route({ ...base, requestedModel: 'groq/openai/gpt-oss-20b' }).error, 'capacity_exhausted');
+    const nvidia = catalogEntry('nvidia/openai/gpt-oss-20b', env);
+    tracker.recordFailure(poolKey(nvidia, nvidia.pools[0]), { kind: FailureKind.RATE_LIMITED, retryAfterSeconds: 12 });
+    assert.equal(router.route({ ...base, requestedModel: 'openai/gpt-oss-20b' }).error, 'capacity_exhausted', 'every route down: the family is busy');
+    tracker.reset(poolKey(groq, groq.pools[0]));
+    tracker.reset(poolKey(nvidia, nvidia.pools[0]));
+    // A conversation stays on the route that served it (its prompt cache).
+    const conversation = { ...base, requestedModel: 'openai/gpt-oss-20b', affinity: 'user-9', conversation: 'c:task-9' };
+    const sticky = router.route(conversation).sticky;
+    assert.ok(sticky);
+    router.remember(sticky, 'nvidia/openai/gpt-oss-20b');
+    assert.equal(ids(router.route(conversation))[0], 'nvidia/openai/gpt-oss-20b#free');
+    // Unknown or unserved families.
+    assert.equal(router.route({ ...base, requestedModel: 'openai/gpt-oss-999b' }).error, 'model_not_found');
+    assert.equal(router.route({ ...base, requestedModel: 'meta/llama-3.3-70b' }).error, 'model_not_found', 'no route configured');
+    assert.equal(router.route({ ...base, env: { GROQ_API_KEY: 'g' }, requestedModel: 'nvidia/nemotron-3-ultra-550b' }).error, 'model_not_found');
+    // A family whose routes all lack a capability the request needs.
+    assert.equal(router.route({ ...base, requestedModel: 'openai/gpt-oss-20b', needs: { vision: true } }).error, 'invalid_request');
   });
 
   await test('health is keyed per pool: one dead model never trips its provider', () => {

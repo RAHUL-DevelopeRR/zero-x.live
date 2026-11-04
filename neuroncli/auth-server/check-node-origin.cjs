@@ -40,7 +40,7 @@ const call = (port, { method = 'GET', path = '/v1/models', headers = {} } = {}) 
 const geminiAvailable = async (port, headers) => {
   const response = await call(port, { headers });
   assert.equal(response.status, 200, response.text);
-  return response.json().data.find(model => model.id === 'gemini/gemini-3.5-flash').available;
+  return response.json().data.find(model => model.id === 'google/gemini-3.5-flash').available; // family id (contract section 14)
 };
 
 // Collects what console.error / console.warn print while fn runs (the mismatch log, the

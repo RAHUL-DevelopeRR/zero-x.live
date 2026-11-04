@@ -195,7 +195,7 @@ try {
   const geminiOpen = async (cf, headers = {}) => {
     const response = await visit('https://zero-x.live/v1/models', { cf, headers });
     assert.equal(response.status, 200);
-    return (await response.json()).data.find(model => model.id === 'gemini/gemini-3.5-flash').available;
+    return (await response.json()).data.find(model => model.id === 'google/gemini-3.5-flash').available; // family id (contract section 14)
   };
   assert.equal(await geminiOpen({ country: 'US' }), true);
   assert.equal(await geminiOpen({ country: 'DE' }), false);
