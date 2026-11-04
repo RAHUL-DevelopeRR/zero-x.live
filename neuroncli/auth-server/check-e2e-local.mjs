@@ -600,9 +600,10 @@ try {
   const requestsBeforeGate = rzp.requests.length;
   expectError(await call('/api/billing/checkout', { method: 'POST', token: ses, body: { plan: 'pro', currency: 'INR', consent } }), 409, 'billing_profile_required');
   const savedDetails = await call('/api/billing/profile', { method: 'PUT', token: ses, body: { full_name: 'E2E Buyer', country: 'IN', state: 'Tamil Nadu',
-    city: 'Karur', postal_code: '639113', phone: '9876543210' } });
+    city: 'Karur', postal_code: '639113', phone: '9876543210', tax_id: '33abcde 1234f1z7' } });
   assert.equal(savedDetails.status, 200, redact(savedDetails.text));
-  assert.deepEqual([savedDetails.body.profile.state, savedDetails.body.profile.phone, savedDetails.body.complete], ['TN', '+919876543210', true]);
+  assert.deepEqual([savedDetails.body.profile.state, savedDetails.body.profile.phone, savedDetails.body.profile.tax_id, savedDetails.body.complete],
+    ['TN', '+919876543210', '33ABCDE1234F1Z7', true], 'the optional GSTIN is normalised and stored (20261104000000)');
   assert.deepEqual((await call('/api/billing/profile', { token: ses })).body.profile, savedDetails.body.profile, 'the profile is stored and read back');
   const needsAgreement = expectError(await call('/api/billing/checkout', { method: 'POST', token: ses, body: { plan: 'pro', currency: 'INR' } }), 409, 'consent_required');
   assert.deepEqual(needsAgreement.missing, ['terms', 'privacy', 'auto_renewal', 'refund']);
@@ -611,6 +612,7 @@ try {
   assert.equal(checkout.status, 200, redact(checkout.text));
   assert.deepEqual(checkout.body.prefill, { email: checkout.body.prefill.email, name: 'E2E Buyer', contact: '+919876543210' }, 'Razorpay is prefilled with name, e-mail and phone only');
   assert.equal(Object.keys(rzp.subscriptions.get(checkout.body.subscription_id).notes).sort().join(), 'plan,user_id', 'only ids in Razorpay notes');
+  assert.ok(!JSON.stringify(rzp.requests).includes('1234F1Z7') && !JSON.stringify(checkout.body).includes('1234F1Z7'), 'the GSTIN never reaches Razorpay');
   const agreed = (await call('/api/billing/profile', { token: ses })).body.accepted;
   assert.deepEqual(Object.entries(agreed).map(([name, entry]) => [name, entry.version, entry.current]).sort(), Object.entries(consent).map(([name, version]) => [name, version, true]).sort(), 'the agreements are recorded');
   assert.equal(checkout.body.provider, 'razorpay');

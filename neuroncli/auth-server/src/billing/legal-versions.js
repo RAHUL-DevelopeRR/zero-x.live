@@ -13,7 +13,7 @@
 
 export const LEGAL_DOCUMENTS = Object.freeze({
   terms: Object.freeze({ version: '2026-11-03', path: '/terms' }),
-  privacy: Object.freeze({ version: '2026-11-03', path: '/privacy' }),
+  privacy: Object.freeze({ version: '2026-11-04', path: '/privacy' }),
   refund: Object.freeze({ version: '2026-11-03', path: '/refund' }),
   auto_renewal: Object.freeze({ version: '2026-11-04', path: '/terms#billing' }),
 });

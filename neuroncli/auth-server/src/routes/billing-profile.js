@@ -44,7 +44,7 @@ async function getProfile(c, caller) {
   });
 }
 
-// Ten fields of at most 120 characters: far below this, so anything larger is not a billing profile.
+// Eleven fields of at most 120 characters: far below this, so anything larger is not a billing profile.
 const MAX_PROFILE_BYTES = 16 * 1024;
 
 async function putProfile(c, caller) {
@@ -59,7 +59,10 @@ async function putProfile(c, caller) {
     const first = PROFILE_FIELDS.find(field => result.errors[field]) || Object.keys(result.errors)[0];
     throw new ApiError(400, 'invalid_request', result.errors[first], { param: first === '_' ? null : first, fields: result.errors });
   }
-  const row = await rpc(c.env, 'zerox_billing_profile_upsert', { p_user_id: caller.user_id, p_profile: result.value });
+  // No tax id: the key is left out (the upsert clears an absent one all the same), so a profile
+  // without one still saves on a database that does not have 20261104000000_billing_tax_id.sql yet.
+  const { tax_id: taxId, ...withoutTaxId } = result.value;
+  const row = await rpc(c.env, 'zerox_billing_profile_upsert', { p_user_id: caller.user_id, p_profile: taxId ? result.value : withoutTaxId });
   return c.json({ profile: publicProfile(row), complete: true, missing: [] });
 }
 

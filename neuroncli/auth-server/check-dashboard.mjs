@@ -1092,7 +1092,10 @@ async function loadAuth({hostname, config, session = makeStorage(), sdk = true})
   const OPTIONS = {countries: [{code: 'IN', name: 'India'}, {code: 'US', name: 'United States'}, {code: 'AE', name: 'United Arab Emirates'}],
     states: {IN: [{code: 'KA', name: 'Karnataka'}, {code: 'TN', name: 'Tamil Nadu'}]}, no_postal: ['AE']};
   const SAVED = {customer_type: 'individual', full_name: 'Asha Kumar', business_name: null, country: 'IN', state: 'TN', city: 'Karur', postal_code: '639113',
-    address_line1: '6/2 N. Pugalur', address_line2: null, phone: '+919876543210'};
+    address_line1: '6/2 N. Pugalur', address_line2: null, phone: '+919876543210', tax_id: null};
+  // GSTINs with a correct check character (check-billing-profile.mjs computes them): Tamil Nadu (33) and Karnataka (29).
+  const GSTIN_TN = '33ABCDE1234F1Z7';
+  const GSTIN_KA = '29ABCDE1234F1ZW';
   const detailsPayload = (extra = {}) => ({profile: null, complete: false, missing: ['full_name', 'country', 'city', 'postal_code'], documents: DOCS, accepted: {},
     tax: {no_gst_notice: false}, options: OPTIONS, ...extra});
   const returning = (extra = {}) => detailsPayload({profile: SAVED, complete: true, missing: [],
@@ -1134,7 +1137,7 @@ async function loadAuth({hostname, config, session = makeStorage(), sdk = true})
     const labels = new Map(dialog.querySelectorAll('label').map(label => [label.getAttribute('for'), label.textContent]));
     const expectations = {'bd-full-name': ['Full name', 'name'], 'bd-business-name': ['Business name', 'organization'], 'bd-country': ['Country', 'country'],
       'bd-city': ['City', 'address-level2'], 'bd-postal-code': ['Postal code', 'postal-code'], 'bd-address-line1': ['Address line 1', 'address-line1'],
-      'bd-address-line2': ['Address line 2', 'address-line2'], 'bd-phone': ['Phone number', 'tel']};
+      'bd-address-line2': ['Address line 2', 'address-line2'], 'bd-tax-id': ['GSTIN', 'off'], 'bd-phone': ['Phone number', 'tel']};
     for (const [id, [label, token]] of Object.entries(expectations)) {
       assert.ok(labels.get(id) && labels.get(id).startsWith(label), `${id} has the label ${label}`);
       assert.equal(field(doc, id).getAttribute('autocomplete'), token, `${id} autocomplete`);
@@ -1144,9 +1147,17 @@ async function loadAuth({hostname, config, session = makeStorage(), sdk = true})
     assert.match(labels.get('bd-full-name'), /\(required\)/);
     assert.match(labels.get('bd-address-line1'), /\(optional\)/, 'the street address is optional for an individual');
     assert.match(labels.get('bd-phone'), /\(optional\)/);
+    // The optional tax id, for individuals too: "GSTIN (optional)" in India, with the honest note about GST.
+    assert.equal(labels.get('bd-tax-id'), 'GSTIN (optional)');
+    assert.equal(field(doc, 'bd-tax-id-field').hidden, false, 'an individual can give a tax id too');
+    assert.equal(field(doc, 'bd-tax-id').getAttribute('maxlength'), '40');
+    assert.equal(field(doc, 'bd-tax-id-hint').textContent,
+      'Optional. It is saved with your billing details for your own records and is not sent to Razorpay. Zero-X is not registered for GST, so no GST is charged and no GST invoice is issued.');
+    assert.ok(field(doc, 'bd-tax-id').getAttribute('aria-describedby').includes('bd-tax-id-hint'), 'the note describes the field');
     assert.equal(field(doc, 'bd-business-name-field').hidden, true, 'business fields appear only for a business');
     assert.equal(field(doc, 'bd-country').value, 'IN', 'paying in rupees: India is preselected (a guess the buyer can change)');
     fill(doc, {'bd-country': ''});
+    assert.equal(field(doc, 'bd-tax-id-label').textContent, 'VAT or tax ID', 'outside India the field asks for a VAT or tax ID');
     // The order summary is a description list with the price and renewal terms; no GST line unless the server says so.
     const summary = field(doc, 'bd-summary');
     const rows = Object.fromEntries(summary.querySelectorAll('dt').map((term, index) => [term.textContent, summary.querySelectorAll('dd')[index].textContent]));
@@ -1155,7 +1166,9 @@ async function loadAuth({hostname, config, session = makeStorage(), sdk = true})
     assert.equal(rows['Due today'], '₹899');
     assert.equal(rows.Billing, 'Monthly, renews until you cancel');
     assert.match(rows['First renewal'], /^About \d{1,2} \w+ 20\d\d, then monthly$/);
-    assert.ok(!('Tax' in rows) && !/GST/i.test(dialog.textContent), 'the page does not mention GST until the owner turns the notice on');
+    assert.ok(!('Tax' in rows) && !/GST/i.test(summary.textContent), 'the order summary does not mention GST until the owner turns the notice on');
+    const taxField = field(doc, 'bd-tax-id-field');
+    assert.ok(!/GST/i.test(dialog.textContent.replace(taxField.textContent, '')), 'outside the tax id field, the dialog says nothing about GST');
     assert.match(field(doc, 'bd-notice').textContent, /renews monthly until you cancel.*Your bank or Razorpay may notify you before each charge.*Zero-X never sees your card details/);
     assert.equal(dialog.querySelectorAll('input[type="checkbox"]').length, 4, 'terms, privacy, renewal notice and refund policy, all unticked');
     assert.ok(dialog.querySelectorAll('input[type="checkbox"]').every(box => !box.checked));
@@ -1185,21 +1198,36 @@ async function loadAuth({hostname, config, session = makeStorage(), sdk = true})
     assert.match(labels.get('bd-state') || '', /^State|^$/);
     assert.match(field(doc, 'bd-state-marker').textContent, /required/);
     fill(doc, {'bd-state': 'TN', 'bd-city': 'Karur', 'bd-postal-code': '639113'});
+    assert.equal(field(doc, 'bd-tax-id-label').textContent, 'GSTIN');
+    // The GSTIN is checked in the browser with the server's rule: a Karnataka GSTIN for a Tamil Nadu address, then a typo.
+    fill(doc, {'bd-tax-id': GSTIN_KA});
     submit(doc);
     await settle();
+    assert.equal(field(doc, 'bd-tax-id-error').textContent, 'This GSTIN starts with 29, but the GST state code of Tamil Nadu is 33. Check the GSTIN or the state.');
+    assert.equal(field(doc, 'bd-tax-id').getAttribute('aria-invalid'), 'true');
+    fill(doc, {'bd-tax-id': GSTIN_TN.slice(0, 14) + 'A'});
+    submit(doc);
+    await settle();
+    assert.equal(field(doc, 'bd-tax-id-error').textContent, 'This GSTIN\'s last character does not match the rest. Check it for a typo.');
+    assert.ok(!calls.some(call => call.method === 'PUT'), 'a bad GSTIN is never sent');
+    fill(doc, {'bd-tax-id': ' ' + GSTIN_TN.slice(0, 7).toLowerCase() + ' ' + GSTIN_TN.slice(7) + ' '});
+    submit(doc);
+    await settle();
+    assert.equal(field(doc, 'bd-tax-id-error').hidden, true, 'lower case and spaces are fine (the server normalises them)');
     assert.equal(field(doc, 'bd-consent-terms').getAttribute('aria-invalid'), 'true', 'the boxes still have to be ticked');
     assert.ok(!calls.some(call => call.method === 'PUT'), 'nothing is saved until the boxes are ticked too');
     tick(doc, ['bd-consent-terms', 'bd-consent-privacy', 'bd-consent-auto-renewal', 'bd-consent-refund']);
     submit(doc);
     await settle();
-    assert.deepEqual(calls.find(call => call.method === 'PUT').body, {customer_type: 'individual', full_name: 'Asha Kumar', country: 'IN', state: 'TN', city: 'Karur', postal_code: '639113'},
-      'only what was filled in is sent, trimmed');
+    assert.deepEqual(calls.find(call => call.method === 'PUT').body, {customer_type: 'individual', full_name: 'Asha Kumar', country: 'IN', state: 'TN', city: 'Karur', postal_code: '639113',
+      tax_id: GSTIN_TN.slice(0, 7).toLowerCase() + ' ' + GSTIN_TN.slice(7)}, 'only what was filled in is sent, trimmed');
     assert.deepEqual(calls.find(call => call.path === '/api/billing/checkout').body, {plan: 'pro', currency: 'INR', consent: consentFor('subscription')});
     assert.equal(dialogOf(doc), null, 'the dialog is removed');
     const razorpay = FakeRazorpay.instances[0];
     assert.equal(razorpay.options.subscription_id, 'sub_TEST12345');
     assert.deepEqual(razorpay.options.prefill, {email: 'owner@example.com', name: 'Asha Kumar', contact: '+919876543210'}, 'name, e-mail and phone only');
     assert.ok(!JSON.stringify(razorpay.options).includes('639113') && !JSON.stringify(razorpay.options).includes('Karur'), 'no address reaches Razorpay');
+    assert.ok(!JSON.stringify(razorpay.options).includes(GSTIN_TN.slice(7)), 'no tax id reaches Razorpay');
     assert.ok(![...t.win.localStorage.map.values(), ...t.win.sessionStorage.map.values()].some(value => /639113|Asha|Karur/.test(value)), 'details are never written to browser storage');
   }
 
@@ -1243,6 +1271,7 @@ async function loadAuth({hostname, config, session = makeStorage(), sdk = true})
     assert.equal(field(doc, 'bd-business-name-field').hidden, false);
     assert.match(field(doc, 'bd-address-line1-marker').textContent, /required/, 'a business gives its address');
     fill(doc, {'bd-country': 'AE'});
+    assert.equal(field(doc, 'bd-tax-id-label').textContent, 'VAT or tax ID');
     assert.equal(field(doc, 'bd-state').localName, 'input', 'free text where there is no list');
     assert.equal(field(doc, 'bd-postal-code-field').hidden, true, 'no postal code where there are none');
     submit(doc);
@@ -1251,10 +1280,16 @@ async function loadAuth({hostname, config, session = makeStorage(), sdk = true})
     assert.equal(field(doc, 'bd-postal-code-error').hidden, true);
     fill(doc, {'bd-full-name': 'Asha Kumar', 'bd-business-name': 'Zero X Labs', 'bd-city': 'Dubai', 'bd-address-line1': 'Office 4', 'bd-state': 'Dubai'});
     tick(doc, ['bd-consent-terms', 'bd-consent-privacy', 'bd-consent-auto-renewal', 'bd-consent-refund']);
+    fill(doc, {'bd-tax-id': 'TRN_1'});
+    submit(doc);
+    await settle();
+    assert.equal(field(doc, 'bd-tax-id-error').textContent, 'Enter a VAT or tax ID of 2 to 20 letters, digits or hyphens.');
+    assert.ok(!calls.some(call => call.method === 'PUT'));
+    fill(doc, {'bd-tax-id': '100 2345 6789 0003'});
     submit(doc);
     await settle();
     assert.deepEqual(calls.find(call => call.method === 'PUT').body, {customer_type: 'business', full_name: 'Asha Kumar', business_name: 'Zero X Labs', country: 'AE', state: 'Dubai',
-      city: 'Dubai', address_line1: 'Office 4'});
+      city: 'Dubai', address_line1: 'Office 4', tax_id: '100 2345 6789 0003'});
   }
 
   // ── Returning buyer: a one-click review; ticks only for what is new ──
@@ -1269,6 +1304,7 @@ async function loadAuth({hostname, config, session = makeStorage(), sdk = true})
     assert.match(review.textContent, /6\/2 N\. Pugalur/);
     assert.match(review.textContent, /Karur, Tamil Nadu 639113/);
     assert.match(review.textContent, /\+919876543210/);
+    assert.ok(!/GSTIN|tax ID/.test(review.textContent), 'no tax id row when none was given');
     assert.equal(field(doc, 'bd-submit').textContent, 'Continue to payment');
     assert.deepEqual(dialogOf(doc).querySelectorAll('input[type="checkbox"]').map(box => box.getAttribute('id')), ['bd-consent-auto-renewal'],
       'only the renewal notice has to be ticked: it is about this purchase');
@@ -1284,12 +1320,15 @@ async function loadAuth({hostname, config, session = makeStorage(), sdk = true})
     assert.deepEqual(calls.find(call => call.path === '/api/billing/checkout').body, {plan: 'pro', currency: 'USD', consent: {auto_renewal: '2026-11-03'}});
   }
   {
-    // Editing from the review screen shows the form with the saved values and saves them.
-    const t = await pricingWith({'GET /api/billing/profile': returning(), 'PUT /api/billing/profile': json(200, {profile: SAVED, complete: true, missing: []})});
+    // Editing from the review screen shows the form with the saved values (the GSTIN too) and saves them.
+    const t = await pricingWith({'GET /api/billing/profile': returning({profile: {...SAVED, tax_id: GSTIN_TN}}), 'PUT /api/billing/profile': json(200, {profile: SAVED, complete: true, missing: []})});
     t.doc.querySelector('[data-upgrade="pro"]').click();
     await settle();
     const {doc, calls} = t;
+    const reviewRows = Object.fromEntries(field(doc, 'bd-review').querySelectorAll('dt').map((term, index) => [term.textContent, field(doc, 'bd-review').querySelectorAll('dd')[index].textContent]));
+    assert.equal(reviewRows.GSTIN, GSTIN_TN, 'the saved GSTIN is shown for review');
     field(doc, 'bd-edit').click();
+    assert.equal(field(doc, 'bd-tax-id').value, GSTIN_TN, 'and prefilled in the form');
     assert.equal(field(doc, 'bd-full-name').value, 'Asha Kumar');
     assert.equal(field(doc, 'bd-country').value, 'IN');
     assert.equal(field(doc, 'bd-state').value, 'TN');

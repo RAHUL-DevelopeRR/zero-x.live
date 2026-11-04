@@ -315,11 +315,13 @@ const rpc = {
   zerox_webhook_release: ({ p_event_id }) => { db.claims.delete(p_event_id); return []; },
   zerox_subscription_by_provider_id: ({ p_provider_subscription_id }) => db.subscriptions.has(p_provider_subscription_id)
     ? [db.subscriptions.get(p_provider_subscription_id)] : [],
-  // 20261103000000_billing_details.sql: profile and consent RPCs (the CHECKs live in the SQL; check-billing-details-db.mjs).
+  // 20261103000000_billing_details.sql and 20261104000000_billing_tax_id.sql: profile and consent RPCs (the CHECKs live in the
+  // SQL; check-billing-details-db.mjs).
   zerox_billing_profile_get: ({ p_user_id }) => db.profiles.has(p_user_id) ? [db.profiles.get(p_user_id)] : [],
   zerox_billing_profile_upsert: ({ p_user_id, p_profile }) => {
     if (!db.accounts.has(p_user_id)) throw raise('account_not_found');
-    const keys = ['customer_type', 'full_name', 'business_name', 'country', 'state', 'city', 'postal_code', 'address_line1', 'address_line2', 'phone_e164'];
+    db.profileKeys = Object.keys(p_profile);
+    const keys = ['customer_type', 'full_name', 'business_name', 'country', 'state', 'city', 'postal_code', 'address_line1', 'address_line2', 'phone_e164', 'tax_id'];
     if (Object.keys(p_profile).some(key => !keys.includes(key))) throw raise('invalid_billing_profile: unknown field');
     const existing = db.profiles.get(p_user_id);
     const row = { ...Object.fromEntries(keys.map(key => [key, p_profile[key] ?? null])), customer_type: p_profile.customer_type ?? 'individual',
@@ -926,7 +928,9 @@ try {
   const GOOD = { customer_type: 'individual', full_name: '  Gate   Keeper ', country: 'in', state: 'Tamil Nadu', city: 'Karur', postal_code: '639 113',
     address_line1: '12 Secret Street', phone: '098765 43210' };
   const SAVED = { customer_type: 'individual', full_name: 'Gate Keeper', business_name: null, country: 'IN', state: 'TN', city: 'Karur', postal_code: '639113',
-    address_line1: '12 Secret Street', address_line2: null, phone: '+919876543210' };
+    address_line1: '12 Secret Street', address_line2: null, phone: '+919876543210', tax_id: null };
+  // A GSTIN of Tamil Nadu with a correct check character (check-billing-profile.mjs computes it).
+  const GSTIN_TN = '33ABCDE1234F1Z7';
   const checkoutBody = consent => ({ plan: 'pro', currency: 'INR', ...(consent === undefined ? {} : { consent }) });
   const topupBody = consent => ({ pack: 'credits_5', currency: 'INR', ...(consent === undefined ? {} : { consent }) });
   const gateConsents = () => db.consents.filter(row => row.user_id === gate.id);
@@ -971,6 +975,7 @@ try {
     [{ ...GOOD, state: '' }, 'state'], [{ ...GOOD, state: 'Atlantis' }, 'state'], [{ ...GOOD, country: 'ZZ' }, 'country'], [{ ...GOOD, full_name: '   ' }, 'full_name'],
     [{ ...GOOD, city: undefined }, 'city'], [{ ...GOOD, customer_type: 'business' }, 'business_name'], [{ ...GOOD, address_line1: 5 }, 'address_line1'],
     [{ ...GOOD, full_name: 'x'.repeat(121) }, 'full_name'], [{ ...GOOD, address_line1: undefined, address_line2: 'Floor 2' }, 'address_line1'],
+    [{ ...GOOD, tax_id: '29ABCDE1234F1ZW' }, 'tax_id'], [{ ...GOOD, tax_id: GSTIN_TN.slice(0, 14) + 'A' }, 'tax_id'], [{ ...GOOD, tax_id: 'x'.repeat(41) }, 'tax_id'],
   ];
   for (const [body, param] of refusals) {
     const refused = await gateCall(PROFILE_PATH, { method: 'PUT', body });
@@ -983,12 +988,27 @@ try {
   assert.equal(saved.status, 200);
   assert.deepEqual(saved.body, { profile: SAVED, complete: true, missing: [] }, 'normalised: name, India state code, PIN, E.164 phone');
   assert.equal(db.profiles.get(gate.id).phone_e164, '+919876543210');
+  assert.ok(!db.profileKeys.includes('tax_id'), 'without a tax id the key is not sent (so a database without 20261104000000 still saves it)');
+  // The optional tax id: normalised, saved, read back and cleared by a PUT without it.
+  const taxed = await gateCall(PROFILE_PATH, { method: 'PUT', body: { ...GOOD, tax_id: ' 33abcde 1234 f1z7 ' } });
+  assert.deepEqual(taxed.body.profile, { ...SAVED, tax_id: GSTIN_TN }, 'spaces removed, upper case');
+  assert.equal(db.profiles.get(gate.id).tax_id, GSTIN_TN);
+  assert.equal((await gateCall(PROFILE_PATH, { method: 'GET' })).body.profile.tax_id, GSTIN_TN);
+  assert.deepEqual((await gateCall(PROFILE_PATH, { method: 'PUT', body: GOOD })).body.profile.tax_id, null, 'a PUT without it clears it');
+  const business = await gateCall(PROFILE_PATH, { method: 'PUT', body: { ...GOOD, country: 'GB', state: '', postal_code: 'SW1A 1AA', phone: undefined, customer_type: 'business',
+    business_name: 'Gate Ltd', tax_id: 'gb 123 4567 89' } });
+  assert.deepEqual([business.status, business.body.profile.tax_id], [200, 'GB123456789'], 'a VAT number outside India');
+  const mismatch = await gateCall(PROFILE_PATH, { method: 'PUT', body: { ...GOOD, tax_id: '29ABCDE1234F1ZW' } });
+  assert.equal(mismatch.body.error.message, 'This GSTIN starts with 29, but the GST state code of Tamil Nadu is 33. Check the GSTIN or the state.');
+  await gateCall(PROFILE_PATH, { method: 'PUT', body: GOOD });
   const reread = await gateCall(PROFILE_PATH, { method: 'GET' });
   assert.deepEqual([reread.body.profile, reread.body.complete, reread.body.missing], [SAVED, true, []]);
   // A PUT replaces the profile: what is not sent is cleared.
+  await gateCall(PROFILE_PATH, { method: 'PUT', body: { ...GOOD, tax_id: GSTIN_TN } });
   const replaced = await gateCall(PROFILE_PATH, { method: 'PUT', body: { full_name: 'Gate Keeper', country: 'US', state: 'Texas', city: 'Austin', postal_code: '73301' } });
-  assert.deepEqual([replaced.body.profile.country, replaced.body.profile.phone, replaced.body.profile.address_line1], ['US', null, null]);
-  await gateCall(PROFILE_PATH, { method: 'PUT', body: GOOD });
+  assert.deepEqual([replaced.body.profile.country, replaced.body.profile.phone, replaced.body.profile.address_line1, replaced.body.profile.tax_id], ['US', null, null, null]);
+  // The checkout below runs with a saved GSTIN, which must reach neither the browser's answer nor Razorpay.
+  await gateCall(PROFILE_PATH, { method: 'PUT', body: { ...GOOD, tax_id: GSTIN_TN } });
 
   // A profile is not enough: the current documents must be agreed to as well.
   const everyDocument = ['terms', 'privacy', 'auto_renewal', 'refund'];
@@ -1019,8 +1039,9 @@ try {
     everyDocument.slice().sort().map(document => [gate.id, document, CURRENT_DOCUMENTS[document], 'subscription']), 'one record per document, with the version shown');
   const razorpayBodies = JSON.stringify(rzp.requests.filter(entry => entry.method === 'POST' && entry.path.startsWith('/v1/subscriptions')).map(entry => entry.body));
   // The answer to the browser carries the prefill (so the phone is in it) but no address; Razorpay's own API receives none of it.
-  for (const hidden of ['Secret Street', '639113', 'Karur', 'Tamil Nadu', '"TN"']) assert.ok(!JSON.stringify(sent.body).includes(hidden), `the checkout answer holds no ${hidden}`);
-  for (const hidden of ['Secret Street', '639113', 'Karur', 'Tamil Nadu', '"TN"', '9876543210', 'Gate Keeper']) {
+  assert.equal(db.profiles.get(gate.id).tax_id, GSTIN_TN, 'this checkout ran with a saved GSTIN');
+  for (const hidden of ['Secret Street', '639113', 'Karur', 'Tamil Nadu', '"TN"', GSTIN_TN, '1234F1Z7']) assert.ok(!JSON.stringify(sent.body).includes(hidden), `the checkout answer holds no ${hidden}`);
+  for (const hidden of ['Secret Street', '639113', 'Karur', 'Tamil Nadu', '"TN"', '9876543210', 'Gate Keeper', GSTIN_TN, '1234F1Z7']) {
     assert.ok(!razorpayBodies.includes(hidden), `no ${hidden} in anything sent to Razorpay's API`);
   }
   assert.deepEqual(rzp.requests.filter(entry => entry.method === 'POST' && entry.path === '/v1/subscriptions').at(-1).body,
@@ -1109,4 +1130,4 @@ console.log('PASS: Razorpay signatures (positive/negative, constant-time), check
   'raw-body webhook verification, duplicate events, leased webhook claims, credits once per payment, plan/status mapping, downgrade on ' +
   'cancellation, one payable subscription per account (checkout reuse, duplicate cancel + refund, cancel-all), refund clawback, ' +
   'billing_not_configured and billing_plan_missing, plan bootstrap, billing profile routes, the details and agreement gate (nothing reaches ' +
-  'Razorpay without them), consent records, name/e-mail/phone-only prefill, first-month credits at verify and plans_configured in /health');
+  'Razorpay without them), the optional tax id (normalised, refused with field messages, never sent to Razorpay), consent records, name/e-mail/phone-only prefill, first-month credits at verify and plans_configured in /health');

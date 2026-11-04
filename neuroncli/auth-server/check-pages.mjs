@@ -308,7 +308,9 @@ const ADDRESS = '6/2, N. Pugalur, Karur 639113, Tamil Nadu, India';
   assert.match(text('terms.html'), /at least 18 years old/);
 
   // Claude on Pro and Max (Anthropic as a processor, credit holds, daily spend limits).
-  for (const file of ['privacy.html', 'terms.html']) assert.match(text(file), /Effective date: 3 November 2026\. Replaces the (?:policy|terms) dated 25 October 2026/, file + ' effective date');
+  assert.match(text('terms.html'), /Effective date: 3 November 2026\. Replaces the terms dated 25 October 2026/, 'terms.html effective date');
+  // 4 November 2026: the optional GSTIN or tax ID (legal-versions.js privacy is 2026-11-04 with it, so buyers agree again).
+  assert.match(text('privacy.html'), /Effective date: 4 November 2026\. Replaces the policy dated 3 November 2026\. This version adds the optional GSTIN or tax ID/, 'privacy.html effective date');
   const anthropicRow = read('privacy.html').match(/<tr><th scope="row"><a href="https:\/\/www\.anthropic\.com\/legal\/privacy">Anthropic<\/a><\/th>([\s\S]*?)<\/tr>/);
   assert.ok(anthropicRow, 'privacy: Anthropic is listed as a processor');
   assert.match(anthropicRow[1], /not used to train its models/);
@@ -376,7 +378,10 @@ const ADDRESS = '6/2, N. Pugalur, Karur 639113, Tamil Nadu, India';
   assert.match(privacy, /Razorpay keeps its own record of every payment/);
   assert.doesNotMatch(privacy, /even after account deletion/);
   assert.match(privacy, /grievance officer: Rahul S, founder of Zero-X, at support@zero-x\.live/);
-  assert.match(privacy, /We do not ask for a tax or GST number/);
+  assert.doesNotMatch(privacy, /We do not ask for a tax or GST number/, 'the tax id is asked for (optionally) since 4 November 2026');
+  assert.match(privacy, /You can also give a GSTIN or tax ID; it is optional, and if you give one we keep it with these details and use it only for billing records\. It is not sent to Razorpay\./);
+  assert.match(privacy, /We never ask for card, UPI or bank details/);
+  assert.match(text('docs/data.html'), /optional street address, phone and GSTIN or tax ID, business name/);
   assert.match(privacy, /Razorpay's payment window is filled in with your name \(the first 50 characters\), email address and phone number only/);
   assert.match(contact, /Grievance officer Zero-X is a small business founded and run by Rahul S/);
   assert.ok(read('contact.html').includes('id="grievance"'));

@@ -4,10 +4,12 @@
 // Later purchases: a one-click review of the saved details, with ticks only for what is new.
 // Contract: neuroncli/auth-server/docs/PLATFORM_CONTRACT.md section 3.5, GET/PUT /api/billing/profile.
 //
-// Only contact and address details are asked for here. Card, UPI and bank details are typed into
-// Razorpay's own window and never reach Zero-X. There is no tax id field: Zero-X is not
-// registered for GST. Every value that comes back from the API is treated as untrusted data
-// (textContent only), and details are held in memory only: nothing is written to browser storage.
+// Only contact and address details, and an optional tax id (a GSTIN in India, a VAT or tax ID
+// elsewhere; since 2026-11-04), are asked for here. Zero-X is not registered for GST: the tax id is
+// kept for the buyer's own records and never sent to Razorpay. Card, UPI and bank details are typed
+// into Razorpay's own window and never reach Zero-X. Every value that comes back from the API is
+// treated as untrusted data (textContent only), and details are held in memory only: nothing is
+// written to browser storage.
 import { ApiError, apiFetch, describeError, normalizeCurrency, siteUrl } from './billing-checkout.js';
 
 export const PROFILE_PATH = '/api/billing/profile';
@@ -39,16 +41,66 @@ export const RENEWAL_NOTICE = 'Your subscription renews monthly until you cancel
 export const ONE_TIME_NOTICE = 'This is a one-time payment. It does not renew.';
 export const PROCESSOR_NOTICE = 'Payments are processed by Razorpay. Zero-X never sees your card details.';
 export const DATA_NOTICE = 'Zero-X keeps these details with your account for billing records and support. Razorpay receives only your name, e-mail address and phone number, to fill in its payment window.';
+// Next to the optional tax id field. Zero-X is not registered for GST; nothing more is claimed about tax.
+export const TAX_ID_HINT = 'Optional. It is saved with your billing details for your own records and is not sent to Razorpay. Zero-X is not registered for GST, so no GST is charged and no GST invoice is issued.';
 
 /* ───────────── Pure helpers (unit-tested in check-pages.mjs) ───────────── */
 
 const object = value => value && typeof value === 'object' && !Array.isArray(value) ? value : null;
 const string = (value, max = 200) => typeof value === 'string' ? value.slice(0, max) : '';
-const FIELD_KEYS = ['customer_type', 'full_name', 'business_name', 'country', 'state', 'city', 'postal_code', 'address_line1', 'address_line2', 'phone'];
+const FIELD_KEYS = ['customer_type', 'full_name', 'business_name', 'country', 'state', 'city', 'postal_code', 'address_line1', 'address_line2', 'tax_id', 'phone'];
 const FIELD_LABELS = Object.freeze({
   full_name: 'Full name', business_name: 'Business name', country: 'Country', state: 'State', city: 'City', postal_code: 'Postal code',
-  address_line1: 'Address line 1', address_line2: 'Address line 2', phone: 'Phone number',
+  address_line1: 'Address line 1', address_line2: 'Address line 2', tax_id: 'GSTIN or tax ID', phone: 'Phone number',
 });
+
+/** The tax id field's label: a GSTIN in India, a VAT or tax ID elsewhere. */
+export const taxIdLabel = country => country === 'IN' ? 'GSTIN' : 'VAT or tax ID';
+
+// The server's tax id rule and messages (src/billing/profile.js taxIdError); check-billing-profile.mjs
+// keeps the two equal for every country and Indian state.
+export const GST_STATE_CODES = Object.freeze({
+  JK: ['01'], HP: ['02'], PB: ['03'], CH: ['04'], UT: ['05'], HR: ['06'], DL: ['07'], RJ: ['08'], UP: ['09'], BR: ['10'], SK: ['11'],
+  AR: ['12'], NL: ['13'], MN: ['14'], MZ: ['15'], TR: ['16'], ML: ['17'], AS: ['18'], WB: ['19'], JH: ['20'], OD: ['21'], CT: ['22'],
+  MP: ['23'], GJ: ['24'], DH: ['26', '25'], MH: ['27'], KA: ['29'], GA: ['30'], LD: ['31'], KL: ['32'], TN: ['33'], PY: ['34'],
+  AN: ['35'], TG: ['36'], AP: ['37'], LA: ['38'],
+});
+const GSTIN = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
+const OTHER_TAX_ID = /^[A-Z0-9][A-Z0-9-]{0,18}[A-Z0-9]$/;
+const GSTIN_CHARACTERS = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+// The server's cleaning of typed text: control characters become spaces; invisible and bidirectional override characters go.
+const CONTROL = /[\u0000-\u001f\u007f-\u009f]/g;
+const INVISIBLE = /[​-‏‪-‮⁠-⁤⁦-⁩﻿]/g;
+const cleanText = value => string(value, 200).normalize('NFC').replace(CONTROL, ' ').replace(INVISIBLE, '').replace(/\s+/g, ' ').trim();
+
+/** A tax id as the server stores it: spaces removed, upper case ('' when nothing was given). */
+export function normalizeTaxId(raw) {
+  return cleanText(raw).replace(/\s+/g, '').toUpperCase();
+}
+
+/** The GSTIN check character (the 15th) for its first 14 characters: the GSTN's mod-36 rule. */
+export function gstinCheckCharacter(first14) {
+  let sum = 0;
+  for (let index = 0; index < 14; index++) {
+    const product = GSTIN_CHARACTERS.indexOf(first14[index]) * (index % 2 ? 2 : 1);
+    sum += Math.floor(product / 36) + (product % 36);
+  }
+  return GSTIN_CHARACTERS[(36 - (sum % 36)) % 36];
+}
+
+/** Why a normalised tax id is refused for this country and state code, or '' (also for an empty one). */
+export function taxIdError(value, country, state = '', stateName = '') {
+  if (!value) return '';
+  if (country !== 'IN') return OTHER_TAX_ID.test(value) ? '' : 'Enter a VAT or tax ID of 2 to 20 letters, digits or hyphens.';
+  if (value.length !== 15) return 'A GSTIN has 15 letters and digits.';
+  if (!GSTIN.test(value)) return 'Enter a valid GSTIN: a 2 digit state code, the 10 character PAN, then 3 more characters.';
+  if (gstinCheckCharacter(value) !== value[14]) return 'This GSTIN\'s last character does not match the rest. Check it for a typo.';
+  const codes = Object.prototype.hasOwnProperty.call(GST_STATE_CODES, state) ? GST_STATE_CODES[state] : null;
+  if (codes && !codes.includes(value.slice(0, 2))) {
+    return `This GSTIN starts with ${value.slice(0, 2)}, but the GST state code of ${stateName || state} is ${codes[0]}. Check the GSTIN or the state.`;
+  }
+  return '';
+}
 
 /** The fields that must be filled in (the server's rule: src/billing/profile.js requiredFields). */
 export function requiredFields(country, customerType, noPostal = []) {
@@ -75,8 +127,12 @@ export function valuesFromProfile(profile) {
   return values;
 }
 
-/** Quick checks before anything is sent: required fields only. The server checks the rest and says what is wrong. */
-export function validateDetails(values, { noPostal = [] } = {}) {
+/**
+ * Quick checks before anything is sent: the required fields and the optional tax id, with the
+ * server's rules and messages. The server checks the rest and says what is wrong. `states` (the
+ * server's lists) names the state in a GSTIN state-code message and enables that check.
+ */
+export function validateDetails(values, { noPostal = [], states = {} } = {}) {
   const errors = {};
   const type = values && values.customer_type === 'business' ? 'business' : 'individual';
   const country = string(values && values.country, 2).toUpperCase();
@@ -85,6 +141,14 @@ export function validateDetails(values, { noPostal = [] } = {}) {
   }
   if (string(values && values.address_line2, 200).trim() && !string(values && values.address_line1, 200).trim()) {
     errors.address_line1 ||= 'Enter address line 1 before address line 2.';
+  }
+  const typed = cleanText(values && values.tax_id);
+  if (Array.from(typed).length > 40) errors.tax_id = 'GSTIN or tax ID must be at most 40 characters.';
+  else if (typed) {
+    const state = string(values && values.state, 80);
+    const named = (Array.isArray(states[country]) ? states[country] : []).find(entry => entry && entry.code === state);
+    const message = taxIdError(normalizeTaxId(typed), country, named ? state : '', named ? named.name : '');
+    if (message) errors.tax_id = message;
   }
   return errors;
 }
@@ -290,9 +354,9 @@ export async function collectBillingDetails({ kind, plan = null, pack = null, cu
     }, label);
 
     // ── Fields ──
-    function field(key, { type = 'text', autocomplete, inputmode, hint, control } = {}) {
+    function field(key, { type = 'text', autocomplete, inputmode, hint, control, maxlength = 120 } = {}) {
       const id = 'bd-' + key.replace(/_/g, '-');
-      const input = control || h(doc, 'input', { class: 'zx-input', id, type, name: key, autocomplete, inputmode, maxlength: 120 });
+      const input = control || h(doc, 'input', { class: 'zx-input', id, type, name: key, autocomplete, inputmode, maxlength });
       if (control) { control.setAttribute('id', id); control.setAttribute('name', key); control.setAttribute('autocomplete', autocomplete); }
       input.value = values[key] || '';
       refs.fields[key] = { input, id };
@@ -300,8 +364,10 @@ export async function collectBillingDetails({ kind, plan = null, pack = null, cu
       const hintEl = hint ? h(doc, 'p', { class: 'zx-help', id: id + '-hint' }, hint) : null;
       const error = h(doc, 'p', { class: 'zx-field-error', id: id + '-error', hidden: true });
       input.setAttribute('aria-describedby', [hintEl ? id + '-hint' : '', id + '-error'].filter(Boolean).join(' '));
-      const wrapper = h(doc, 'div', { class: 'zx-field', id: id + '-field' }, h(doc, 'label', { for: id }, FIELD_LABELS[key], ' ', marker), input, hintEl, error);
+      const labelText = h(doc, 'span', { id: id + '-label' }, FIELD_LABELS[key]);
+      const wrapper = h(doc, 'div', { class: 'zx-field', id: id + '-field' }, h(doc, 'label', { for: id }, labelText, ' ', marker), input, hintEl, error);
       refs.fields[key].wrapper = wrapper;
+      refs.fields[key].label = labelText;
       refs.fields[key].marker = marker;
       refs.fields[key].error = error;
       return wrapper;
@@ -345,6 +411,8 @@ export async function collectBillingDetails({ kind, plan = null, pack = null, cu
         field('postal_code', { autocomplete: 'postal-code' }),
         field('address_line1', { autocomplete: 'address-line1', hint: 'Optional for individuals; needed for a business.' }),
         field('address_line2', { autocomplete: 'address-line2' }),
+        // With the business address, for individuals and businesses alike; its label follows the country.
+        field('tax_id', { autocomplete: 'off', maxlength: 40, hint: TAX_ID_HINT }),
         field('phone', { type: 'tel', autocomplete: 'tel', inputmode: 'tel', hint: 'Optional. With the country code, for example +91 98765 43210. Fills in the payment window for you.' }));
       refs.stateSlot = stateWrapper;
       countrySelect.value = values.country;
@@ -376,6 +444,7 @@ export async function collectBillingDetails({ kind, plan = null, pack = null, cu
       if (refs.fields.business_name) refs.fields.business_name.wrapper.hidden = current.customer_type !== 'business';
       if (refs.fields.state) refs.fields.state.wrapper.hidden = !current.country;
       if (refs.fields.postal_code) refs.fields.postal_code.wrapper.hidden = !current.country || data.noPostal.includes(current.country);
+      if (refs.fields.tax_id) refs.fields.tax_id.label.textContent = taxIdLabel(current.country);
     }
 
     function showErrors(errors) {
@@ -411,6 +480,7 @@ export async function collectBillingDetails({ kind, plan = null, pack = null, cu
     // ── Review (a buyer with saved details) ──
     function buildReview() {
       const rows = [['Name', values.full_name], ['Address', addressLines(values, data)], ['Phone', values.phone || 'Not given']];
+      if (values.tax_id) rows.push([taxIdLabel(values.country), values.tax_id]);
       return h(doc, 'section', { 'aria-labelledby': 'bd-saved-title', id: 'bd-review' },
         h(doc, 'h3', { id: 'bd-saved-title' }, 'Your saved details'),
         h(doc, 'dl', { class: 'zx-kv' }, rows.flatMap(([label, value]) => [h(doc, 'dt', {}, label),
@@ -463,7 +533,7 @@ export async function collectBillingDetails({ kind, plan = null, pack = null, cu
       const errors = {};
       if (mode === 'form') {
         values = read();
-        Object.assign(errors, validateDetails(values, { noPostal: data.noPostal }));
+        Object.assign(errors, validateDetails(values, { noPostal: data.noPostal, states: data.states }));
       }
       for (const name of needed) if (!refs.boxes[name].input.checked) errors['consent_' + name] = 'Tick the box for the ' + DOCUMENT_NAMES[name] + ' to continue.';
       if (Object.keys(errors).length) { showErrors(errors); return; }
@@ -485,7 +555,7 @@ export async function collectBillingDetails({ kind, plan = null, pack = null, cu
         submit.removeAttribute('aria-busy');
         status.textContent = '';
         if (error && error.fields && Object.keys(error.fields).length) {
-          // The server's messages, by field (it checks postal codes, phone numbers and state lists).
+          // The server's messages, by field (it checks postal codes, phone numbers, state lists and the tax id).
           const fields = {};
           for (const [key, message] of Object.entries(error.fields)) if (FIELD_LABELS[key] || key === 'customer_type') fields[key] = string(message, 200);
           showErrors(Object.keys(fields).length ? fields : { full_name: describeError(error) });

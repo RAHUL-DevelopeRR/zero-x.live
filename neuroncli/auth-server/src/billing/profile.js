@@ -1,11 +1,13 @@
 // Billing profile: what Zero-X asks a buyer for before Razorpay opens (docs/PLATFORM_CONTRACT.md
 // section 3.5, GET/PUT /api/billing/profile). Pure functions, no I/O, shared by the routes and
 // the tests. Never card, UPI or bank details: those are typed into Razorpay's own window and
-// never reach Zero-X. There is no tax id field: Zero-X is not registered for GST.
+// never reach Zero-X. An optional tax id (a GSTIN in India, a VAT or tax id elsewhere) has been
+// accepted since 20261104000000_billing_tax_id.sql (owner decision of 2026-11-04); Zero-X is still
+// not registered for GST, so it is kept for the buyer's own records only and never sent to Razorpay.
 //
 // The server is the authority. The browser (billing-details.js) checks the same required fields
-// so a form fails fast, and shows the server's messages for everything else; a test keeps the two
-// required-field rules equal.
+// and the same tax id rule so a form fails fast, and shows the server's messages for everything
+// else; a test keeps the two rules equal.
 
 const object = value => value && typeof value === 'object' && !Array.isArray(value) ? value : null;
 
@@ -84,14 +86,65 @@ const POSTAL = {
 const GENERIC_POSTAL = /^[A-Z0-9][A-Z0-9 -]{1,10}[A-Z0-9]$/;
 
 export const CUSTOMER_TYPES = Object.freeze(['individual', 'business']);
-// The only keys a profile body may carry. There is deliberately no tax id (GSTIN) among them.
+// The only keys a profile body may carry, in form order. Card, UPI and bank details are never among them.
 export const PROFILE_FIELDS = Object.freeze(['customer_type', 'full_name', 'business_name', 'country', 'state', 'city', 'postal_code',
-  'address_line1', 'address_line2', 'phone']);
-const LIMITS = { full_name: 120, business_name: 120, state: 80, city: 80, postal_code: 12, address_line1: 120, address_line2: 120, phone: 40 };
+  'address_line1', 'address_line2', 'tax_id', 'phone']);
+// tax_id's limit is on what was typed (spaces included); the stored value is at most 20 characters.
+const LIMITS = { full_name: 120, business_name: 120, state: 80, city: 80, postal_code: 12, address_line1: 120, address_line2: 120, tax_id: 40, phone: 40 };
 export const FIELD_LABELS = Object.freeze({
   customer_type: 'Customer type', full_name: 'Full name', business_name: 'Business name', country: 'Country', state: 'State',
-  city: 'City', postal_code: 'Postal code', address_line1: 'Address line 1', address_line2: 'Address line 2', phone: 'Phone number',
+  city: 'City', postal_code: 'Postal code', address_line1: 'Address line 1', address_line2: 'Address line 2', tax_id: 'GSTIN or tax ID',
+  phone: 'Phone number',
 });
+
+// GST state codes (the first two digits of a GSTIN) of each state and union territory in
+// INDIA_STATES. Dadra and Nagar Haveli and Daman and Diu is 26 since the 2020 merger; 25 (Daman and
+// Diu before it) is accepted too. Codes 97 (Other Territory) and 99 (Centre Jurisdiction) belong to
+// no state, so a GSTIN with them is refused by the state match.
+export const GST_STATE_CODES = Object.freeze({
+  JK: ['01'], HP: ['02'], PB: ['03'], CH: ['04'], UT: ['05'], HR: ['06'], DL: ['07'], RJ: ['08'], UP: ['09'], BR: ['10'], SK: ['11'],
+  AR: ['12'], NL: ['13'], MN: ['14'], MZ: ['15'], TR: ['16'], ML: ['17'], AS: ['18'], WB: ['19'], JH: ['20'], OD: ['21'], CT: ['22'],
+  MP: ['23'], GJ: ['24'], DH: ['26', '25'], MH: ['27'], KA: ['29'], GA: ['30'], LD: ['31'], KL: ['32'], TN: ['33'], PY: ['34'],
+  AN: ['35'], TG: ['36'], AP: ['37'], LA: ['38'],
+});
+const GSTIN = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
+const OTHER_TAX_ID = /^[A-Z0-9][A-Z0-9-]{0,18}[A-Z0-9]$/;
+const GSTIN_CHARACTERS = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+
+/** A tax id as stored: spaces removed, upper case ('' when nothing was given). */
+export function normalizeTaxId(raw) {
+  return String(raw ?? '').replace(/\s+/g, '').toUpperCase();
+}
+
+/** The GSTIN check character (the 15th) for its first 14 characters: the GSTN's mod-36 rule. */
+export function gstinCheckCharacter(first14) {
+  let sum = 0;
+  for (let index = 0; index < 14; index++) {
+    const product = GSTIN_CHARACTERS.indexOf(first14[index]) * (index % 2 ? 2 : 1);
+    sum += Math.floor(product / 36) + (product % 36);
+  }
+  return GSTIN_CHARACTERS[(36 - (sum % 36)) % 36];
+}
+
+/**
+ * Why a normalised tax id is refused for this country and state, or '' when it is accepted (an
+ * empty one is). India: a GSTIN with the right check character whose state code is the state's
+ * (when the state is a code from INDIA_STATES; otherwise the state's own error is shown instead).
+ * Elsewhere: 2 to 20 letters, digits or hyphens, starting and ending with a letter or digit.
+ * billing-details.js has the same rule and messages (a test compares them).
+ */
+export function taxIdError(value, country, state = '') {
+  if (!value) return '';
+  if (country !== 'IN') return OTHER_TAX_ID.test(value) ? '' : 'Enter a VAT or tax ID of 2 to 20 letters, digits or hyphens.';
+  if (value.length !== 15) return 'A GSTIN has 15 letters and digits.';
+  if (!GSTIN.test(value)) return 'Enter a valid GSTIN: a 2 digit state code, the 10 character PAN, then 3 more characters.';
+  if (gstinCheckCharacter(value) !== value[14]) return 'This GSTIN\'s last character does not match the rest. Check it for a typo.';
+  const codes = Object.hasOwn(GST_STATE_CODES, state) ? GST_STATE_CODES[state] : null;
+  if (codes && !codes.includes(value.slice(0, 2))) {
+    return `This GSTIN starts with ${value.slice(0, 2)}, but the GST state code of ${STATE_BY_CODE.get(state)} is ${codes[0]}. Check the GSTIN or the state.`;
+  }
+  return '';
+}
 
 // Control characters become spaces; zero-width and bidirectional override characters (which can
 // disguise text) are dropped.
@@ -172,6 +225,7 @@ export function normalizeProfile(input) {
   const postalRaw = read('postal_code');
   const line1 = read('address_line1');
   const line2 = read('address_line2');
+  const taxId = normalizeTaxId(read('tax_id'));
   const phoneRaw = read('phone');
 
   if (!country) errors.country ||= 'Choose your country.';
@@ -199,6 +253,11 @@ export function normalizeProfile(input) {
     if (!line1) errors.address_line1 ||= 'Enter the business address.';
   }
   if (line2 && !line1) errors.address_line1 ||= 'Enter address line 1 before address line 2.';
+  // Optional for every buyer; checked against the country (and, in India, the state code) once known.
+  if (taxId && !errors.tax_id) {
+    const message = taxIdError(taxId, known, STATE_BY_CODE.has(stateValue) ? stateValue : '');
+    if (message) errors.tax_id = message;
+  }
   const phone = phoneRaw ? normalizePhone(phoneRaw, known) : null;
   if (phoneRaw && !phone) errors.phone ||= 'Enter the number with its country code, for example +91 98765 43210.';
 
@@ -208,7 +267,7 @@ export function normalizeProfile(input) {
     value: {
       customer_type: customerType, full_name: fullName, business_name: businessName || null, country: known,
       state: stateValue || null, city, postal_code: postal || null, address_line1: line1 || null, address_line2: line2 || null,
-      phone_e164: phone,
+      phone_e164: phone, tax_id: taxId || null,
     },
   };
 }
@@ -220,7 +279,7 @@ export function publicProfile(row) {
   return {
     customer_type: stored.customer_type, full_name: stored.full_name, business_name: stored.business_name ?? null, country: stored.country,
     state: stored.state ?? null, city: stored.city, postal_code: stored.postal_code ?? null, address_line1: stored.address_line1 ?? null,
-    address_line2: stored.address_line2 ?? null, phone: stored.phone_e164 ?? null,
+    address_line2: stored.address_line2 ?? null, phone: stored.phone_e164 ?? null, tax_id: stored.tax_id ?? null,
   };
 }
 
@@ -239,8 +298,8 @@ export function checkStoredProfile(row) {
 
 /**
  * What Razorpay Checkout is prefilled with: the buyer's name (at most 50 characters, Razorpay's
- * limit), the account e-mail and, when given, the phone. Address, state and business name stay
- * in Zero-X's own database; nothing here goes into Razorpay notes.
+ * limit), the account e-mail and, when given, the phone. Address, state, business name and tax id
+ * stay in Zero-X's own database; nothing here goes into Razorpay notes.
  */
 export function razorpayPrefill(profile, email) {
   const prefill = { email: typeof email === 'string' ? email : '', name: Array.from(profile?.full_name || '').slice(0, 50).join('').trim() };

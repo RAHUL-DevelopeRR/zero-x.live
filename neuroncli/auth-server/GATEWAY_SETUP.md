@@ -201,6 +201,7 @@ and apply, in order (the ten catalog and app migrations were renumbered from 202
 12. `20261102000000_free_token_window.sql` (Free: 1,000,000 tokens per rolling 5-hour window instead of 500K a day; see below)
 13. `20261103000000_billing_details.sql` (billing profiles and consent records; see below)
 14. `20261103000100_free_plan_features_providers.sql` (the Free plan's first feature line becomes "Free models with usage limits" and names no provider; replaces its own text only, safe to re-run, applies after `20261029000900`)
+15. `20261104000000_billing_tax_id.sql` (an optional `tax_id` on `zerox_billing_profiles` with its CHECK, and the two profile functions returning it; applies after `20261103000000`; see below)
 
 **Billing details (`20261103000000_billing_details.sql`).** Two new tables (`zerox_billing_profiles`,
 `zerox_billing_consents`) and four functions; nothing existing changes, and it does not depend on
@@ -222,7 +223,22 @@ Verify: `SELECT count(*) FROM pg_proc WHERE proname LIKE 'zerox_billing_%' AND p
 ('zerox_billing_profile_get', 'zerox_billing_profile_upsert', 'zerox_billing_record_consents',
 'zerox_billing_consents_latest');` returns 4. Roll back with
 `migrations/down/20261103000000_billing_details.down.sql` (psql -X -v ON_ERROR_STOP=1 -f, or paste
-it); that deletes every saved profile and consent record.
+it); that deletes every saved profile and consent record. If `20261104000000_billing_tax_id.sql` is
+applied, run its down script first.
+
+**Optional tax id (`20261104000000_billing_tax_id.sql`).** Adds the nullable column
+`zerox_billing_profiles.tax_id` with the CHECK `zerox_billing_profiles_tax_id_check` (a GSTIN shape
+for India, 2 to 20 of `[A-Z0-9-]` elsewhere) and replaces `zerox_billing_profile_get` /
+`zerox_billing_profile_upsert` so they return and save it (same SECURITY INVOKER, pinned search_path
+and service_role-only grants). Existing profiles keep everything and get `NULL`. **Apply it before
+deploying the gateway that knows it**: until then a buyer who types a tax id gets 503
+`service_unavailable` on saving (the old upsert refuses the unknown key); a buyer who leaves it empty
+is not affected, because the gateway then leaves the key out. The privacy policy changes with it
+(version `2026-11-04`), so every buyer is asked to agree again at their next checkout. Contract §14.6.
+Verify: `SELECT column_name FROM information_schema.columns WHERE table_name = 'zerox_billing_profiles'
+AND column_name = 'tax_id';` returns one row. Roll back with
+`migrations/down/20261104000000_billing_tax_id.down.sql`; that deletes every saved tax id and keeps
+every other billing detail and consent record.
 
 **Free's 5-hour token window (`20261102000000_free_token_window.sql`).** Deploy the gateway that
 knows `user_window_tokens` (both runtimes: the Worker and the EC2 Node server) **before** pasting

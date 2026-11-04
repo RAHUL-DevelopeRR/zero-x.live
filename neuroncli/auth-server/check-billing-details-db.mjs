@@ -3,7 +3,9 @@
 // append-only consents (including that deleting an account still removes its rows), and the down
 // script. The migration is also applied on top of production's state before it (every migration
 // up to 20261102000000, with and without 20261029000900_plan_features_claude.sql, which this
-// migration does not depend on).
+// migration does not depend on). 20261104000000_billing_tax_id.sql (the optional tax id) is checked
+// the same way: its column, CHECK and replaced functions, on a database with saved profiles, and
+// its down script.
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
@@ -19,6 +21,7 @@ import { migrationScript } from './scripts/apply-migrations.mjs';
 const root = dirname(fileURLToPath(import.meta.url));
 const env = { DATABASE_DRIVER: 'pglite' };
 const VERSION = '20261103000000';
+const TAX_VERSION = '20261104000000';
 const passed = [];
 function ok(name) { passed.push(name); console.log(`ok - ${name}`); }
 
@@ -45,6 +48,7 @@ try {
   // ---------------------------------------------------------------- tables, grants, RLS
   const migrations = await listMigrations();
   assert.ok(handle.applied.includes(VERSION), 'the migration applies with every other one');
+  assert.ok(handle.applied.includes(TAX_VERSION), 'and so does the tax id migration');
   assert.equal(migrations.at(-1).version >= VERSION, true);
   const tables = await sql(`SELECT c.relname, c.relrowsecurity,
       has_table_privilege('anon', c.oid, 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') AS anon_any,
@@ -62,8 +66,11 @@ try {
   const columns = (await sql(`SELECT column_name FROM information_schema.columns WHERE table_schema = 'public'
     AND table_name = 'zerox_billing_profiles' ORDER BY ordinal_position`)).map(row => row.column_name);
   assert.deepEqual(columns, ['user_id', 'customer_type', 'full_name', 'business_name', 'country', 'state', 'city', 'postal_code',
-    'address_line1', 'address_line2', 'phone_e164', 'created_at', 'updated_at']);
-  assert.ok(!columns.some(name => /gst|tax/i.test(name)), 'there is no tax id column');
+    'address_line1', 'address_line2', 'phone_e164', 'created_at', 'updated_at', 'tax_id']);
+  assert.deepEqual(columns.filter(name => /gst|tax|vat/i.test(name)), ['tax_id'], 'one tax id column (20261104000000)');
+  assert.ok(!columns.some(name => /card|cvv|upi|vpa|bank|ifsc|account|iban/i.test(name)), 'no card, UPI or bank column');
+  assert.deepEqual((await sql(`SELECT data_type, is_nullable FROM information_schema.columns WHERE table_schema = 'public'
+    AND table_name = 'zerox_billing_profiles' AND column_name = 'tax_id'`))[0], { data_type: 'text', is_nullable: 'YES' });
   const functions = await sql(`SELECT p.oid::regprocedure::text AS signature, p.prosecdef, p.proconfig,
       has_function_privilege('anon', p.oid, 'EXECUTE') AS anon_exec, has_function_privilege('authenticated', p.oid, 'EXECUTE') AS auth_exec,
       has_function_privilege('service_role', p.oid, 'EXECUTE') AS service_exec
@@ -87,14 +94,14 @@ try {
       await assert.rejects(db.query('SELECT * FROM public.zerox_billing_consents_latest($1)', [alice]), /permission denied/);
     } finally { await db.exec('RESET ROLE'); }
   }
-  ok('two tables with RLS and service_role-only access, five SECURITY INVOKER functions with a pinned search_path, no tax id column');
+  ok('two tables with RLS and service_role-only access, five SECURITY INVOKER functions with a pinned search_path, an optional tax id column and no payment-instrument column');
 
   // ---------------------------------------------------------------- profile RPCs
   assert.equal(await rpc(env, 'zerox_billing_profile_get', { p_user_id: alice }), null, 'no profile until one is saved');
   const saved = await upsert(alice, profile({ phone_e164: '+919876543210', address_line1: '6/2 N. Pugalur', address_line2: null }));
   assert.deepEqual({ ...saved, created_at: undefined, updated_at: undefined }, {
     customer_type: 'individual', full_name: 'Asha K', business_name: null, country: 'IN', state: 'TN', city: 'Karur', postal_code: '639113',
-    address_line1: '6/2 N. Pugalur', address_line2: null, phone_e164: '+919876543210', created_at: undefined, updated_at: undefined });
+    address_line1: '6/2 N. Pugalur', address_line2: null, phone_e164: '+919876543210', tax_id: null, created_at: undefined, updated_at: undefined });
   assert.deepEqual((await rpc(env, 'zerox_billing_profile_get', { p_user_id: alice })).full_name, 'Asha K');
   const first = (await sql('SELECT created_at, updated_at FROM public.zerox_billing_profiles WHERE user_id = $1', [alice]))[0];
   await new Promise(done => setTimeout(done, 15));
@@ -130,6 +137,43 @@ try {
   assert.equal((await rpc(env, 'zerox_billing_profile_get', { p_user_id: alice })).full_name, 'Asha K', 'a refused save changes nothing');
   await upsert(alice, profile({ customer_type: 'business', business_name: 'Zero X Labs', address_line1: '6/2 N. Pugalur' }));
   ok('profile RPCs: round trip, PUT replaces and keeps created_at, blanks become NULL, every CHECK and the unknown-field guard refuse bad data');
+
+  // ---------------------------------------------------------------- tax id (20261104000000)
+  const GSTIN_TN = '33ABCDE1234F1Z7';
+  const withTax = await upsert(alice, profile({ tax_id: GSTIN_TN }));
+  assert.equal(withTax.tax_id, GSTIN_TN, 'the upsert returns the tax id');
+  assert.equal((await rpc(env, 'zerox_billing_profile_get', { p_user_id: alice })).tax_id, GSTIN_TN, 'and get reads it back');
+  await upsert(alice, profile({ customer_type: 'business', business_name: 'Zero X Labs', address_line1: 'Office 4', tax_id: GSTIN_TN }));
+  assert.equal((await rpc(env, 'zerox_billing_profile_get', { p_user_id: alice })).tax_id, GSTIN_TN, 'a business keeps it too');
+  await upsert(alice, profile());
+  assert.equal((await rpc(env, 'zerox_billing_profile_get', { p_user_id: alice })).tax_id, null, 'a PUT without it clears it');
+  await upsert(alice, profile({ tax_id: GSTIN_TN }));
+  await upsert(alice, profile({ tax_id: '' }));
+  assert.equal((await rpc(env, 'zerox_billing_profile_get', { p_user_id: alice })).tax_id, null, 'an empty one is stored as NULL');
+  await upsert(alice, profile({ tax_id: null }));
+  for (const [country, state, postal, taxId] of [['US', 'Texas', '73301', 'DE123456789'], ['GB', null, 'SW1A 1AA', 'GB-123-456'], ['US', null, '73301', 'AB'],
+    ['US', null, '73301', 'A'.repeat(20)], ['US', null, '73301', GSTIN_TN]]) {
+    assert.equal((await upsert(alice, profile({ country, state, postal_code: postal, tax_id: taxId }))).tax_id, taxId, `${country} ${taxId}`);
+  }
+  const taxRefused = async (overrides, label) => {
+    await assert.rejects(upsert(alice, profile(overrides)), /violates check constraint "zerox_billing_profiles_tax_id_check"/, label);
+  };
+  // India: the GSTIN shape (the gateway also checks the check character and the state code).
+  for (const bad of ['33abcde1234f1z7', '33ABCDE 1234F1Z7', '33ABCDE1234F1Z', '33ABCDE1234F1Z77', '33ABCDE1234F0Z7', '33ABCDE1234F1Y7', '3XABCDE1234F1Z7', 'DE123456789', '33-ABCDE-1234']) {
+    await taxRefused({ tax_id: bad }, `IN ${bad}`);
+  }
+  // Elsewhere: 2 to 20 upper-case letters, digits or hyphens, starting and ending with a letter or digit.
+  for (const bad of ['A', 'A'.repeat(21), 'de123456789', 'DE 123', '-AB', 'AB-', 'DE_123', 'DE.123', 'ÄB12']) {
+    await taxRefused({ country: 'US', state: null, postal_code: '73301', tax_id: bad }, `US ${bad}`);
+  }
+  // The CHECK follows the country: a VAT id kept while the country changes to India is refused.
+  await upsert(alice, profile({ country: 'US', state: null, postal_code: '73301', tax_id: 'DE123456789' }));
+  await assert.rejects(db.query(`UPDATE public.zerox_billing_profiles SET country = 'IN', state = 'TN' WHERE user_id = $1`, [alice]),
+    /zerox_billing_profiles_tax_id_check/, 'changing the country re-checks the tax id');
+  await upsert(alice, profile());
+  assert.equal((await rpc(env, 'zerox_billing_profile_get', { p_user_id: alice })).tax_id, null, 'a refused save changes nothing');
+  await rejected(profile({ gstin: GSTIN_TN }), /invalid_billing_profile: unknown field/, 'tax_id is the only tax key');
+  ok('tax id: round trip through both RPCs, cleared by a PUT without it or with an empty one, and the CHECK refuses lower case, spaces, bad lengths, characters and (in India) non-GSTIN shapes');
 
   // ---------------------------------------------------------------- consent RPCs
   const bob = await newUser();
@@ -241,6 +285,75 @@ try {
     }
   }
   ok('the migration applies on production\'s state (with and without 20261029000900), the down script restores the schema exactly (data and all), applies again and is safe to run twice');
+
+  // ---------------------------------------------------------------- 20261104000000 on a database with saved profiles, and its down script
+  {
+    const taxMigration = migrations.find(candidate => candidate.version === TAX_VERSION);
+    assert.ok(taxMigration, 'the tax id migration file exists');
+    const taxDown = await readFile(join(root, 'migrations', 'down', `${TAX_VERSION}_billing_tax_id.down.sql`), 'utf8');
+    assert.match(taxDown, /^BEGIN;\s+(?:--.*\s+)*SET LOCAL lock_timeout = '\d+s';[\s\S]*\bCOMMIT;\s*$/, 'the down script is one transaction with a lock timeout');
+    assert.match(taxMigration.path ? await readFile(taxMigration.path, 'utf8') : '', /^BEGIN;\s+(?:--.*\s+)*SET LOCAL lock_timeout = '\d+s';[\s\S]*\bCOMMIT;\s*$/,
+      'the migration is one transaction with a lock timeout');
+    const earlier = migrations.filter(candidate => candidate.version < TAX_VERSION);
+    assert.ok(earlier.some(candidate => candidate.version === '20261103000100'), 'every migration before it, 20261103000100 included');
+    const baseline = await PGlite.create();
+    const rolled = await PGlite.create();
+    const USER = '22222222-2222-4222-8222-222222222222';
+    try {
+      await up(baseline);
+      await up(rolled);
+      await apply(baseline, earlier);
+      await apply(rolled, earlier);
+      // A profile saved before the migration keeps everything and gets no tax id.
+      await rolled.query(`INSERT INTO auth.users (id, email) VALUES ($1, 'tax@example.test')`, [USER]);
+      await rolled.query(`SELECT public.zerox_sync_account($1::uuid, '{"email":"tax@example.test","name":"Tax"}'::jsonb)`, [USER]);
+      await rolled.query('SELECT * FROM public.zerox_billing_profile_upsert($1, $2)', [USER, JSON.stringify(profile({ phone_e164: '+919876543210' }))]);
+      await rolled.query('SELECT * FROM public.zerox_billing_record_consents($1, $2, $3)', [USER, 'topup', JSON.stringify({ terms: '2026-10-25' })]);
+      const beforeRow = (await rolled.query('SELECT * FROM public.zerox_billing_profiles WHERE user_id = $1', [USER])).rows[0];
+      const baselineSchema = await schemaOf(baseline);
+      await apply(rolled, [taxMigration]);
+      const afterRow = (await rolled.query('SELECT * FROM public.zerox_billing_profiles WHERE user_id = $1', [USER])).rows[0];
+      assert.deepEqual(afterRow, { ...beforeRow, tax_id: null }, 'existing profiles are unchanged, with no tax id');
+      const applied = await schemaOf(rolled);
+      assert.ok(applied.some(row => row.kind === 'column' && row.name === 'zerox_billing_profiles.tax_id'));
+      assert.ok(applied.some(row => row.kind === 'history' && row.name === TAX_VERSION && row.def === 'billing_tax_id'), 'the runner records it');
+      const acl = (await rolled.query(`SELECT p.proname, has_function_privilege('anon', p.oid, 'EXECUTE') AS anon, has_function_privilege('authenticated', p.oid, 'EXECUTE') AS auth,
+          has_function_privilege('service_role', p.oid, 'EXECUTE') AS service, p.prosecdef, p.proconfig
+        FROM pg_proc AS p WHERE p.pronamespace = 'public'::regnamespace AND p.proname IN ('zerox_billing_profile_get', 'zerox_billing_profile_upsert') ORDER BY 1`)).rows;
+      assert.deepEqual(acl.map(row => [row.proname, row.anon, row.auth, row.service, row.prosecdef, row.proconfig?.includes('search_path=""')]),
+        [['zerox_billing_profile_get', false, false, true, false, true], ['zerox_billing_profile_upsert', false, false, true, false, true]],
+        'the replaced functions keep SECURITY INVOKER, the pinned search_path and service_role-only grants');
+      const saved = (await rolled.query('SELECT * FROM public.zerox_billing_profile_upsert($1, $2)', [USER, JSON.stringify(profile({ tax_id: GSTIN_TN }))])).rows[0];
+      assert.equal(saved.tax_id, GSTIN_TN);
+      // The down script: the schema of the database before the migration, the other details and the consents kept.
+      await rolled.exec(taxDown);
+      assert.deepEqual(await schemaOf(rolled), baselineSchema, 'the down script restores the schema before the migration and removes the history row');
+      const kept = (await rolled.query('SELECT * FROM public.zerox_billing_profile_get($1)', [USER])).rows[0];
+      assert.deepEqual([kept.full_name, kept.phone_e164, 'tax_id' in kept], ['Asha K', null, false], 'the profile stays, without its tax id');
+      assert.equal((await rolled.query('SELECT count(*)::int AS n FROM public.zerox_billing_consents WHERE user_id = $1', [USER])).rows[0].n, 1, 'consents are untouched');
+      await assert.rejects(rolled.query('SELECT * FROM public.zerox_billing_profile_upsert($1, $2)', [USER, JSON.stringify(profile({ tax_id: GSTIN_TN }))]),
+        /invalid_billing_profile: unknown field/, 'the old upsert refuses a tax id again');
+      await apply(rolled, [taxMigration]);
+      assert.deepEqual(await schemaOf(rolled), applied, 'the migration applies again after its rollback');
+      await rolled.exec(taxDown);
+      await rolled.exec(taxDown);
+      assert.deepEqual(await schemaOf(rolled), baselineSchema, 'running the down script twice changes nothing more');
+      // Both down scripts, newest first, take the database back to before 20261103000000.
+      await apply(rolled, [taxMigration]);
+      await rolled.exec(taxDown);
+      await rolled.exec(down);
+      const beforeDetails = await PGlite.create();
+      try {
+        await up(beforeDetails);
+        await apply(beforeDetails, earlier.filter(candidate => candidate.version !== VERSION));
+        assert.deepEqual(await schemaOf(rolled), await schemaOf(beforeDetails), 'the two down scripts, newest first, undo both migrations');
+      } finally { await beforeDetails.close(); }
+    } finally {
+      await baseline.close();
+      await rolled.close();
+    }
+  }
+  ok('20261104000000 applies on a database with saved profiles (kept, tax id NULL), keeps the grants, round-trips the tax id; its down script restores the schema exactly, keeps every other detail, applies again and is safe to run twice');
 
   console.log(`PASS: billing details database (${passed.length} groups)`);
 } finally {
