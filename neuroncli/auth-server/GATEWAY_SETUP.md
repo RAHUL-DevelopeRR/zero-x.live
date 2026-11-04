@@ -241,16 +241,29 @@ or after the deploy. Until it is applied, and while neither `SEARXNG_URL` nor `B
 set, `POST /v1/search` answers 503 `search_unavailable` (never unmetered); `/api/account` gains
 `limits.search` and `limits.colony` either way. Owner steps to switch search on:
 
+Both values reach the runtimes only through `.github/workflows/deploy.yml` (already wired): job
+ec2 rewrites `/etc/zerox/gateway.env` on every deploy, so a hand edit on the VM is gone at the next
+deploy. Add them as secrets of the GitHub environment "production", never of the repository, and
+never to `wrangler.toml` `[vars]` (`gateway-env.mjs` refuses a name that is both).
+
 1. Run SearXNG on its own host (not the gateway VM), with `search.formats: [html, json]` in its
-   `settings.yml`, its own `server.secret_key`, the limiter on, and reachable from the gateway only
-   (private network, firewall or tunnel). Set `SEARXNG_URL` to its base URL (`/search` is
-   appended) on both runtimes: `wrangler.toml` `[vars]` or a Worker secret, and the VM's
-   `/etc/zerox/gateway.env` (manual entry: the deploy workflow does not write it yet).
-2. Optionally create a Brave Search API key (paid per query beyond the free allowance) and set
-   `BRAVE_API_KEY` as a Worker secret and in the VM's env file (or add it to `OPTIONAL_SECRETS`
-   and both env blocks of `.github/workflows/deploy.yml`).
+   `settings.yml`, its own `server.secret_key`, the limiter on, and reachable from the VM only
+   (private network, security group or tunnel). Add the environment secret `SEARXNG_URL` with its
+   base URL (`/search` is appended). It is VM-only (job ec2): a Worker cannot reach a private
+   host, so SearXNG answers only the searches the Worker forwards, which needs
+   `EC2_PROXY_PREFIXES` to cover `/v1/` (deploy/aws/CUTOVER.md). With forwarding off (the
+   rollback), the Worker serves search with Brave alone, or answers 503 `search_unavailable`
+   without a Brave key; it never waits on an unreachable SearXNG. Do not also set `SEARXNG_URL`
+   as a Worker secret: the Worker would wait up to 8 s on the unreachable host before every fallback.
+2. Optionally create a Brave Search API key (paid per query beyond the free allowance) and add the
+   environment secret `BRAVE_API_KEY`. The workflow binds it to the Worker and writes it to the
+   VM. Before forwarding covers `/v1/`, Brave is the only backend search can use, so set it
+   if search should work on the Worker.
 3. Apply the migration, then verify with
    `SELECT proname FROM pg_proc WHERE proname LIKE 'zerox_search%';` (two rows).
+4. Deploy (the workflow picks both secrets up; an unset one is skipped with a warning), then
+   check `POST /v1/search` answers 200 with `provider` `searxng` through the forward and
+   `brave` otherwise.
 
 Roll back with `migrations/down/20261104200000_search_quota.down.sql` (drops the counters).
 
