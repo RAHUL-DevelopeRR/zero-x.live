@@ -9,7 +9,7 @@ import { conversationKey, createChatHandler, MAX_OUTPUT_TOKENS, requestNeeds } f
 import { RoutingEngine, fitMaxTokens } from './src/router.js';
 import { FailureKind, HealthState, ProviderHealthTracker } from './src/provider-health.js';
 import {
-  BUILTIN_PLANS, CATALOG, EEA_COUNTRIES, MODEL_ALIASES, POOL_LIMITS, callerCountry, catalogEntry, catalogWarnings,
+  AGENT_MIN_CONTEXT, BUILTIN_PLANS, CATALOG, EEA_COUNTRIES, MODEL_ALIASES, POOL_LIMITS, callerCountry, catalogEntry, catalogWarnings,
   expandCountries, listModelsForCaller, loadPlanPolicies, planPolicy, poolConfigured, poolKey, resolveModelId,
 } from './src/catalog.js';
 import {
@@ -310,14 +310,21 @@ try {
     assert.deepEqual(byId.auto.capabilities, { tools: true, streaming: true, vision: false, reasoning: true });
     const flash = byId['gemini/gemini-2.5-flash'];
     assert.deepEqual(Object.keys(flash).sort(), ['available', 'capabilities', 'context_length', 'context_window', 'created',
-      'display_name', 'id', 'max_output_tokens', 'models_dev_id', 'object', 'offers', 'owned_by', 'pricing', 'provider',
-      'reasoning_efforts', 'tiers', 'unavailable_reason']);
+      'display_name', 'id', 'max_output_tokens', 'models_dev_id', 'native_context_window', 'object', 'offers', 'owned_by',
+      'pricing', 'provider', 'reasoning_efforts', 'tiers', 'unavailable_reason']);
     assert.deepEqual(flash.capabilities, { tools: true, streaming: true, vision: true, reasoning: true });
     assert.equal(flash.context_length, flash.context_window);
     assert.equal(flash.available, true);
     assert.deepEqual(flash.tiers, ['free', 'paid']);
     assert.deepEqual(flash.pricing, { input_per_mtok_usd: 0.375, output_per_mtok_usd: 3.125 });
-    assert.equal(flash.context_window, 1048576);
+    // The Free plan reaches only the free pool, whose 120K tokens per minute cap every request
+    // (router.js fitMaxTokens); the model's own window is still reported.
+    assert.deepEqual([flash.context_window, flash.native_context_window, flash.max_output_tokens], [120000, 1048576, 65536]);
+    // Groq's free org takes 8K tokens per minute, prompt plus max_tokens: that is the whole window
+    // a Free caller gets, however large the model's own.
+    const groq = byId['groq/openai/gpt-oss-120b'];
+    assert.deepEqual([groq.context_window, groq.context_length, groq.native_context_window, groq.max_output_tokens],
+      [8000, 8000, 131072, 8000]);
     assert.equal(byId['gemini/gemini-2.5-pro'].available, false);
     assert.equal(byId['gemini/gemini-2.5-pro'].unavailable_reason, 'upgrade_required');
     assert.equal(byId['groq/qwen/qwen3.8-27b'].pricing, null);
@@ -334,6 +341,9 @@ try {
     assert.equal(listModelsForCaller(noPaid, { country: 'FR' }).data[0].unavailable_reason, 'region_unavailable');
     const proDe = Object.fromEntries(listModelsForCaller(KEYS, { plan: 'pro', country: 'DE' }).data.map(model => [model.id, model]));
     assert.equal(proDe['gemini/gemini-2.5-flash'].available, true);
+    // A plan with the paid pool (no per-minute token budget) gets the model's whole window.
+    assert.equal(proDe['gemini/gemini-2.5-flash'].context_window, 1048576);
+    assert.equal(proDe['groq/openai/gpt-oss-120b'].context_window, 131072);
     assert.equal(proDe['gemini/gemini-2.5-pro'].available, true);
     assert.equal(proDe['gemini/gemini-3.5-flash'].unavailable_reason, 'region_unavailable');
     assert.equal(listModelsForCaller({}, {}).data[0].unavailable_reason, 'not_configured');
@@ -443,14 +453,17 @@ try {
     assert.deepEqual(ids(router.route({ ...base, requestedModel: 'llama-3.3-70b' })), [`${LLAMA}#free`], 'explicit alias');
     assert.deepEqual(ids(router.route({ ...base, requestedModel: LLAMA })), [`${LLAMA}#free`], 'explicit id');
 
-    // auto advertises the smallest window among its candidates: 131K (Groq, NVIDIA), not llama's 24K.
+    // auto advertises the smallest window among its candidates that can hold a coding session:
+    // 120K (Gemini's free per-minute budget), not llama's 24K nor Groq's free 8K, which serve only
+    // the requests that fit them.
     const list = listModelsForCaller(env, { country: 'US' }).data;
     const auto = list.find(model => model.id === 'auto');
     assert.ok(list.some(model => model.id === LLAMA && model.available), 'llama is still listed');
     const windows = list.filter(model => model.available && catalogEntry(model.id)?.auto_rank != null).map(model => model.context_window);
-    assert.equal(auto.context_window, Math.min(...windows));
-    assert.equal(auto.context_window, 131072);
-    assert.equal(auto.context_length, 131072);
+    assert.equal(Math.min(...windows), 8000, 'Groq free is an auto candidate with an 8K window');
+    assert.equal(auto.context_window, Math.min(...windows.filter(window => window >= AGENT_MIN_CONTEXT)));
+    assert.equal(auto.context_window, 120000);
+    assert.equal(auto.context_length, 120000);
   });
 
   // Owner lineup (2026-10-29): Gemini and Workers AI are switched off by configuration only
@@ -491,7 +504,11 @@ try {
     const free = route.filter(id => id.endsWith('#free'));
     assert.deepEqual(free.slice(-2), ['zai/glm-4.7-flash#free', 'zai/glm-4.5-flash#free']);
     assert.deepEqual(free.slice(0, -2).map(id => id.split('/')[0]),
-      ['groq', 'groq', 'groq', 'nvidia', 'nvidia', 'cohere', 'minimax']);
+      ['groq', 'groq', 'groq', 'nvidia', 'nvidia', 'cohere']);
+    // 2026-11-04: OpenRouter no longer lists minimax/minimax-m3.1-flash:free and every request for
+    // it answered service_unavailable, so the lineup's OPENROUTER_MODELS leaves it out.
+    assert.ok(!listModelsForCaller(env, { country: 'US' }).data.some(model => model.id.startsWith('minimax/')), 'MiniMax free is not offered');
+    assert.equal(router.route({ ...base, requestedModel: 'minimax/minimax-m3.1-flash:free' }).error, 'model_not_found');
     for (const model of ['gemini/gemini-2.5-flash', 'gemini-3.5-flash', '@cf/meta/llama-3.3-70b-instruct-fp8-fast', 'llama-3.3-70b']) {
       assert.equal(router.route({ ...base, requestedModel: model }).error, 'model_not_found', model);
     }
@@ -538,7 +555,7 @@ try {
     // ones, and still before Z.ai's.
     const spent = ids(router.route({ ...base, budgetState: key => (key.startsWith('groq:') ? { until: Date.now() + 60_000 } : null) }));
     assert.deepEqual(spent.filter(id => id.endsWith('#free')).map(id => id.split('/')[0]),
-      ['nvidia', 'nvidia', 'cohere', 'minimax', 'groq', 'groq', 'groq', 'zai', 'zai']);
+      ['nvidia', 'nvidia', 'cohere', 'groq', 'groq', 'groq', 'zai', 'zai']);
 
     // Through the chat handler: turn 1 is served by Groq and sticks; turn 2 finds every other free
     // pool rate limited and falls back to Z.ai, which serves without replacing the remembered model;
@@ -1428,6 +1445,47 @@ try {
     }
     assert.deepEqual(args('groq/openai/gpt-oss-120b').p_pool, { rpm: 30, rpd: 1000, tpm: 8000, tpd: 200000 });
     assert.ok(!('concurrency' in (args('nvidia/openai/gpt-oss-20b').p_pool || {})));
+  });
+
+  // Neuron 7.0.0-alpha.4 (2026-11-04): with GLM-4.7-Flash chosen by name, a request that found the
+  // slot taken by another user's request failed three times over 68 s (capacity_exhausted, retry
+  // in 30 s) although the slot frees when that request ends. With nothing else to try, the
+  // request now waits for the slot; once it gives up, the client retries within seconds.
+  await test('a full Z.ai pool: the request waits for the slot, then fails with a short retry', async () => {
+    const env = accountEnv({ GLM_API_KEY: 'zai-free-key', POOL_SLOT_POLL_MS: '10', POOL_SLOT_WAIT_MS: '300' });
+    const gw = gateway();
+    gw.addSession('ses_free', { account_backed: true, user_id: ACCOUNT, plan: 'free' });
+    const call = () => gw.call(env, { model: 'zai/glm-4.7-flash', messages, tools }, { token: 'ses_free', country: 'US' });
+    let refusals = 3;
+    resetPoolBudgets();
+    reset({ 'rpc:zerox_plan_policies_v2': policiesRpc,
+      'rpc:zerox_reserve_v2': () => Response.json([refusals-- > 0 ? { status: 'pool_exhausted', retry_after_seconds: 40 } : okReserve({ plan: 'free' })]),
+      'rpc:zerox_settle_v2': () => Response.json([{ status: 'settled' }]),
+      zai: () => completion({ content: 'from zai' }) });
+    const served = await call();
+    assert.equal(served.status, 200);
+    assert.equal(served.headers.get('x-neuron-model'), 'zai/glm-4.7-flash');
+    assert.equal(rpcCalls('zerox_reserve_v2').length, 4, 'three refusals, then the slot');
+    assert.equal(upstreamCalls().filter(item => item.target === 'zai').length, 1);
+    assert.equal(poolBudgetState('zai:glm-4.7-flash:free'), null, 'a served pool is not parked');
+
+    resetPoolBudgets();
+    const started = Date.now();
+    const quiet = await captureLogs(async () => {
+      reset({ 'rpc:zerox_plan_policies_v2': policiesRpc,
+        'rpc:zerox_reserve_v2': () => Response.json([{ status: 'pool_exhausted', retry_after_seconds: 40 }]),
+        zai: () => completion({ content: 'never' }) });
+      return expectError(await call(), 503, 'capacity_exhausted');
+    });
+    const error = quiet.result;
+    assert.ok(Date.now() - started < 5000, 'the wait is bounded by POOL_SLOT_WAIT_MS');
+    assert.ok(rpcCalls('zerox_reserve_v2').length > 2, 'the slot is polled while waiting');
+    assert.equal(upstreamCalls().filter(item => item.target === 'zai').length, 0);
+    assert.equal(error.retry_after_seconds, 5, 'a full pool frees within seconds, not at the lease end');
+    const parked = poolBudgetState('zai:glm-4.7-flash:free');
+    assert.equal(parked.budget, 'concurrency');
+    assert.ok(parked.until - Date.now() <= 5000, 'parked for seconds only');
+    resetPoolBudgets();
   });
 
   // Z.ai ends a generation that failed after the stream started with an error finish_reason

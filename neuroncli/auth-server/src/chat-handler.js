@@ -127,6 +127,17 @@ function positiveInt(value, fallback) {
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+// A full pool (p_pool.concurrency: Z.ai's free GLM Flash models run one request at a time for
+// every user of the operator's account) frees its slot as soon as the running request settles,
+// yet zerox_reserve_v2 names the end of that request's lease (up to 60 s) as the retry delay.
+// With no other pool left to try, the request waits for the slot (POOL_SLOT_WAIT_MS, default
+// 20 s, polled every POOL_SLOT_POLL_MS) instead of failing; once it gives up, the pool is
+// parked and the client told to retry after at most CONCURRENCY_RETRY_SECONDS.
+const POOL_SLOT_WAIT_MS = 20000;
+const POOL_SLOT_POLL_MS = 1000;
+const CONCURRENCY_RETRY_SECONDS = 5;
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
 // zerox_renew_reservation does not exist until migrations/20261028000000_reservation_leases.sql
 // is applied (PostgREST reports PGRST202, Postgres 42883). Renewal is then skipped for a while.
 const MISSING_FUNCTION_CODES = new Set(['PGRST202', '42883']);
@@ -568,6 +579,9 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
     const failoverBudgetMs = positiveInt(env.UPSTREAM_FAILOVER_BUDGET_MS, 50000);
     const minAttemptMs = Math.min(5000, failoverBudgetMs / 10);
     const paidReserveMs = Math.round(failoverBudgetMs * 0.3);
+    const slotWaitMs = Math.min(failoverBudgetMs, positiveInt(env.POOL_SLOT_WAIT_MS, POOL_SLOT_WAIT_MS));
+    const slotPollMs = positiveInt(env.POOL_SLOT_POLL_MS, POOL_SLOT_POLL_MS);
+    let slotWaitUntil = null;
     const candidates = await orderBySharedHealth(env, route.candidates, healthTracker, sharedHealth);
     const paidCandidates = candidates.filter(candidate => candidate.pool.tier === 'paid');
     // The paid attempt is owed its last attempt and share of the budget only until it is made (a
@@ -688,10 +702,26 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
               // pool_exhausted: the shared budget of this pool (a paid pool's daily spend cap
               // included) is spent for every user.
               const budget = exhaustedBudget(args.p_pool, row.retry_after_seconds);
-              exhausted.push({ ...row, budget, model: candidate.entry.display_name });
-              notePoolExhausted(candidate.key, { budget, retryAfterSeconds: row.retry_after_seconds });
+              if (budget === 'concurrency') {
+                // Every other request of this pool's slot is someone's running request: wait
+                // for it while nothing else is left to try (POOL_SLOT_WAIT_MS above).
+                slotWaitUntil ??= Date.now() + slotWaitMs;
+                const others = queue.slice(index + 1).some(next => !skipModels.has(next.entry.id)
+                  && !(paidDenied && next.pool.tier === 'paid'));
+                const waitBy = Math.min(slotWaitUntil, startBy(candidate) - minAttemptMs);
+                if (!others && Date.now() + slotPollMs < waitBy && !clientSignal?.aborted) {
+                  await sleep(slotPollMs);
+                  index--;
+                  continue;
+                }
+              }
+              const retryAfter = budget === 'concurrency'
+                ? Math.min(Number(row.retry_after_seconds) || CONCURRENCY_RETRY_SECONDS, CONCURRENCY_RETRY_SECONDS)
+                : row.retry_after_seconds;
+              exhausted.push({ ...row, retry_after_seconds: retryAfter, budget, model: candidate.entry.display_name });
+              notePoolExhausted(candidate.key, { budget, retryAfterSeconds: retryAfter });
               console.warn('Neuron pool budget exhausted', { pool: candidate.key, model: candidate.entry.id,
-                budget, retry_after_seconds: row.retry_after_seconds ?? null, request_id: requestId });
+                budget, retry_after_seconds: retryAfter ?? null, request_id: requestId });
               if (!paidLeft(index)) releaseHeld(index);
             }
             continue;

@@ -37,7 +37,7 @@ custom_domain = true
 # CLOUDFLARE_MODELS / NVIDIA_MODELS / ANTHROPIC_MODELS can only narrow it (unknown ids are ignored
 # and reported on /v1/providers/health); *_TOOL_MODELS are no longer read.
 # OPENROUTER_MODELS narrows the OpenRouter models offered, hosted and BYOK alike.
-OPENROUTER_MODELS = "cohere/north-mini-code:free,minimax/minimax-m3.1-flash:free"
+OPENROUTER_MODELS = "cohere/north-mini-code:free"
 SUPABASE_URL = "https://norrtosjwcossxrhhtvd.supabase.co"
 # Public browser key. OAuth, SMTP, SMS and service-role secrets stay outside this repository.
 SUPABASE_PUBLISHABLE_KEY = "sb_publishable_Fgrm-Cfyj3w0xAfepK-CFg_SpUydF2T"

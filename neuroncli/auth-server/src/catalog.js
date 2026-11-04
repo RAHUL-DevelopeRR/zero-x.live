@@ -586,12 +586,28 @@ export function planPolicy(env, plan, policies) {
 }
 
 // ── GET /v1/models (contract §3.2, §12.4) ──
+// A coding agent's system prompt and tool schemas alone take ~4K tokens (Neuron 7.0.0-alpha.4:
+// 3.8K input tokens for a one-line prompt), so a window below this cannot hold a working
+// session. Such a model stays listed, but never sets the window `auto` advertises.
+export const AGENT_MIN_CONTEXT = 65536;
+
+// The largest request (prompt plus max_tokens) the caller's usable pools take. A pool's
+// per-minute token budget caps every request (router.js fitMaxTokens: Groq's free org refuses
+// one over its 8K TPM), so on the Free plan a Groq model holds ~8K tokens, not its 131K window;
+// advertising 131K let clients grow a session the gateway then refused as too large.
+export function usableContextWindow(entry, pools) {
+  if (!pools.length) return entry.context_window;
+  return Math.min(entry.context_window, Math.max(...pools.map(pool => pool.limits?.tpm || entry.context_window)));
+}
+
 // The caller's data policy (src/oiop/policy.js) removes pools whose offer it rules out; a model
 // whose configured pools are all ruled out is unavailable with reason policy_restricted.
 function describeEntry(env, entry, tiers, country, policy) {
   const verdicts = poolVerdicts(env, entry, tiers, country);
   const permitted = verdicts.map(verdict => ({ ...verdict, configured: verdict.configured && !policyBlock(verdict.offer, policy) }));
   const configured = permitted.filter(verdict => verdict.configured).map(verdict => verdict.pool);
+  const window = usableContextWindow(entry, permitted.filter(verdict => verdict.configured && verdict.inPlan && verdict.region)
+    .map(verdict => verdict.pool));
   const reason = verdicts.some(verdict => verdict.configured) && !configured.length ? 'policy_restricted' : unavailableReason(permitted);
   const paid = configured.find(pool => pool.tier === 'paid' && pool.price);
   const shown = configured.length ? permitted.filter(verdict => verdict.configured) : verdicts;
@@ -604,10 +620,12 @@ function describeEntry(env, entry, tiers, country, policy) {
     created: 0,
     owned_by: entry.provider,
     display_name: entry.display_name,
-    context_window: entry.context_window,
+    // What this caller can send (usableContextWindow); native_context_window is the model's own.
+    context_window: window,
     // OpenAI-compatible clients (opencode, Freebuff BYOK, Cursor) read context_length.
-    context_length: entry.context_window,
-    max_output_tokens: entry.max_output_tokens,
+    context_length: window,
+    native_context_window: entry.context_window,
+    max_output_tokens: Math.min(entry.max_output_tokens, window),
     capabilities: {
       tools: entry.supports_tools, streaming: entry.supports_streaming,
       vision: entry.supports_vision, reasoning: entry.reasoning_efforts.length > 0,
@@ -627,7 +645,11 @@ function describeEntry(env, entry, tiers, country, policy) {
 function describeAuto(models, env) {
   const candidates = models.filter(model => catalogEntry(model.id, env)?.auto_rank != null && model.capabilities.tools);
   const available = candidates.filter(model => model.available);
-  const pool = available.length ? available : candidates;
+  const listed = available.length ? available : candidates;
+  // A candidate below AGENT_MIN_CONTEXT serves only the requests that fit it (router.js skips it
+  // otherwise), so it does not shrink the window auto advertises.
+  const roomy = listed.filter(model => model.context_window >= AGENT_MIN_CONTEXT);
+  const pool = roomy.length ? roomy : listed;
   const reasons = candidates.map(model => model.unavailable_reason);
   const reason = available.length ? null : !candidates.length ? 'not_configured'
     : ['upgrade_required', 'region_unavailable', 'policy_restricted', 'not_configured'].find(value => reasons.includes(value));
@@ -642,13 +664,14 @@ function describeAuto(models, env) {
     // 131K-context fallback rejected the request.
     context_window: pool.length ? Math.min(...pool.map(model => model.context_window)) : 0,
     context_length: pool.length ? Math.min(...pool.map(model => model.context_window)) : 0,
+    native_context_window: pool.length ? Math.min(...pool.map(model => model.context_window)) : 0,
     max_output_tokens: pool.length ? Math.min(...pool.map(model => model.max_output_tokens)) : 0,
     capabilities: {
       tools: true, streaming: true, vision: false,
-      reasoning: pool.some(model => model.capabilities.reasoning),
+      reasoning: listed.some(model => model.capabilities.reasoning),
     },
     reasoning_efforts: [],
-    tiers: [...new Set(pool.flatMap(model => model.tiers))],
+    tiers: [...new Set(listed.flatMap(model => model.tiers))],
     available: reason === null,
     unavailable_reason: reason,
     pricing: null,
