@@ -14,7 +14,7 @@ export const PLAN_CATALOG = Object.freeze({
       id: 'free', name: 'Free', price: { usd_cents: 0, inr_paise: 0 }, interval: 'month',
       limits: { daily_requests: 100, daily_tokens: 5000000, window_tokens: 1000000, window_seconds: 18000, rpm: 10, concurrency: 2 },
       monthly_credit_usd: 0, tiers: ['free'], highlighted: false,
-      features: ['Free models from Groq, NVIDIA, OpenRouter and Z.ai',
+      features: ['Free models with usage limits',
         '100 requests per day and 1M tokens every 5 hours', '10 requests per minute, 2 at once', 'Every Neuron feature, the same on all plans'],
     },
     {

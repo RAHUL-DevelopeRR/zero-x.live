@@ -394,7 +394,13 @@ const ADDRESS = '6/2, N. Pugalur, Karur 639113, Tamil Nadu, India';
   assert.match(pricingPage, /No GST is charged, so the price shown is the price you pay/);
   assert.match(pricingPage, /Pro and Max renew every month at the price shown until you cancel/);
   assert.match(pricingPage, /How far does 1M tokens go\?/);
-  assert.match(pricingPage, /Z\.ai \(the free GLM models\)/);
+  // The owner's rule (2026-11-04): the pricing page does not name the providers behind the free models; the
+  // privacy policy and docs/data.html, which disclose who receives requests, still do.
+  assert.doesNotMatch(pricingPage, /Groq|NVIDIA|Z\.ai|Gemini|Workers AI|free models on OpenRouter|OpenRouter, free/, 'pricing names no upstream provider of the free models');
+  assert.ok(read('pricing.html').includes('href="/privacy#processors"'), 'pricing links the privacy policy table of providers');
+  for (const file of ['pricing.html', 'pricing.js', 'neuroncli/auth-server/src/plan-policy.js']) {
+    assert.ok(read(file).includes("Free models with usage limits"), file + ': the Free plan line names no provider');
+  }
   assert.match(read('zerox-auth.js'), /By continuing you agree to the <a href="https:\/\/zero-x\.live\/terms"[^>]*>Terms of Service<\/a> and the <a href="https:\/\/zero-x\.live\/privacy"[^>]*>Privacy Policy<\/a>, and confirm you are 18 or older/);
   assert.match(text('neuroncli/device/index.html'), /By continuing you agree to the Terms of Service and the Privacy Policy ?, and confirm you are 18 or older/);
   const data = text('docs/data.html');

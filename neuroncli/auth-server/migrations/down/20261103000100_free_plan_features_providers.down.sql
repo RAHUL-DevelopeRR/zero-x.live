@@ -10,11 +10,11 @@ BEGIN;
 
 UPDATE public.zerox_plan_policy
 SET features = replace(features::text,
-      'Free models from Groq, NVIDIA, OpenRouter and Z.ai',
+      'Free models with usage limits',
       'Free models from Groq, Google Gemini, Cloudflare Workers AI, NVIDIA and OpenRouter')::jsonb,
     updated_at = now()
 WHERE plan = 'free'
-  AND features::text LIKE '%Free models from Groq, NVIDIA, OpenRouter and Z.ai%';
+  AND features::text LIKE '%Free models with usage limits%';
 
 DELETE FROM supabase_migrations.schema_migrations WHERE version = '20261103000100';
 

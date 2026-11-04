@@ -69,7 +69,7 @@
           </div>
           <p class="zx-plan__price"><span data-plan-price="free">$0</span> <small>/ month</small></p>
           <ul data-plan-features="free">
-            <li>Free models from Groq, NVIDIA, OpenRouter and Z.ai</li>
+            <li>Free models with usage limits</li>
             <li>100 requests per day and 1M tokens every 5 hours</li>
             <li>10 requests per minute, 2 at once</li>
             <li>Every Neuron feature, the same on all plans</li>
@@ -117,7 +117,7 @@
       <div class="zx-grid zx-grid--2">
         <div class="zx-card zx-card--flat">
           <h3>Free plan: shared free pools</h3>
-          <p>Free requests go to the free tiers of upstream providers: at the moment Groq, NVIDIA API Catalog, the free models on OpenRouter and the free GLM models from Z.ai (Google Gemini API and Cloudflare Workers AI are switched off for now). Every Zero-X user shares those pools, and each pool has its own daily budget. <strong>Free tiers may keep your requests, let people review them or use them to improve their models</strong>, so keep secrets and code you may not share out of Free-plan requests.</p>
+          <p>Free requests go to the free tiers of upstream model providers. Every Zero-X user shares those pools, and each pool has its own daily budget. <strong>Free tiers may keep your requests, let people review them or use them to improve their models</strong>, so keep secrets and code you may not share out of Free-plan requests. The <a href="/privacy#processors">privacy policy</a> lists who receives requests and what each provider states.</p>
           <p>Free usage costs no credits but counts toward your daily request and token caps. When a shared pool runs out, requests fail with <code>capacity_exhausted</code> until it resets or another free model has capacity. Availability is best effort.</p>
         </div>
         <div class="zx-card zx-card--flat">
@@ -212,7 +212,7 @@
         </details>
         <details>
           <summary>Who sees my prompts and code?</summary>
-          <p>Your requests are sent to the upstream provider that serves the selected model, or the one <code>auto</code> picks: Anthropic (Claude Sonnet 5.5 and Claude Opus 5.5) on Pro and Max, Groq, NVIDIA API Catalog, OpenRouter (the free OpenRouter models Zero-X offers, or your own OpenRouter account if you connect one) or Z.ai (the free GLM models). Google Gemini API and Cloudflare Workers AI are switched off at the moment. Anthropic does not train its models on requests sent through its API. <strong>Free tiers of some providers may use prompts to improve their models and allow human review</strong>, and for some providers we could not confirm their position, so do not send secrets or code you are not allowed to share on the Free plan. The gateway stores usage metadata only, not the text of your prompts, and replaces credentials it recognises with placeholders before a request leaves. The <a href="/privacy#processors">privacy policy</a> has a table of who receives what and what each provider states; <a href="/docs/data">Data and subprocessors</a> shows the data flow. With your own provider key, requests go straight to that provider.</p>
+          <p>Your requests are sent to the upstream provider that serves the selected model, or the one <code>auto</code> picks: Anthropic (Claude Sonnet 5.5 and Claude Opus 5.5) on Pro and Max, or the free tier of an upstream provider for a free model. Anthropic does not train its models on requests sent through its API. <strong>Free tiers of some providers may use prompts to improve their models and allow human review</strong>, and for some providers we could not confirm their position, so do not send secrets or code you are not allowed to share on the Free plan. The gateway stores usage metadata only, not the text of your prompts, and replaces credentials it recognises with placeholders before a request leaves. The <a href="/privacy#processors">privacy policy</a> has a table of who receives what and what each provider states; <a href="/docs/data">Data and subprocessors</a> shows the data flow. With your own provider key, requests go straight to that provider.</p>
         </details>
         <details>
           <summary>Can I use my own API key (BYOK)?</summary>

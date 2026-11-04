@@ -74,7 +74,7 @@ const columnsOf = async table => (await sql(`SELECT column_name FROM information
   WHERE table_schema = 'public' AND table_name = $1 ORDER BY column_name`, [table])).map(row => row.column_name);
 
 const PLAN_FEATURES = {
-  free: ['Free models from Groq, NVIDIA, OpenRouter and Z.ai',
+  free: ['Free models with usage limits',
     '100 requests per day and 1M tokens every 5 hours', '10 requests per minute, 2 at once', 'Every Neuron feature, the same on all plans'],
   pro: ['Claude Sonnet 5.5 and Claude Opus 5.5, billed from credits', '$8 of credits included every month',
     'Free models with higher limits: 2,000 requests and 10M tokens per day', '30 requests per minute, 4 at once',
@@ -366,7 +366,7 @@ try {
     FROM pg_proc AS p JOIN pg_namespace AS n ON n.oid = p.pronamespace WHERE n.nspname = 'public' AND p.proname = ANY($1) ORDER BY 1, 2`, [names])).rows;
   // The Free provider line: the down script puts the Gemini and Workers AI text back, and only that line.
   const freeLine = async () => (await db.query(`SELECT features FROM public.zerox_plan_policy WHERE plan = 'free'`)).rows[0].features;
-  assert.equal((await freeLine())[0], PLAN_FEATURES.free[0], 'the Free card names the providers that are switched on');
+  assert.equal((await freeLine())[0], PLAN_FEATURES.free[0], 'the Free card names no upstream provider');
   await db.exec(await downSql(PROVIDERS));
   assert.equal((await freeLine())[0], 'Free models from Groq, Google Gemini, Cloudflare Workers AI, NVIDIA and OpenRouter');
   assert.deepEqual((await freeLine()).slice(1), PLAN_FEATURES.free.slice(1), 'the other Free lines are untouched');
@@ -415,6 +415,13 @@ try {
     'the October seed provider line is replaced in place');
   await db.exec(await migrationSql(PROVIDERS));
   assert.equal((await freeLine())[2], PLAN_FEATURES.free[0], 're-run is a no-op');
+  // A database that applied the earlier draft of this file (it named Groq, NVIDIA, OpenRouter and Z.ai) is updated too.
+  await db.exec(`UPDATE public.zerox_plan_policy SET features = '${JSON.stringify(['Free models from Groq, NVIDIA, OpenRouter and Z.ai', ...PLAN_FEATURES.free.slice(1)])}'::jsonb WHERE plan = 'free'`);
+  await db.exec(await migrationSql(PROVIDERS));
+  assert.deepEqual(await freeLine(), PLAN_FEATURES.free, 'the earlier draft line is replaced too');
+  for (const plan of Object.values(PLAN_FEATURES)) {
+    assert.doesNotMatch(plan.join(' '), /Groq|NVIDIA|OpenRouter|Z\.ai|Gemini|Workers AI/, 'plan features name no upstream provider');
+  }
   await db.exec(`UPDATE public.zerox_plan_policy SET features = '${JSON.stringify(PLAN_FEATURES.free).replaceAll("'", "''")}'::jsonb WHERE plan = 'free'`);
   ok('down scripts restore the previous functions, columns, features and grants exactly; the up migrations re-apply cleanly twice');
 
