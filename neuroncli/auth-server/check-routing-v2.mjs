@@ -1443,6 +1443,47 @@ try {
     assert.ok(!('concurrency' in (args('nvidia/openai/gpt-oss-20b').p_pool || {})));
   });
 
+  // Neuron 7.0.0-alpha.4 (2026-11-04): with GLM-4.7-Flash chosen by name, a request that found the
+  // slot taken by another user's request failed three times over 68 s (capacity_exhausted, retry
+  // in 30 s) although the slot frees when that request ends. With nothing else to try, the
+  // request now waits for the slot; once it gives up, the client retries within seconds.
+  await test('a full Z.ai pool: the request waits for the slot, then fails with a short retry', async () => {
+    const env = accountEnv({ GLM_API_KEY: 'zai-free-key', POOL_SLOT_POLL_MS: '10', POOL_SLOT_WAIT_MS: '300' });
+    const gw = gateway();
+    gw.addSession('ses_free', { account_backed: true, user_id: ACCOUNT, plan: 'free' });
+    const call = () => gw.call(env, { model: 'zai/glm-4.7-flash', messages, tools }, { token: 'ses_free', country: 'US' });
+    let refusals = 3;
+    resetPoolBudgets();
+    reset({ 'rpc:zerox_plan_policies_v2': policiesRpc,
+      'rpc:zerox_reserve_v2': () => Response.json([refusals-- > 0 ? { status: 'pool_exhausted', retry_after_seconds: 40 } : okReserve({ plan: 'free' })]),
+      'rpc:zerox_settle_v2': () => Response.json([{ status: 'settled' }]),
+      zai: () => completion({ content: 'from zai' }) });
+    const served = await call();
+    assert.equal(served.status, 200);
+    assert.equal(served.headers.get('x-neuron-model'), 'zai/glm-4.7-flash');
+    assert.equal(rpcCalls('zerox_reserve_v2').length, 4, 'three refusals, then the slot');
+    assert.equal(upstreamCalls().filter(item => item.target === 'zai').length, 1);
+    assert.equal(poolBudgetState('zai:glm-4.7-flash:free'), null, 'a served pool is not parked');
+
+    resetPoolBudgets();
+    const started = Date.now();
+    const quiet = await captureLogs(async () => {
+      reset({ 'rpc:zerox_plan_policies_v2': policiesRpc,
+        'rpc:zerox_reserve_v2': () => Response.json([{ status: 'pool_exhausted', retry_after_seconds: 40 }]),
+        zai: () => completion({ content: 'never' }) });
+      return expectError(await call(), 503, 'capacity_exhausted');
+    });
+    const error = quiet.result;
+    assert.ok(Date.now() - started < 5000, 'the wait is bounded by POOL_SLOT_WAIT_MS');
+    assert.ok(rpcCalls('zerox_reserve_v2').length > 2, 'the slot is polled while waiting');
+    assert.equal(upstreamCalls().filter(item => item.target === 'zai').length, 0);
+    assert.equal(error.retry_after_seconds, 5, 'a full pool frees within seconds, not at the lease end');
+    const parked = poolBudgetState('zai:glm-4.7-flash:free');
+    assert.equal(parked.budget, 'concurrency');
+    assert.ok(parked.until - Date.now() <= 5000, 'parked for seconds only');
+    resetPoolBudgets();
+  });
+
   // Z.ai ends a generation that failed after the stream started with an error finish_reason
   // (network_error; sensitive for a refused prompt) instead of an error event: a failed attempt.
   await test('Z.ai: error finish_reasons fail the attempt, tool_choice "none" sends no tools, other choices are dropped', async () => {
