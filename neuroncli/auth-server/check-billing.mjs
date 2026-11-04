@@ -11,7 +11,10 @@ import { DEVELOPMENT_PLANS } from './src/plan-policy.js';
 import {
   checkoutSignatureMessage, constantTimeEqual, hmacSha256, razorpayBase, toHex, verifyCheckoutSignature, verifySignature, verifyWebhookSignature,
 } from './src/billing/razorpay.js';
-import { bootstrapPlans, planSql } from './scripts/razorpay-bootstrap.mjs';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { bootstrapPlans, planSql, storePlanIdsInPglite } from './scripts/razorpay-bootstrap.mjs';
 import { B1_CREDIT_REASON, planPolicyRows } from './contract-rows.mjs';
 import { LEGAL_DOCUMENTS } from './src/billing/legal-versions.js';
 
@@ -902,6 +905,18 @@ try {
   assert.ok(sql.includes(`razorpay_plan_id_inr = '${applied[0].id}', razorpay_plan_id_usd = '${applied[1].id}' WHERE plan = 'pro';`));
   assert.ok(sql.includes(`WHERE plan = 'max';`));
   assert.match(planSql([{ plan: 'pro', currency: 'INR', id: "plan_x'; DROP TABLE x; --" }]), /<razorpay plan id INR>/, 'ids are validated before SQL output');
+  // --store-pglite: a local test-mode rehearsal stores the four test plan ids in a local PGlite database only.
+  await assert.rejects(storePlanIdsInPglite({ env: { RAZORPAY_KEY_ID: 'rzp_live_RealKey123', RAZORPAY_KEY_SECRET: KEY_SECRET }, results: applied, dataDir: 'x' }), /test-mode keys/);
+  await assert.rejects(storePlanIdsInPglite({ env: bootstrapEnv, results: dryRun, dataDir: 'x' }), /run with --apply first/);
+  await assert.rejects(storePlanIdsInPglite({ env: bootstrapEnv, results: applied, dataDir: '' }), /PGlite directory/);
+  const localDir = await mkdtemp(join(tmpdir(), 'zerox-bootstrap-'));
+  try {
+    const stored = await storePlanIdsInPglite({ env: bootstrapEnv, results: applied, dataDir: localDir });
+    assert.deepEqual(stored.map(row => [row.plan, row.razorpay_plan_id_inr, row.razorpay_plan_id_usd]), [
+      ['max', applied[2].id, applied[3].id], ['pro', applied[0].id, applied[1].id]]);
+  } finally {
+    await rm(localDir, { recursive: true, force: true });
+  }
 
   // ── 10. Billing details: the profile routes, the checkout gate, agreements, what Razorpay receives ──
   const gate = { id: '99999999-9999-4999-8999-999999999999', email: 'gate@example.test', user_metadata: { name: 'Gate Keeper' } };
