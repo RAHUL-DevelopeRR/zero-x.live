@@ -10,6 +10,7 @@
   const codeInput = $('code');
   const approve = $('approve');
   const deny = $('deny');
+  const switchAccount = $('switch');
   let pendingCode = '';
   let grant = null;
   let busy = false;
@@ -21,6 +22,7 @@
 
   function finish(text) {
     show('none');
+    switchAccount.hidden = true;
     $('done').hidden = false;
     $('done').textContent = text;
     message.textContent = '';
@@ -97,6 +99,7 @@
 
   async function render() {
     const profile = await window.ZeroXAuth.getProfile();
+    switchAccount.hidden = !profile;
     if (!profile) {
       account.textContent = '';
       message.textContent = 'Sign in to the Zero-X account you want Neuron to use.';
@@ -124,6 +127,18 @@
       title: 'Sign in to Neuron', subtitle: 'Use your Zero-X account',
       redirectTo: location.origin + location.pathname + (pendingCode ? '?user_code=' + pretty(pendingCode) : ''),
     }));
+    // Signs this browser out (other browsers stay signed in) and reloads with the code kept, so
+    // the sign-in step, and Google's account chooser, come next. Nothing is approved or denied.
+    switchAccount.addEventListener('click', async () => {
+      switchAccount.disabled = true;
+      try {
+        await window.ZeroXAuth.signOut({ scope: 'local',
+          redirectUrl: location.origin + location.pathname + (pendingCode ? '?user_code=' + pretty(pendingCode) : '') });
+      } catch (error) {
+        message.textContent = error.message || 'Sign out failed. Try again.';
+        switchAccount.disabled = false;
+      }
+    });
     codeInput.addEventListener('input', () => { codeInput.value = pretty(normalize(codeInput.value)); });
     $('code-step').addEventListener('submit', event => {
       event.preventDefault();
