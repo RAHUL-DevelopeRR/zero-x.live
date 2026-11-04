@@ -1,7 +1,9 @@
 BEGIN;
 
 -- Reverts 20261103000100_free_plan_features_providers.sql: puts the earlier Free plan provider
--- line back (the text seeded by 20261029000900_plan_features_claude.sql). Safe to re-run. Run it
+-- line back (the text seeded by 20261029000900_plan_features_claude.sql; on a database that had
+-- the October seed line "Free-tier models (Groq, Gemini Flash, Workers AI)" instead, this puts
+-- back the 20261029000900 line, which names the same switched-off providers). Safe to re-run. Run it
 -- by hand (psql -X -v ON_ERROR_STOP=1 -f <this file>); the migration runner never reads
 -- migrations/down/. The DELETE below removes the runner's history row so the migration can be
 -- applied again.

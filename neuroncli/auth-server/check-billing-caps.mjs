@@ -405,6 +405,16 @@ try {
   await db.exec(`UPDATE public.zerox_plan_policy SET features = '["Our own copy"]'::jsonb WHERE plan = 'free'`);
   await db.exec(await migrationSql(PROVIDERS));
   assert.deepEqual(await freeLine(), ['Our own copy'], 'the provider migration only replaces its own text');
+  // A database where 20261029000900 never ran still shows the October seed's provider line: it is
+  // replaced too, and the other seed lines stay.
+  const october = ['100 requests per day', '1M tokens every 5 hours', 'Free-tier models (Groq, Gemini Flash, Workers AI)',
+    '10 requests per minute, 2 concurrent', 'Usage dashboard'];
+  await db.exec(`UPDATE public.zerox_plan_policy SET features = '${JSON.stringify(october)}'::jsonb WHERE plan = 'free'`);
+  await db.exec(await migrationSql(PROVIDERS));
+  assert.deepEqual(await freeLine(), october.map(line => line.startsWith('Free-tier models') ? PLAN_FEATURES.free[0] : line),
+    'the October seed provider line is replaced in place');
+  await db.exec(await migrationSql(PROVIDERS));
+  assert.equal((await freeLine())[2], PLAN_FEATURES.free[0], 're-run is a no-op');
   await db.exec(`UPDATE public.zerox_plan_policy SET features = '${JSON.stringify(PLAN_FEATURES.free).replaceAll("'", "''")}'::jsonb WHERE plan = 'free'`);
   ok('down scripts restore the previous functions, columns, features and grants exactly; the up migrations re-apply cleanly twice');
 
