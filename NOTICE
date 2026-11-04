@@ -1,0 +1,42 @@
+Zero-X notices
+==============
+
+Zero-X house style (neuroncli/auth-server/src/house-style.js)
+-------------------------------------------------------------
+The short style preface that the Zero-X gateway adds to coding-agent requests
+(docs.html#house-style, neuroncli/auth-server/docs/HOUSE_STYLE.md) is written in
+Zero-X's own words. Its ideas were inspired by the public projects below, and
+the wording was checked against the copies of their skill files that the Neuron
+client bundles: no run of four words is shared with any of them
+(neuroncli/auth-server/scripts/check-style-originality.mjs, a local script that
+needs the Neuron client's bundled-skills directory). That check covers the
+bundled copies only; it was not run against other versions of these projects.
+
+- Ponytail, a rule set that makes a coding agent write the least code that
+  works: https://github.com/DietrichGebert/ponytail (original) and the fork
+  https://github.com/dkfish/ponytail. MIT licence.
+  Inspired the "Economy" section (is the change needed at all, does the
+  platform, the language's library or the codebase already cover it) and the
+  rule in "Build discipline" that shortening never removes input validation,
+  data-loss handling, security or accessibility.
+- gstack by Garry Tan, role-based workflows for planning, building, review and
+  shipping: https://github.com/garrytan/gstack. MIT licence.
+  Inspired the "Build discipline" habit of small, verified steps and running
+  the tests. Its role-based pipeline is not part of the preface.
+- anti-slop by miqdadbadjuber, a skill set against generic AI copy and UI:
+  https://github.com/miqdadbadjuber/anti-slop, the version the Neuron client
+  bundles (commit 388cbe3, recorded as MIT licence in the client's
+  bundled-skills SOURCES.json). Inspired the "Design taste" section.
+- Hallmark by Nutlope, an anti-slop UI design skill:
+  https://github.com/Nutlope/hallmark. MIT licence according to its project
+  page; we have not confirmed its LICENSE file or copyright line. Also
+  inspired the "Design taste" section (choose a deliberate direction first,
+  avoid default generic AI page patterns, real content, accessible layouts).
+
+No text from these projects is copied or vendored here, so their licence
+notices are not required for this code. If text from any of them is ever added
+to the gateway, its licence file and copyright line must be added to this
+notice in the same change. The Neuron client bundles the Ponytail, gstack and
+anti-slop skills, with their licences, in its own repository.
+
+The names above belong to their authors. Zero-X is not affiliated with them.

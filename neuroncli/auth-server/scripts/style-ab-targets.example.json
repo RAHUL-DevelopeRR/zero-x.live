@@ -1,0 +1,8 @@
+{
+  "staging": {
+    "_comment": "Copy to scripts/style-ab-targets.local.json (gitignored). base: an https staging origin (first label 'staging' or ending in '-staging', no port, no IP; production hosts are refused) or a loopback http origin. models: the allow-list of FREE model ids; a run also checks that GET /v1/models lists each as free and available. The gateway must run with HOUSE_STYLE=auto or on.",
+    "base": "https://gateway-staging.example.com",
+    "models": ["groq/openai/gpt-oss-120b"],
+    "max_requests": 40
+  }
+}

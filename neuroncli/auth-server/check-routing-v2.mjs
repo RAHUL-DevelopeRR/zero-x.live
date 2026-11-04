@@ -97,7 +97,9 @@ const claudeTurn = ({ text = 'Claude here.', usage, output = 800 }) => [
 ];
 
 // ── Gateway under test ──
-const KEYS = { GROQ_API_KEY: 'groq-free-key', GEMINI_API_KEY: 'gemini-free-key', GROQ_PAID_API_KEY: 'groq-paid-key', GEMINI_PAID_API_KEY: 'gemini-paid-key' };
+// HOUSE_STYLE off: these cases fix exact token counts from tiny fake usage (a prompt of 40 tokens), which a request
+// carrying the 350-token house style preface cannot report; the preface has its own check (check-house-style.mjs).
+const KEYS = { GROQ_API_KEY: 'groq-free-key', GEMINI_API_KEY: 'gemini-free-key', GROQ_PAID_API_KEY: 'groq-paid-key', GEMINI_PAID_API_KEY: 'gemini-paid-key', HOUSE_STYLE: 'off' };
 const FAST = { UPSTREAM_TTFB_TIMEOUT_MS: '150', UPSTREAM_IDLE_TIMEOUT_MS: '150' };
 const DB = { SUPABASE_URL: 'https://db.test', SUPABASE_SECRET_KEY: 'sb_secret_test' };
 const ACCOUNT = '12345678-1234-4234-8234-123456789abc';

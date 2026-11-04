@@ -39,6 +39,7 @@ import { registerCreditRoutes } from './routes/credits.js';
 import { loadVaultKeys, vaultConfigured } from './provider-keys.js';
 import { accessConfigured, passedAccess } from './access-auth.js';
 import { chatRefusal, chatRoutedToEc2, forwardToEc2, proxyStatus, servingRuntime } from './ec2-proxy.js';
+import { houseStyleStatus } from './house-style.js';
 import { extraWebOrigins, isExtraWebHost } from './web-hosts.js';
 // Durable Object classes are exported from the Worker entry (wrangler.toml [[durable_objects]]),
 // each with its binding. RelayRoom (src/relay.js) is not bound for now, so it is not exported.
@@ -283,8 +284,10 @@ app.use('*', async (c, next) => {
 // EXTRA_WEB_HOSTS adds a test host's https origin on EC2 (src/web-hosts.js); unset on the Worker.
 const IDENTITY_ORIGINS = ['https://zero-x.live', 'https://www.zero-x.live', 'https://dashboard.zero-x.live'];
 const DEV_ORIGIN = /^http:\/\/(127\.0\.0\.1|localhost)(:\d{1,5})?$/;
+// X-Neuron-Style is the house style opt-out request header (src/house-style.js STYLE_HEADER): a
+// browser client's preflight must allow it, and openCors exposes the response header below.
 const CORS_HEADERS = ['Content-Type', 'Authorization', 'X-Neuron-Trust-Tiers', 'X-Neuron-Allow-Training',
-  'X-Neuron-Conversation'];
+  'X-Neuron-Conversation', 'X-Neuron-Style'];
 const CORS_METHODS = ['GET', 'POST', 'DELETE', 'OPTIONS'];
 const identityOrigin = (origin, env) => IDENTITY_ORIGINS.includes(origin) || extraWebOrigins(env).includes(origin) ||
   (devRuntimeEnabled(env) && DEV_ORIGIN.test(origin));
@@ -295,7 +298,7 @@ const identityCors = cors({
 const openCors = cors({
   origin: '*', allowHeaders: CORS_HEADERS, allowMethods: CORS_METHODS, maxAge: 600,
   exposeHeaders: ['X-Request-Id', 'X-Neuron-Plan', 'X-Neuron-Model', 'X-Neuron-Quota-Remaining-Requests',
-    'X-Neuron-Quota-Remaining-Tokens', 'X-OIOP-Offer', 'X-OIOP-Fallback', 'X-OIOP-Redacted', 'Retry-After', 'X-Zerox-Runtime'],
+    'X-Neuron-Quota-Remaining-Tokens', 'X-Neuron-Style', 'X-OIOP-Offer', 'X-OIOP-Fallback', 'X-OIOP-Redacted', 'Retry-After', 'X-Zerox-Runtime'],
 });
 app.use('*', async (c, next) => {
   const path = routePath(new URL(c.req.url).pathname);
@@ -592,6 +595,7 @@ api.get('/health', async (c) => {
     admin_access_configured: accessConfigured(c.env),
     csp_enforced: c.env.CSP_ENFORCE === 'true',
     ec2_proxy: proxyStatus(c.env),
+    house_style: houseStyleStatus(c.env),
   });
 });
 

@@ -26,6 +26,7 @@ import { bootstrapPlans, planSql } from './scripts/razorpay-bootstrap.mjs';
 import { devToken, devUserId } from './src/auth-context.js';
 import { catalogEntry } from './src/catalog.js';
 import { costMicrousd, estimatePromptTokens, reserveCostMicrousd } from './src/pricing.js';
+import { HOUSE_STYLE_TEXT, HOUSE_STYLE_TOKENS } from './src/house-style.js';
 
 const LIVE = process.argv.includes('--live');
 const MAX_REAL_CALLS = 10;
@@ -74,6 +75,10 @@ const listen = async server => { server.listen(0, '127.0.0.1'); await once(serve
 const upstream = { calls: [] };
 const USAGE = { prompt_tokens: 120, completion_tokens: 30, total_tokens: 150 };
 const CLAUDE_USAGE = { input_tokens: 800, cache_creation_input_tokens: 4000, cache_read_input_tokens: 16000 };
+// Like a real provider, the fake upstream counts the house style preface (src/house-style.js) in the prompt of a request that
+// carries it; the gateway must leave those tokens out of what it settles, so the usage rows still read 120 and 30.
+const carriesStyle = body => JSON.stringify([body.system ?? [], body.messages ?? []]).includes(HOUSE_STYLE_TEXT.slice(0, 40));
+const usageFor = body => (carriesStyle(body) ? { ...USAGE, prompt_tokens: USAGE.prompt_tokens + HOUSE_STYLE_TOKENS, total_tokens: USAGE.total_tokens + HOUSE_STYLE_TOKENS } : USAGE);
 const upstreamServer = createServer(async (request, response) => {
   const body = JSON.parse((await readBody(request)) || '{}');
   // Claude Messages API (the SDK always streams): one text block, then usage with cache counts.
@@ -83,7 +88,7 @@ const upstreamServer = createServer(async (request, response) => {
     response.writeHead(200, { 'Content-Type': 'text/event-stream', 'request-id': 'req_e2e_claude' });
     const event = value => response.write(`event: ${value.type}\ndata: ${JSON.stringify(value)}\n\n`);
     event({ type: 'message_start', message: { id: 'msg_e2e', type: 'message', role: 'assistant', model: body.model, content: [],
-      stop_reason: null, stop_sequence: null, usage: { ...CLAUDE_USAGE, output_tokens: 1 } } });
+      stop_reason: null, stop_sequence: null, usage: { ...CLAUDE_USAGE, input_tokens: CLAUDE_USAGE.input_tokens + (carriesStyle(body) ? HOUSE_STYLE_TOKENS : 0), output_tokens: 1 } } });
     event({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } });
     event({ type: 'ping' });
     // A slow turn keeps its credit hold in flight while a concurrent request reserves (step 11d).
@@ -97,7 +102,8 @@ const upstreamServer = createServer(async (request, response) => {
   }
   const provider = request.url.startsWith('/openai/v1/') ? 'groq' : request.url.startsWith('/v1beta/openai/') ? 'gemini' : null;
   upstream.calls.push({ provider, key: String(request.headers.authorization || '').replace(/^Bearer /, ''), model: body.model,
-    stream: body.stream === true, tools: Array.isArray(body.tools) ? body.tools.length : 0, streamOptions: body.stream_options ?? null });
+    stream: body.stream === true, tools: Array.isArray(body.tools) ? body.tools.length : 0, streamOptions: body.stream_options ?? null,
+    styled: carriesStyle(body) });
   // Groq's model list: how the provider key vault checks a key before saving it.
   if (request.method === 'GET' && request.url === '/openai/v1/models') {
     const rejected = request.headers.authorization === `Bearer ${REJECTED_VAULT_KEY}`;
@@ -117,7 +123,7 @@ const upstreamServer = createServer(async (request, response) => {
   if (!body.stream) {
     response.writeHead(200, { 'Content-Type': 'application/json' });
     response.end(JSON.stringify({ id: 'up-1', object: 'chat.completion', choices: [{ index: 0,
-      message: { role: 'assistant', content: 'pong' }, finish_reason: 'stop' }], usage: USAGE }));
+      message: { role: 'assistant', content: 'pong' }, finish_reason: 'stop' }], usage: usageFor(body) }));
     return;
   }
   response.writeHead(200, { 'Content-Type': 'text/event-stream' });
@@ -129,11 +135,11 @@ const upstreamServer = createServer(async (request, response) => {
     const name = body.tools[0].function.name;
     send(chunk({ tool_calls: [{ id: 'call_a', type: 'function', function: { name, arguments: '{"path":"a.js"}' } }] }));
     send(chunk({ tool_calls: [{ id: 'call_b', type: 'function', function: { name, arguments: '{"path":"b.js"}' } }] }));
-    send(chunk({}, 'stop', { usage: USAGE }));
+    send(chunk({}, 'stop', { usage: usageFor(body) }));
   } else {
     send(chunk({ content: 'pong' }));
     send(chunk({}, 'stop'));
-    send({ id: 'up', object: 'chat.completion.chunk', choices: [], usage: USAGE });
+    send({ id: 'up', object: 'chat.completion.chunk', choices: [], usage: usageFor(body) });
   }
   send('[DONE]');
   response.end();
@@ -407,6 +413,7 @@ try {
     const upstreamCall = upstream.calls[upstreamBefore];
     assert.deepEqual([upstreamCall.provider, upstreamCall.key, upstreamCall.model, upstreamCall.tools], ['gemini', 'e2e-gemini-free', 'gemini-2.5-flash', 1]);
     assert.deepEqual(upstreamCall.streamOptions, { include_usage: true });
+    assert.equal(upstreamCall.styled, true, 'a request with tools reached the upstream with the house style preface');
     assert.deepEqual(toolDeltas.map(delta => [delta.index, delta.id]), [[0, 'call_a'], [1, 'call_b']]);
     assert.ok(chunks.some(item => item.choices?.[0]?.finish_reason === 'tool_calls'));
   } else {
