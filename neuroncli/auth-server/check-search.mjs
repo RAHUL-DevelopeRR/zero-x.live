@@ -185,6 +185,18 @@ try {
   assert.deepEqual(await usage(alice.userId), { searches: 3, research_runs: 0, cache_hits: 1, searxng_calls: 2, brave_calls: 0 });
   ok('cache: the same normalized query and freshness is served from memory within 10 minutes (cached: true)');
 
+  // ── The cache is per user: no cross-tenant "someone searched this" signal ──
+  const carol = await signIn('search-carol@example.test');
+  answer = await search(both, carol.ses, { query: 'Rust async traits', freshness: 'week' });
+  assert.equal(answer.status, 200);
+  assert.equal(answer.body.cached, false, "another user's query is never reported as cached");
+  assert.equal(searx.state.calls.length, 3, 'and is asked of the backend again');
+  answer = await search(both, carol.ses, { query: 'rust async traits', freshness: 'week' });
+  assert.equal(answer.body.cached, true, "the caller's own repeat is cached");
+  assert.equal(searx.state.calls.length, 3);
+  assert.deepEqual(await usage(carol.userId), { searches: 2, research_runs: 0, cache_hits: 1, searxng_calls: 1, brave_calls: 0 });
+  ok("cache is per user: user B searching user A's query gets cached: false and a backend call; B's own repeat is cached");
+
   // ── Brave fallback ──
   searx.state.reply = { status: 500, body: { error: 'engines down' } };
   brave.state.reply = { body: braveResults('fb') };
@@ -210,7 +222,13 @@ try {
   searx.state.reply = { body: { results: [] } };
   answer = await search(both, alice.ses, { query: 'nothing anywhere' });
   assert.deepEqual([answer.status, answer.body.provider, answer.body.results], [200, 'searxng', []], 'an empty answer from every backend is a 200');
-  ok('Brave fallback on SearXNG errors, empty answers, non-JSON and unreachable hosts; Brave alone; freshness pd and the key header');
+  const callsAfterEmpty = searx.state.calls.length;
+  searx.state.reply = { body: searxResults('later') };
+  answer = await search(both, alice.ses, { query: 'nothing anywhere' });
+  assert.deepEqual([answer.status, answer.body.cached, answer.body.provider], [200, false, 'searxng'], 'an empty answer is not cached');
+  assert.equal(searx.state.calls.length, callsAfterEmpty + 1, 'the next search asks SearXNG again');
+  assert.ok(answer.body.results.length > 0);
+  ok('Brave fallback on SearXNG errors, empty answers, non-JSON and unreachable hosts; Brave alone; freshness pd and the key header; empty answers not cached');
 
   // ── Every backend fails: 503 and the search is given back ──
   const before = await usage(alice.userId);
@@ -230,7 +248,8 @@ try {
   assert.equal(answer.status, 429);
   assert.equal(answer.body.error, 'search_quota_exhausted');
   assert.equal(answer.body.resets_at, nextMidnight());
-  assert.equal(answer.body.quota, 'searches');
+  assert.equal(answer.body.exhausted, 'searches');
+  assert.equal(answer.body.quota, undefined, 'quota is only ever the 200 object');
   assert.ok(Number(answer.headers.get('retry-after')) > 0);
   answer = await search(both, alice.ses, { query: 'last one' });
   assert.equal(answer.status, 429, 'a cached query is refused too once the quota is used up');
@@ -246,7 +265,7 @@ try {
   }
   assert.deepEqual(answer.body.quota, { remaining: 36, limit: 40, resets_at: nextMidnight(), research: { remaining: 0, limit: 3 } });
   answer = await research('run-dddd-4');
-  assert.deepEqual([answer.status, answer.body.error, answer.body.quota], [429, 'search_quota_exhausted', 'research_runs']);
+  assert.deepEqual([answer.status, answer.body.error, answer.body.exhausted], [429, 'search_quota_exhausted', 'research_runs']);
   answer = await research('run-aaaa-1', 'a3');
   assert.equal(answer.status, 200, 'a run opened today keeps working');
   answer = await search(both, bob.ses, { query: 'plain search' }, { 'x-neuron-research-run': 'run-eeee-5' });
@@ -266,7 +285,7 @@ try {
   searx.state.reply = { body: searxResults('again') };
   answer = await research('run-ffff-6', 'works');
   assert.equal(answer.status, 200, 'so the same run can start again');
-  ok('research runs: distinct run ids counted (3 on Free), the 4th refused with quota research_runs, open runs keep working, hashed ids, failures give the run back');
+  ok('research runs: distinct run ids counted (3 on Free), the 4th refused with exhausted research_runs, open runs keep working, hashed ids, failures give the run back');
 
   // ── Plans: Pro and Max limits, /api/account limits.search and limits.colony ──
   let account = await call(pgEnv, '/api/account', { token: bob.ses });

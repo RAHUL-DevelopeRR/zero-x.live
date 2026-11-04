@@ -81,7 +81,8 @@ export function researchRunId(purpose, header) {
 // The cache key's text: NFKC, lower case, one space between words.
 export const normalizeQuery = query => query.normalize('NFKC').toLocaleLowerCase('en').replace(/\s+/g, ' ').trim();
 
-// ── Cache: in memory, per process or isolate, 10 minutes, at most CACHE_LIMIT entries ──
+// ── Cache: in memory, per process or isolate, 10 minutes, at most CACHE_LIMIT entries. The route
+// keys it by user, freshness and query, and stores non-empty answers only. ──
 export const CACHE_TTL_MS = 600000;
 export const CACHE_LIMIT = 1000;
 export class SearchCache {

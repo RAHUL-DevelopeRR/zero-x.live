@@ -992,8 +992,8 @@ Errors are flat JSON, `{"error": code, "message", "request_id", ...}`:
   `x-neuron-research-run`);
 - `401 invalid_session`: sign in again;
 - `403 account_suspended`;
-- `429 search_quota_exhausted` with `resets_at`, `quota` (`"searches"` or `"research_runs"`) and
-  `Retry-After`;
+- `429 search_quota_exhausted` with `resets_at`, `exhausted` (`"searches"` or `"research_runs"`)
+  and `Retry-After` (`quota` appears only in a `200`, always as the object above);
 - `503 search_unavailable`: no backend configured (the default until the operator sets
   `SEARXNG_URL` or `BRAVE_API_KEY`), every backend failed, or the quota database (migration
   `20261104200000_search_quota.sql`) is missing or down. Search is never served unmetered.
@@ -1005,8 +1005,10 @@ times out (8 s), answers non-JSON or answers no results. An empty answer from ev
 `200` with `results: []`.
 
 **Cache.** Answers are cached in the gateway's memory (per Node process or Worker isolate) for 10
-minutes, keyed by sha256 of `freshness` and the normalized query (NFKC, lower case, single spaces),
-at most 1000 entries. A cached answer says `"cached": true` and still counts as a search.
+minutes, keyed by sha256 of the user id, `freshness` and the normalized query (NFKC, lower case,
+single spaces), at most 1000 entries. The cache is per user, so `"cached": true` (or a faster
+answer) only ever reflects the caller's own earlier search, never another user's. Empty answers
+are not cached. A cached answer says `"cached": true` and still counts as a search.
 
 **Quotas** (per UTC day, enforced in Postgres by `zerox_search_reserve` before any backend call):
 

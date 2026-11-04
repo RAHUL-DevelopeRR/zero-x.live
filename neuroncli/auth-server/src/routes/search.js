@@ -83,7 +83,7 @@ export async function searchHandler(c, { fetchImpl } = {}) {
       throw new SearchError(429, 'search_quota_exhausted', research
         ? `Your plan's ${limits.daily_research_runs} research runs for today are used up.`
         : `Your plan's ${limits.daily_searches} web searches for today are used up.`,
-      { resets_at: resetsAt, quota: research ? 'research_runs' : 'searches', ...(retryAfter ? { headers: { 'Retry-After': String(retryAfter) } } : {}) });
+      { resets_at: resetsAt, exhausted: research ? 'research_runs' : 'searches', ...(retryAfter ? { headers: { 'Retry-After': String(retryAfter) } } : {}) });
     }
 
     const settle = async outcome => {
@@ -95,7 +95,9 @@ export async function searchHandler(c, { fetchImpl } = {}) {
         return null;
       }
     };
-    const cacheKey = await sha256Hex(`${request.freshness || ''}\n${normalizeQuery(request.query)}`);
+    // One cache per user: a shared entry would tell a caller (by `cached: true`, or by how fast the
+    // answer comes) that someone else searched the same text in the last 10 minutes.
+    const cacheKey = await sha256Hex(`${caller.user_id}\n${request.freshness || ''}\n${normalizeQuery(request.query)}`);
     let answer = searchCache.get(cacheKey);
     const cached = !!answer;
     if (!answer) {
@@ -104,7 +106,9 @@ export async function searchHandler(c, { fetchImpl } = {}) {
         await settle('failed');
         throw error;
       }
-      searchCache.set(cacheKey, answer);
+      // An empty answer is often a backend rate-limited for a moment (SearXNG's engines CAPTCHA'd):
+      // it is not cached, so the next search asks again.
+      if (answer.results.length) searchCache.set(cacheKey, answer);
     }
     await settle(cached ? 'cached' : answer.provider);
     return c.json({
