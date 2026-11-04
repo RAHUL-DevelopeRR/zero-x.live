@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {existsSync, readdirSync, readFileSync, statSync} from 'node:fs';
 // Site scripts load as ES modules whatever package.json lies above the checkout.
 import './site-modules.mjs';
+import {NEURON_INSTALL, NEURON_RELEASE_DATE, NEURON_RELEASE_URL, NEURON_VERSION} from './src/neuron-release.js';
 
 const root = new URL('../../', import.meta.url);
 const read = file => readFileSync(new URL(file, root), 'utf8');
@@ -85,23 +86,41 @@ for (const file of PUBLIC_PAGES) assert.ok(seoPages.some(page => page.file === f
 assert.match(read('neuroncli/index.html'), /<meta http-equiv="refresh" content="0; url=\/neuron-cli">/, 'Old /neuroncli/ page points to /neuron-cli');
 assert.match(read('neuroncli/index.html'), /<link rel="canonical" href="https:\/\/zero-x.live\/neuron-cli">/);
 
-// Neuron 7.0.0-alpha.2 is a GitHub pre-release, so the installers must name its version (as written in HTML).
-const NEURON_VERSION = '7.0.0-alpha.2';
-const RELEASE_TAG_URL = 'https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/tag/v' + NEURON_VERSION;
-const INSTALL_SH = `curl -fsSL https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v${NEURON_VERSION}/install.sh | sh -s -- --version ${NEURON_VERSION}`;
-const INSTALL_PS1 = `&amp; ([scriptblock]::Create((irm https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v${NEURON_VERSION}/install.ps1))) -Version ${NEURON_VERSION}`;
+// The release and its install commands come from src/neuron-release.js (as written in HTML: & is &amp;).
+// check-neuron-version.mjs fails on any other 7.0.0 build, installer or pip without --pre across the site;
+// these checks pin where each command appears.
+const escapeHtml = value => value.replace(/&/g, '&amp;');
+const RELEASE_TAG_URL = NEURON_RELEASE_URL;
+const INSTALL_NPM = NEURON_INSTALL.npm;
+const INSTALL_PIP = NEURON_INSTALL.pip;
+const INSTALL_SH = escapeHtml(NEURON_INSTALL.shell);
+const INSTALL_PS1 = escapeHtml(NEURON_INSTALL.powershell);
+const INSTALL_CMD = escapeHtml(NEURON_INSTALL.cmd);
+assert.equal(INSTALL_PIP, 'python -m pip install --pre neuroncli', 'pip needs --pre while Neuron 7 is a pre-release');
+assert.match(INSTALL_PS1, / -Version 7\.0\.0-alpha\.\d+ -AddToPath$/, 'the PowerShell installer puts neuron on PATH');
 // The superseded alpha's installer still resolves, so a page that keeps naming it silently installs the old build.
 for (const file of new Set([...seoPages.map(page => page.file), ...PUBLIC_PAGES, ...PRIVATE_PAGES, 'llms.txt', 'neuroncli/login/index.html', 'neuroncli/callback/index.html', 'neuroncli/device/index.html'])) {
   assert.doesNotMatch(read(file), /7\.0\.0-alpha\.1\b/, file + ': names the superseded 7.0.0-alpha.1');
 }
-for (const file of ['neuron-cli.html', 'docs.html', 'ai-coding-agent.html']) {
-  assert.ok(read(file).includes(INSTALL_SH) && read(file).includes(INSTALL_PS1), file + ' uses the pinned release installers');
+// Every option, best first: npm, pip, then the install scripts. On Windows, a PowerShell command and a
+// Command Prompt one (cmd.exe rejects PowerShell's "&" with "& was unexpected at this time."), and the
+// reminder that the PATH change needs a new terminal.
+for (const file of ['index.html', 'neuron-cli.html', 'docs.html', 'ai-coding-agent.html', 'download.html']) {
+  const page = read(file);
+  for (const command of [INSTALL_NPM, INSTALL_PIP, INSTALL_SH, INSTALL_PS1, INSTALL_CMD]) assert.ok(page.includes(command), `${file} shows ${command}`);
+  const at = command => page.indexOf(command);
+  assert.ok(at(INSTALL_NPM) < at(INSTALL_PIP) && at(INSTALL_PIP) < at(INSTALL_SH) && at(INSTALL_SH) < at(INSTALL_PS1) && at(INSTALL_PS1) < at(INSTALL_CMD),
+    file + ': npm, pip, install.sh, PowerShell, Command Prompt, in that order');
+  const words = stripScripts(page).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  assert.match(words, /open a new terminal/i, file + ': says to open a new terminal after -AddToPath');
+  assert.match(words, /keep --pre/i, file + ': explains --pre');
 }
 {
   const html = read('neuron-cli.html');
   const software = JSON.parse(html.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/)[1])['@graph'].find(n => n['@type'] === 'SoftwareApplication');
   assert.deepEqual([software.softwareVersion, software.downloadUrl], [NEURON_VERSION, RELEASE_TAG_URL], 'neuron-cli.html JSON-LD names the current release');
-  assert.ok(html.includes(`Neuron ${NEURON_VERSION} is the second alpha, published on 26 October 2026 as a <a href="${RELEASE_TAG_URL}">GitHub pre-release</a>`), 'neuron-cli.html names the release and its date');
+  assert.ok(html.includes(`Neuron ${NEURON_VERSION} is the fourth alpha, published on ${NEURON_RELEASE_DATE} as a <a href="${RELEASE_TAG_URL}">GitHub pre-release</a>`), 'neuron-cli.html names the release and its date');
+  assert.match(html, /status bar under the prompt/, 'neuron-cli.html says what the release brings');
   // Without a terminal nobody approves, so a headless test run needs an allow rule or it is denied and exits 2.
   const headless = html.match(/<h3>Run it headless<\/h3>([\s\S]*?)<\/li>/)[1];
   assert.ok(headless.includes('neuron -p "Run the test suite and summarise the failures"'), 'headless example');
@@ -127,7 +146,8 @@ for (const file of ['neuron-cli.html', 'docs.html', 'ai-coding-agent.html']) {
   }
   assert.match(html, /role="progressbar"[^>]*aria-valuemin="0" aria-valuemax="100"/);
   assert.doesNotMatch(html, /256,000|500K|10M|50M|2,000|10,000|44K/, 'Dashboard must not hardcode plan limits');
-  assert.ok(html.includes(INSTALL_SH) && html.includes(INSTALL_PS1), 'Dashboard quick start uses the pinned release installers');
+  assert.match(html, new RegExp(`<code id="qs-install">${INSTALL_NPM}</code>[\\s\\S]*<code id="qs-install-pip">${INSTALL_PIP}</code>`), 'Dashboard quick start: npm, then pip');
+  assert.match(html, /href="https:\/\/zero-x\.live\/download#cli" data-site-path="\/download#cli">download page<\/a>/, 'Dashboard quick start links the install scripts');
   assert.match(html, /neuron -p[\s\S]*?exits with code 2 unless <code>~\/\.neuron\/settings\.json<\/code> allows them/, 'Dashboard headless example explains the denied run');
   assert.match(html, /<code id="qs-login">neuron login<\/code>/);
   assert.match(html, /https:\/\/zero-x\.live\/v1/);
@@ -664,20 +684,24 @@ assert.equal(checkout.normalizeCurrency('EUR'), 'USD');
 /* Homepage: install commands, plan slots, live model list and its helpers */
 {
   const html = read('index.html');
-  for (const command of [INSTALL_SH, INSTALL_PS1, 'neuron login', 'curl https://zero-x.live/v1/models']) {
+  for (const command of [INSTALL_NPM, INSTALL_PIP, INSTALL_SH, INSTALL_PS1, INSTALL_CMD, 'neuron login', 'curl https://zero-x.live/v1/models']) {
     assert.ok(html.includes(command), 'index.html shows ' + command);
   }
-  // npm serves only the unsupported 6.2.0 (no alpha under any tag) and PyPI only the unsupported 6.2.4.
+  for (const id of ['step-install', 'cta-install']) assert.match(html, new RegExp(`<code id="${id}">${INSTALL_NPM}\\b`), `index.html #${id} starts with npm`);
+  // npm's latest tag and PyPI (as a pre-release) serve Neuron 7: npm is the first tab, pip the second,
+  // and the install scripts follow. Each command is labelled with the shell it is for.
   for (const file of ['index.html', 'neuron-cli.html']) {
     const page = read(file);
-    assert.ok(page.includes('Not yet: npm still serves the old, unsupported 6.2.0 build. Use the install script above.'), file + ': npm tab');
-    assert.ok(page.includes('Not yet: PyPI still serves the old, unsupported <code>neuroncli</code> 6.2.4. Use the install script above.'), file + ': pip tab');
+    const tabs = [...page.matchAll(/<section class="zx-install" id="(install-[\w-]+)"/g)].map(m => m[1]);
+    assert.deepEqual(tabs, ['install-npm', 'install-pip', 'install-sh', 'install-ps1', 'install-source'], file + ': install tabs, best first');
+    for (const label of ['Any terminal', 'Terminal (sh, bash or zsh)', 'Command Prompt (cmd.exe)']) {
+      assert.ok(page.includes(`<span class="zx-code__label">${label}`), `${file}: labels a command "${label}"`);
+    }
   }
   for (const file of ['index.html', 'neuron-cli.html', 'docs.html', 'dashboard.html', 'pricing.html', 'download.html',
     'docs/trust.html', 'changelog.html']) {
     const page = read(file);
-    assert.doesNotMatch(page, /@zero-x\.live\/neuron/, file + ': npm package offered before the alpha is on npm');
-    assert.doesNotMatch(page, /pip install neuroncli/, file + ': pip install of the old PyPI package');
+    assert.doesNotMatch(page, /pip install neuroncli/, file + ': pip install without --pre installs the unsupported 6.2.4');
     assert.doesNotMatch(page, /install script is not published|installer is not published/, file + ': stale installer notice');
     assert.doesNotMatch(page, /releases\/latest\/download\/install\./, file + ': unpinned installer (the alpha is a pre-release)');
     assert.doesNotMatch(page, /href="https:\/\/neuron\.zero-x\.live\/(?:#[\w-]*)?"/, file + ': NeuCockpit lives at https://zero-x.live/neucockpit');
@@ -736,11 +760,12 @@ assert.equal(checkout.normalizeCurrency('EUR'), 'USD');
 /* Download page (A6), trust page and support (A8), gateway logging policy (A17) */
 {
   const html = read('download.html');
-  for (const command of [INSTALL_SH, INSTALL_PS1, 'neuron login', 'Get-FileHash',
+  for (const command of [INSTALL_NPM, INSTALL_PIP, INSTALL_SH, INSTALL_PS1, INSTALL_CMD, 'neuron login', 'Get-FileHash',
     'shasum -a 256', 'gh attestation verify']) {
     assert.ok(html.includes(command), 'download.html shows ' + command);
   }
-  assert.match(text('download.html'), /Not on npm or pip yet: npm still serves the old, unsupported 6\.2\.0 build/);
+  for (const id of ['cmd-npm', 'cmd-pip', 'cmd-shell', 'cmd-powershell', 'cmd-cmd']) assert.ok(tags(html, 'button').some(b => b['data-copy-target'] === id), 'download.html copies #' + id);
+  assert.match(text('download.html'), /status bar under the prompt/, 'download.html says what the release brings');
   assert.ok(html.includes('href="https://zero-x.live/neucockpit#downloads"'), 'download.html links the NeuCockpit downloads');
   for (const id of ['desktop', 'cli', 'mobile', 'verify', 'desktop-note', 'cli-release-note', 'cli-binaries', 'checksums-link', 'copy-status']) {
     assert.ok(ids(html).includes(id), 'download.html #' + id);

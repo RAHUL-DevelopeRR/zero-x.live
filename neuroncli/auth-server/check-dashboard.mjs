@@ -6,6 +6,7 @@ import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
 // Site scripts load as ES modules whatever package.json lies above the checkout.
 import './site-modules.mjs';
+import {NEURON_INSTALL} from './src/neuron-release.js';
 
 const root = new URL('../../', import.meta.url);
 const read = file => readFileSync(new URL(file, root), 'utf8');
@@ -376,10 +377,10 @@ async function mountDashboard({profile = PROFILE, hash = '', state = {}, routes 
   // Copy quick-start command.
   doc.querySelector('[data-copy-target="qs-install"]').click();
   await settle();
-  assert.equal(win.copied, 'curl -fsSL https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.2/install.sh | sh -s -- --version 7.0.0-alpha.2');
-  doc.querySelector('[data-copy-target="qs-install-win"]').click();
+  assert.equal(win.copied, NEURON_INSTALL.npm);
+  doc.querySelector('[data-copy-target="qs-install-pip"]').click();
   await settle();
-  assert.equal(win.copied, '& ([scriptblock]::Create((irm https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.2/install.ps1))) -Version 7.0.0-alpha.2');
+  assert.equal(win.copied, NEURON_INSTALL.pip);
 
   // Hash routing to Usage.
   win.location.hash = '#usage';
@@ -821,16 +822,16 @@ for (const scenario of ['live', 'offline']) {
   vm.runInNewContext(script, {document: doc, fetch, Promise, Array, Math, isFinite, Error, TypeError});
   await settle();
   const tabs = doc.querySelectorAll('[role="tab"]');
-  assert.deepEqual(tabs.map(tab => tab.textContent), ['install.sh', 'install.ps1', 'npm', 'pip', 'From source']);
-  assert.equal(doc.getElementById('install-sh').hidden, false, 'The release installer is the default tab');
-  assert.equal(doc.getElementById('install-npm').hidden, true);
+  assert.deepEqual(tabs.map(tab => tab.textContent), ['npm', 'pip', 'install.sh', 'install.ps1', 'From source']);
+  assert.equal(doc.getElementById('install-npm').hidden, false, 'npm is the default tab');
+  assert.equal(doc.getElementById('install-ps1').hidden, true);
   tabs[2].click();
-  assert.equal(doc.getElementById('install-npm').hidden, false);
-  assert.equal(doc.getElementById('install-sh').hidden, true);
+  assert.equal(doc.getElementById('install-sh').hidden, false);
+  assert.equal(doc.getElementById('install-npm').hidden, true);
   assert.equal(tabs[2].getAttribute('aria-selected'), 'true');
   tabs[2].focus();
   doc.querySelector('[role="tablist"]').dispatchEvent(makeEvent('keydown', {key: 'ArrowRight', bubbles: true}));
-  assert.equal(doc.getElementById('install-pip').hidden, false);
+  assert.equal(doc.getElementById('install-ps1').hidden, false);
   assert.equal(doc.activeElement, tabs[3]);
   const rows = doc.getElementById('models-body').querySelectorAll('tr');
   if (scenario === 'live') {
