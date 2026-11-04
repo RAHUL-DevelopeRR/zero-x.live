@@ -8,6 +8,9 @@ import { apiFetch } from './billing-checkout.js';
 export const PROVIDER_NAMES = Object.freeze({
   'zero-x': 'Zero-X', gemini: 'Google Gemini', groq: 'Groq', cloudflare: 'Cloudflare Workers AI',
   nvidia: 'NVIDIA', openrouter: 'OpenRouter', anthropic: 'Anthropic',
+  // Makers, as the family view of /v1/models names them (owned_by).
+  openai: 'OpenAI', alibaba: 'Alibaba', cohere: 'Cohere', stepfun: 'StepFun', zhipu: 'Zhipu', google: 'Google',
+  meta: 'Meta', minimax: 'MiniMax', moonshot: 'Moonshot AI', deepseek: 'DeepSeek', mistral: 'Mistral AI',
 });
 const MAX_MODELS = 60;
 const DEFAULT_POLL_SECONDS = 30;
@@ -205,6 +208,15 @@ function renderModels(doc, body, rows, now) {
   body.replaceChildren(fragment);
 }
 
+/** Shows every row as not checked (no live status could be read), keeping names and ids. */
+export function markUnchecked(body) {
+  for (const item of body.querySelectorAll('.zx-model')) {
+    item.dataset.tone = 'unknown';
+    const status = item.querySelector('.zx-model__status');
+    if (status) status.textContent = 'Not checked recently';
+  }
+}
+
 function liveModels(doc, win) {
   const body = doc.getElementById('models-list');
   const note = doc.getElementById('models-note');
@@ -236,13 +248,21 @@ function liveModels(doc, win) {
   apiFetch('/v1/models', { timeoutMs: 8000 })
     .then(payload => {
       const parsed = modelRows(payload);
-      if (!parsed || !parsed.length) { note.textContent = 'Showing the default catalog; the live list is empty right now.'; return; }
+      if (!parsed || !parsed.length) {
+        markUnchecked(body);
+        note.textContent = 'Showing the default catalog without live status; the live list is empty right now.';
+        return;
+      }
       rows = parsed;
       renderModels(doc, body, rows, now());
       describe();
       schedule(DEFAULT_POLL_SECONDS);
     })
-    .catch(() => { note.textContent = 'Showing the default catalog; the live list could not be loaded.'; });
+    .catch(() => {
+      // Without the gateway nothing here was checked: no row may claim to be available.
+      markUnchecked(body);
+      note.textContent = 'Showing the default catalog without live status; the live list could not be loaded.';
+    });
   doc.addEventListener('visibilitychange', () => { if (!doc.hidden && rows) refresh(); });
 }
 
