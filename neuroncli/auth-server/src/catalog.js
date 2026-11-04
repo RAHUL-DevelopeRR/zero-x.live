@@ -748,7 +748,8 @@ export function listModelsForCaller(env = {}, { plan = 'free', country = null, t
 // ── Model families on /v1/models (contract section 14) ──
 // GET /v1/models lists one entry per family (src/model-families.js): the routes of a model
 // rolled up for the caller. Route ids stay listed under ?routes=1, each with its identity.
-const STATUS_RANK = Object.freeze({ available: 0, degraded: 1, busy: 2, blurred: 3 });
+// Public statuses (health-share.js withHealth); `blurred` is the word clients before section 15 read.
+const STATUS_RANK = Object.freeze({ available: 0, degraded: 1, unknown: 2, busy: 3, unavailable: 4, blurred: 4 });
 const REASON_ORDER = Object.freeze(['upgrade_required', 'region_unavailable', 'policy_restricted', 'not_configured']);
 const AUTO_IDENTITY = Object.freeze({ maker: 'zero-x', maker_name: 'Zero-X', family: AUTO_MODEL_ID, model_name: 'Auto' });
 
@@ -764,11 +765,11 @@ export function withIdentity(model, env) {
 const time = value => (value ? Date.parse(value) || 0 : 0);
 const union = lists => [...new Set(lists.flat())];
 
-// Routes that can take a request now: not busy or blurred (a route without an observation is
-// available). When every route is busy or blurred, the ones with the best status (the window the
-// model takes once they free up).
+// Routes that can take a request now: available or degraded (a route without any status counts
+// as available). Without one, the routes with the best status (unknown, which routing still
+// tries, then busy, then unavailable): the window the model takes once they free up.
 function servingRoutes(listed) {
-  const rank = model => STATUS_RANK[model.status ?? 'available'] ?? STATUS_RANK.available;
+  const rank = model => STATUS_RANK[model.status ?? 'available'] ?? STATUS_RANK.unknown;
   const now = listed.filter(model => rank(model) <= STATUS_RANK.degraded);
   if (now.length) return now;
   const best = Math.min(...listed.map(rank));
@@ -831,10 +832,14 @@ function describeFamily(identity, routes) {
   if (routes.some(model => 'facts' in model)) family.facts = facts ? { ...facts, models_dev_id: null } : null;
   const observed = listed.filter(model => model.status);
   if (observed.length) {
-    const best = [...observed].sort((a, b) => STATUS_RANK[a.status] - STATUS_RANK[b.status]
-      || time(a.available_again_at) - time(b.available_again_at))[0];
-    const checked = observed.map(model => model.checked_at).filter(Boolean).sort((a, b) => time(b) - time(a))[0];
-    Object.assign(family, { status: best.status, available_again_at: best.available_again_at ?? null, checked_at: checked ?? null });
+    // The best route speaks for the family, with its own observation time, latency and last
+    // failure: a fresh failure on another route never dates an older verdict.
+    const rank = model => STATUS_RANK[model.status] ?? STATUS_RANK.unknown;
+    const best = [...observed].sort((a, b) => rank(a) - rank(b)
+      || time(a.available_again_at) - time(b.available_again_at) || time(b.checked_at) - time(a.checked_at))[0];
+    Object.assign(family, { status: best.status, available_again_at: best.available_again_at ?? null,
+      checked_at: best.checked_at ?? null, latency_ms: best.latency_ms ?? null, last_success_at: best.last_success_at ?? null,
+      last_failure_class: best.last_failure_class ?? null });
   }
   return family;
 }

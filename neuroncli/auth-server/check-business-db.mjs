@@ -117,7 +117,7 @@ try {
     '20261028000000_reservation_leases.sql', '20261029000000_session_devices.sql', '20261029000100_push_tokens.sql',
     '20261029000200_provider_keys.sql', '20261029000300_provider_key_budgets.sql', '20261029000400_oiop_offers.sql',
     '20261029000500_credit_programs.sql', '20261029000800_paid_billing_caps.sql', '20261029000900_plan_features_claude.sql',
-    '20261029001000_pool_concurrency.sql', '20261102000000_free_token_window.sql'];
+    '20261029001000_pool_concurrency.sql', '20261102000000_free_token_window.sql', '20261104000000_health_probes.sql'];
   assert.deepEqual(migrations.map(migration => migration.file).filter(file => businessMigrations.includes(file)), businessMigrations);
   assert.equal((await sql('SELECT count(*)::int AS n FROM supabase_migrations.schema_migrations'))[0].n, migrations.length);
   await assert.rejects(rpc(env, 'zerox_does_not_exist', {}), error =>
@@ -1829,7 +1829,7 @@ try {
   // check-catalog-db.mjs).
   const downFiles = (await readdir(join(root, 'migrations/down'))).filter(file => !file.endsWith('.down.sql')).sort();
   assert.deepEqual(downFiles, ['20261028000000_reservation_leases.sql', '20261029001000_pool_concurrency.sql',
-    '20261102000000_free_token_window.sql']);
+    '20261102000000_free_token_window.sql', '20261104000000_health_probes.sql']);
   for (const file of downFiles) {
     const migration = migrations.find(candidate => candidate.file === file);
     assert.ok(migration, `${file} undoes a migration of the same name`);

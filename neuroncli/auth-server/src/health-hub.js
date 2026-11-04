@@ -63,7 +63,7 @@ const percentile = (values, fraction) => {
 
 // Free model lists. A `header` list is read with each key and judges only that key's free pools
 // (a paid key's pool is not checked); a public list (no header) is read once for all of them.
-const LIST_CHECKS = Object.freeze({
+export const LIST_CHECKS = Object.freeze({
   groq: { url: 'https://api.groq.com/openai/v1/models', header: 'bearer',
     ids: body => body?.data?.map(model => model.id) },
   gemini: { url: 'https://generativelanguage.googleapis.com/v1beta/models?pageSize=200',
@@ -76,7 +76,7 @@ const LIST_CHECKS = Object.freeze({
 });
 
 // Free endpoints that tell a live key from a dead one where the model list is public.
-const KEY_CHECKS = Object.freeze({
+export const KEY_CHECKS = Object.freeze({
   openrouter: { url: 'https://openrouter.ai/api/v1/key', header: 'bearer' },
 });
 

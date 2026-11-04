@@ -10,6 +10,7 @@ import { globalRouter, lastResort } from './router.js';
 import { FailureKind, globalHealthTracker } from './provider-health.js';
 import { hubHealthForRouting, hubHealthRows, publishHealth } from './health-hub-client.js';
 import { readShared } from './health-share.js';
+import { probeRoutingRows } from './health-probes.js';
 import { callerCountry, loadCatalog, loadPlanPolicies, planPolicy, poolSecret, resolveModelId } from './catalog.js';
 import { touchVaultKey } from './provider-keys.js';
 import { billableUsage, estimateOutputTokens, estimatePromptTokens, reserveCostMicrousd, utf8Bytes } from './pricing.js';
@@ -277,7 +278,11 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
     if (session.account_backed && !ledger) return fail('service_unavailable');
     const policies = ledger ? await loadPlanPolicies(env) : undefined;
     const policy = planPolicy(env, session.plan, policies);
-    const [, , sharedHealth] = await Promise.all([loadCatalog(env), loadOffers(env), hubHealthForRouting(env)]);
+    // Shared health: the HealthHub snapshot on Workers; on the Node gateway the active checker's
+    // rows (src/health-probes.js), so a delisted model or a full slot is skipped before a request
+    // is spent on it.
+    const [, , hubRows] = await Promise.all([loadCatalog(env), loadOffers(env), hubHealthForRouting(env)]);
+    const sharedHealth = hubRows ?? probeRoutingRows();
     headers['x-neuron-plan'] = policy.id;
     const promptTokens = estimatePromptTokens(body.messages, body.tools);
     const explicitMax = body.max_completion_tokens ?? body.max_tokens;

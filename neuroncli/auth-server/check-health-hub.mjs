@@ -372,8 +372,10 @@ try {
     { id: 'qwen', available: true }, { id: 'llama', available: true }, { id: 'other', available: true }] };
   const keys = { qwen: [GROQ_QWEN], llama: ['cloudflare:@cf/meta/llama-3.3-70b-instruct-fp8-fast:free'], other: ['x:y:free'] };
   await withHealth(env, payload, model => keys[model.id], { readRows: k => hubHealthRows(env, k) });
-  assert.deepEqual(payload.data.map(model => model.status), ['blurred', 'degraded', 'available']);
-  console.log('ok - /v1/models from the hub: blurred, degraded and available as reported');
+  // Public statuses (contract section 15): blurred reads unavailable; a pool the hub has never
+  // seen is unknown, never available.
+  assert.deepEqual(payload.data.map(model => model.status), ['unavailable', 'degraded', 'unknown']);
+  console.log('ok - /v1/models from the hub: unavailable, degraded as reported, unknown when unobserved');
 
   console.log('PASS: HealthHub Durable Object: global state, 30 s alarm checks, capped test requests, restart, client and /v1/models merge');
 } finally {

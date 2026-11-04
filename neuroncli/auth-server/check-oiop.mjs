@@ -736,8 +736,9 @@ try {
     assert.ok(events.some(event => event.comment), 'keep-alive comments while nothing changes');
     const [firstUpdate, secondUpdate] = updates.map(event => JSON.parse(event.data));
     // The stream carries family rows (contract section 14); Groq is the only route of this one here.
-    assert.equal(firstUpdate.data.find(model => model.id === 'openai/gpt-oss-120b').status, 'available');
-    assert.equal(secondUpdate.data.find(model => model.id === 'openai/gpt-oss-120b').status, 'blurred');
+    // Nobody observed Groq before the failure: unknown (never available), then unavailable.
+    assert.equal(firstUpdate.data.find(model => model.id === 'openai/gpt-oss-120b').status, 'unknown');
+    assert.equal(secondUpdate.data.find(model => model.id === 'openai/gpt-oss-120b').status, 'unavailable');
     assert.notEqual(updates[0].id, updates[1].id, 'each event carries the status ETag as its id');
     const resumed = await readEvents(await app.request('https://zero-x.live/v1/models/stream',
       { headers: { 'Last-Event-ID': updates[0].id } }, env));

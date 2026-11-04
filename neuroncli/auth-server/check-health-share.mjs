@@ -104,19 +104,22 @@ console.log('ok - slow_until: kept while it lasts, published to KV and cleared b
   const keys = { a: ['p:a:free'], b: ['p:b:free'], c: ['p:c:free', 'p:c2:free'], d: ['p:d:free'] };
   await withHealth(env, payload, model => keys[model.id] || [], { autoId: 'auto', isAutoCandidate: () => true, now });
   const by = Object.fromEntries(payload.data.map(model => [model.id, model]));
-  assert.equal(by.a.status, 'blurred');
+  // Public statuses (contract section 15): the rows' blurred is unavailable; a pool nobody
+  // observed within HEALTH_STALE_SECONDS is unknown, never available.
+  assert.equal(by.a.status, 'unavailable');
   assert.equal(by.a.available_again_at, new Date(now + 600_000).toISOString());
-  assert.equal(by.b.status, 'available', 'an expired shared cooldown counts as available');
-  assert.equal(by.c.status, 'available', 'the best pool wins: c2 has no failures');
-  assert.equal(by.d.status, 'available');
-  assert.equal(by.auto.status, 'available');
+  assert.equal(by.b.status, 'available', 'an expired shared cooldown, observed 15 minutes ago, counts as available');
+  assert.equal(by.c.status, 'unknown', 'the best pool wins: routing skips busy c and tries c2, which nobody observed');
+  assert.equal(by.d.status, 'unknown', 'no observation: unknown');
+  assert.equal(by.auto.status, 'available', 'auto: its best candidate');
 
   // Local isolate knowledge that is fresher than KV wins.
   const tracker = new ProviderHealthTracker();
   tracker.recordFailure('p:d:free', { kind: FailureKind.MODEL_UNAVAILABLE });
   const second = { object: 'list', data: [{ id: 'd', available: true }] };
   await withHealth(env, second, () => ['p:d:free'], { tracker });
-  assert.equal(second.data[0].status, 'blurred');
+  assert.equal(second.data[0].status, 'unavailable');
+  assert.equal(second.data[0].last_failure_class, 'model_unavailable');
   console.log('ok - merge: blurred with available_again_at, expired rows ignored, best pool wins, local state counts');
 }
 
@@ -139,9 +142,9 @@ console.log('ok - slow_until: kept while it lasts, published to KV and cleared b
   // ?routes=1 (contract section 14): one row per route, as the router sees them.
   const models = await v1ModelsPayload(c, {}, { routes: true });
   const byId = Object.fromEntries(models.data.map(model => [model.id, model]));
-  assert.equal(byId['gemini/gemini-3.6-flash'].status, 'blurred');
+  assert.equal(byId['gemini/gemini-3.6-flash'].status, 'unavailable');
   assert.ok(byId['gemini/gemini-3.6-flash'].available_again_at);
-  assert.equal(byId['groq/openai/gpt-oss-120b'].status, 'available');
+  assert.equal(byId['groq/openai/gpt-oss-120b'].status, 'unknown', 'nobody observed it: unknown, never available');
   assert.equal(byId['gemini/gemini-3.6-flash'].capabilities.vision, true);
   assert.equal(byId['groq/openai/gpt-oss-120b'].capabilities.vision, false);
   assert.equal(byId['groq/openai/gpt-oss-120b'].capabilities.reasoning, true);
@@ -155,14 +158,14 @@ console.log('ok - slow_until: kept while it lasts, published to KV and cleared b
   const smallest = Math.min(...models.data.filter(model => model.id !== 'auto' && model.available
     && catalogEntry(model.id)?.auto_rank != null && model.context_window >= AGENT_MIN_CONTEXT).map(model => model.context_window));
   assert.equal(byId.auto.context_window, smallest, 'auto advertises the smallest candidate window that holds a coding session');
-  assert.equal(byId.auto.status, 'available');
+  assert.equal(byId.auto.status, 'unknown');
   assert.equal(byId['groq/openai/gpt-oss-120b'].family, 'openai/gpt-oss-120b');
   assert.equal(byId['groq/openai/gpt-oss-120b'].maker, 'openai');
 
   // The default list: one entry per family, with the maker's clean name and the status rolled up.
   const families = Object.fromEntries((await v1ModelsPayload(c, {})).data.map(model => [model.id, model]));
   assert.ok(!families['groq/openai/gpt-oss-120b'] && !families['cohere/north-mini-code:free'], 'route ids are not listed');
-  assert.equal(families['google/gemini-3.6-flash'].status, 'blurred');
+  assert.equal(families['google/gemini-3.6-flash'].status, 'unavailable');
   assert.ok(families['google/gemini-3.6-flash'].available_again_at);
   assert.deepEqual([families['openai/gpt-oss-120b'].display_name, families['openai/gpt-oss-120b'].maker,
     families['openai/gpt-oss-120b'].context_window, families['openai/gpt-oss-120b'].native_context_window], ['GPT-OSS 120B', 'openai', 8000, 131072]);
@@ -196,11 +199,12 @@ console.log('ok - slow_until: kept while it lasts, published to KV and cleared b
   assert.match(first.etag, /^W\/"[0-9a-f]{24}"$/);
   assert.equal(first.body.poll_interval_seconds, 30);
   const row = first.body.data.find(model => model.id === 'google/gemini-3.6-flash');
+  assert.equal(first.body.stale_after_seconds, 1200);
   assert.deepEqual(Object.keys(row).sort(), ['available', 'available_again_at', 'checked_at', 'context_window', 'display_name', 'family',
-    'id', 'maker', 'native_context_window', 'status', 'unavailable_reason']);
-  assert.deepEqual([row.status, row.family, row.maker, row.display_name], ['blurred', 'google/gemini-3.6-flash', 'google', 'Gemini 3.6 Flash']);
+    'id', 'last_failure_class', 'last_success_at', 'latency_ms', 'maker', 'native_context_window', 'status', 'unavailable_reason']);
+  assert.deepEqual([row.status, row.family, row.maker, row.display_name], ['unavailable', 'google/gemini-3.6-flash', 'google', 'Gemini 3.6 Flash']);
   const routeRow = (await v1ModelStatusPayload(c, {}, { routes: true })).body.data.find(model => model.id === 'gemini/gemini-3.6-flash');
-  assert.deepEqual([routeRow.status, routeRow.family], ['blurred', 'google/gemini-3.6-flash']);
+  assert.deepEqual([routeRow.status, routeRow.family], ['unavailable', 'google/gemini-3.6-flash']);
   const again = await v1ModelStatusPayload(c, {});
   assert.equal(again.etag, first.etag, 'unchanged state, same ETag');
   kv.store.delete(`health:v1:${poolKey(entry, freePool)}`);
@@ -229,24 +233,24 @@ console.log('ok - slow_until: kept while it lasts, published to KV and cleared b
   assert.equal(gptOss.status, 'busy', 'a free caller cannot use the paid pool, so the spent free budget decides');
   assert.equal(gptOss.available_again_at, new Date(at + 40_000).toISOString());
   assert.equal(gptOss.checked_at, new Date(at).toISOString());
-  assert.equal(byId['groq/qwen/qwen3.8-27b'].status, 'blurred');
+  assert.equal(byId['groq/qwen/qwen3.8-27b'].status, 'unavailable');
   assert.equal(byId['groq/qwen/qwen3.8-27b'].available_again_at, new Date(at + 3_600_000).toISOString());
-  assert.equal(byId['groq/openai/gpt-oss-20b'].status, 'available', 'a budget that has reset no longer counts');
+  assert.equal(byId['groq/openai/gpt-oss-20b'].status, 'unknown', 'a budget that has reset no longer counts');
   const status = await v1ModelStatusPayload(c, {});
   assert.deepEqual(status.body.data.find(model => model.id === 'openai/gpt-oss-120b'), { id: 'openai/gpt-oss-120b',
     family: 'openai/gpt-oss-120b', maker: 'openai', display_name: 'GPT-OSS 120B', context_window: 8000, native_context_window: 131072,
     available: true, unavailable_reason: null, status: 'busy', available_again_at: new Date(at + 40_000).toISOString(),
-    checked_at: new Date(at).toISOString() });
+    checked_at: new Date(at).toISOString(), latency_ms: null, last_success_at: null, last_failure_class: null });
 
   // A caller that can also use the paid pool still has a way through it.
   const both = { object: 'list', data: [{ id: 'gpt-oss', available: true }] };
   await withHealth(env, both, () => [pool('groq/openai/gpt-oss-120b'), 'groq:openai/gpt-oss-120b:paid'], { budgetState: poolBudgetState });
-  assert.equal(both.data[0].status, 'available');
+  assert.equal(both.data[0].status, 'unknown', 'not busy: routing tries the paid pool, which nobody observed');
 
   notePoolReserved(pool('groq/openai/gpt-oss-120b'));
   resetSharedHealthCache();
   const cleared = await v1ModelStatusPayload(c, {});
-  assert.equal(cleared.body.data.find(model => model.id === 'openai/gpt-oss-120b').status, 'available');
+  assert.equal(cleared.body.data.find(model => model.id === 'openai/gpt-oss-120b').status, 'unknown');
   assert.notEqual(cleared.etag, status.etag, 'the ETag follows the budget state');
 
   // A family rolls up its routes: one busy route does not grey out a model another route serves,
@@ -258,13 +262,13 @@ console.log('ok - slow_until: kept while it lasts, published to KV and cleared b
   notePoolExhausted(pool('groq/openai/gpt-oss-20b'), { budget: 'rpm|tpm', retryAfterSeconds: 30, now: Date.now() });
   let family = (await v1ModelsPayload(rc, {})).data.filter(model => model.id === 'openai/gpt-oss-20b');
   assert.equal(family.length, 1, 'one entry for the Groq and NVIDIA routes');
-  assert.equal(family[0].status, 'available', 'the NVIDIA route still serves it');
+  assert.equal(family[0].status, 'unknown', 'not busy: the NVIDIA route, which nobody observed, still takes it');
   assert.equal(family[0].context_window, 131072, "NVIDIA's window while it serves");
   // The window follows the routes that can serve now: NVIDIA busy, Groq free takes about 8K.
   resetPoolBudgets();
   notePoolExhausted(nvidia20, { budget: 'rpm|tpm', retryAfterSeconds: 90, now: Date.now() });
   family = (await v1ModelStatusPayload(rc, {})).body.data.find(model => model.id === 'openai/gpt-oss-20b');
-  assert.deepEqual([family.status, family.context_window, family.native_context_window], ['available', 8000, 131072],
+  assert.deepEqual([family.status, family.context_window, family.native_context_window], ['unknown', 8000, 131072],
     'a busy route does not advertise a window the available one cannot serve');
   notePoolExhausted(pool('groq/openai/gpt-oss-20b'), { budget: 'rpm|tpm', retryAfterSeconds: 30, now: Date.now() });
   family = (await v1ModelStatusPayload(rc, {})).body.data.find(model => model.id === 'openai/gpt-oss-20b');

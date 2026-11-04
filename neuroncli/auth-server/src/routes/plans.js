@@ -8,6 +8,7 @@ import { isOwnedSession, listModelsForSession } from '../providers.js';
 import { sessionTiers } from '../capacity.js';
 import { withHealth } from '../health-share.js';
 import { hubHealthRows } from '../health-hub-client.js';
+import { healthStaleMs, probeHealthRows } from '../health-probes.js';
 import { globalHealthTracker } from '../provider-health.js';
 import { poolBudgetState } from '../pool-budget.js';
 import { loadOffers } from '../oiop/offers.js';
@@ -73,8 +74,10 @@ export async function v1ModelsPayload(c, session = {}, { routes = wantsRoutes(c)
   for (const model of payload.data) model.facts = model.id === AUTO_MODEL_ID ? null : facts[model.id] ?? null;
   // Runtime health: the pools behind each model (one per provider key) in the tiers listed for
   // it that the caller can use (all listed tiers when it can use none), read from the HealthHub
-  // Durable Object (KV on the Node server or when the hub does not answer), plus pool budgets
-  // this isolate saw spent. A model stays bright while any of its keys can serve.
+  // Durable Object (KV on the Node server or when the hub does not answer), the active checker's
+  // rows on the Node gateway (src/health-probes.js), this instance's own attempts and the pool
+  // budgets it saw spent. A model stays bright while any of its keys can serve; a model nobody
+  // observed within HEALTH_STALE_SECONDS is unknown.
   const poolKeysFor = model => {
     const entry = catalogEntry(model.id, env);
     if (!entry) return [];
@@ -86,6 +89,8 @@ export async function v1ModelsPayload(c, session = {}, { routes = wantsRoutes(c)
     tracker: globalHealthTracker, autoId: AUTO_MODEL_ID,
     isAutoCandidate: model => catalogEntry(model.id, env)?.auto_rank != null,
     readRows: keys => hubHealthRows(env, keys),
+    probeRows: probeHealthRows(),
+    staleMs: healthStaleMs(env),
     budgetState: poolBudgetState,
   });
   // Health is read per route (pool keys belong to routes), then rolled up per family.
@@ -99,21 +104,27 @@ export async function v1ModelsPayload(c, session = {}, { routes = wantsRoutes(c)
 // change that keeps availability (a new price or display name) still changes the ETag and
 // /v1/models/stream emits catalog.updated: clients then reload /v1/models.
 // Each row also names the model (family, maker, display_name) and its usable context window, so a
-// page can draw the live list from this endpoint alone; checked_at is the row's newest observation.
+// page can draw the live list from this endpoint alone. checked_at is when the verdict in status
+// was last confirmed (null: never), with the latency of the last test request, the last success
+// and the class of the last failure (docs/PLATFORM_CONTRACT.md section 15). stale_after_seconds
+// says how long a verdict stands without a new observation before the model reads unknown.
 export async function v1ModelStatusPayload(c, session = {}, options = {}) {
   const models = await v1ModelsPayload(c, session, options);
   const data = models.data.map(model => ({
     id: model.id, family: model.family ?? null, maker: model.maker ?? null, display_name: model.display_name ?? model.id,
     context_window: model.context_window ?? null, native_context_window: model.native_context_window ?? null,
     available: model.available !== false, unavailable_reason: model.unavailable_reason ?? null,
-    status: model.status ?? 'available', available_again_at: model.available_again_at ?? null,
-    checked_at: model.checked_at ?? null,
+    status: model.status ?? 'unknown', available_again_at: model.available_again_at ?? null,
+    checked_at: model.checked_at ?? null, latency_ms: model.latency_ms ?? null,
+    last_success_at: model.last_success_at ?? null, last_failure_class: model.last_failure_class ?? null,
   }));
   const catalogVersion = catalogStatus(c.env || {}).version;
-  // checked_at moves with every observation, so it stays out of the ETag (as the top-level one did).
-  const stable = data.map(({ checked_at: _checked, ...row }) => row);
+  // checked_at, latency_ms and last_success_at move with every observation, so they stay out of
+  // the ETag (as the top-level checked_at did): a 304 means the verdicts did not change.
+  const stable = data.map(({ checked_at: _checked, latency_ms: _latency, last_success_at: _success, ...row }) => row);
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify({ v: catalogVersion, data: stable })));
   const etag = `W/"${[...new Uint8Array(digest).slice(0, 12)].map(byte => byte.toString(16).padStart(2, '0')).join('')}"`;
   const checked = models.data.map(model => model.checked_at).filter(Boolean).sort().at(-1) ?? null;
-  return { etag, body: { object: 'list', checked_at: checked, poll_interval_seconds: 30, catalog_version: catalogVersion, data } };
+  return { etag, body: { object: 'list', checked_at: checked, poll_interval_seconds: 30,
+    stale_after_seconds: Math.round(healthStaleMs(c.env || {}) / 1000), catalog_version: catalogVersion, data } };
 }
