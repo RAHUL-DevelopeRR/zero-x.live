@@ -9,7 +9,7 @@ import { conversationKey, createChatHandler, MAX_OUTPUT_TOKENS, requestNeeds } f
 import { RoutingEngine, fitMaxTokens } from './src/router.js';
 import { FailureKind, HealthState, ProviderHealthTracker } from './src/provider-health.js';
 import {
-  BUILTIN_PLANS, CATALOG, EEA_COUNTRIES, MODEL_ALIASES, POOL_LIMITS, callerCountry, catalogEntry, catalogWarnings,
+  AGENT_MIN_CONTEXT, BUILTIN_PLANS, CATALOG, EEA_COUNTRIES, MODEL_ALIASES, POOL_LIMITS, callerCountry, catalogEntry, catalogWarnings,
   expandCountries, listModelsForCaller, loadPlanPolicies, planPolicy, poolConfigured, poolKey, resolveModelId,
 } from './src/catalog.js';
 import {
@@ -310,14 +310,21 @@ try {
     assert.deepEqual(byId.auto.capabilities, { tools: true, streaming: true, vision: false, reasoning: true });
     const flash = byId['gemini/gemini-2.5-flash'];
     assert.deepEqual(Object.keys(flash).sort(), ['available', 'capabilities', 'context_length', 'context_window', 'created',
-      'display_name', 'id', 'max_output_tokens', 'models_dev_id', 'object', 'offers', 'owned_by', 'pricing', 'provider',
-      'reasoning_efforts', 'tiers', 'unavailable_reason']);
+      'display_name', 'id', 'max_output_tokens', 'models_dev_id', 'native_context_window', 'object', 'offers', 'owned_by',
+      'pricing', 'provider', 'reasoning_efforts', 'tiers', 'unavailable_reason']);
     assert.deepEqual(flash.capabilities, { tools: true, streaming: true, vision: true, reasoning: true });
     assert.equal(flash.context_length, flash.context_window);
     assert.equal(flash.available, true);
     assert.deepEqual(flash.tiers, ['free', 'paid']);
     assert.deepEqual(flash.pricing, { input_per_mtok_usd: 0.375, output_per_mtok_usd: 3.125 });
-    assert.equal(flash.context_window, 1048576);
+    // The Free plan reaches only the free pool, whose 120K tokens per minute cap every request
+    // (router.js fitMaxTokens); the model's own window is still reported.
+    assert.deepEqual([flash.context_window, flash.native_context_window, flash.max_output_tokens], [120000, 1048576, 65536]);
+    // Groq's free org takes 8K tokens per minute, prompt plus max_tokens: that is the whole window
+    // a Free caller gets, however large the model's own.
+    const groq = byId['groq/openai/gpt-oss-120b'];
+    assert.deepEqual([groq.context_window, groq.context_length, groq.native_context_window, groq.max_output_tokens],
+      [8000, 8000, 131072, 8000]);
     assert.equal(byId['gemini/gemini-2.5-pro'].available, false);
     assert.equal(byId['gemini/gemini-2.5-pro'].unavailable_reason, 'upgrade_required');
     assert.equal(byId['groq/qwen/qwen3.8-27b'].pricing, null);
@@ -334,6 +341,9 @@ try {
     assert.equal(listModelsForCaller(noPaid, { country: 'FR' }).data[0].unavailable_reason, 'region_unavailable');
     const proDe = Object.fromEntries(listModelsForCaller(KEYS, { plan: 'pro', country: 'DE' }).data.map(model => [model.id, model]));
     assert.equal(proDe['gemini/gemini-2.5-flash'].available, true);
+    // A plan with the paid pool (no per-minute token budget) gets the model's whole window.
+    assert.equal(proDe['gemini/gemini-2.5-flash'].context_window, 1048576);
+    assert.equal(proDe['groq/openai/gpt-oss-120b'].context_window, 131072);
     assert.equal(proDe['gemini/gemini-2.5-pro'].available, true);
     assert.equal(proDe['gemini/gemini-3.5-flash'].unavailable_reason, 'region_unavailable');
     assert.equal(listModelsForCaller({}, {}).data[0].unavailable_reason, 'not_configured');
@@ -443,14 +453,17 @@ try {
     assert.deepEqual(ids(router.route({ ...base, requestedModel: 'llama-3.3-70b' })), [`${LLAMA}#free`], 'explicit alias');
     assert.deepEqual(ids(router.route({ ...base, requestedModel: LLAMA })), [`${LLAMA}#free`], 'explicit id');
 
-    // auto advertises the smallest window among its candidates: 131K (Groq, NVIDIA), not llama's 24K.
+    // auto advertises the smallest window among its candidates that can hold a coding session:
+    // 120K (Gemini's free per-minute budget), not llama's 24K nor Groq's free 8K, which serve only
+    // the requests that fit them.
     const list = listModelsForCaller(env, { country: 'US' }).data;
     const auto = list.find(model => model.id === 'auto');
     assert.ok(list.some(model => model.id === LLAMA && model.available), 'llama is still listed');
     const windows = list.filter(model => model.available && catalogEntry(model.id)?.auto_rank != null).map(model => model.context_window);
-    assert.equal(auto.context_window, Math.min(...windows));
-    assert.equal(auto.context_window, 131072);
-    assert.equal(auto.context_length, 131072);
+    assert.equal(Math.min(...windows), 8000, 'Groq free is an auto candidate with an 8K window');
+    assert.equal(auto.context_window, Math.min(...windows.filter(window => window >= AGENT_MIN_CONTEXT)));
+    assert.equal(auto.context_window, 120000);
+    assert.equal(auto.context_length, 120000);
   });
 
   // Owner lineup (2026-10-29): Gemini and Workers AI are switched off by configuration only

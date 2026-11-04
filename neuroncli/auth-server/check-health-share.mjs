@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { publicStatus, resetSharedHealthCache, shareHealth, withHealth } from './src/health-share.js';
 import { HealthState, ProviderHealthTracker, FailureKind } from './src/provider-health.js';
 import { v1ModelsPayload, v1ModelStatusPayload } from './src/routes/plans.js';
-import { catalogEntry, poolKey } from './src/catalog.js';
+import { AGENT_MIN_CONTEXT, catalogEntry, poolKey } from './src/catalog.js';
 import { notePoolExhausted, notePoolReserved, poolBudgetState, resetPoolBudgets } from './src/pool-budget.js';
 
 function fakeKv() {
@@ -144,13 +144,16 @@ console.log('ok - slow_until: kept while it lasts, published to KV and cleared b
   assert.equal(byId['gemini/gemini-3.6-flash'].capabilities.vision, true);
   assert.equal(byId['groq/openai/gpt-oss-120b'].capabilities.vision, false);
   assert.equal(byId['groq/openai/gpt-oss-120b'].capabilities.reasoning, true);
-  assert.equal(byId['groq/openai/gpt-oss-120b'].context_length, 131072);
+  // An anonymous caller is on the Free plan: Groq's free pool takes 8K tokens per minute, prompt
+  // plus max_tokens, so that is its usable window (catalog.js usableContextWindow).
+  assert.equal(byId['groq/openai/gpt-oss-120b'].context_length, 8000);
+  assert.equal(byId['groq/openai/gpt-oss-120b'].native_context_window, 131072);
   assert.ok(byId['nvidia/stepfun-ai/step-5-preview'], 'NVIDIA models are offered with NVIDIA_HOSTED=true');
   assert.ok(!byId['nvidia/nvidia/nemotron-3-super-120b-a12b'], 'the deprecated Nemotron 3 Super is gone');
   assert.ok(byId['minimax/minimax-m3.1-flash:free'] && byId['cohere/north-mini-code:free'], 'hosted OpenRouter models');
   const smallest = Math.min(...models.data.filter(model => model.id !== 'auto' && model.available
-    && catalogEntry(model.id)?.auto_rank != null).map(model => model.context_window));
-  assert.equal(byId.auto.context_window, smallest, 'auto advertises the smallest candidate window');
+    && catalogEntry(model.id)?.auto_rank != null && model.context_window >= AGENT_MIN_CONTEXT).map(model => model.context_window));
+  assert.equal(byId.auto.context_window, smallest, 'auto advertises the smallest candidate window that holds a coding session');
   assert.equal(byId.auto.status, 'available');
 
   const first = await v1ModelStatusPayload(c, {});
