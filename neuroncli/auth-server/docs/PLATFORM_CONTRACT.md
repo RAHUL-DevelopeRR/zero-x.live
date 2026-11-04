@@ -1001,7 +1001,11 @@ Connectors are MCP servers. There are no organisations yet, so gateway policy is
   missing or malformed `catalog_version` is the gateway's (`2026-11-03`). A policy only restricts
   what it says.
 - `hosted` is reported only while the gateway serves hosted connectors (`HOSTED_CONNECTORS=true`,
-  off by default); otherwise it is `[]` whatever the plan allows.
+  off by default); otherwise it is `[]` whatever the plan allows. Even then it lists only the
+  plan's ids the gateway can serve now: a catalog entry whose vendor OAuth app is configured
+  (client id, every URL, scopes), with the database and `CONNECTOR_TOKENS_KEK` in place. An id the
+  plan grants but the operator has not configured is left out, so a client never sets up a
+  connector that could only answer 503.
 - Seed (migration `20261104000000_connector_policy.sql`, kept if an operator already set a
   policy): every plan `allowed: ["catalog:*"]`, `denied: []`, `required: []`,
   `allow_unvetted: true`, `catalog_version: "2026-11-03"`; Free `hosted: []` (local connectors
@@ -1067,13 +1071,17 @@ Code: `src/mcp-proxy.js`, `src/routes/connectors.js`, `src/connector-accounts.js
   session). The answer is `application/json` or `text/event-stream`, as the vendor sends it.
 - `401` (`{"error":"invalid_session"}`, `WWW-Authenticate: Bearer`) = sign in again. `403` with
   `{"error":"needs_connect","connect_url":"https://zero-x.live/dashboard#connectors"}` = the user
-  has not linked that connector, or the vendor no longer accepts the link (the gateway then
-  revokes it). Other answers, all `{"error": <code>, "message": ...}`: `403 not_in_plan` (the
-  plan does not include the connector; `upgrade_url`), `403 account_suspended`, `404 not_found`
-  (unknown connector), `404 session_not_found` (initialize again), `413 request_too_large`
-  (over 1 MiB), `429 rate_limited` (`Retry-After`; 120 requests per user per minute),
-  `502 upstream_error`/`upstream_unreachable`, `503 connector_not_configured` or
-  `connectors_unavailable`.
+  has not linked that connector, or the vendor no longer accepts the link: it refused the refresh
+  grant (`invalid_grant` and the like), the token expired without a refresh token, or a freshly
+  refreshed token was refused too (the gateway then deletes the link). A token endpoint that
+  cannot be reached or answers 5xx (or an operator error such as `invalid_client`) is
+  `502 upstream_unreachable` and keeps the link. Other answers, all
+  `{"error": <code>, "message": ...}`: `403 not_in_plan` (the plan does not include the
+  connector; `upgrade_url`), `403 account_suspended`, `404 not_found` (unknown connector),
+  `404 session_not_found` (initialize again), `413 request_too_large` (over 1 MiB),
+  `429 rate_limited` (`Retry-After`; 120 requests per user per minute, counted in the database
+  so the Worker, the EC2 server and every isolate share one budget), `502 upstream_error` /
+  `upstream_unreachable`, `503 connector_not_configured` or `connectors_unavailable`.
 - Sessions: the client sees `Mcp-Session-Id: zxs_<43 characters>`, which the gateway maps to the
   vendor's session id, the user and the connector (24 hours). Another user's id answers 404.
 - A call to a destructive-tier tool must carry `x-neuron-confirmed: 1`, which the CLI sends only
@@ -1081,11 +1089,18 @@ Code: `src/mcp-proxy.js`, `src/routes/connectors.js`, `src/connector-accounts.js
   200 with JSON-RPC error `-32010` (`data.reason: "confirmation_required"`, `data.tool`,
   `data.tier`). The header is not passed to the vendor. Tools the catalog marks `blocked` answer
   `-32011` and are left out of `tools/list`. An answer over the size cap (4 MiB) ends with
-  `-32012` for the pending request.
-- `tools/list` answers carry the gateway catalog's tier, replacing what the vendor says about its
-  own tools: `annotations.readOnlyHint` (read), `annotations.destructiveHint` (destructive),
-  `annotations.openWorldHint: true`, and `_meta["live.zero-x/tier"]` = `read`, `write`,
-  `external` or `destructive`.
+  `-32012` for the pending request. The gateway forwards the JSON-RPC message it checked
+  (re-serialized), never the raw request body.
+- A tool's tier is the gateway catalog's (an explicit per-vendor map from the vendor's published
+  tool list where there is one, else name rules on the name split into words without the vendor
+  prefix, so `deleteConfluencePage` and `notion-delete-page` are destructive), made stricter, never
+  looser, by the vendor's own annotations: an explicit `destructiveHint: true` makes it
+  destructive, an explicit `readOnlyHint: false` takes it out of `read`. `tools/list` answers
+  carry that tier: `annotations.readOnlyHint` (read), `annotations.destructiveHint`
+  (destructive), `annotations.openWorldHint: true`, and `_meta["live.zero-x/tier"]` = `read`,
+  `write`, `external` or `destructive`. Tiers the vendor made stricter are remembered per user
+  and connector (seven days) and applied to `tools/call`, so a call is checked against the tier
+  the client was shown; a tool whose stricter tier cannot be stored is left out of the list.
 - Every message the proxy handles writes one audit row with metadata only (method, tool, tier,
   decision, status, duration, byte counts, sha256 of the tool arguments), kept 30 days; no
   argument or result text is stored. Vendor tokens never reach a client or a log.
@@ -1100,10 +1115,16 @@ Code: `src/mcp-proxy.js`, `src/routes/connectors.js`, `src/connector-accounts.js
   the vendor's OAuth app). No token is ever returned.
 - `POST /api/connectors/<id>/connect` → `{authorize_url, expires_in: 600}` and an HttpOnly
   `zx_connect` cookie; the browser goes to `authorize_url` (OAuth 2.0 code flow with PKCE S256
-  and a single-use `state`). `403 not_in_plan`, `503 connector_not_configured`.
+  and a single-use `state`). For a vendor whose MCP server is an MCP 2025-06-18 authorization
+  server (Notion, Atlassian) the authorize URL, the code exchange and every refresh grant carry
+  `resource=<the MCP server URL>` (RFC 8707). Linking again replaces the previous link.
+  `403 not_in_plan`, `503 connector_not_configured`.
 - `GET /api/connectors/callback` (the vendor's redirect) → `303` to the dashboard with
   `?connector=<id>&connect=ok#connectors`, or `connect=error&reason=` `invalid_state`, `expired`,
   `browser_mismatch` (no matching cookie: the flow was started in another browser), `denied`,
   `vendor_error`, `invalid_code`, `not_in_plan`, `token_exchange` or `unavailable`.
 - `DELETE /api/connectors/<id>` → `{status: "disconnected", connector}`; `404` when not connected.
-  The CLI sees `needs_connect` on its next call.
+  Where the operator set `CONNECTOR_<ID>_REVOKE_URL` the stored refresh token
+  (`token_type_hint=refresh_token`), then the access token, are revoked at the vendor (RFC 7009,
+  best effort); the link's row and its sealed tokens are then deleted, not kept. The CLI sees
+  `needs_connect` on its next call.

@@ -7,7 +7,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import app from './src/index.js';
 import { closeAllPglite, getPgliteHandle } from './src/db/pglite.js';
 import { clearIdentityCaches, devToken } from './src/auth-context.js';
-import { connectorConfig, hostedConnector, toolTier } from './src/connector-catalog.js';
+import { connectorConfig, effectiveTier, hostedConnector, normalizeToolName, toolTier } from './src/connector-catalog.js';
 import { openConnectorTokens, sealConnectorTokens } from './src/connector-vault.js';
 import { resetConnectorPolicyCache } from './src/connector-accounts.js';
 import {
@@ -25,6 +25,7 @@ const sha256 = text => createHash('sha256').update(text).digest('hex');
 // ── Mock OAuth provider and vendor MCP server ──
 const OAUTH = 'https://oauth.mock.test';
 const VENDOR = 'https://mcp.mock.test/mcp';
+const NOTION_VENDOR = 'https://mcp.mock.test/notion';
 const SENTINEL = 'SENTINEL-argument-text-7f3a';
 const vendor = {
   challenges: new Map(), // code -> challenge
@@ -35,6 +36,8 @@ const vendor = {
   calls: [],
   sessions: new Set(),
   tokenRequests: [],
+  revokeRequests: [],
+  tokenDown: false,
 };
 function issue() {
   vendor.issued += 1;
@@ -51,13 +54,16 @@ const TOOLS = [
   { name: 'delete_file', description: 'Delete a file' },
   { name: 'merge_pull_request', description: 'Merge' },
   { name: 'get_big', description: 'A large answer' },
+  // The catalog's rules call this `write`; the vendor says it is destructive, which must win.
+  { name: 'replace_content', description: 'Replace a page', annotations: { destructiveHint: true } },
 ];
 async function vendorMcp(request) {
   const auth = request.headers.get('Authorization') || '';
   const token = auth.replace(/^Bearer /, '');
   const session = request.headers.get('Mcp-Session-Id');
-  const body = request.method === 'POST' ? await request.json() : null;
-  vendor.calls.push({ method: request.method, token, session, rpc: body?.method, name: body?.params?.name,
+  const raw = request.method === 'POST' ? await request.text() : '';
+  const body = raw ? JSON.parse(raw) : null;
+  vendor.calls.push({ method: request.method, url: request.url, raw, token, session, rpc: body?.method, name: body?.params?.name,
     protocol: request.headers.get('MCP-Protocol-Version'), confirmed: request.headers.get('x-neuron-confirmed'),
     cookie: request.headers.get('Cookie') });
   if (!vendor.valid.has(token)) return new Response('unauthorized', { status: 401, headers: { 'WWW-Authenticate': 'Bearer resource_metadata="https://mcp.mock.test/.well-known"' } });
@@ -90,6 +96,7 @@ async function vendorMcp(request) {
 async function oauthToken(request) {
   const form = new URLSearchParams(await request.text());
   vendor.tokenRequests.push(Object.fromEntries(form));
+  if (vendor.tokenDown) return new Response('maintenance', { status: 503 });
   if (form.get('client_id') !== 'zx-test-client' || form.get('client_secret') !== 'zx-test-secret') return json({ error: 'invalid_client' }, 401);
   if (form.get('grant_type') === 'authorization_code') {
     const challenge = vendor.challenges.get(form.get('code'));
@@ -109,7 +116,11 @@ const realFetch = globalThis.fetch;
 globalThis.fetch = async (input, init) => {
   const request = input instanceof Request ? input : new Request(input, init);
   if (request.url === `${OAUTH}/token` && request.method === 'POST') return oauthToken(request);
-  if (request.url === VENDOR) return vendorMcp(request);
+  if (request.url === `${OAUTH}/revoke` && request.method === 'POST') {
+    vendor.revokeRequests.push(Object.fromEntries(new URLSearchParams(await request.text())));
+    return new Response(null, { status: 200 });
+  }
+  if (request.url === VENDOR || request.url === NOTION_VENDOR) return vendorMcp(request);
   if (request.url.startsWith('https://')) throw new Error(`Unexpected network call in a check: ${request.url}`);
   return realFetch(input, init);
 };
@@ -130,6 +141,10 @@ const onEnv = {
   CONNECTOR_GITHUB_CLIENT_ID: 'zx-test-client', CONNECTOR_GITHUB_CLIENT_SECRET: 'zx-test-secret',
   CONNECTOR_GITHUB_AUTHORIZE_URL: `${OAUTH}/authorize`, CONNECTOR_GITHUB_TOKEN_URL: `${OAUTH}/token`,
   CONNECTOR_GITHUB_MCP_URL: VENDOR, CONNECTORS_CALLBACK_URL: `${base}/api/connectors/callback`, CONNECTORS_RETURN_URL: '/dashboard',
+  // Notion: an MCP 2025-06-18 authorization server (resource: true).
+  CONNECTOR_NOTION_CLIENT_ID: 'zx-test-client', CONNECTOR_NOTION_CLIENT_SECRET: 'zx-test-secret',
+  CONNECTOR_NOTION_AUTHORIZE_URL: `${OAUTH}/authorize`, CONNECTOR_NOTION_TOKEN_URL: `${OAUTH}/token`,
+  CONNECTOR_NOTION_MCP_URL: NOTION_VENDOR,
 };
 const offEnv = { ...onEnv, HOSTED_CONNECTORS: 'false' };
 
@@ -196,16 +211,49 @@ try {
   assert.equal(toolTier(github, 'delete_file'), 'destructive');
   assert.equal(toolTier(github, 'merge_pull_request'), 'destructive');
   assert.equal(toolTier(hostedConnector('slack'), 'slack_send_message'), 'external');
+  // camelCase and vendor-prefixed names (Atlassian Rovo, Notion) go through the same rules.
+  const atlassian = hostedConnector('atlassian');
+  const notion = hostedConnector('notion');
+  const linearEntry = hostedConnector('linear');
+  assert.equal(normalizeToolName(atlassian, 'deleteConfluencePage'), 'delete_confluence_page');
+  assert.equal(normalizeToolName(notion, 'notion-search'), 'search');
+  assert.equal(toolTier(atlassian, 'deleteConfluencePage'), 'destructive', 'camelCase delete is destructive');
+  assert.equal(toolTier(linearEntry, 'deleteIssue'), 'destructive');
+  assert.equal(toolTier(atlassian, 'getSomethingNew'), 'read', 'camelCase get is read');
+  assert.equal(toolTier(notion, 'notion-delete-page'), 'destructive', 'the vendor prefix is stripped before matching');
+  assert.equal(toolTier(notion, 'notion-archive-page'), 'destructive');
+  // Explicit maps from the vendors' published tool lists.
+  assert.equal(toolTier(atlassian, 'getJiraIssue'), 'read');
+  assert.equal(toolTier(atlassian, 'searchJiraIssuesUsingJql'), 'read');
+  assert.equal(toolTier(atlassian, 'createJiraIssue'), 'write');
+  assert.equal(toolTier(atlassian, 'deleteJiraIssue'), 'destructive');
+  assert.equal(toolTier(atlassian, 'executeDestructive'), 'destructive');
+  assert.equal(toolTier(atlassian, 'removeConfluenceContentPermissions'), 'destructive');
+  assert.equal(toolTier(atlassian, 'mergeBitbucketRepoPullRequest'), 'destructive');
+  assert.equal(toolTier(atlassian, 'enableConfluencePublicLink'), 'external');
+  assert.equal(toolTier(atlassian, 'unarchiveConfluenceContent'), 'write');
+  assert.equal(toolTier(atlassian, 'atlassianUserInfo'), 'read');
+  assert.equal(toolTier(notion, 'notion-search'), 'read');
+  assert.equal(toolTier(notion, 'notion-fetch'), 'read');
+  assert.equal(toolTier(notion, 'notion-create-pages'), 'write');
+  // Vendor hints only ever make a tier stricter.
+  assert.equal(effectiveTier(notion, { name: 'notion-replace-content', annotations: { destructiveHint: true } }), 'destructive');
+  assert.equal(effectiveTier(github, { name: 'delete_file', annotations: { readOnlyHint: true, destructiveHint: false } }), 'destructive',
+    'a vendor cannot loosen the catalog tier');
+  assert.equal(effectiveTier(github, { name: 'list_issues', annotations: { readOnlyHint: false } }), 'write');
+  assert.equal(effectiveTier(github, { name: 'create_issue', annotations: { readOnlyHint: true } }), 'write');
+  assert.equal(effectiveTier(github, { name: 'create_issue' }), 'write', 'absent hints change nothing');
   assert.equal(connectorConfig({}, github).configured, false, 'no client id: not configured');
   assert.deepEqual(connectorConfig({}, github).missing, ['CONNECTOR_GITHUB_CLIENT_ID']);
   assert.deepEqual(connectorConfig({}, hostedConnector('atlassian')).missing.sort(), ['CONNECTOR_ATLASSIAN_AUTHORIZE_URL',
-    'CONNECTOR_ATLASSIAN_CLIENT_ID', 'CONNECTOR_ATLASSIAN_MCP_URL', 'CONNECTOR_ATLASSIAN_SCOPES', 'CONNECTOR_ATLASSIAN_TOKEN_URL']);
+    'CONNECTOR_ATLASSIAN_CLIENT_ID', 'CONNECTOR_ATLASSIAN_SCOPES', 'CONNECTOR_ATLASSIAN_TOKEN_URL']);
+  assert.equal(connectorConfig({}, hostedConnector('atlassian')).mcpUrl, 'https://mcp.atlassian.com/v2/mcp');
   const insecure = connectorConfig({ ...onEnv, CONNECTOR_GITHUB_MCP_URL: 'http://evil.test/mcp' }, github);
   assert.equal(insecure.mcpUrl, null, 'a non-https override is no URL, not the default');
   assert.deepEqual(insecure.missing, ['CONNECTOR_GITHUB_MCP_URL']);
   assert.equal(connectorConfig({}, github).mcpUrl, 'https://api.githubcopilot.com/mcp/');
   assert.equal(connectorConfig(onEnv, github).configured, true);
-  ok('catalog: tool tiers by name (vendor annotations ignored), per-connector env config, https only');
+  ok('catalog: tool tiers by name (camelCase, vendor prefixes, explicit vendor maps), vendor hints only stricter, env config, https only');
 
   // ── Envelope encryption ──
   const link = { id: crypto.randomUUID(), userId: proId, connector: 'github' };
@@ -229,12 +277,14 @@ try {
   assert.equal(byId.github.endpoint, 'https://zero-x.live/mcp/github');
   assert.equal(byId.linear.status, 'unavailable', 'no OAuth app configured');
   assert.equal(proList.body.connect_url, 'https://zero-x.live/dashboard#connectors');
-  assert.deepEqual((await call(onEnv, '/api/account', { token: proSession })).body.policy.connectors.hosted,
-    ['atlassian', 'github', 'linear', 'notion', 'slack']);
+  // Only the vendors this gateway can serve: linear, slack and atlassian have no OAuth app here.
+  assert.deepEqual((await call(onEnv, '/api/account', { token: proSession })).body.policy.connectors.hosted, ['github', 'notion']);
+  assert.deepEqual((await call({ ...onEnv, CONNECTOR_TOKENS_KEK: '' }, '/api/account', { token: proSession })).body.policy.connectors.hosted, [],
+    'nothing is hosted while the gateway cannot serve connectors');
   assert.equal((await call(onEnv, '/api/connectors', { token: 'nzx_' + 'a'.repeat(43) })).body.error.code, 'api_key_not_allowed',
     'API keys cannot manage connector links');
   assert.equal((await call(onEnv, '/api/connectors')).status, 401);
-  ok('GET /api/connectors: Free sees not_in_plan everywhere; Pro sees github ready to connect, unconfigured vendors unavailable');
+  ok('GET /api/connectors: Free sees not_in_plan everywhere; Pro sees github ready to connect, unconfigured vendors unavailable; /api/account hosts only configured vendors');
 
   // ── Free plan refused ──
   const freeConnect = await call(onEnv, '/api/connectors/github/connect', { method: 'POST', token: freeWeb, body: {} });
@@ -293,11 +343,13 @@ try {
   assert.equal(callback.headers.get('Location'), '/dashboard?connector=github&connect=ok#connectors');
   assert.match(callback.headers.get('Set-Cookie'), /^zx_connect=; .*Max-Age=0/);
   assert.equal(vendor.tokenRequests.at(-1).grant_type, 'authorization_code');
+  assert.equal(vendor.tokenRequests.at(-1).resource, undefined, 'no resource for a connector without one');
+  assert.equal(authorize.searchParams.get('resource'), null);
   const replay = await call(onEnv, `/api/connectors/callback?code=${approved.code}&state=${approved.state}`, { headers: { Cookie: nonce } });
   assert.equal(replay.headers.get('Location'), '/dashboard?connect=error&reason=expired#connectors', 'state is single use');
   assert.equal((await call(onEnv, '/api/connectors/callback?state=bad')).headers.get('Location'), '/dashboard?connect=error&reason=invalid_state#connectors');
 
-  const rows = await sql('SELECT * FROM public.zerox_connector_accounts WHERE user_id = $1 AND revoked_at IS NULL', [proId]);
+  const rows = await sql("SELECT * FROM public.zerox_connector_accounts WHERE user_id = $1 AND connector = 'github'", [proId]);
   assert.equal(rows.length, 1);
   assert.deepEqual(rows[0].scopes, ['repo', 'read:org']);
   assert.ok(!rows[0].enc_refresh_token.includes('gho_access1') && !rows[0].enc_refresh_token.includes('ghr_refresh1'), 'tokens are stored sealed');
@@ -332,6 +384,8 @@ try {
   assert.equal(tools.list_issues.annotations.readOnlyHint, true);
   assert.equal(tools.delete_file.annotations.destructiveHint, true);
   assert.equal(tools.delete_file._meta[TIER_META_KEY], 'destructive');
+  assert.equal(tools.replace_content.annotations.destructiveHint, true, "the vendor's destructiveHint is kept");
+  assert.equal(tools.replace_content._meta[TIER_META_KEY], 'destructive');
 
   const created = await mcp(onEnv, proSession, { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'create_issue', arguments: { title: SENTINEL } } }, { session });
   assert.equal(created.status, 200);
@@ -353,7 +407,24 @@ try {
     { session, confirmed: '1' });
   assert.equal(confirmed.body.result.content[0].text, 'ok:delete_file');
   assert.equal(vendor.calls.at(-1).confirmed, null, 'the confirmation header stays at the gateway');
-  ok('destructive tools: refused with a JSON-RPC confirmation error unless x-neuron-confirmed: 1');
+  // A tool only the vendor calls destructive (tools/list above) is held to that on tools/call.
+  const beforeVendorHint = vendor.calls.length;
+  const hinted = await mcp(onEnv, proSession, { jsonrpc: '2.0', id: 30, method: 'tools/call', params: { name: 'replace_content', arguments: {} } }, { session });
+  assert.equal(hinted.body.error.code, JSONRPC_CONFIRMATION_REQUIRED, 'a vendor-annotated destructive tool needs confirmation');
+  assert.equal(hinted.body.error.data.tier, 'destructive');
+  assert.equal(vendor.calls.length, beforeVendorHint, 'the vendor never saw it');
+  const hintedOk = await mcp(onEnv, proSession, { jsonrpc: '2.0', id: 31, method: 'tools/call', params: { name: 'replace_content', arguments: {} } },
+    { session, confirmed: '1' });
+  assert.equal(hintedOk.body.result.content[0].text, 'ok:replace_content');
+  // The gateway forwards the message it checked: a body with duplicate keys reaches the vendor as
+  // the single tool name the gateway read (the last one, here a read tool), never the raw bytes.
+  const duplicate = '{"jsonrpc":"2.0","id":32,"method":"tools/call","params":{"name":"delete_file","name":"list_issues","arguments":{}}}';
+  const dup = await call(onEnv, '/mcp/github', { method: 'POST', token: proSession, body: duplicate,
+    headers: { 'Mcp-Session-Id': session, Accept: 'application/json, text/event-stream' } });
+  assert.equal(dup.body.result.content[0].text, 'ok:list_issues');
+  assert.ok(!vendor.calls.at(-1).raw.includes('delete_file'), 'the raw body is not forwarded');
+  assert.equal(JSON.parse(vendor.calls.at(-1).raw).params.name, 'list_issues');
+  ok('destructive tools: refused with a JSON-RPC confirmation error unless x-neuron-confirmed: 1, vendor destructive hints included; the checked message is forwarded');
 
   // ── Sessions belong to their user; size cap; GET stream; nzx_ key ──
   const otherEmail = 'connectors-other@example.test';
@@ -391,22 +462,42 @@ try {
   assert.equal(refreshed.body.result.content[0].text, 'ok:list_issues');
   assert.equal(vendor.refreshes, 1);
   assert.equal(vendor.calls.at(-1).token, 'gho_access2');
-  const [rotated] = await sql('SELECT enc_refresh_token FROM public.zerox_connector_accounts WHERE user_id = $1 AND revoked_at IS NULL', [proId]);
+  const [rotated] = await sql("SELECT enc_refresh_token FROM public.zerox_connector_accounts WHERE user_id = $1 AND connector = 'github'", [proId]);
   assert.notEqual(rotated.enc_refresh_token, rows[0].enc_refresh_token, 'the refreshed tokens are stored');
   ok('a vendor 401 refreshes the tokens (refresh_token grant), stores them sealed and retries once');
 
-  // ── Rate limit ──
-  resetMcpRateLimits();
+  // ── Token endpoint down after a vendor 401: 502, the link is kept ──
+  vendor.valid.delete('gho_access2');
+  vendor.tokenDown = true;
+  const outage = await mcp(onEnv, proSession, { jsonrpc: '2.0', id: 40, method: 'tools/call', params: { name: 'list_issues', arguments: {} } }, { session });
+  assert.equal(outage.status, 502, JSON.stringify(outage.body));
+  assert.equal(outage.body.error, 'upstream_unreachable');
+  assert.equal((await sql("SELECT count(*)::int AS n FROM public.zerox_connector_accounts WHERE user_id = $1 AND connector = 'github'", [proId]))[0].n, 1,
+    'a token endpoint outage does not disconnect the user');
+  vendor.tokenDown = false;
+  const recovered = await mcp(onEnv, proSession, { jsonrpc: '2.0', id: 41, method: 'tools/call', params: { name: 'list_issues', arguments: {} } }, { session });
+  assert.equal(recovered.body.result.content[0].text, 'ok:list_issues', 'the kept refresh token works once the endpoint is back');
+  assert.equal(vendor.calls.at(-1).token, 'gho_access3');
+  ok('a token endpoint answering 503 after a vendor 401: 502 upstream_unreachable, the link is kept and recovers');
+
+  // ── Rate limit (one counter per user in the database, shared by every runtime) ──
+  await sql('DELETE FROM public.zerox_connector_rate');
   const limited = { ...onEnv, HOSTED_CONNECTORS_RPM: '2' };
   for (let index = 0; index < 2; index += 1) {
     assert.equal((await mcp(limited, proSession, { jsonrpc: '2.0', method: 'notifications/initialized' }, { session })).status, 202);
+    resetMcpRateLimits(); // another isolate: the per-isolate window plays no part
   }
   const throttled = await mcp(limited, proSession, { jsonrpc: '2.0', method: 'notifications/initialized' }, { session });
   assert.equal(throttled.status, 429);
   assert.equal(throttled.body.error, 'rate_limited');
   assert.ok(Number(throttled.headers.get('Retry-After')) >= 1);
+  assert.equal((await sql('SELECT count FROM public.zerox_connector_rate WHERE user_id = $1', [proId]))[0].count, 3);
+  await sql("UPDATE public.zerox_connector_rate SET window_start = now() - interval '61 seconds' WHERE user_id = $1", [proId]);
+  assert.equal((await mcp(limited, proSession, { jsonrpc: '2.0', method: 'notifications/initialized' }, { session })).status, 202,
+    'a new window starts after a minute');
+  await sql('DELETE FROM public.zerox_connector_rate');
   resetMcpRateLimits();
-  ok('per-user rate limit: 429 with Retry-After past HOSTED_CONNECTORS_RPM');
+  ok('per-user rate limit: 429 with Retry-After past HOSTED_CONNECTORS_RPM, counted in the database across isolates');
 
   // ── Audit rows: metadata only ──
   await mcpAuditSettled();
@@ -433,16 +524,20 @@ try {
   assert.equal(sessionEnded.status, 204);
   assert.equal(vendor.sessions.has('vendor-session-1'), false, 'DELETE ends the vendor session');
   assert.equal((await mcp(onEnv, proSession, { jsonrpc: '2.0', id: 13, method: 'tools/list' }, { session })).status, 404);
-  const disconnected = await call(onEnv, '/api/connectors/github', { method: 'DELETE', token: proWeb });
+  const revokeEnv = { ...onEnv, CONNECTOR_GITHUB_REVOKE_URL: `${OAUTH}/revoke` };
+  const disconnected = await call(revokeEnv, '/api/connectors/github', { method: 'DELETE', token: proWeb });
   assert.deepEqual(disconnected.body, { status: 'disconnected', connector: 'github' });
+  assert.deepEqual(vendor.revokeRequests.map(form => [form.token, form.token_type_hint]),
+    [['ghr_refresh3', 'refresh_token'], ['gho_access3', 'access_token']], 'the refresh token (then the access token) is revoked at the vendor');
+  assert.ok(vendor.revokeRequests.every(form => form.client_id === 'zx-test-client'));
   assert.equal((await call(onEnv, '/api/connectors/github', { method: 'DELETE', token: proWeb })).status, 404);
   const afterRevoke = await mcp(onEnv, proSession, initialize);
   assert.equal(afterRevoke.status, 403);
   assert.equal(afterRevoke.body.error, 'needs_connect');
   assert.equal((await call(onEnv, '/api/connectors', { token: proWeb })).body.connectors.find(row => row.id === 'github').status, 'not_connected');
-  assert.equal((await sql('SELECT count(*)::int AS n FROM public.zerox_connector_accounts WHERE user_id = $1 AND revoked_at IS NOT NULL', [proId]))[0].n, 1,
-    'revoked rows are kept as a record, sealed');
-  ok('disconnect: the link is revoked and the next call answers 403 needs_connect');
+  assert.equal((await sql("SELECT count(*)::int AS n FROM public.zerox_connector_accounts WHERE user_id = $1 AND connector = 'github'", [proId]))[0].n, 0,
+    'disconnect deletes the row and its sealed tokens');
+  ok('disconnect: tokens revoked at the vendor (refresh first), the row and its sealed tokens deleted, the next call answers 403 needs_connect');
 
   // ── A vendor that refuses the link (revoked at the vendor) also ends it ──
   const again = await call(onEnv, '/api/connectors/github/connect', { method: 'POST', token: proWeb, body: {} });
@@ -455,7 +550,36 @@ try {
   assert.equal(dead.status, 403);
   assert.equal(dead.body.error, 'needs_connect');
   assert.equal((await call(onEnv, '/api/connectors', { token: proWeb })).body.connectors.find(row => row.id === 'github').status, 'not_connected');
-  ok('a vendor that refuses both the token and its refresh: the link is revoked, needs_connect');
+  assert.equal((await sql('SELECT count(*)::int AS n FROM public.zerox_connector_accounts WHERE user_id = $1', [proId]))[0].n, 0,
+    'a refused link leaves no stored token');
+  ok('a vendor that refuses both the token and its refresh (invalid_grant): the link is deleted, needs_connect');
+
+  // ── resource (RFC 8707) on every token request of an MCP authorization server (Notion) ──
+  const linkNotion = async () => {
+    const begun = await call(onEnv, '/api/connectors/notion/connect', { method: 'POST', token: proWeb, body: {} });
+    assert.equal(begun.status, 200, JSON.stringify(begun.body));
+    assert.equal(new URL(begun.body.authorize_url).searchParams.get('resource'), NOTION_VENDOR);
+    const consent = approveAtVendor(begun.body.authorize_url);
+    const back = await call(onEnv, `/api/connectors/callback?code=${consent.code}&state=${consent.state}`,
+      { headers: { Cookie: begun.headers.get('Set-Cookie').split(';')[0] } });
+    assert.equal(back.headers.get('Location'), '/dashboard?connector=notion&connect=ok#connectors');
+  };
+  await linkNotion();
+  const exchange = vendor.tokenRequests.at(-1);
+  assert.equal(exchange.grant_type, 'authorization_code');
+  assert.equal(exchange.resource, NOTION_VENDOR, 'the code exchange names the MCP server');
+  await linkNotion();
+  assert.equal((await sql("SELECT count(*)::int AS n FROM public.zerox_connector_accounts WHERE user_id = $1 AND connector = 'notion'", [proId]))[0].n, 1,
+    'linking again replaces the previous row');
+  vendor.valid.clear();
+  const notionInit = await call(onEnv, '/mcp/notion', { method: 'POST', token: proSession, body: initialize,
+    headers: { Accept: 'application/json, text/event-stream', 'MCP-Protocol-Version': '2025-06-18' } });
+  assert.equal(notionInit.status, 200, JSON.stringify(notionInit.body));
+  const refreshGrant = vendor.tokenRequests.at(-1);
+  assert.equal(refreshGrant.grant_type, 'refresh_token');
+  assert.equal(refreshGrant.resource, NOTION_VENDOR, 'the refresh grant names the MCP server');
+  assert.equal(vendor.calls.at(-1).url, NOTION_VENDOR);
+  ok('resource: authorize, code exchange and refresh all name the MCP server for a resource connector; re-linking replaces the row');
 
   // ── Downgrade to Free: the link stays but the proxy refuses ──
   await setPlan(proEmail, 'free');

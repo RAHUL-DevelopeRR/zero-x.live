@@ -17,6 +17,18 @@ export function connectorsServing(env) {
   return hostedConnectorsEnabled(env) && databaseConfigured(env) && connectorKekConfigured(env);
 }
 
+// The hosted ids (of a plan's policy) this gateway can serve right now: hosted connectors serving
+// (switched on, database, token key), a catalog entry, and the vendor's OAuth app configured.
+// GET /api/account reports only these, so a client never sets up a connector that would answer
+// 503 connector_not_configured or connectors_unavailable.
+export function servableHostedIds(env, ids) {
+  if (!Array.isArray(ids) || !ids.length || !connectorsServing(env)) return [];
+  return ids.filter(id => {
+    const connector = hostedConnector(id);
+    return Boolean(connector) && connectorConfig(env, connector).configured;
+  });
+}
+
 // The public origin of /mcp/<id> (HOSTED_CONNECTORS_BASE_URL, https; default https://zero-x.live).
 export function connectorEndpoint(env, id) {
   const base = typeof env?.HOSTED_CONNECTORS_BASE_URL === 'string' && /^https:\/\/[^/\s]+$/.test(env.HOSTED_CONNECTORS_BASE_URL.trim())
@@ -69,14 +81,36 @@ export class ConnectorTokenError extends Error {
   }
 }
 
+// A token request the vendor answered, refusing the grant itself (the refresh token is revoked,
+// expired or unknown). Only these end a link; an unreachable token endpoint, a vendor 5xx or an
+// operator mistake (invalid_client, invalid_request) keeps it.
+const REFUSED_GRANT = new Set(['invalid_grant', 'invalid_refresh_token', 'token_revoked', 'token_expired',
+  'refresh_token_expired', 'expired_token']);
+export function grantRefused(error) {
+  return error instanceof ConnectorTokenError && error.status < 500 && REFUSED_GRANT.has(error.code);
+}
+
+// The link cannot be used right now for a reason that may pass (the vendor's token endpoint is
+// down, the tokens cannot be opened, the vendor is not configured). The link is kept.
+export class ConnectorUnavailableError extends Error {
+  constructor(code) {
+    super('Connector tokens are temporarily unavailable');
+    this.name = 'ConnectorUnavailableError';
+    this.code = typeof code === 'string' && /^[a-z_]{1,40}$/.test(code) ? code : 'unavailable';
+  }
+}
+
 const scopeList = value => (typeof value === 'string' ? value.split(/[\s,]+/) : Array.isArray(value) ? value : [])
   .filter(scope => typeof scope === 'string' && /^[\w.:/*-]{1,128}$/.test(scope)).slice(0, 64);
 
 // POSTs a form to the connector's token URL (client id, and client secret when set) and returns
-// {bundle, scopes}. Handles Slack's {ok:false} and its user-token shape (authed_user).
+// {bundle, scopes}. Handles Slack's {ok:false} and its user-token shape (authed_user). For a
+// connector with `resource` (an MCP 2025-06-18 authorization server, RFC 8707) every grant names
+// the MCP server as the resource, as the authorize URL did, so the token's audience is that server.
 export async function requestTokens(config, params, now = Date.now()) {
   const body = new URLSearchParams({ ...params, client_id: config.clientId });
   if (config.clientSecret) body.set('client_secret', config.clientSecret);
+  if (config.resource && config.mcpUrl) body.set('resource', config.mcpUrl);
   let response;
   try {
     response = await fetch(config.tokenUrl, {
@@ -117,9 +151,37 @@ export async function listConnectorAccounts(env, userId) {
   return rpcRows(env, 'zerox_connector_accounts_list', { p_user_id: userId });
 }
 
+// Ends the user's link: the row and its sealed tokens are deleted (not kept as a record).
 export async function revokeConnectorAccount(env, userId, connector) {
   const row = await rpc(env, 'zerox_connector_account_revoke', { p_user_id: userId, p_connector: connector });
   return row?.revoked === true;
+}
+
+// The stored tokens of the user's active link, as stored (no refresh), or null without a link.
+// For revoking them at the vendor on disconnect; throws when they cannot be opened.
+export async function storedConnectorTokens(env, userId, connectorId) {
+  const row = await rpc(env, 'zerox_connector_account_get', { p_user_id: userId, p_connector: connectorId });
+  if (!row?.id) return null;
+  return openConnectorTokens(env, { id: String(row.id), userId, connector: connectorId }, row.enc_refresh_token);
+}
+
+// RFC 7009 revocation at the vendor (CONNECTOR_<ID>_REVOKE_URL), best effort: the refresh token
+// first (which ends the grant at vendors that tie access tokens to it), then the access token.
+export async function revokeTokensAtVendor(config, bundle) {
+  if (!config.revokeUrl || !bundle) return;
+  const tokens = [['refresh_token', bundle.refresh_token], ['access_token', bundle.access_token]]
+    .filter(([, token]) => typeof token === 'string' && token);
+  for (const [hint, token] of tokens) {
+    const body = new URLSearchParams({ token, token_type_hint: hint, client_id: config.clientId });
+    if (config.clientSecret) body.set('client_secret', config.clientSecret);
+    try {
+      const response = await fetch(config.revokeUrl, { method: 'POST', body, redirect: 'manual', signal: AbortSignal.timeout(10000),
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' } });
+      response.body?.cancel().catch(() => {});
+    } catch {
+      console.warn('Connector revocation at the vendor failed', { connector: config.id, hint });
+    }
+  }
 }
 
 const refreshing = new Map(); // row id -> Promise<bundle> (one refresh per link per isolate)
@@ -135,9 +197,13 @@ async function refreshBundle(env, config, link, bundle) {
 
 /**
  * The user's usable vendor access token for a connector, refreshing it when it has expired (or
- * `force`, after the vendor answered 401). Returns {token, link} or null when the user has no
- * active link, or its tokens cannot be opened or refreshed (the proxy then answers needs_connect;
- * a link the vendor refuses to refresh is revoked so the dashboard shows it disconnected).
+ * `force`, after the vendor answered 401). Returns {token, link}, or null when the link is gone
+ * for good: no active link, the vendor refused the refresh grant (grantRefused), or the token is
+ * expired or refused without a refresh token. In the last two cases the link is revoked, so the
+ * dashboard shows it disconnected and the proxy answers needs_connect.
+ * Throws ConnectorUnavailableError when the failure may pass (the token endpoint unreachable or
+ * answering 5xx, an operator error such as invalid_client, tokens that cannot be opened, the
+ * vendor not configured): the link is kept and the proxy answers 502.
  */
 export async function connectorAccessToken(env, userId, connectorId, { force = false, now = Date.now() } = {}) {
   const connector = hostedConnector(connectorId);
@@ -150,12 +216,12 @@ export async function connectorAccessToken(env, userId, connectorId, { force = f
     bundle = await openConnectorTokens(env, link, row.enc_refresh_token);
   } catch {
     console.error('Connector tokens could not be opened', { connector: connectorId });
-    return null;
+    throw new ConnectorUnavailableError('token_open_failed');
   }
   const expired = Number.isSafeInteger(bundle.expires_at) && bundle.expires_at - REFRESH_MARGIN_MS <= now;
   if ((force || expired || !bundle.access_token) && bundle.refresh_token) {
     const config = connectorConfig(env, connector);
-    if (!config.configured) return null;
+    if (!config.configured) throw new ConnectorUnavailableError('connector_not_configured');
     let pending = refreshing.get(link.id);
     if (!pending) {
       pending = refreshBundle(env, config, link, bundle).finally(() => refreshing.delete(link.id));
@@ -164,14 +230,17 @@ export async function connectorAccessToken(env, userId, connectorId, { force = f
     try {
       bundle = await pending;
     } catch (error) {
-      if (error instanceof ConnectorTokenError && error.status >= 400 && error.status < 500) {
-        await revokeConnectorAccount(env, userId, connectorId).catch(() => {});
-      }
       console.warn('Connector token refresh failed', { connector: connectorId, code: error?.code ?? 'error' });
-      return null;
+      if (grantRefused(error)) {
+        await revokeConnectorAccount(env, userId, connectorId).catch(() => {});
+        return null;
+      }
+      throw new ConnectorUnavailableError(error instanceof ConnectorTokenError ? error.code : 'refresh_failed');
     }
   } else if (force || expired) {
-    // An expired (or refused) token that cannot be refreshed: the user links the account again.
+    // An expired (or refused) token without a refresh token: the link cannot recover, so it ends
+    // and the user links the account again.
+    await revokeConnectorAccount(env, userId, connectorId).catch(() => {});
     return null;
   }
   return bundle.access_token ? { token: bundle.access_token, link } : null;

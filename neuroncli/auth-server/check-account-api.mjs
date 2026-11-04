@@ -604,9 +604,22 @@ try {
   account = await json(await request('/api/account', { token: sessionToken }));
   assert.deepEqual(account.body.policy, { connectors: { allowed: ['catalog:*'], denied: [], required: [], hosted: [],
     allow_unvetted: true, catalog_version: '2026-11-03' } }, 'hosted connectors are off by default');
-  const hostedEnv = { ...env, HOSTED_CONNECTORS: 'true' };
+  // `hosted` lists only what the gateway can serve: switched on, the token key set, and the
+  // vendor's OAuth app configured (client id, every URL, scopes).
+  const vendorEnv = Object.fromEntries(HOSTED.flatMap(id => {
+    const name = id.toUpperCase();
+    return [[`CONNECTOR_${name}_CLIENT_ID`, `client-${id}`], [`CONNECTOR_${name}_AUTHORIZE_URL`, `https://${id}.example.test/authorize`],
+      [`CONNECTOR_${name}_TOKEN_URL`, `https://${id}.example.test/token`], [`CONNECTOR_${name}_SCOPES`, 'read']];
+  }));
+  const kek = Buffer.alloc(32, 7).toString('base64');
+  const hostedEnv = { ...env, HOSTED_CONNECTORS: 'true', CONNECTOR_TOKENS_KEK: kek, ...vendorEnv };
   account = await json(await request('/api/account', { token: sessionToken, bindings: hostedEnv }));
   assert.deepEqual(account.body.policy.connectors.hosted, HOSTED, 'Pro gets the hosted connectors once they are on');
+  account = await json(await request('/api/account', { token: sessionToken,
+    bindings: { ...env, HOSTED_CONNECTORS: 'true', CONNECTOR_TOKENS_KEK: kek, CONNECTOR_GITHUB_CLIENT_ID: 'client-github' } }));
+  assert.deepEqual(account.body.policy.connectors.hosted, ['github'], 'only vendors with a configured OAuth app are hosted');
+  account = await json(await request('/api/account', { token: sessionToken, bindings: { ...hostedEnv, CONNECTOR_TOKENS_KEK: '' } }));
+  assert.deepEqual(account.body.policy.connectors.hosted, [], 'nothing is hosted while the gateway cannot serve connectors');
   db.accounts.get(userA.id).plan = 'free';
   account = await json(await request('/api/account', { token: sessionToken, bindings: hostedEnv }));
   assert.deepEqual(account.body.policy.connectors.hosted, [], 'Free never gets hosted connectors');

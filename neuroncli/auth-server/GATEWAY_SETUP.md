@@ -256,11 +256,13 @@ catalog). Roll back with `migrations/down/20261104000000_connector_policy.sql`; 
 
 **Connector accounts (`20261104000100_connector_accounts.sql`).** New tables only:
 `zerox_connector_accounts` (one row per linked vendor account; `enc_refresh_token` is the sealed
-token envelope, never readable without `CONNECTOR_TOKENS_KEK`) and `zerox_connector_audit`
-(metadata of each `/mcp/<id>` call, purged after 30 days by the scheduled maintenance while
-hosted connectors are on). Nothing uses them while `HOSTED_CONNECTORS` is off, so it can be pasted
-before or after any deploy. Verify: `SELECT count(*) FROM pg_proc WHERE proname LIKE 'zerox_connector_%';`
-returns 7. Roll back with `migrations/down/20261104000100_connector_accounts.sql` (switch hosted
+token envelope, never readable without `CONNECTOR_TOKENS_KEK`; disconnecting, or the vendor
+refusing the link, deletes the row, so no token is kept after its link ends),
+`zerox_connector_audit` (metadata of each `/mcp/<id>` call, purged after 30 days by the scheduled
+maintenance while hosted connectors are on) and `zerox_connector_rate` (one per-user request
+counter for `/mcp/`, shared by every runtime). Nothing uses them while `HOSTED_CONNECTORS` is off,
+so it can be pasted before or after any deploy. Verify:
+`SELECT count(*) FROM pg_proc WHERE proname LIKE 'zerox_connector_%';` returns 8. Roll back with `migrations/down/20261104000100_connector_accounts.sql` (switch hosted
 connectors off first; it deletes every link and audit row).
 
 **Hosted connectors (contract section 14.4; off until every step below is done).** Users link a
@@ -291,16 +293,25 @@ user's stored token (`src/routes/connectors.js`, `src/mcp-proxy.js`). Owner step
    - Notion: register a client with the authorization server that `https://mcp.notion.com/mcp`
      advertises (its protected-resource metadata), then set `CONNECTOR_NOTION_AUTHORIZE_URL`,
      `CONNECTOR_NOTION_TOKEN_URL` and the client id.
-   - Atlassian: check Atlassian's current Rovo MCP server docs for the endpoint and OAuth 2.1
-     client registration, then set `CONNECTOR_ATLASSIAN_MCP_URL`, `_AUTHORIZE_URL`, `_TOKEN_URL`,
-     `_SCOPES` and the client id. Sources disagreed on the endpoint on 2026-11-04.
+   - Atlassian: the MCP URL defaults to `https://mcp.atlassian.com/v2/mcp`, which the
+     atlassian/atlassian-mcp-server README recommended on 2026-11-04. Register an OAuth 2.1 client
+     with the authorization server that endpoint advertises, then set
+     `CONNECTOR_ATLASSIAN_AUTHORIZE_URL`, `_TOKEN_URL`, `_SCOPES` and the client id. Delete tools
+     (`delete_jira`) are off by default on Atlassian's side; the gateway asks before any it allows.
+   - Check each vendor's tools/list on staging against `src/connector-catalog.js`: Atlassian's map
+     follows its published tool list, Notion's names come from third-party listings, and Linear
+     publishes no tool names (name rules only).
    Set `CONNECTOR_<ID>_REVOKE_URL` where the vendor offers RFC 7009 revocation, so Disconnect also
-   revokes the token at the vendor.
+   revokes the refresh token (then the access token) at the vendor; without it Disconnect deletes
+   the stored tokens but the vendor's grant stays until the user removes the app there.
+   `/api/account` reports a connector as hosted only once its OAuth app is configured, so vendors
+   can be switched on one at a time.
 4. Decide where `/mcp/` runs. Both runtimes serve it; on the Worker a long tool call counts
    against the request limits, on EC2 it does not. If EC2 should serve it, add `/mcp/` to
    `EC2_PROXY_PREFIXES`.
 5. Legal and privacy text before launch: the privacy policy must say that Zero-X stores linked
-   accounts' OAuth tokens (encrypted, until the user disconnects or deletes the account), which
+   accounts' OAuth tokens (encrypted, deleted when the user disconnects, when the vendor refuses
+   the link, or with the account; revoked at the vendor where it supports revocation), which
    vendors receive the user's requests, that call metadata (tool name, time, sizes, a hash of the
    arguments, never their content) is kept 30 days, and how to disconnect. The terms should
    cover acting on the user's behalf in third-party services. Each vendor's developer terms apply

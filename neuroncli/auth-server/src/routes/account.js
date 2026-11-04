@@ -1,5 +1,6 @@
 import { rpc, rpcRows } from '../account-store.js';
 import { ApiError, ALL_CREDENTIALS, bearerToken, invalidSession, withCaller } from '../auth-context.js';
+import { servableHostedIds } from '../connector-accounts.js';
 import { connectorPolicyBlock } from '../connector-policy.js';
 import { normalizePlanId, planById } from '../plan-policy.js';
 import { sessionExpiry } from '../session-store.js';
@@ -95,6 +96,9 @@ export async function accountPayload(env, caller, { token = '' } = {}) {
   // The plan's connector policy (migration 20261104000000, contract section 14.1); left out when
   // the plan has none or the database predates the column ("no gateway policy").
   const connectors = connectorPolicyBlock(policy.connector_policy, env);
+  // `hosted` lists only connectors this gateway can serve now (contract section 14.1): a client
+  // sets up every id it gets, so an unconfigured vendor would only ever answer 503.
+  if (connectors) connectors.hosted = servableHostedIds(env, connectors.hosted);
   return {
     user: {
       id: caller.user_id,

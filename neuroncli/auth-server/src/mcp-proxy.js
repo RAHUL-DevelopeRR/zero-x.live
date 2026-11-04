@@ -4,21 +4,27 @@
 // (src/routes/connectors.js). Served only with HOSTED_CONNECTORS=true; otherwise /mcp/* is 404.
 //
 // Per request: the Neuron credential (ses_ session or nzx_ key) → the plan's connector policy
-// (policy.connectors.hosted) → the operator's vendor config → a per-user rate limit → the user's
-// link (403 needs_connect without one) → the catalog tier of a tools/call (blocked tools are
-// refused; destructive ones need `x-neuron-confirmed: 1`) → the vendor. The vendor's session id is
-// never shown: the client gets a gateway session id mapped to it (and to the user and connector).
-// tools/list answers lose blocked tools and carry the catalog tier as annotations and
-// `_meta["live.zero-x/tier"]`. Requests and answers are size-capped. Every JSON-RPC message the
+// (policy.connectors.hosted) → the operator's vendor config → a per-user rate limit (shared by
+// every runtime through zerox_connector_rate_take) → the user's link (403 needs_connect without
+// one) → the tier of a tools/call (blocked tools are refused; destructive ones need
+// `x-neuron-confirmed: 1`) → the vendor. The vendor's session id is never shown: the client gets a
+// gateway session id mapped to it (and to the user and connector). tools/list answers lose blocked
+// tools and carry each tool's tier as annotations and `_meta["live.zero-x/tier"]`: the catalog
+// tier, made stricter (never looser) by the vendor's own destructiveHint/readOnlyHint
+// (effectiveTier). Tools the vendor made stricter are remembered per user and connector, so a
+// tools/call is checked against the same tier the client was shown. The gateway forwards the
+// message it checked (re-serialized), never the raw body, so the vendor cannot read a different
+// tool name out of the same bytes. Requests and answers are size-capped. Every JSON-RPC message the
 // gateway handles writes one metadata-only audit row (zerox_connector_audit_add): method, tool
 // name, tier, decision, status, duration, byte counts and the sha256 of the tool arguments, never
 // argument or result text.
 import { ApiError, backgroundRunner, resolveCaller } from './auth-context.js';
 import { rpc } from './account-store.js';
-import { connectorConfig, hostedConnector, toolTier } from './connector-catalog.js';
+import { TIERS, connectorConfig, effectiveTier, hostedConnector, stricterTier, toolTier } from './connector-catalog.js';
 import { hostedConnectorsEnabled } from './connector-policy.js';
 import {
-  CONNECT_URL, connectorAccessToken, connectorsServing, planConnectorPolicy, policyAllowsHosted, revokeConnectorAccount,
+  CONNECT_URL, ConnectorUnavailableError, connectorAccessToken, connectorsServing, planConnectorPolicy, policyAllowsHosted,
+  revokeConnectorAccount,
 } from './connector-accounts.js';
 import { bytesToBase64 } from './provider-keys.js';
 import { deleteRecord, readRecord, sha256Hex, writeRecord } from './session-store.js';
@@ -29,6 +35,8 @@ export const JSONRPC_TOOL_BLOCKED = -32011;
 export const JSONRPC_TOO_LARGE = -32012;
 export const TIER_META_KEY = 'live.zero-x/tier';
 const SESSION_TTL_SECONDS = 24 * 3600;
+const TOOL_TIERS_TTL_SECONDS = 7 * 24 * 3600;
+const MAX_REMEMBERED_TOOLS = 1000;
 const SESSION_PATTERN = /^zxs_[A-Za-z0-9_-]{43}$/;
 const UPSTREAM_SESSION = /^[\x21-\x7e]{1,256}$/;
 const PROTOCOL_VERSION = /^\d{4}-\d{2}-\d{2}$/;
@@ -60,10 +68,25 @@ const jsonResponse = (body, status = 200, headers = {}) => new Response(JSON.str
   status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...headers },
 });
 
-// ── Per-user rate limit (fixed one-minute window, per isolate) ──
+// ── Per-user rate limit ──
 
+// The shared limit: one counter per user in the database (zerox_connector_rate_take), so the
+// Worker, the EC2 server and every isolate count together. Returns 0 (allowed) or the seconds to
+// wait. When the database cannot answer, the per-isolate window below stands in for it.
+export async function takeRateLimit(env, userId) {
+  const limit = requestsPerMinute(env);
+  try {
+    const row = await rpc(env, 'zerox_connector_rate_take', { p_user_id: userId, p_limit: limit });
+    if (row && typeof row.allowed === 'boolean') return row.allowed ? 0 : Math.max(1, Number(row.retry_after) || 1);
+  } catch (error) {
+    console.warn('Connector rate limit check failed', { message: String(error?.message).slice(0, 120) });
+  }
+  return takeLocalRateLimit(env, userId);
+}
+
+// Fixed one-minute window, per isolate (the fallback).
 const windows = new Map(); // user id -> { start, count }
-export function takeRateLimit(env, userId, now = Date.now()) {
+export function takeLocalRateLimit(env, userId, now = Date.now()) {
   const limit = requestsPerMinute(env);
   let entry = windows.get(userId);
   if (!entry || now - entry.start >= 60_000) {
@@ -102,16 +125,20 @@ export async function mcpAuditSettled() {
 
 // ── tools/list filtering ──
 
-export function filterToolList(connector, result) {
+// Rewrites a tools/list result: blocked tools are left out and every other tool carries its tier
+// (effectiveTier: the catalog tier, made stricter by the vendor's own hints) as annotations and
+// _meta. Tools whose tier the vendor made stricter than the catalog's go into `stricter`
+// (name -> tier) for the proxy to remember.
+export function filterToolList(connector, result, stricter = new Map()) {
   if (!isObject(result) || !Array.isArray(result.tools)) return result;
   const tools = [];
   for (const tool of result.tools) {
     if (!isObject(tool) || typeof tool.name !== 'string') continue;
-    const tier = toolTier(connector, tool.name);
+    const tier = effectiveTier(connector, tool);
     if (tier === 'blocked') continue;
+    if (tier !== toolTier(connector, tool.name)) stricter.set(tool.name, tier);
     tools.push({
       ...tool,
-      // The catalog's tier replaces whatever the vendor says about its own tools.
       annotations: { ...(isObject(tool.annotations) ? tool.annotations : {}),
         readOnlyHint: tier === 'read', destructiveHint: tier === 'destructive', openWorldHint: true },
       _meta: { ...(isObject(tool._meta) ? tool._meta : {}), [TIER_META_KEY]: tier },
@@ -120,10 +147,46 @@ export function filterToolList(connector, result) {
   return { ...result, tools };
 }
 
-// Rewrites one JSON-RPC message from the vendor (the answer to tools/list).
-function rewriteMessage(connector, request, message) {
+// Tools the vendor marked stricter than the catalog, per user and connector (name -> tier).
+const toolTiersKey = (userId, connectorId) => `mcp-tool-tiers:${userId}:${connectorId}`;
+export async function rememberedToolTiers(env, userId, connectorId) {
+  const record = await readRecord(env, toolTiersKey(userId, connectorId));
+  const tools = isObject(record?.tools) ? record.tools : {};
+  return Object.fromEntries(Object.entries(tools).filter(([, tier]) => TIERS.includes(tier)));
+}
+// Merges `stricter` into the remembered tiers (a remembered tier only ever gets stricter, so the
+// pages of a paginated tools/list add up). Returns false when they could not be stored.
+async function rememberToolTiers(env, userId, connectorId, stricter) {
+  try {
+    const tools = await rememberedToolTiers(env, userId, connectorId);
+    let changed = false;
+    for (const [name, tier] of stricter) {
+      const next = stricterTier(tools[name] ?? tier, tier);
+      if (tools[name] !== next) { tools[name] = next; changed = true; }
+    }
+    if (!changed) return true;
+    const entries = Object.entries(tools);
+    if (entries.length > MAX_REMEMBERED_TOOLS) return false;
+    await writeRecord(env, toolTiersKey(userId, connectorId), { tools, updated: Date.now() }, TOOL_TIERS_TTL_SECONDS);
+    return true;
+  } catch (error) {
+    console.warn('Connector tool tiers could not be stored', { connector: connectorId, name: error?.name });
+    return false;
+  }
+}
+
+// Rewrites one JSON-RPC message from the vendor (the answer to tools/list). The stricter tiers are
+// stored before the answer goes out, so the client cannot call a tool before the gateway knows
+// its tier; a tool whose stricter tier could not be stored is left out of the answer.
+async function rewriteMessage(context, message) {
+  const { connector, request } = context;
   if (request?.method === 'tools/list' && isObject(message) && message.id === request.id && isObject(message.result)) {
-    return { ...message, result: filterToolList(connector, message.result) };
+    const stricter = new Map();
+    let result = filterToolList(connector, message.result, stricter);
+    if (stricter.size && !await context.remember(stricter)) {
+      result = { ...result, tools: result.tools.filter(tool => !stricter.has(tool.name)) };
+    }
+    return { ...message, result };
   }
   return message;
 }
@@ -133,7 +196,7 @@ function rewriteMessage(connector, request, message) {
 // Relays a text/event-stream from the vendor, rewriting each event's JSON data and enforcing the
 // size caps: `totalCap` (the answer to one POST) and `eventCap` (any single event, also on GET
 // streams). Past a cap the stream ends, after a JSON-RPC error for the pending request if any.
-function relayEvents(body, { connector, request, totalCap, eventCap, onEnd }) {
+function relayEvents(body, { connector, request, remember, totalCap, eventCap, onEnd }) {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
@@ -146,14 +209,14 @@ function relayEvents(body, { connector, request, totalCap, eventCap, onEnd }) {
     finished = true;
     onEnd({ reason, bytesOut });
   };
-  const encodeEvent = block => {
+  const encodeEvent = async block => {
     const lines = block.split(/\r?\n/);
     const data = lines.filter(line => line.startsWith('data:')).map(line => line.slice(5).replace(/^ /, '')).join('\n');
     if (!data) return block + '\n\n';
     let message;
     try { message = JSON.parse(data); } catch { return block + '\n\n'; }
     if (request?.id !== undefined && isObject(message) && message.id === request.id && !('method' in message)) answered = true;
-    const rewritten = rewriteMessage(connector, request, message);
+    const rewritten = await rewriteMessage({ connector, request, remember }, message);
     if (rewritten === message) return block + '\n\n';
     return lines.filter(line => !line.startsWith('data:')).concat(`data: ${JSON.stringify(rewritten)}`).join('\n') + '\n\n';
   };
@@ -177,7 +240,7 @@ function relayEvents(body, { connector, request, totalCap, eventCap, onEnd }) {
         if (chunk.done) {
           buffer += decoder.decode();
           if (buffer.trim()) {
-            const out = encoder.encode(encodeEvent(buffer.replace(/(\r?\n)+$/, '')));
+            const out = encoder.encode(await encodeEvent(buffer.replace(/(\r?\n)+$/, '')));
             bytesOut += out.byteLength;
             controller.enqueue(out);
           }
@@ -192,7 +255,9 @@ function relayEvents(body, { connector, request, totalCap, eventCap, onEnd }) {
         buffer = parts.pop();
         if (buffer.length > eventCap) return tooLarge(controller);
         if (!parts.length) continue;
-        const out = encoder.encode(parts.map(encodeEvent).join(''));
+        let text = '';
+        for (const part of parts) text += await encodeEvent(part);
+        const out = encoder.encode(text);
         bytesOut += out.byteLength;
         controller.enqueue(out);
         return;
@@ -287,7 +352,7 @@ async function handle(c) {
   }
   const config = connectorConfig(env, connector);
   if (!config.configured) return fail(503, 'connector_not_configured', `${connector.name} is not available yet. Try again later.`);
-  const retryAfter = takeRateLimit(env, userId);
+  const retryAfter = await takeRateLimit(env, userId);
   if (retryAfter) {
     audit(c, { ...base, method: method.toLowerCase(), decision: 'rate_limited', status: 429, durationMs: Date.now() - started });
     return fail(429, 'rate_limited', 'Too many connector requests. Slow down and retry.',
@@ -310,29 +375,44 @@ async function handle(c) {
   return forwardPost(c, { connector, config, base, session, started });
 }
 
+const unreachable = connector => fail(502, 'upstream_unreachable', `${connector.name} could not be reached. Retry shortly.`);
+
+// The user's vendor token: {current} ({token, link} or null when the link is gone for good) or
+// {failure} when it is unavailable for now (the link is kept).
 async function vendorToken(env, userId, connector, force = false) {
-  return connectorAccessToken(env, userId, connector.id, { force });
+  try {
+    return { current: await connectorAccessToken(env, userId, connector.id, { force }) };
+  } catch (error) {
+    if (error instanceof ConnectorUnavailableError) return { failure: unreachable(connector) };
+    console.error('Connector token lookup failed', { connector: connector.id, name: error?.name });
+    return { failure: fail(503, 'service_unavailable', 'Zero-X is temporarily unavailable. Please retry shortly.') };
+  }
 }
 
 // One fetch to the vendor; a 401 gets one retry with refreshed tokens. Returns {response} or
-// {failure} (a Response to send as is).
+// {failure} (a Response to send as is). The link ends only when the vendor refuses it for good:
+// the refresh grant refused, no refresh token (connectorAccessToken revokes those), or a freshly
+// refreshed token answered 401 too. A token endpoint that is down answers 502 and keeps the link.
 async function callVendor(c, { connector, config, base, init }) {
-  let current = await vendorToken(c.env, base.userId, connector);
+  let { current, failure } = await vendorToken(c.env, base.userId, connector);
+  if (failure) return { failure };
   if (!current) return { failure: needsConnect(connector) };
   for (let attempt = 0; attempt < 2; attempt += 1) {
     let response;
     try {
       response = await fetch(config.mcpUrl, { ...init(current.token), redirect: 'manual', signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS) });
     } catch {
-      return { failure: fail(502, 'upstream_unreachable', `${connector.name} could not be reached. Retry shortly.`) };
+      return { failure: unreachable(connector) };
     }
     if (response.status !== 401) return { response };
     response.body?.cancel().catch(() => {});
     if (attempt === 0) {
-      current = await vendorToken(c.env, base.userId, connector, true);
+      ({ current, failure } = await vendorToken(c.env, base.userId, connector, true));
+      if (failure) return { failure };
       if (current) continue;
+      return { failure: needsConnect(connector) };
     }
-    // The vendor refuses the link (revoked there, or expired without a refresh token).
+    // A freshly refreshed token refused as well: the vendor no longer accepts the link.
     await revokeConnectorAccount(c.env, base.userId, connector.id).catch(() => {});
     return { failure: needsConnect(connector) };
   }
@@ -362,7 +442,12 @@ async function forwardPost(c, { connector, config, base, session, started }) {
 
   if (rpcMethod === 'tools/call') {
     const tool = typeof message.params?.name === 'string' ? message.params.name : '';
-    const tier = toolTier(connector, tool);
+    // The catalog tier, made stricter by what the vendor's tools/list said about the tool.
+    let tier = toolTier(connector, tool);
+    if (tier !== 'blocked') {
+      try { tier = stricterTier(tier, (await rememberedToolTiers(env, base.userId, connector.id))[tool]); }
+      catch { return fail(503, 'service_unavailable', 'Zero-X is temporarily unavailable. Please retry shortly.'); }
+    }
     row.tool = tool.slice(0, 128);
     row.tier = tier === 'blocked' ? null : tier;
     row.argsSha256 = await sha256Hex(JSON.stringify(message.params?.arguments ?? {}));
@@ -382,7 +467,9 @@ async function forwardPost(c, { connector, config, base, session, started }) {
   const { response: upstream, failure } = await callVendor(c, {
     connector, config, base,
     init: token => ({
-      method: 'POST', body: read.text,
+      // The message that was checked, not the raw bytes (duplicate keys and other parser
+      // differences cannot make the vendor read another tool than the one checked above).
+      method: 'POST', body: JSON.stringify(message),
       headers: { ...upstreamHeaders(c, token, session?.upstream, 'application/json, text/event-stream'), 'Content-Type': 'application/json' },
     }),
   });
@@ -419,6 +506,7 @@ async function forwardPost(c, { connector, config, base, session, started }) {
 
   const contentType = (upstream.headers.get('Content-Type') || '').toLowerCase();
   const request = isRequest ? { id: message.id, method: rpcMethod } : null;
+  const remember = stricter => rememberToolTiers(env, base.userId, connector.id, stricter);
   const cap = maxResponseBytes(env);
   const okDecision = upstream.ok ? 'allowed' : 'upstream_error';
   const errorClass = upstream.ok ? null : `http_${upstream.status}`;
@@ -429,7 +517,7 @@ async function forwardPost(c, { connector, config, base, session, started }) {
   }
   if (contentType.startsWith('text/event-stream') && upstream.ok) {
     const stream = relayEvents(upstream.body, {
-      connector, request, totalCap: cap, eventCap: cap,
+      connector, request, remember, totalCap: cap, eventCap: cap,
       onEnd: ({ reason, bytesOut }) => audit(c, { ...row, decision: reason === 'too_large' ? 'too_large' : 'allowed',
         status: upstream.status, bytesOut, errorClass: reason === 'upstream_error' ? 'stream_error' : null,
         durationMs: Date.now() - started }),
@@ -448,7 +536,7 @@ async function forwardPost(c, { connector, config, base, session, started }) {
     audit(c, { ...row, decision: 'upstream_error', status: upstream.status, errorClass: errorClass ?? 'bad_response', durationMs: Date.now() - started });
     return fail(502, 'upstream_error', `${connector.name} answered with an error (${upstream.status}).`, { upstream_status: upstream.status });
   }
-  const text = JSON.stringify(rewriteMessage(connector, request, parsed));
+  const text = JSON.stringify(await rewriteMessage({ connector, request, remember }, parsed));
   audit(c, { ...row, decision: okDecision, status: upstream.status, errorClass, bytesOut: encoder.encode(text).byteLength,
     durationMs: Date.now() - started });
   return new Response(text, { status: upstream.status, headers: { ...headers, 'Content-Type': 'application/json' } });
@@ -490,7 +578,7 @@ async function forwardSessionRequest(c, { connector, config, base, session, clie
     return new Response(null, { status: upstream.status === 405 ? 405 : 502, headers });
   }
   const stream = relayEvents(upstream.body, {
-    connector, request: null, totalCap: 0, eventCap: maxResponseBytes(c.env),
+    connector, request: null, remember: async () => true, totalCap: 0, eventCap: maxResponseBytes(c.env),
     onEnd: ({ reason, bytesOut }) => audit(c, { ...base, method: auditMethod, decision: reason === 'too_large' ? 'too_large' : 'allowed',
       status: 200, bytesOut, durationMs: Date.now() - started }),
   });

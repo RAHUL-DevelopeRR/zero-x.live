@@ -12,8 +12,9 @@ import { ApiError, INTERACTIVE_CREDENTIALS, errorResponse, withCaller } from '..
 import { HOSTED_CATALOG_VERSION, HOSTED_CONNECTORS, connectorConfig, hostedConnector } from '../connector-catalog.js';
 import { hostedConnectorsEnabled } from '../connector-policy.js';
 import {
-  CONNECT_URL, ConnectorTokenError, connectorAccessToken, connectorEndpoint, connectorsServing, linkConnectorAccount,
+  CONNECT_URL, ConnectorTokenError, connectorEndpoint, connectorsServing, linkConnectorAccount,
   listConnectorAccounts, planConnectorPolicy, policyAllowsHosted, requestTokens, revokeConnectorAccount,
+  revokeTokensAtVendor, storedConnectorTokens,
 } from '../connector-accounts.js';
 import { bytesToBase64 } from '../provider-keys.js';
 import { deleteRecord, readRecord, sha256Hex, writeRecord } from '../session-store.js';
@@ -185,12 +186,14 @@ export function registerConnectorRoutes(api) {
   api.delete('/api/connectors/:id', gated(withCaller(INTERACTIVE_CREDENTIALS, async (c, caller) => {
     if (!connectorsServing(c.env)) throw unavailable();
     const connector = connectorParam(c);
-    // Best effort: tell the vendor (RFC 7009) when the operator configured a revocation URL.
+    // Best effort: revoke the stored refresh and access tokens at the vendor (RFC 7009) when the
+    // operator configured a revocation URL. The stored tokens are used as they are (no refresh).
     const config = connectorConfig(c.env, connector);
     if (config.revokeUrl) {
-      const current = await connectorAccessToken(c.env, caller.user_id, connector.id).catch(() => null);
-      if (current?.token) await revokeAtVendor(config, current.token);
+      const stored = await storedConnectorTokens(c.env, caller.user_id, connector.id).catch(() => null);
+      await revokeTokensAtVendor(config, stored);
     }
+    // Deletes the link and its sealed tokens.
     if (!await revokeConnectorAccount(c.env, caller.user_id, connector.id)) {
       throw new ApiError(404, 'not_found', `${connector.name} is not connected.`);
     }
@@ -202,15 +205,4 @@ async function planForUser(env, userId) {
   const account = await rpc(env, 'zerox_get_account', { p_user_id: userId });
   if (!account) throw new Error('Account not found');
   return { plan: account.plan, suspended: account.suspended === true || account.status === 'suspended' };
-}
-
-async function revokeAtVendor(config, token) {
-  const body = new URLSearchParams({ token, client_id: config.clientId });
-  if (config.clientSecret) body.set('client_secret', config.clientSecret);
-  try {
-    await fetch(config.revokeUrl, { method: 'POST', body, redirect: 'manual', signal: AbortSignal.timeout(10000),
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' } });
-  } catch {
-    console.warn('Connector revocation at the vendor failed', { connector: config.id });
-  }
 }
