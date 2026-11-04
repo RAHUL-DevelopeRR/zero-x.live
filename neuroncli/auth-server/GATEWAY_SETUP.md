@@ -154,6 +154,65 @@ No longer read: `*_TOOL_MODELS` (tool support comes from the catalog), `MAX_REQU
 `OPENROUTER_CLIENT_ID`. Test-only: `E2E_*` (read by `e2e-upstream-shim.mjs`), `PGLITE_ENTRY`
 (`check-session-store.mjs`, `check-quota.mjs`).
 
+### Active model health checks
+
+The live status on `/v1/models`, `/v1/models/status` and the website's model list comes from an
+active checker on the Node gateway (`src/health-probes.js`, contract section 15), not only from
+real requests that failed. Every instance runs it; each tick (15 s) it asks Postgres for the
+`health_probes` lease (90 s, renewed every tick), and only the holder sends test requests, so
+the two EC2 instances (and any later host) never probe twice. A stopping instance hands the lease
+back (SIGTERM), so after a deploy the new instance leads within one tick; after a crash, within
+90 s. Every instance reads the shared verdicts (`zerox_pool_health`) back, so both answer the same.
+
+What the leader checks, cheapest first: the free model lists every 10 minutes (Groq, Gemini and
+Claude with each key; NVIDIA and OpenRouter public; OpenRouter's key endpoint), which mark a
+delisted model or a rejected key unavailable without spending a request; the one-at-a-time slots
+(Z.ai's GLM Flash) every tick, from Postgres only, which mark a model busy with
+`available_again_at` while users hold its slot; then tiny test requests (3 output tokens; a tool
+call of 160 tokens less often; 12 s and 24 s timeouts). `zerox_probe_take` counts each test
+request in the pool's shared minute and day budgets (the ones users' reservations are checked
+against), refuses it while users are busy on the pool (its slot is taken, or users already used
+half the minute's requests or tokens), and reports users' outcomes of the last ten minutes from
+any instance: a recent success is the observation and no test request is sent.
+
+| Pool | Published free budget | Chat test | Tool-call test | Requests a day | Share |
+|---|---|---|---|---|---|
+| Groq free (per model and key) | 1,000 a day, 30 a minute, 200K tokens a day | every 60 min | every 6 h | 28 | 2.8 % (about 1 % of the tokens) |
+| NVIDIA trial (per account) | 10,000 a day, 40 a minute | every 15 min | every 3 h | 104 per model, 312 for three | 3.1 % |
+| OpenRouter free (per account, every `:free` model together) | 50 a day | every 8 h | every 24 h | at most 4 for all of them | 8 % (the free list every 10 min finds delisting) |
+| Z.ai GLM Flash free (per model) | none published; one request at a time | every 15 min, only while the slot is free | every 6 h | 100 | n/a (the slot check spends nothing) |
+| Gemini free (per model) | 20 a day | once a day | none | 1 | 5 % (the keyed list every 10 min) |
+| Workers AI free | 200-300 a day | 8-12 a day | 2-3 a day | 10-15 | 5 % |
+| Paid pools (Groq, Gemini, Workers AI, Claude) | daily spend cap | every 30 min | every 6 h | 52 | under $0.03 a day for Claude Opus 5.5, counted in the cap |
+
+`probePlan` keeps every pool with a published daily request budget at 5 % of it or less (the
+schedule stretches when it would not), except OpenRouter's account-wide cap of 4. After a failure
+the next chat test comes sooner (a quarter of the interval, 2 minutes to 2 hours), within the same
+daily cap, so a recovery shows quickly. Counts per pool and day are stored with the verdicts, so a
+restart or a new leader continues them.
+
+Verdicts: `available`; `busy` (a slot or rate limit in use, with `available_again_at`);
+`degraded` (a 3-token answer slower than 8 s, a first 5xx or timeout, or tool calls that stopped
+working); `unavailable` (two failures in a row, delisted, the key rejected, the quota spent). A
+model whose newest observation (a test request, a list check, real traffic) is older than
+`HEALTH_STALE_SECONDS` reports `unknown`, never `available`; a real failure on an instance still
+flips its model at once, since the freshest observation wins. Routing on the Node gateway skips
+busy and unavailable pools from the same rows. Logs are metadata only (`Health probe` with the
+pool key, kind, outcome class, HTTP status and milliseconds; `Health list check failed` with the
+check id); bodies, provider messages and keys are never logged or stored.
+
+| Variable | Kind | Default | Purpose |
+|---|---|---|---|
+| `HEALTH_PROBES` | var | `on` | `off` (also `false`, `0`) is the kill switch: no list checks, slot checks or test requests. Models without recent real traffic then report `unknown`. |
+| `HEALTH_PROBE_TICK_SECONDS` | var | `15` (5-300) | How often each instance renews or asks for the lease and reads the verdicts again. The lease lasts 90 s. |
+| `HEALTH_PROBE_TIMEOUT_SECONDS` | var | `12` (3-60) | Timeout of a chat test request; a tool-call test gets twice as long. |
+| `HEALTH_STALE_SECONDS` | var | `1200` (120-86400) | A verdict nobody confirmed for this long reads `unknown`. Keep it above the 10-minute list interval. Also read by the Worker's `/v1/models`. |
+
+It needs migration `20261104000000_health_probes.sql` (below) and the database (`SUPABASE_*`);
+without either, the gateway logs it once at start and runs no checks. The Worker keeps its
+HealthHub Durable Object (`HEALTH_CANARIES`) for the paths it still serves; the checker runs only
+on the Node gateway.
+
 ### Provider discovery
 
 Daily and weekly jobs on the existing cron queue new free models and providers for review at
@@ -199,6 +258,7 @@ and apply, in order (the ten catalog and app migrations were renumbered from 202
 10. `20261029000900_plan_features_claude.sql` (plan feature strings; tiers, limits and credits unchanged)
 11. `20261029001000_pool_concurrency.sql` (`p_pool.concurrency`: requests of a pool key running at once, for Z.ai's one-at-a-time free models)
 12. `20261102000000_free_token_window.sql` (Free: 1,000,000 tokens per rolling 5-hour window instead of 500K a day; see below)
+13. `20261104000000_health_probes.sql` (the active health checker's lease, verdict rows and `zerox_probe_take`; see below)
 
 **Free's 5-hour token window (`20261102000000_free_token_window.sql`).** Deploy the gateway that
 knows `user_window_tokens` (both runtimes: the Worker and the EC2 Node server) **before** pasting
@@ -245,6 +305,22 @@ cache arguments. Verify:
 - `SELECT id, status FROM public.zerox_catalog_snapshot() WHERE status = 'active';` returns 18 rows;
 - `SELECT plan, allowed_tiers, monthly_credit_microusd, jsonb_array_length(features) FROM public.zerox_plan_policy ORDER BY sort;`
   returns free `{free}` 0 4, pro `{free,paid}` 8000000 5, max `{free,paid}` 35000000 5, ultrawork `{free,paid}` 8000000 5.
+
+**Active health checks (`20261104000000_health_probes.sql`).** New tables and functions only
+(the tables `zerox_pool_health` and `zerox_health_lease`; the functions `zerox_health_lease`, `zerox_probe_take`,
+`zerox_pool_health_put`, `zerox_pool_health_get`, service_role only); nothing existing changes, so
+it can be pasted before or after the deploy. A gateway that runs before it is applied logs
+"Health probes need migration 20261104000000_health_probes.sql" once and reports models without
+recent traffic as `unknown` until the migration is applied and the gateway restarts. Verify:
+
+- `SELECT count(*) FROM pg_proc WHERE proname IN ('zerox_health_lease', 'zerox_probe_take', 'zerox_pool_health_put', 'zerox_pool_health_get');` returns 4;
+- after the next deploy, `SELECT holder, expires_at FROM public.zerox_health_lease;` names one
+  instance (`<host>:<pid>:<id>`) with an expiry under 90 s ahead, and
+  `SELECT pool, status, failure_class, checked_at FROM public.zerox_pool_health ORDER BY pool;`
+  fills within a few minutes.
+
+Roll back with `migrations/down/20261104000000_health_probes.sql` after setting `HEALTH_PROBES=off`
+(or rolling the gateway back).
 
 **Branches that still have the old migration names (fix before they merge).** Two pushed branches
 carry PR #27's migrations under their 20261023-20261025 versions:

@@ -1,6 +1,6 @@
 # Neuron × Zero-X platform contract
 
-Status: v1.9 (2026-11-04; amendments v1.1 to v1.9 in sections 6 to 14). This document is the source of truth shared by the Neuron CLI
+Status: v1.10 (2026-11-04; amendments v1.1 to v1.10 in sections 6 to 15). This document is the source of truth shared by the Neuron CLI
 (`RAHUL-DevelopeRR/neuron-v2`) and the Zero-X gateway + website
 (`RAHUL-DevelopeRR/zero-x.live`, `neuroncli/auth-server`). A copy lives in both repos;
 change both together.
@@ -401,6 +401,7 @@ Sync the copy in `neuron-v2`; nothing here changes what the CLI sends or must ha
   clients), `reasoning_efforts[]`, `capabilities.vision`, `capabilities.reasoning`, and runtime
   health: `status` (`available` | `degraded` | `busy` | `blurred`), `available_again_at`
   (ISO time or `null`) and `checked_at` (ISO time of the newest observation, or `null`).
+  Section 15 (v1.10) renames `blurred` to `unavailable` and adds `unknown`.
   - `busy`: a short rate-limit cooldown (60 s or less); keep the model selectable and show the wait.
   - `blurred`: grey the model out until `available_again_at` (quota spent, model gone, provider down).
   - `available` stays the plan/region/configuration verdict; a client greys out a model when
@@ -1020,7 +1021,9 @@ Every route has an identity derived from its `upstream_model` (database rows inc
     reports.
   - `status`: the best route status (`available` > `degraded` > `busy` > `blurred`), with that
     route's `available_again_at` (the earliest among equals); `checked_at`: the newest observation.
-    One busy route therefore does not grey out a model another route still serves.
+    One busy route therefore does not grey out a model another route still serves. Section 15
+    (v1.10) adds `unknown`, renames `blurred` to `unavailable` and takes `checked_at` from the
+    best route.
   - `pricing`: the highest-priced usable route (credits are never under-held).
   - Nothing names a serving provider. `offers`: the data-policy fields of those routes' offers
     (section 12.4: `{tier, owner, trust_tier, trains_on_inputs}`, duplicates removed) without the
@@ -1075,3 +1078,71 @@ Neuron's TUI already strips route suffixes from display names client-side; with 
 `family` it can show the maker's logo, list one row per model and send the family id, so a request
 follows the healthiest route instead of failing on one busy provider. Clients that send route ids
 are unaffected.
+
+## 15. v1.10 amendments (active health checks, 2026-11-04)
+
+The 2026-11-04 status said MiniMax M3.1 Flash and both GLM Flash models were available while
+OpenRouter had delisted MiniMax and GLM refused requests while its one free slot was busy: on the
+Node gateway a status came only from real requests that failed on that instance, and a model
+nobody had used counted as available.
+
+### 15.1 Statuses
+
+`status` on `/v1/models`, `/v1/models/status` and `/v1/models/stream` is one of:
+
+- `available`: the newest observation (a test request, a model list, real traffic) says it answers.
+- `degraded`: it answers, but slowly (a 3-token test answer over 8 s), after a first 5xx or
+  timeout, or without calling tools any more.
+- `busy`: a one-at-a-time slot or a rate limit is in use; `available_again_at` says when it frees.
+  Keep the model selectable and show the wait.
+- `unknown`: no observation within `stale_after_seconds` (`HEALTH_STALE_SECONDS`, 1,200 by default).
+  Never reported as `available`. Selectable; routing still tries it after the known-good routes.
+- `unavailable` (was `blurred`): failing (two failures in a row), delisted by its provider, its
+  key rejected or its quota spent; grey it out until `available_again_at` when there is one.
+  Clients written for v1.3 should treat any status other than `available`, `degraded` and `busy`
+  as not available.
+
+A family (section 14.3) takes the best status of the routes the caller can use, in the order
+`available` > `degraded` > `unknown` > `busy` > `unavailable` (a busy route is skipped by routing,
+an unknown one is tried), and that route's `available_again_at`, `checked_at`, `latency_ms`,
+`last_success_at` and `last_failure_class`. `auto` takes its best candidate's.
+
+### 15.2 Fields
+
+Every model on `/v1/models` and every row of `/v1/models/status` (and its stream) adds:
+
+- `checked_at`: when the verdict in `status` was last confirmed (null: never). Per model, not the
+  newest observation of any of its routes.
+- `latency_ms`: the latency of the last test request (or real attempt on this instance), or null.
+- `last_success_at`: the last successful test request or user request, or null.
+- `last_failure_class`: the class of the last failure, or null: `rate_limited`, `quota`,
+  `delisted`, `model_unavailable`, `auth`, `server`, `timeout`, `slow` or `tool_call`. Never a
+  provider name or message.
+
+`/v1/models/status` adds `stale_after_seconds` at the top level. `checked_at`, `latency_ms` and
+`last_success_at` stay out of the ETag, so `If-None-Match` answers `304` while the verdicts are
+unchanged.
+
+### 15.3 The checker
+
+On the Node gateway every instance runs `src/health-probes.js`; only the holder of the
+`health_probes` lease in Postgres (`zerox_health_lease`, 90 s, renewed every 15 s) checks model
+lists every 10 minutes, one-at-a-time slots every tick (from Postgres, without a request) and sends
+test requests on a schedule sized to each pool's free quota (GATEWAY_SETUP.md, "Active model health
+checks"): 3 output tokens for a chat test, 160 for a tool-call test. `zerox_probe_take` counts each
+test request in the pool's shared budget (`zerox_pool_usage`), refuses it while users are busy on
+the pool, and reports users' outcomes of the last ten minutes, which count as observations. Verdicts
+are stored in `zerox_pool_health` and read by every instance; the freshest of a verdict and this
+instance's own attempts wins, so a real failure flips a model at once. Routing on the Node gateway
+skips pools the verdicts mark busy or unavailable until their time ends. `HEALTH_PROBES=off` turns
+the checker off. The Worker keeps its HealthHub (section 8.1) with the same statuses and staleness.
+
+### 15.4 RPCs (migration 20261104000000_health_probes.sql, service_role only)
+
+| Function | Arguments → result |
+|---|---|
+| `zerox_health_lease` | `(p_holder text, p_ttl_seconds int)` → `{leader, holder, expires_at}`. Takes or renews the lease; `p_ttl_seconds = 0` releases it. |
+| `zerox_probe_take` | `(p_model, p_tier, p_pool_key, p_pool jsonb, p_tokens, p_cost_microusd, p_take boolean)` → `{status: ok \| pool_full \| pool_exhausted \| pool_busy, retry_after_seconds, running, minute_requests, minute_tokens, day_requests, recent_ok, recent_failed, last_ok_at, last_failed_at}`. `p_take` counts the request when `ok`. |
+| `zerox_pool_health_put` | `(p_rows jsonb)` → rows written (at most 500; rows unchecked for 7 days are deleted). |
+| `zerox_pool_health_get` | `(p_since_seconds int)` → the rows checked within that time. |
+
