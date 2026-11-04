@@ -40,6 +40,14 @@ function lacks(entry, needs) {
   return null;
 }
 
+// Whether `auto` may pick `entry`: it offers what the request needs and, for an agentic request,
+// calls tools and is not a known poor tool caller (catalog.js POOR_TOOL_CALLERS). Applied to the
+// operator catalog and to a BYOK caller's own OpenRouter models alike.
+function autoEligible(entry, needs, agentic) {
+  if (lacks(entry, needs)) return false;
+  return !agentic || (Boolean(entry.supports_tools) && !poorToolCaller(entry));
+}
+
 const LACKS_MESSAGE = {
   tools: 'This model does not support tools; choose a tool-capable model.',
   vision: 'This model does not accept images; choose a vision model.',
@@ -155,20 +163,22 @@ export class RoutingEngine {
   route({ env = {}, requestedModel, needsTools = false, needs = {}, promptTokens, maxTokens, maxTokensExplicit = true,
     tiers = ['free'], country = null, ownedCatalog = null, affinity = null, conversation = null, policy = DEFAULT_POLICY,
     sharedHealth = null, budgetState = null, now = Date.now() }) {
-    // An agentic request (tools attached, or the CLI's x-neuron-route: agentic hint) needs a
-    // tool-capable model, and auto leaves out the models known to answer such requests in chat
-    // (catalog.js POOR_TOOL_CALLERS). A model asked for by name serves as before.
-    const agentic = Boolean(needs.tools || needsTools || needs.agentic);
-    const required = { ...needs, tools: agentic };
-    if (ownedCatalog) return this.routeOwned({ env, requestedModel, needs: required, maxTokens, ownedCatalog, policy });
+    // `required` is what every model must offer: tools only when the request attaches them. An
+    // agentic request (tools attached, or the CLI's x-neuron-route: agentic hint) narrows auto
+    // alone (autoEligible): tool-capable models without a poor tool-call record (catalog.js
+    // POOR_TOOL_CALLERS). A model asked for by name serves as before, hint or not
+    // (PLATFORM_CONTRACT.md section 14.2).
+    const required = { ...needs, tools: Boolean(needs.tools || needsTools) };
+    const agentic = Boolean(required.tools || needs.agentic);
+    if (ownedCatalog) return this.routeOwned({ env, requestedModel, needs: required, agentic, maxTokens, ownedCatalog, policy });
     const resolved = resolveModelId(requestedModel, env);
     if (!resolved) return failure('model_not_found');
     const auto = resolved === AUTO_MODEL_ID;
     const offered = offeredEntries(env);
     let entries;
     if (auto) {
-      entries = offered.filter(entry => entry.auto_rank != null && !lacks(entry, required) && !cannotForce(entry, required)
-        && !(agentic && poorToolCaller(entry)))
+      entries = offered.filter(entry => entry.auto_rank != null && autoEligible(entry, required, agentic)
+        && !cannotForce(entry, required))
         .sort((left, right) => left.auto_rank - right.auto_rank);
     } else {
       const entry = offered.find(item => item.id === resolved);
@@ -271,7 +281,7 @@ export class RoutingEngine {
   // Sessions using the caller's own OpenRouter key (BYOK): exact ids only, no budgets. The
   // offer's redistribution does not apply (the caller holds the account); its lifecycle and the
   // caller's data policy do.
-  routeOwned({ env = {}, requestedModel, needs = {}, maxTokens, ownedCatalog, policy = DEFAULT_POLICY }) {
+  routeOwned({ env = {}, requestedModel, needs = {}, agentic = false, maxTokens, ownedCatalog, policy = DEFAULT_POLICY }) {
     const offer = offerById(env, BYOK_OFFERS.openrouter);
     if (!servesOwnKeys(offer)) return failure('service_unavailable', { message: 'Your own OpenRouter key cannot be used right now.' });
     if (policyBlock(offer, policy)) {
@@ -279,13 +289,18 @@ export class RoutingEngine {
     }
     const value = typeof requestedModel === 'string' ? requestedModel.trim() : '';
     const bare = value.toLowerCase().startsWith('openai/') ? value.slice('openai/'.length) : value;
-    const eligible = ownedCatalog.filter(entry => !lacks(entry, needs));
     const auto = [value, bare].some(id => id === AUTO_MODEL_ID || id === 'default');
     let entries;
     if (auto) {
-      entries = eligible.slice(0, 2);
-      if (!entries.length) return failure(ownedCatalog.length ? 'invalid_request' : 'model_not_found',
-        ownedCatalog.length ? { message: 'None of your OpenRouter models support tools.' } : {});
+      entries = ownedCatalog.filter(entry => autoEligible(entry, needs, agentic)).slice(0, 2);
+      if (!entries.length) {
+        if (!ownedCatalog.length) return failure('model_not_found');
+        // Tool-capable models exist, but only ones that answer agent work in chat.
+        const onlyPoor = agentic && ownedCatalog.some(entry => autoEligible(entry, needs, false) && entry.supports_tools);
+        return failure('invalid_request', { message: onlyPoor
+          ? 'None of your OpenRouter models reliably calls tools; choose a model by name.'
+          : 'None of your OpenRouter models support tools.' });
+      }
     } else {
       const entry = ownedCatalog.find(item => item.id === value) || ownedCatalog.find(item => item.id === bare);
       if (!entry) return failure('model_not_found');

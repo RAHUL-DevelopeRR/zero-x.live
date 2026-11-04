@@ -261,7 +261,8 @@ function freezeEntry(entry) {
 // `x-neuron-route: agentic` hint; src/router.js), although they declare tools and still serve
 // when asked for by name. The catalog keeps no per-model tool-call rate (the HealthHub canary
 // records one probe per pool, not a rate over real requests), so this is an explicit list, matched
-// on the upstream model so that catalog rows of the same model are covered too. Evidence
+// on the upstream model (any provider prefix, any `:variant` suffix) so that catalog rows and a
+// BYOK caller's own OpenRouter models of the same model are covered too. Evidence
 // (2026-11-03, Neuron alpha.3 bug sweep): on Free with `auto`, "build me a todo app in this
 // folder" was served by groq/openai/gpt-oss-120b, which answered with code in chat and called no
 // tool. The rest of the gpt-oss family (gpt-oss-20b on Groq and NVIDIA, gpt-oss-120b on Workers
@@ -269,7 +270,8 @@ function freezeEntry(entry) {
 // the siblings behave the same is not separately measured. Remove an entry once a live multi-turn
 // build probe shows the model calling tools.
 export const POOR_TOOL_CALLERS = Object.freeze([
-  Object.freeze({ upstream: /(^|\/)gpt-oss-\d+b$/, reason: 'answers build requests in chat without calling tools' }),
+  // OpenRouter ids carry an optional variant suffix: openai/gpt-oss-120b:free, :nitro.
+  Object.freeze({ upstream: /(^|\/)gpt-oss-\d+b(:[a-z0-9-]+)?$/, reason: 'answers build requests in chat without calling tools' }),
 ]);
 
 export function poorToolCaller(entry) {

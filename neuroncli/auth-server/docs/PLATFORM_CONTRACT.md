@@ -1006,7 +1006,11 @@ Connectors are MCP servers. There are no organisations yet, so gateway policy is
   policy): every plan `allowed: ["catalog:*"]`, `denied: []`, `required: []`,
   `allow_unvetted: true`, `catalog_version: "2026-11-03"`; Free `hosted: []` (local connectors
   only); Pro, Max and ultrawork `hosted: ["atlassian", "github", "linear", "notion", "slack"]`
-  (vendors with an official remote MCP server). The ids must equal the CLI catalog's ids.
+  (vendors with an official remote MCP server). The ids must equal the CLI catalog's ids. Not yet
+  checked: the CLI's compiled-in catalog (`assets/mcp-catalog.json`) is on no neuron-v2 branch as
+  of 2026-11-04, so these five ids are provisional. When it lands, compare them and fix either
+  side (a new migration, or an operator update of `connector_policy`). Nothing depends on them
+  yet: `hosted` is reported only with `HOSTED_CONNECTORS=true`.
 - CLI behaviour (neuron-v2): the block is cached with its expiry; offline or when the gateway
   cannot be reached, the CLI uses the last cached policy and warns (fail open), unless managed
   settings set `mcpPolicy.failClosed: true`.
@@ -1020,11 +1024,16 @@ Connectors are MCP servers. There are no organisations yet, so gateway policy is
 - For an agentic request `auto` considers only catalog models with `capabilities.tools = true`
   and leaves out models with a poor tool-call record, including as fallbacks. The catalog keeps no
   per-model tool-call rate, so the record is an explicit list in `src/catalog.js`
-  (`POOR_TOOL_CALLERS`, matched on the upstream model): today the gpt-oss family
+  (`POOR_TOOL_CALLERS`, matched on the upstream model with any provider prefix and any
+  OpenRouter `:variant` suffix such as `:free`): today the gpt-oss family
   (`groq/openai/gpt-oss-120b`, `groq/openai/gpt-oss-20b`, `nvidia/openai/gpt-oss-20b`,
-  `@cf/openai/gpt-oss-120b`), after `groq/openai/gpt-oss-120b` answered a build request in chat
-  without calling a tool (2026-11-03).
-- A model asked for by id is served as before, agentic or not. A request without tools and
+  `@cf/openai/gpt-oss-120b`, and catalog rows or BYOK OpenRouter models of the same models), after
+  `groq/openai/gpt-oss-120b` answered a build request in chat without calling a tool (2026-11-03).
+  The same rule applies to `auto` on a BYOK session's own OpenRouter models; when only listed
+  models could serve, it answers 400 `invalid_request` ("None of your OpenRouter models reliably
+  calls tools; choose a model by name.").
+- The header only narrows `auto`. A model asked for by id is served as before, agentic or not: the
+  header alone never makes it need tools (only attached tools do). A request without tools and
   without the header routes as before.
 - When no other tool-capable model is configured, the request answers 503 `service_unavailable`
   ("No model that reliably calls tools is configured on this gateway; choose a model by name.").

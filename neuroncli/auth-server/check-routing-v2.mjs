@@ -623,6 +623,42 @@ try {
     assert.deepEqual([onlyGptOss.ok, onlyGptOss.error], [false, 'service_unavailable']);
     assert.match(onlyGptOss.message, /reliably calls tools.*choose a model by name/);
 
+    // OpenRouter ids carry a `:variant` suffix; a catalog row or a BYOK model of gpt-oss is listed
+    // all the same. Other models whose name merely starts with gpt-oss are not.
+    for (const upstream of ['openai/gpt-oss-120b:free', 'openai/gpt-oss-20b:nitro', 'OpenAI/GPT-OSS-120B:Free', 'gpt-oss-20b']) {
+      assert.equal(poorToolCaller({ upstream_model: upstream }), true, upstream);
+    }
+    for (const upstream of ['openai/gpt-oss-120b-vault', 'openai/gpt-oss-120b:free/extra', 'openai/gpt-oss-safeguard', 'qwen/qwen3.8-27b:free']) {
+      assert.equal(poorToolCaller({ upstream_model: upstream }), false, upstream);
+    }
+
+    // A BYOK session's own OpenRouter models: auto leaves gpt-oss out of an agentic request too,
+    // and the hint alone never makes a model asked for by name need tools (contract section 14.2).
+    const byokEnv = { ...KEYS, OPENROUTER_API_KEY: 'operator-key' };
+    const owned = [
+      { id: 'openai/gpt-oss-120b:free', upstream_model: 'openai/gpt-oss-120b:free', supports_tools: true },
+      { id: 'meta-llama/llama-3.2-3b-instruct:free', upstream_model: 'meta-llama/llama-3.2-3b-instruct:free', supports_tools: false },
+      { id: 'qwen/qwen3.8-27b:free', upstream_model: 'qwen/qwen3.8-27b:free', supports_tools: true },
+    ].map(entry => ({ ...entry, provider: 'openrouter', pools: [{ tier: 'byok' }], tiers: ['free'], pricing: null }));
+    const byok = (requestedModel, needs, ownedCatalog = owned) => router.route({ env: byokEnv, requestedModel, needs,
+      promptTokens: 500, maxTokens: 2000, ownedCatalog });
+    const agenticOwned = { agentic: true };
+    assert.deepEqual(ids(byok('auto', {})), ['openai/gpt-oss-120b:free#byok', 'meta-llama/llama-3.2-3b-instruct:free#byok'],
+      'plain chat on BYOK keeps the caller\'s order');
+    for (const needs of [agenticOwned, { tools: true, agentic: true }]) {
+      assert.deepEqual(ids(byok('auto', needs)), ['qwen/qwen3.8-27b:free#byok'], `BYOK auto, ${JSON.stringify(needs)}: no gpt-oss`);
+    }
+    assert.deepEqual(ids(byok('meta-llama/llama-3.2-3b-instruct:free', agenticOwned)), ['meta-llama/llama-3.2-3b-instruct:free#byok'],
+      'the hint alone does not refuse a model without tools asked for by name');
+    assert.equal(byok('meta-llama/llama-3.2-3b-instruct:free', { tools: true, agentic: true }).error, 'invalid_request',
+      'tools attached to a model without tools still answer 400');
+    assert.deepEqual(ids(byok('openai/gpt-oss-120b:free', { tools: true, agentic: true })), ['openai/gpt-oss-120b:free#byok'],
+      'asked for by name, gpt-oss still serves');
+    const onlyPoorOwned = byok('auto', { tools: true, agentic: true }, owned.slice(0, 2));
+    assert.deepEqual([onlyPoorOwned.error, onlyPoorOwned.message],
+      ['invalid_request', 'None of your OpenRouter models reliably calls tools; choose a model by name.']);
+    assert.equal(byok('auto', { tools: true }, owned.slice(1, 2)).message, 'None of your OpenRouter models support tools.');
+
     // Through the chat handler, as the CLI sends it.
     const gw = gateway();
     gw.addSession('ses_anon', {});
