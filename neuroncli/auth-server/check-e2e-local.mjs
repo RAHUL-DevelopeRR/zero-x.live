@@ -352,7 +352,8 @@ try {
 
   // ── 3. /v1/models with plan-aware availability ──
   const modelKeys = ['available', 'available_again_at', 'capabilities', 'checked_at', 'context_length', 'context_window',
-    'created', 'display_name', 'facts', 'id', 'max_output_tokens', 'models_dev_id', 'object', 'offers', 'owned_by', 'pricing',
+    'created', 'display_name', 'facts', 'id', 'max_output_tokens', 'models_dev_id', 'native_context_window', 'object', 'offers',
+    'owned_by', 'pricing',
     'provider', 'reasoning_efforts', 'status', 'tiers', 'unavailable_reason'];
   const models = async token => {
     const listed = await call('/v1/models', { token });
@@ -370,6 +371,8 @@ try {
     assert.equal(view['gemini/gemini-2.5-flash'].available, true);
     assert.equal(view['gemini/gemini-2.5-pro'].available, false);
     assert.equal(view['gemini/gemini-2.5-pro'].unavailable_reason, 'upgrade_required');
+    // Free plan: Groq's free pool takes 8K tokens per minute, so that is the usable window.
+    assert.deepEqual([view['groq/openai/gpt-oss-120b'].context_window, view['groq/openai/gpt-oss-120b'].native_context_window], [8000, 131072]);
   }
   assert.ok(!Object.values(free).some(model => ['nvidia', 'openrouter'].includes(model.owned_by)), 'non-hosted providers are not listed');
   assert.ok(Object.values(free).every(model => model.status === 'available'), 'no failures yet: every model is available');
