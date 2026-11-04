@@ -97,7 +97,7 @@ NVIDIA_HOSTED=true
 NVIDIA_API_KEY=                     # SECRET
 OPENROUTER_HOSTED=true
 OPENROUTER_API_KEY=                 # SECRET
-OPENROUTER_MODELS=cohere/north-mini-code:free,minimax/minimax-m3.1-flash:free
+OPENROUTER_MODELS=cohere/north-mini-code:free
 OPENROUTER_FREE_ONLY=
 OPENROUTER_CALLBACK_URL=https://zero-x.live/neuroncli/callback/
 

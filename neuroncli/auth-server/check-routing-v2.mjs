@@ -504,7 +504,11 @@ try {
     const free = route.filter(id => id.endsWith('#free'));
     assert.deepEqual(free.slice(-2), ['zai/glm-4.7-flash#free', 'zai/glm-4.5-flash#free']);
     assert.deepEqual(free.slice(0, -2).map(id => id.split('/')[0]),
-      ['groq', 'groq', 'groq', 'nvidia', 'nvidia', 'cohere', 'minimax']);
+      ['groq', 'groq', 'groq', 'nvidia', 'nvidia', 'cohere']);
+    // 2026-11-04: OpenRouter no longer lists minimax/minimax-m3.1-flash:free and every request for
+    // it answered service_unavailable, so the lineup's OPENROUTER_MODELS leaves it out.
+    assert.ok(!listModelsForCaller(env, { country: 'US' }).data.some(model => model.id.startsWith('minimax/')), 'MiniMax free is not offered');
+    assert.equal(router.route({ ...base, requestedModel: 'minimax/minimax-m3.1-flash:free' }).error, 'model_not_found');
     for (const model of ['gemini/gemini-2.5-flash', 'gemini-3.5-flash', '@cf/meta/llama-3.3-70b-instruct-fp8-fast', 'llama-3.3-70b']) {
       assert.equal(router.route({ ...base, requestedModel: model }).error, 'model_not_found', model);
     }
@@ -551,7 +555,7 @@ try {
     // ones, and still before Z.ai's.
     const spent = ids(router.route({ ...base, budgetState: key => (key.startsWith('groq:') ? { until: Date.now() + 60_000 } : null) }));
     assert.deepEqual(spent.filter(id => id.endsWith('#free')).map(id => id.split('/')[0]),
-      ['nvidia', 'nvidia', 'cohere', 'minimax', 'groq', 'groq', 'groq', 'zai', 'zai']);
+      ['nvidia', 'nvidia', 'cohere', 'groq', 'groq', 'groq', 'zai', 'zai']);
 
     // Through the chat handler: turn 1 is served by Groq and sticks; turn 2 finds every other free
     // pool rate limited and falls back to Z.ai, which serves without replacing the remembered model;
