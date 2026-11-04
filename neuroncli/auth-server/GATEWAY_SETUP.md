@@ -199,6 +199,7 @@ and apply, in order (the ten catalog and app migrations were renumbered from 202
 10. `20261029000900_plan_features_claude.sql` (plan feature strings; tiers, limits and credits unchanged)
 11. `20261029001000_pool_concurrency.sql` (`p_pool.concurrency`: requests of a pool key running at once, for Z.ai's one-at-a-time free models)
 12. `20261102000000_free_token_window.sql` (Free: 1,000,000 tokens per rolling 5-hour window instead of 500K a day; see below)
+13. `20261104200000_search_quota.sql` (daily web search and research-run counters for `POST /v1/search`; see below)
 
 **Free's 5-hour token window (`20261102000000_free_token_window.sql`).** Deploy the gateway that
 knows `user_window_tokens` (both runtimes: the Worker and the EC2 Node server) **before** pasting
@@ -232,6 +233,26 @@ says the same, so the two can be applied in either order. Verify:
 Roll back with `migrations/down/20261102000000_free_token_window.sql` (psql -X -v ON_ERROR_STOP=1 -f,
 or paste it): Free gets 500,000 tokens a day back. It must run before
 `down/20261029001000_pool_concurrency.sql` if both are rolled back.
+
+**Web search (`20261104200000_search_quota.sql`, contract section 14).** New tables
+`zerox_search_usage` and `zerox_search_research_runs` and the functions `zerox_search_reserve` and
+`zerox_search_settle` (service_role only); nothing existing changes, so it can be applied before
+or after the deploy. Until it is applied, and while neither `SEARXNG_URL` nor `BRAVE_API_KEY` is
+set, `POST /v1/search` answers 503 `search_unavailable` (never unmetered); `/api/account` gains
+`limits.search` and `limits.colony` either way. Owner steps to switch search on:
+
+1. Run SearXNG on its own host (not the gateway VM), with `search.formats: [html, json]` in its
+   `settings.yml`, its own `server.secret_key`, the limiter on, and reachable from the gateway only
+   (private network, firewall or tunnel). Set `SEARXNG_URL` to its base URL (`/search` is
+   appended) on both runtimes: `wrangler.toml` `[vars]` or a Worker secret, and the VM's
+   `/etc/zerox/gateway.env` (manual entry: the deploy workflow does not write it yet).
+2. Optionally create a Brave Search API key (paid per query beyond the free allowance) and set
+   `BRAVE_API_KEY` as a Worker secret and in the VM's env file (or add it to `OPTIONAL_SECRETS`
+   and both env blocks of `.github/workflows/deploy.yml`).
+3. Apply the migration, then verify with
+   `SELECT proname FROM pg_proc WHERE proname LIKE 'zerox_search%';` (two rows).
+
+Roll back with `migrations/down/20261104200000_search_quota.down.sql` (drops the counters).
 
 `DATABASE_URL=… node scripts/apply-migrations.mjs --status`, then `--apply`; or run each file in the
 Supabase SQL editor followed by

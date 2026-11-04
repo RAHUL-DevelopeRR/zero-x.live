@@ -1,6 +1,6 @@
 # Neuron × Zero-X platform contract
 
-Status: v1.8 (2026-10-25; amendments v1.1 to v1.8 in sections 6 to 13). This document is the source of truth shared by the Neuron CLI
+Status: v1.9 (2026-11-04; amendments v1.1 to v1.9 in sections 6 to 14). This document is the source of truth shared by the Neuron CLI
 (`RAHUL-DevelopeRR/neuron-v2`) and the Zero-X gateway + website
 (`RAHUL-DevelopeRR/zero-x.live`, `neuroncli/auth-server`). A copy lives in both repos;
 change both together.
@@ -963,3 +963,87 @@ Code: `src/catalog-types.js`, `src/list-prices.js`, `src/catalog-guardrails.js`,
 Tiers, limits, prices and credits are unchanged (section 1). The plan features
 (`zerox_plan_policy.features`, `/api/plans`, the site fallback) name Claude Sonnet 5.5 and Claude
 Opus 5.5 billed from credits on Pro and Max, and say every plan has the same Neuron features.
+
+## 14. v1.9 amendments (web search and colony budgets, 2026-11-04)
+
+### 14.1 `POST /v1/search`
+
+`Authorization: Bearer <ses_ session, nzx_ key or website token>`; JSON body (at most 8 KB):
+
+| field | type | |
+|---|---|---|
+| `query` | string, 1-400 characters after trimming | required |
+| `count` | integer 1-10 | default 8 |
+| `purpose` | `"search"` or `"research"` | default `"search"` |
+| `freshness` | `"day"`, `"week"`, `"month"` or `"year"` | optional |
+
+A search with `purpose: "research"` must send `x-neuron-research-run: <run id>` (8-128 of
+`A-Z a-z 0-9 . _ : -`); the header is ignored on plain searches.
+
+`200`: `{"results": [{"title", "url", "snippet", "published"?}], "provider": "searxng" | "brave",
+"cached": bool, "quota": {"remaining", "limit", "resets_at", "research": {"remaining", "limit"}}}`.
+`quota` counts searches per UTC day (`resets_at` is the next 00:00 UTC); `research` is additive.
+`published` is an ISO 8601 time when the backend gives one. Results are http(s) URLs only,
+de-duplicated, with HTML removed from titles (300 characters) and snippets (600).
+
+Errors are flat JSON, `{"error": code, "message", "request_id", ...}`:
+
+- `400 invalid_request` with `param` (`query`, `count`, `purpose`, `freshness` or
+  `x-neuron-research-run`);
+- `401 invalid_session`: sign in again;
+- `403 account_suspended`;
+- `429 search_quota_exhausted` with `resets_at`, `quota` (`"searches"` or `"research_runs"`) and
+  `Retry-After`;
+- `503 search_unavailable`: no backend configured (the default until the operator sets
+  `SEARXNG_URL` or `BRAVE_API_KEY`), every backend failed, or the quota database (migration
+  `20261104200000_search_quota.sql`) is missing or down. Search is never served unmetered.
+
+**Backends.** A self-hosted SearXNG (`SEARXNG_URL`, its JSON API: `categories=general`,
+`safesearch=1`, `time_range` from `freshness`) is asked first; the Brave Search API
+(`BRAVE_API_KEY`, `freshness` as `pd`/`pw`/`pm`/`py`) is the fallback when SearXNG fails,
+times out (8 s), answers non-JSON or answers no results. An empty answer from every backend is a
+`200` with `results: []`.
+
+**Cache.** Answers are cached in the gateway's memory (per Node process or Worker isolate) for 10
+minutes, keyed by sha256 of `freshness` and the normalized query (NFKC, lower case, single spaces),
+at most 1000 entries. A cached answer says `"cached": true` and still counts as a search.
+
+**Quotas** (per UTC day, enforced in Postgres by `zerox_search_reserve` before any backend call):
+
+| plan | searches | research runs |
+|---|---|---|
+| Free | 40 | 3 |
+| Pro | 400 | 30 |
+| Max | 2000 | 150 |
+
+A research run is a distinct `x-neuron-research-run` id of the day: the first search of a new run
+takes one research run (and one search); later searches of that run take one search each. A run
+opened today keeps working after the research runs are used up. A search no backend answered is
+given back (`zerox_search_settle` with `failed`), with the run it opened.
+
+**Metering is metadata only.** `zerox_search_usage` keeps per-user daily counters (`searches`,
+`research_runs`, `cache_hits`, `searxng_calls`, `brave_calls`) and `zerox_search_research_runs`
+the sha256 of today's run ids. No query text, result or raw run id is stored or logged; the query
+leaves the gateway only to the backend, and the in-memory cache forgets it after 10 minutes. A
+user's run hashes from earlier days and counters older than 92 days are deleted by their next
+search.
+
+**Runtimes.** Both the Worker and the Node server serve the route; with `EC2_PROXY_PREFIXES`
+covering `/v1/`, the Worker forwards it to the VM like the other `/v1` routes.
+
+### 14.2 `GET /api/account` limits
+
+`limits` gains two objects, from the plan (static, src/search.js):
+
+- `search`: `{"daily_searches", "daily_research_runs"}`: Free 40/3, Pro 400/30, Max 2000/150;
+- `colony`: `{"max_workers", "max_tokens_per_run"}` for Neuron's multi-agent mode, enforced by the
+  CLI: Free 1 / 300,000, Pro 4 / 2,000,000, Max 8 / 6,000,000.
+
+### 14.3 RPCs
+
+- `zerox_search_reserve(p_user_id uuid, p_daily_searches int, p_daily_research_runs int,
+  p_run_hash text DEFAULT NULL)` → `(status, day, searches, research_runs, run_added, resets_at)`;
+  `status` is `ok`, `search_quota_exhausted` or `research_quota_exhausted` (nothing taken).
+- `zerox_search_settle(p_user_id uuid, p_day date, p_outcome text, p_run_hash text DEFAULT NULL,
+  p_run_added boolean DEFAULT false)` → `(searches, research_runs)`; `p_outcome` is `searxng`,
+  `brave`, `cached` or `failed` (gives the search, and the run when `p_run_added`, back).
