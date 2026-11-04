@@ -1053,15 +1053,57 @@ Connectors are MCP servers. There are no organisations yet, so gateway policy is
   and Claude (whose adapter caches with its own `cache_control` blocks).
 - Quota accounting is unchanged: cached input tokens count like other prompt tokens.
 
-### 14.4 Hosted connector endpoint (specified; not served by this gateway version)
+### 14.4 Hosted connector endpoint (implemented; off unless `HOSTED_CONNECTORS=true`)
+
+Code: `src/mcp-proxy.js`, `src/routes/connectors.js`, `src/connector-accounts.js`,
+`src/connector-catalog.js`, `src/connector-vault.js`; migration
+`20261104000100_connector_accounts.sql` (down script in `migrations/down/`); check
+`check-connectors.mjs`. With `HOSTED_CONNECTORS` unset every route below answers 404.
 
 - `https://zero-x.live/mcp/<connector_id>`: Streamable HTTP (MCP 2025-06-18), `Authorization:
-  Bearer <ses_ session token or nzx_ key>`. Served only with `HOSTED_CONNECTORS=true` and only for
-  ids in the caller's `policy.connectors.hosted`.
-- `401` = sign in again. `403` with `{"error":"needs_connect","connect_url":"https://zero-x.live/dashboard#connectors"}`
-  = the user has not linked that connector.
+  Bearer <ses_ session token or nzx_ key>`. Served only for ids in the caller's
+  `policy.connectors.hosted` (and allowed, not denied). Methods: `POST` (one JSON-RPC message;
+  batches answer 400), `GET` (the server-to-client stream; needs a session) and `DELETE` (ends the
+  session). The answer is `application/json` or `text/event-stream`, as the vendor sends it.
+- `401` (`{"error":"invalid_session"}`, `WWW-Authenticate: Bearer`) = sign in again. `403` with
+  `{"error":"needs_connect","connect_url":"https://zero-x.live/dashboard#connectors"}` = the user
+  has not linked that connector, or the vendor no longer accepts the link (the gateway then
+  revokes it). Other answers, all `{"error": <code>, "message": ...}`: `403 not_in_plan` (the
+  plan does not include the connector; `upgrade_url`), `403 account_suspended`, `404 not_found`
+  (unknown connector), `404 session_not_found` (initialize again), `413 request_too_large`
+  (over 1 MiB), `429 rate_limited` (`Retry-After`; 120 requests per user per minute),
+  `502 upstream_error`/`upstream_unreachable`, `503 connector_not_configured` or
+  `connectors_unavailable`.
+- Sessions: the client sees `Mcp-Session-Id: zxs_<43 characters>`, which the gateway maps to the
+  vendor's session id, the user and the connector (24 hours). Another user's id answers 404.
 - A call to a destructive-tier tool must carry `x-neuron-confirmed: 1`, which the CLI sends only
-  after the user approved that call in its permission prompt; without it the proxy answers a
-  JSON-RPC error asking for confirmation.
+  after the user approved that call in its permission prompt; without it the proxy answers HTTP
+  200 with JSON-RPC error `-32010` (`data.reason: "confirmation_required"`, `data.tool`,
+  `data.tier`). The header is not passed to the vendor. Tools the catalog marks `blocked` answer
+  `-32011` and are left out of `tools/list`. An answer over the size cap (4 MiB) ends with
+  `-32012` for the pending request.
+- `tools/list` answers carry the gateway catalog's tier, replacing what the vendor says about its
+  own tools: `annotations.readOnlyHint` (read), `annotations.destructiveHint` (destructive),
+  `annotations.openWorldHint: true`, and `_meta["live.zero-x/tier"]` = `read`, `write`,
+  `external` or `destructive`.
+- Every message the proxy handles writes one audit row with metadata only (method, tool, tier,
+  decision, status, duration, byte counts, sha256 of the tool arguments), kept 30 days; no
+  argument or result text is stored. Vendor tokens never reach a client or a log.
 - Neuron settings name a hosted connector with server `type: "zerox"`. The managed-proxy type
   string the CLI inherited stays only as a silent parse alias and appears in no docs or UI.
+
+### 14.5 Connector accounts (`/api/connectors`, website and CLI sessions; not API keys)
+
+- `GET /api/connectors` → `{catalog_version, connect_url, connectors: [{id, name, publisher,
+  source, endpoint, status, in_plan, configured, scopes, connected_at}]}`; `status` is
+  `connected`, `not_connected`, `not_in_plan` or `unavailable` (the operator has not configured
+  the vendor's OAuth app). No token is ever returned.
+- `POST /api/connectors/<id>/connect` → `{authorize_url, expires_in: 600}` and an HttpOnly
+  `zx_connect` cookie; the browser goes to `authorize_url` (OAuth 2.0 code flow with PKCE S256
+  and a single-use `state`). `403 not_in_plan`, `503 connector_not_configured`.
+- `GET /api/connectors/callback` (the vendor's redirect) → `303` to the dashboard with
+  `?connector=<id>&connect=ok#connectors`, or `connect=error&reason=` `invalid_state`, `expired`,
+  `browser_mismatch` (no matching cookie: the flow was started in another browser), `denied`,
+  `vendor_error`, `invalid_code`, `not_in_plan`, `token_exchange` or `unavailable`.
+- `DELETE /api/connectors/<id>` → `{status: "disconnected", connector}`; `404` when not connected.
+  The CLI sees `needs_connect` on its next call.

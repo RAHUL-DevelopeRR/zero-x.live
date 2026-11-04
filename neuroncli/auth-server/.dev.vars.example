@@ -101,10 +101,20 @@ OPENROUTER_MODELS=cohere/north-mini-code:free,minimax/minimax-m3.1-flash:free
 OPENROUTER_FREE_ONLY=
 OPENROUTER_CALLBACK_URL=https://zero-x.live/neuroncli/callback/
 
-# ── Hosted connectors (contract section 14.1) ──
-# true reports each plan's hosted connector ids in /api/account policy.connectors.hosted. Keep it
-# false until the hosted connector endpoint (/mcp/<id>) is deployed.
+# ── Hosted connectors (contract sections 14.1 and 14.4) ──
+# true serves /api/connectors/*, the dashboard Connectors tab and /mcp/<id>, and reports each plan's
+# hosted connector ids in /api/account policy.connectors.hosted. false (the default): all of them
+# answer 404 and every plan reports hosted: [].
 HOSTED_CONNECTORS=false
+CONNECTOR_TOKENS_KEK=               # SECRET: 32 random bytes, base64 (openssl rand -base64 32); seals vendor tokens
+# CONNECTORS_CALLBACK_URL= (https://dashboard.zero-x.live/api/connectors/callback; the redirect URI of every vendor OAuth app)
+# CONNECTORS_RETURN_URL= (https://dashboard.zero-x.live/; where the callback sends the browser back)
+# HOSTED_CONNECTORS_BASE_URL= (https://zero-x.live; the origin of /mcp/<id> shown on the dashboard)
+# HOSTED_CONNECTORS_RPM= (120 MCP requests per user per minute)
+# HOSTED_CONNECTORS_MAX_REQUEST_BYTES= (1048576)  HOSTED_CONNECTORS_MAX_RESPONSE_BYTES= (4194304)
+# Per vendor, <ID> = ATLASSIAN, GITHUB, LINEAR, NOTION or SLACK (src/connector-catalog.js):
+# CONNECTOR_<ID>_CLIENT_ID=  CONNECTOR_<ID>_CLIENT_SECRET= (SECRET)  CONNECTOR_<ID>_SCOPES=
+# CONNECTOR_<ID>_MCP_URL=  CONNECTOR_<ID>_AUTHORIZE_URL=  CONNECTOR_<ID>_TOKEN_URL=  CONNECTOR_<ID>_REVOKE_URL=
 
 # ── Optional OpenAI-compatible upstreams ──
 OMNIROUTE_BASE_URL=
