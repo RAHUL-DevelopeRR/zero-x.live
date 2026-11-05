@@ -189,10 +189,11 @@ for (const file of SITE_SCRIPTS) {
   for (const m of read(file).matchAll(/from '(\.\/[\w.-]+)'/g)) assert.ok(isFile(m[1].slice(2)), `${file}: import ${m[1]} missing`);
 }
 
-/* Footer legal links on every public page (Razorpay requires them to be reachable) */
+/* Footer legal links on every public page (Razorpay requires them to be reachable), plus the
+   three landing pages so each one has an internal link from every indexable page */
 for (const file of PUBLIC_PAGES) {
   const footer = read(file).match(/<footer[\s\S]*<\/footer>/)[0];
-  for (const path of ['/terms', '/privacy', '/refund', '/shipping', '/contact', '/pricing']) assert.ok(footer.includes(`href="${path}"`), `${file}: footer links ${path}`);
+  for (const path of ['/terms', '/privacy', '/refund', '/shipping', '/contact', '/pricing', '/ai-coding-agent', '/free-ai-coding-agent', '/claude-code-alternative']) assert.ok(footer.includes(`href="${path}"`), `${file}: footer links ${path}`);
   assert.ok(footer.includes('support@zero-x.live'), file + ': footer support email');
 }
 
