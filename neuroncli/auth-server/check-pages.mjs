@@ -27,6 +27,8 @@ const tags = (html, name) => [...html.matchAll(new RegExp(`<${name}\\b[^>]*>`, '
 const ids = html => [...html.matchAll(/\sid="([^"]+)"/g)].map(m => m[1]);
 const stripScripts = html => html.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '').replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, '');
 const inlineScripts = html => [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(m => m[1]);
+// The menu-mode script every page with the shared header runs right after </header> (site-nav.js).
+const NAV_PRESET = `<script>(function(h){var b=h&&h.querySelector('.zx-nav-toggle');if(b&&'noModule'in HTMLScriptElement.prototype){h.dataset.nav='closed';b.hidden=false}})(document.querySelector('.zx-header'))</script>`;
 const meta = html => Object.fromEntries(tags(html, 'meta').map(a => [a.name || a.property || a['http-equiv'], a.content]));
 
 const seoPages = JSON.parse(read('seo-pages.json'));
@@ -86,6 +88,13 @@ for (const file of [...PUBLIC_PAGES, ...PRIVATE_PAGES]) {
     assert.ok(tags(body, 'nav').some(a => a.id === 'site-nav' && a['aria-label'] === 'Main'), file + ': the main nav is #site-nav');
     assert.match(body, /<button class="zx-nav-toggle"[^>]*>[\s\S]*?Menu<\/button>\s*<nav class="zx-nav" id="site-nav"/, file + ': the button has a visible name and sits before the nav');
     assert.ok(tags(html, 'script').some(a => a.type === 'module' && a.src === '/site-nav.js'), file + ': loads /site-nav.js');
+    // Review 2026-11-05: menu mode before first paint (no wrapped header that then jumps 96 px):
+    // the same inline script right after </header>, and site-nav.js first of the scripts that run
+    // after parsing (deferred and module scripts run in document order).
+    assert.ok(html.includes('</header>\n  ' + NAV_PRESET) || html.includes('</header>\r\n  ' + NAV_PRESET),
+      file + ': the menu-mode inline script right after </header>');
+    const ordered = tags(html, 'script').filter(a => a.src && (a.type === 'module' || 'defer' in a));
+    assert.equal(ordered[0].src, '/site-nav.js', file + ': site-nav.js runs first of the deferred and module scripts');
   }
   assert.ok(tags(html, 'link').some(a => a.rel === 'stylesheet' && a.href === '/zx-tokens.css'), file + ': uses zx-tokens.css');
   assert.doesNotMatch(html, /rahultech|@gmail\.com/i, file + ': personal Gmail address');

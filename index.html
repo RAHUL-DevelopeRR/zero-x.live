@@ -26,9 +26,9 @@
   <link rel="stylesheet" href="/zx-tokens.css">
   <link rel="stylesheet" href="/home.css">
   <script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"Organization","@id":"https://zero-x.live/#organization","name":"Zero-X","alternateName":["Zero X","ZeroX","zero-x.live"],"url":"https://zero-x.live/","logo":"https://zero-x.live/Assets/zerox-favicon-centered.png","description":"Zero-X builds Neuron, an AI coding agent for the terminal, and NeuCockpit, local AI file search for desktop. Built in Tamil Nadu, India.","sameAs":["https://www.instagram.com/zerox.corporation/","https://github.com/RAHUL-DevelopeRR/neuron-v2"],"contactPoint":{"@type":"ContactPoint","email":"support@zero-x.live","contactType":"customer support"},"knowsAbout":["AI coding agents","AI agents","Large language models","LLM gateways","Developer tools","Command-line tools","Semantic file search"]},{"@type":"WebSite","@id":"https://zero-x.live/#website","name":"Zero-X","alternateName":["Zero X","ZeroX","Neuron by Zero-X"],"url":"https://zero-x.live/","publisher":{"@id":"https://zero-x.live/#organization"}},{"@type":"WebPage","@id":"https://zero-x.live/#webpage","url":"https://zero-x.live/","name":"Zero-X | Neuron, the Free AI Coding Agent for Your Terminal","isPartOf":{"@id":"https://zero-x.live/#website"},"about":{"@id":"https://zero-x.live/#neuron"}},{"@type":"SoftwareApplication","@id":"https://zero-x.live/#neuron","name":"Neuron CLI","applicationCategory":"DeveloperApplication","operatingSystem":"Windows, macOS, Linux","url":"https://zero-x.live/neuron-cli","description":"An AI coding agent for the terminal that reads, edits and tests code in your repository with your permission.","publisher":{"@id":"https://zero-x.live/#organization"},"offers":{"@type":"Offer","name":"Free","price":"0","priceCurrency":"USD","url":"https://zero-x.live/pricing#plan-free"},"softwareVersion":"7.0.0-alpha.4","downloadUrl":"https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/tag/v7.0.0-alpha.4","alternateName":["Neuron","Neuron by Zero-X","Zero-X Neuron"],"applicationSubCategory":"AI coding agent","isAccessibleForFree":true,"license":"https://opensource.org/licenses/MIT","featureList":["Reads, writes and edits files in your repository","Runs shell or PowerShell commands, tests and builds","Permission modes: read-only, workspace-write and danger-full-access","Full-screen terminal UI and a line REPL","MCP servers and subagents","Headless runs for CI with neuron -p","Hosted models through Zero-X or your own OpenAI-compatible API key"]},{"@type":"SoftwareApplication","@id":"https://zero-x.live/#neucockpit","name":"NeuCockpit","applicationCategory":"UtilitiesApplication","operatingSystem":"Windows, macOS, Linux","url":"https://zero-x.live/neucockpit","description":"NeuCockpit local AI file search for desktop: find files by meaning and summarize your own documents.","publisher":{"@id":"https://zero-x.live/#organization"}}]}</script>
+  <script type="module" src="/site-nav.js"></script>
   <script type="module" src="/pricing.js"></script>
   <script type="module" src="/home.js"></script>
-  <script type="module" src="/site-nav.js"></script>
 </head>
 <body data-home>
   <a class="zx-skip" href="#main">Skip to content</a>
@@ -45,6 +45,7 @@
       </nav>
     </div>
   </header>
+  <script>(function(h){var b=h&&h.querySelector('.zx-nav-toggle');if(b&&'noModule'in HTMLScriptElement.prototype){h.dataset.nav='closed';b.hidden=false}})(document.querySelector('.zx-header'))</script>
 
   <main id="main" data-pricing-root>
     <section class="zx-container zx-home-hero" aria-labelledby="home-title">

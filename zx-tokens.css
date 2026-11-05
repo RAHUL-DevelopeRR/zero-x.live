@@ -163,8 +163,10 @@ li + li { margin-top: .35em; }
 .zx-nav a[aria-current="page"] { color: var(--zx-heading); box-shadow: inset 0 -2px 0 var(--zx-accent-text); border-radius: 0; }
 .zx-nav .zx-btn { margin-left: 6px; }
 /* Phones: one compact row, the mark and a Menu button (site-nav.js) that opens the nav below it.
-   Without the script the header has no data-nav: the button stays hidden and the nav wraps in a
-   header that does not stick, so it never covers a fifth of the screen. */
+   data-nav is set before first paint by the inline script right after each page's </header>, so
+   the bar never paints wrapped first. Without JavaScript the header has no data-nav: the button
+   stays hidden and the nav wraps in a header that does not stick, so it never covers a fifth of
+   the screen. */
 .zx-nav-toggle { display: none; }
 @media (max-width: 720px) {
   .zx-header:not([data-nav]) { position: static; }

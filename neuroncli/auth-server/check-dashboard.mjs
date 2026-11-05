@@ -951,6 +951,18 @@ for (const scenario of ['live', 'offline']) {
     const nav = doc.getElementById('site-nav');
     assert.equal(button.hidden, true, `${file}: without the script the menu button is hidden (the wrapped nav shows)`);
     assert.equal(header.dataset.nav, undefined, `${file}: and the header is not in menu mode`);
+    // Review 2026-11-05: menu mode is chosen before first paint by the inline script right after
+    // </header>, not when the module runs (which follows the page's other modules), so the header
+    // never paints as three wrapped rows and then jumps up. Browsers without modules keep the
+    // wrapped nav (site-nav.js would never wire the button).
+    const preset = [...read(file).matchAll(/<\/header>\s*<script>([\s\S]*?)<\/script>/g)].map(m => m[1]);
+    assert.equal(preset.length, 1, `${file}: one inline script right after </header>`);
+    const legacy = parseDocument(read(file));
+    vm.runInNewContext(preset[0], {document: legacy, HTMLScriptElement: {prototype: {}}});
+    assert.deepEqual([legacy.querySelector('.zx-header').dataset.nav, legacy.querySelector('.zx-nav-toggle').hidden], [undefined, true],
+      `${file}: no module support: the wrapped nav stays`);
+    vm.runInNewContext(preset[0], {document: doc, HTMLScriptElement: {prototype: {noModule: false}}});
+    assert.deepEqual([header.dataset.nav, button.hidden], ['closed', false], `${file}: menu mode before the module runs`);
     const menu = installNav(doc);
     assert.ok(menu, `${file}: the header has a menu`);
     assert.equal(button.hidden, false, `${file}: the script shows the button`);
@@ -969,6 +981,15 @@ for (const scenario of ['live', 'offline']) {
     assert.equal(menu.isOpen(), false, `${file}: Escape closes the menu`);
     assert.equal(escape.defaultPrevented, true);
     assert.equal(doc.activeElement, button, `${file}: focus returns to the Menu button`);
+    // Safari does not focus a button on click: after a tap on Menu the focus stays on the body,
+    // and Escape from a hardware keyboard still closes the menu.
+    button.click();
+    doc.body.focus();
+    const bodyEscape = makeEvent('keydown', {bubbles: true, cancelable: true, key: 'Escape'});
+    doc.body.dispatchEvent(bodyEscape);
+    assert.equal(menu.isOpen(), false, `${file}: Escape with focus on the body closes the menu`);
+    assert.equal(bodyEscape.defaultPrevented, true);
+    assert.equal(doc.activeElement, button, `${file}: and focus moves to the Menu button`);
     // Escape with the menu closed does nothing.
     const idle = makeEvent('keydown', {bubbles: true, cancelable: true, key: 'Escape'});
     button.dispatchEvent(idle);
