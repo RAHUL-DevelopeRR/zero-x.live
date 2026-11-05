@@ -10,7 +10,7 @@ const root = new URL('../../', import.meta.url);
 const read = file => readFileSync(new URL(file, root), 'utf8');
 const isFile = file => existsSync(new URL(file, root)) && statSync(new URL(file, root)).isFile();
 
-const PUBLIC_PAGES = ['index.html', 'pricing.html', 'neuron-cli.html', 'docs.html', 'ai-coding-agent.html', 'docs/trust.html', 'download.html', 'changelog.html', 'refund.html', 'contact.html', 'shipping.html', 'privacy.html', 'terms.html'];
+const PUBLIC_PAGES = ['index.html', 'pricing.html', 'neuron-cli.html', 'docs.html', 'ai-coding-agent.html', 'free-ai-coding-agent.html', 'claude-code-alternative.html', 'docs/trust.html', 'download.html', 'changelog.html', 'refund.html', 'contact.html', 'shipping.html', 'privacy.html', 'terms.html'];
 const PRIVATE_PAGES = ['dashboard.html', '404.html', 'neuroncli/index.html'];
 const SITE_SCRIPTS = ['dashboard.js', 'pricing.js', 'billing-checkout.js', 'home.js', 'download.js', 'changelog.js'];
 const RELEASE_MANIFESTS = ['releases/cli/latest.json', 'releases/desktop/latest.json'];
@@ -393,13 +393,14 @@ for (const file of ['pricing.html', 'neuron-cli.html']) {
   }
   for (const cell of dataCells(html, 'data-topup-credit')) assert.equal(cell.text, formatUsdAmount(PLAN_CATALOG.topups.find(t => t.id === cell.key).credit_usd));
 }
-// The coding-agent guide quotes Free plan limits without loading pricing.js, so its static text must match the catalog.
-{
-  const cells = dataCells(read('ai-coding-agent.html'), 'data-plan-limit');
-  assert.ok(cells.length >= 2, 'ai-coding-agent.html: limit cells');
+// The coding-agent guide and the free and comparison landing pages quote Free plan limits without
+// loading pricing.js, so their static text must match the catalog.
+for (const file of ['ai-coding-agent.html', 'free-ai-coding-agent.html', 'claude-code-alternative.html']) {
+  const cells = dataCells(read(file), 'data-plan-limit');
+  assert.ok(cells.length >= 2, file + ': limit cells');
   for (const cell of cells) {
     const [id, field] = cell.key.split(':');
-    assert.equal(cell.text, limitLabel(PLAN_CATALOG.plans.find(p => p.id === id), field), `ai-coding-agent.html: ${cell.key}`);
+    assert.equal(cell.text, limitLabel(PLAN_CATALOG.plans.find(p => p.id === id), field), `${file}: ${cell.key}`);
   }
 }
 {
@@ -591,7 +592,7 @@ assert.equal(pricing.tokenAllowance({limits: {daily_tokens: 500000, window_token
 assert.equal(limitLabel(PLAN_CATALOG.plans[0], 'token_phrase'), '1M tokens every 5 hours');
 assert.equal(limitLabel({limits: {daily_tokens: 500000, window_tokens: null, window_seconds: null}}, 'token_phrase'), '500K tokens per day');
 assert.equal(limitLabel(PLAN_CATALOG.plans[1], 'token_phrase'), '10M tokens per day');
-for (const page of ['index.html', 'neuron-cli.html', 'ai-coding-agent.html']) {
+for (const page of ['index.html', 'neuron-cli.html', 'ai-coding-agent.html', 'free-ai-coding-agent.html', 'claude-code-alternative.html']) {
   const html = read(page);
   assert.doesNotMatch(html, /data-plan-limit="free:window_tokens"/, `${page}: no bare window number next to static "every 5 hours"`);
   assert.match(html, /<span data-plan-limit="free:token_phrase">1M tokens every 5 hours<\/span>/, `${page}: the whole phrase is hydrated`);

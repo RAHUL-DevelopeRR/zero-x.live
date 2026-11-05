@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Free AI Coding Agent for the Terminal | Neuron by Zero-X</title>
+  <meta name="description" content="Neuron is a free, open-source AI coding agent for the terminal. Use free hosted LLMs with daily limits or your own API key, on macOS, Linux and Windows. What is free, what is not, and how to start.">
+  <meta name="robots" content="index,follow,max-image-preview:large">
+  <link rel="canonical" href="https://zero-x.live/free-ai-coding-agent">
+  <meta name="theme-color" content="#0A0A0C">
+  <link rel="icon" type="image/png" sizes="32x32" href="/Assets/zerox-favicon-32.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/Assets/zerox-apple-touch-icon.png">
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="Zero-X">
+  <meta property="og:title" content="A free AI coding agent for your terminal">
+  <meta property="og:description" content="Neuron is open source and starts free on hosted LLMs. What the Free plan includes, what it does not, and how to install it in one command.">
+  <meta property="og:url" content="https://zero-x.live/free-ai-coding-agent">
+  <meta property="og:image" content="https://zero-x.live/Assets/zerox-share.png">
+  <meta property="og:image:alt" content="Zero-X logo">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="A free AI coding agent for your terminal">
+  <meta name="twitter:description" content="Neuron is open source and starts free on hosted LLMs. What is free, what is not, and how to install it.">
+  <meta name="twitter:image" content="https://zero-x.live/Assets/zerox-share.png">
+  <meta name="twitter:image:alt" content="Zero-X logo">
+  <link rel="stylesheet" href="/site-fonts.css">
+  <link rel="stylesheet" href="/zx-tokens.css">
+  <script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"TechArticle","@id":"https://zero-x.live/free-ai-coding-agent#article","headline":"A free AI coding agent for your terminal","description":"What is free in Neuron, the open-source AI coding agent by Zero-X: the MIT-licensed CLI, the Free plan on hosted LLMs, and using your own API key.","datePublished":"2026-11-05","dateModified":"2026-11-05","author":{"@id":"https://zero-x.live/#organization"},"publisher":{"@id":"https://zero-x.live/#organization"},"mainEntityOfPage":"https://zero-x.live/free-ai-coding-agent","isPartOf":{"@id":"https://zero-x.live/#website"},"about":[{"@type":"Thing","name":"AI coding agent"},{"@id":"https://zero-x.live/#neuron"}],"image":"https://zero-x.live/Assets/zerox-share.png"},{"@type":"FAQPage","@id":"https://zero-x.live/free-ai-coding-agent#faq","mainEntity":[{"@type":"Question","name":"Do I need a credit card to use Neuron for free?","acceptedAnswer":{"@type":"Answer","text":"No. Install Neuron, run neuron login and sign in. The Free plan needs no payment details."}},{"@type":"Question","name":"Which models are free?","acceptedAnswer":{"@type":"Answer","text":"Open-weight models chosen for coding with tool use, such as GPT-OSS and Qwen. The current list, with each model's usable context window and live status, is on the Zero-X homepage. Claude models are on Pro and Max only."}},{"@type":"Question","name":"Can I use a local model?","acceptedAnswer":{"@type":"Answer","text":"Neuron talks to any OpenAI-compatible endpoint set with OPENAI_BASE_URL and OPENAI_API_KEY, so a local server that offers that API can work. The model must support tool calls for Neuron to edit files and run commands."}},{"@type":"Question","name":"Is my code used to train models?","acceptedAnswer":{"@type":"Answer","text":"The files and messages Neuron includes in a request go to the company serving the model. Free tiers of some of these services may use prompts to improve their models. The Zero-X gateway records usage metadata and is not designed to store prompt or response text. The privacy policy names every company that can receive a request."}}]},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Zero-X","item":"https://zero-x.live/"},{"@type":"ListItem","position":2,"name":"Free AI coding agent","item":"https://zero-x.live/free-ai-coding-agent"}]}]}</script>
+</head>
+<body>
+  <a class="zx-skip" href="#main">Skip to content</a>
+  <header class="zx-header">
+    <div class="zx-container zx-header__inner">
+      <a class="zx-brand" href="/"><img src="/Assets/zerox-mark.svg" width="28" height="28" alt="">Zero-X</a>
+      <nav class="zx-nav" aria-label="Main">
+        <a href="/neuron-cli">Neuron CLI</a>
+        <a href="/pricing">Pricing</a>
+        <a href="/docs">Docs</a>
+        <a class="zx-btn zx-btn--sm" href="https://dashboard.zero-x.live/">Dashboard</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main" class="zx-container zx-legal zx-section--tight">
+    <nav class="zx-breadcrumb" aria-label="Breadcrumb"><a href="/">Zero-X</a> / Free AI coding agent</nav>
+    <article>
+    <h1>A free AI coding agent for your terminal</h1>
+    <p class="zx-updated">By <a href="/about">Zero-X</a>, the team behind Neuron. Published 5 November 2026.</p>
+    <p class="zx-lead"><a href="/neuron-cli">Neuron</a> is an open-source AI coding agent that works in your terminal like a pair programmer: it reads your repository, edits files and runs your tests or build, and asks before anything you have not allowed. You can start without paying and without a credit card.</p>
+    <p>"Free" can mean several things for an AI tool, so this page says exactly what is free in Neuron, where the limits are and when a paid plan makes sense.</p>
+
+    <h2 id="what-is-free">What is free</h2>
+    <ul>
+      <li><strong>The agent itself.</strong> Neuron is written in Rust and released under the MIT licence. The <a href="https://github.com/RAHUL-DevelopeRR/neuron-v2">source code and release binaries</a> are on GitHub, and you can read, change and build it yourself.</li>
+      <li><strong>Hosted LLMs on the Free plan.</strong> Sign in with <code>neuron login</code> and Neuron uses free models chosen for coding with tool use, such as GPT-OSS and Qwen, through the Zero-X gateway. The Free plan allows <span data-plan-limit="free:daily_requests">100</span> requests a day and <span data-plan-limit="free:token_phrase">1M tokens every 5 hours</span>.</li>
+      <li><strong>Your own model.</strong> Set <code>OPENAI_API_KEY</code> and <code>OPENAI_BASE_URL</code> to use any OpenAI-compatible endpoint instead. Zero-X charges nothing for that; your provider bills you, or nobody does if the endpoint is your own.</li>
+    </ul>
+
+    <h2 id="limits">What the Free plan does not include</h2>
+    <p>Free hosted models come from shared pools, so we are plain about the trade-offs:</p>
+    <ul>
+      <li><strong>Best-effort availability.</strong> A free model can be busy or rate-limited. The <a href="/#models">model list on the homepage</a> shows which models the gateway's health checker last found working, and <code>auto</code> skips models that are busy or failing.</li>
+      <li><strong>Smaller usable context.</strong> Some free models accept fewer tokens per request than their full context window. The homepage lists the context each model can actually take on your plan.</li>
+      <li><strong>No Claude models.</strong> Claude Sonnet 5.5 and Claude Opus 5.5 are on <a href="/pricing">Pro and Max</a>, billed from the credits those plans include.</li>
+      <li><strong>Alpha software.</strong> Neuron 7.0.0-alpha.4 is an alpha. Expect rough edges and read the <a href="https://github.com/RAHUL-DevelopeRR/neuron-v2/blob/HEAD/CHANGELOG.md">known limitations</a>. The binaries are not code-signed (Windows) or notarized (macOS).</li>
+    </ul>
+
+    <h2 id="pair-programmer">A pair programmer that runs your tools</h2>
+    <p>Chat assistants write code that you paste and run yourself. A coding agent closes that loop: Neuron searches the repository, plans a change, edits the files, runs your tests and reads the failures until the job is done or it needs your decision. The <a href="/ai-coding-agent">AI coding agent guide</a> explains the loop in detail.</p>
+    <ul>
+      <li>Three permission modes: <code>read-only</code>, <code>workspace-write</code> (the default) and <code>danger-full-access</code>, chosen with <code>--permission-mode</code>. Anything outside the mode asks you first.</li>
+      <li>A full-screen terminal UI, and a line REPL with <code>neuron --no-tui</code>.</li>
+      <li>MCP servers for extra tools, and subagents for focused jobs such as code search or review.</li>
+      <li>Headless runs for scripts and CI with <code>neuron -p</code>.</li>
+      <li>macOS, Linux and Windows, including PowerShell commands on Windows.</li>
+    </ul>
+
+    <h2 id="india">Built in India</h2>
+    <p>Zero-X is a small team in Tamil Nadu, India. The <a href="/pricing">pricing page</a> shows plans in rupees as well as dollars, and support is by email at <a href="mailto:support@zero-x.live">support@zero-x.live</a>. The Free plan is the same wherever you are.</p>
+
+    <h2 id="install">Install it free</h2>
+    <p>With Node.js 22.14 or later, npm is the quickest:</p>
+    <div class="zx-code"><span class="zx-code__label">npm, any terminal</span><pre><code>npm install -g @zero-x.live/neuron</code></pre></div>
+    <p>With Python instead, keep <code>--pre</code> while Neuron 7 is a pre-release:</p>
+    <div class="zx-code"><span class="zx-code__label">pip, any terminal</span><pre><code>python -m pip install --pre neuroncli</code></pre></div>
+    <p>Install scripts for macOS, Linux, PowerShell and Command Prompt are in the <a href="/neuron-cli#install">install options</a>. Then sign in once and start Neuron in a project:</p>
+    <div class="zx-code"><span class="zx-code__label">First run</span><pre><code>neuron login
+cd path/to/your-project
+neuron</code></pre></div>
+    <div class="zx-row">
+      <a class="zx-btn zx-btn--primary" href="/neuron-cli#install">Install Neuron</a>
+      <a class="zx-btn" href="/claude-code-alternative">Compare with other agents</a>
+      <a class="zx-btn zx-btn--ghost" href="/pricing">Compare plans</a>
+    </div>
+
+    <h2 id="faq">Questions</h2>
+    <div class="zx-faq">
+      <details>
+        <summary>Do I need a credit card to use Neuron for free?</summary>
+        <p>No. Install Neuron, run <code>neuron login</code> and sign in. The Free plan needs no payment details.</p>
+      </details>
+      <details>
+        <summary>Which models are free?</summary>
+        <p>Open-weight models chosen for coding with tool use, such as GPT-OSS and Qwen. The current list, with each model's usable context window and live status, is on the <a href="/#models">Zero-X homepage</a>. Claude models are on Pro and Max only.</p>
+      </details>
+      <details>
+        <summary>Can I use a local model?</summary>
+        <p>Neuron talks to any OpenAI-compatible endpoint set with <code>OPENAI_BASE_URL</code> and <code>OPENAI_API_KEY</code>, so a local server that offers that API can work. The model must support tool calls for Neuron to edit files and run commands.</p>
+      </details>
+      <details>
+        <summary>Is my code used to train models?</summary>
+        <p>The files and messages Neuron includes in a request go to the company serving the model. Free tiers of some of these services may use prompts to improve their models. The Zero-X gateway records usage metadata and is not designed to store prompt or response text. The <a href="/privacy">privacy policy</a> names every company that can receive a request.</p>
+      </details>
+    </div>
+    </article>
+  </main>
+
+  <footer class="zx-footer">
+    <div class="zx-container zx-footer__grid">
+      <div>
+        <a class="zx-brand" href="/">Zero-X</a>
+        <p>Neuron CLI and NeuCockpit. Built in Tamil Nadu, India.</p>
+      </div>
+      <nav aria-label="Product">
+        <h2>Product</h2>
+        <a href="/neuron-cli">Neuron CLI</a>
+        <a href="/pricing">Pricing</a>
+        <a href="/docs">Docs</a>
+        <a href="/ai-coding-agent">AI coding agent guide</a>
+        <a href="/free-ai-coding-agent" aria-current="page">Free AI coding agent</a>
+        <a href="/claude-code-alternative">Neuron compared</a>
+        <a href="https://dashboard.zero-x.live/">Dashboard</a>
+      </nav>
+      <nav aria-label="Company">
+        <h2>Company</h2>
+        <a href="/about">About</a>
+        <a href="/contact">Contact</a>
+        <a href="https://zero-x.live/neucockpit">NeuCockpit</a>
+      </nav>
+      <nav aria-label="Legal">
+        <h2>Legal</h2>
+        <a href="/terms">Terms of Service</a>
+        <a href="/privacy">Privacy Policy</a>
+        <a href="/refund">Cancellation and refunds</a>
+        <a href="/shipping">Shipping and delivery</a>
+      </nav>
+    </div>
+    <p class="zx-container zx-footer__legal">© 2026 Zero-X · <a href="mailto:support@zero-x.live">support@zero-x.live</a></p>
+  </footer>
+</body>
+</html>
