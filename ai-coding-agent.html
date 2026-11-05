@@ -25,13 +25,15 @@
   <link rel="stylesheet" href="/site-fonts.css">
   <link rel="stylesheet" href="/zx-tokens.css">
   <script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"TechArticle","@id":"https://zero-x.live/ai-coding-agent#article","headline":"What is an AI coding agent?","description":"How an AI coding agent reads, edits and tests code, what it should be allowed to do, which models it uses and how to try Neuron in your terminal.","datePublished":"2026-10-24","dateModified":"2026-10-24","author":{"@id":"https://zero-x.live/#organization"},"publisher":{"@id":"https://zero-x.live/#organization"},"mainEntityOfPage":"https://zero-x.live/ai-coding-agent","isPartOf":{"@id":"https://zero-x.live/#website"},"about":[{"@type":"Thing","name":"AI coding agent"},{"@id":"https://zero-x.live/#neuron"}],"image":"https://zero-x.live/Assets/zerox-share.png"},{"@type":"FAQPage","@id":"https://zero-x.live/ai-coding-agent#faq","mainEntity":[{"@type":"Question","name":"Is a coding agent the same as an AI agent?","acceptedAnswer":{"@type":"Answer","text":"A coding agent is one kind of AI agent. An AI agent is any program where a model chooses actions and uses tools toward a goal. A coding agent's tools are for software work: reading and editing files, searching code and running commands."}},{"@type":"Question","name":"Is Neuron free?","acceptedAnswer":{"@type":"Answer","text":"Neuron is open source under the MIT licence. The Zero-X Free plan gives you hosted models with daily limits at no cost, or you can use your own API key. Pro and Max raise the limits."}},{"@type":"Question","name":"Does Neuron work on Windows?","acceptedAnswer":{"@type":"Answer","text":"Yes. A Windows x64 build installs with PowerShell, and Neuron can run PowerShell commands as well as shell commands. Windows on Arm runs the x64 build under emulation."}},{"@type":"Question","name":"Can I run a coding agent in CI?","acceptedAnswer":{"@type":"Answer","text":"Yes. Create an API key in the Zero-X dashboard, store it as a CI secret in NEURON_TOKEN and run neuron -p with your task. Never commit the key."}}]},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Zero-X","item":"https://zero-x.live/"},{"@type":"ListItem","position":2,"name":"AI coding agent guide","item":"https://zero-x.live/ai-coding-agent"}]}]}</script>
+  <script type="module" src="/site-nav.js"></script>
 </head>
 <body>
   <a class="zx-skip" href="#main">Skip to content</a>
   <header class="zx-header">
     <div class="zx-container zx-header__inner">
       <a class="zx-brand" href="/"><img src="/Assets/zerox-mark.svg" width="28" height="28" alt="">Zero-X</a>
-      <nav class="zx-nav" aria-label="Main">
+      <button class="zx-nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" hidden><span class="zx-nav-toggle__bars" aria-hidden="true"></span>Menu</button>
+      <nav class="zx-nav" id="site-nav" aria-label="Main">
         <a href="/neuron-cli">Neuron CLI</a>
         <a href="/pricing">Pricing</a>
         <a href="/docs">Docs</a>

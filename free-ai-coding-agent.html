@@ -25,13 +25,15 @@
   <link rel="stylesheet" href="/site-fonts.css">
   <link rel="stylesheet" href="/zx-tokens.css">
   <script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"TechArticle","@id":"https://zero-x.live/free-ai-coding-agent#article","headline":"A free AI coding agent for your terminal","description":"What is free in Neuron, the open-source AI coding agent by Zero-X: the MIT-licensed CLI, the Free plan on hosted LLMs, and using your own API key.","datePublished":"2026-11-05","dateModified":"2026-11-05","author":{"@id":"https://zero-x.live/#organization"},"publisher":{"@id":"https://zero-x.live/#organization"},"mainEntityOfPage":"https://zero-x.live/free-ai-coding-agent","isPartOf":{"@id":"https://zero-x.live/#website"},"about":[{"@type":"Thing","name":"AI coding agent"},{"@id":"https://zero-x.live/#neuron"}],"image":"https://zero-x.live/Assets/zerox-share.png"},{"@type":"FAQPage","@id":"https://zero-x.live/free-ai-coding-agent#faq","mainEntity":[{"@type":"Question","name":"Do I need a credit card to use Neuron for free?","acceptedAnswer":{"@type":"Answer","text":"No. Install Neuron, run neuron login and sign in. The Free plan needs no payment details."}},{"@type":"Question","name":"Which models are free?","acceptedAnswer":{"@type":"Answer","text":"Open-weight models chosen for coding with tool use, such as GPT-OSS and Qwen. The current list, with each model's usable context window and live status, is on the Zero-X homepage. Claude models are on Pro and Max only."}},{"@type":"Question","name":"Can I use a local model?","acceptedAnswer":{"@type":"Answer","text":"Neuron talks to any OpenAI-compatible endpoint set with OPENAI_BASE_URL and OPENAI_API_KEY, so a local server that offers that API can work. The model must support tool calls for Neuron to edit files and run commands."}},{"@type":"Question","name":"Is my code used to train models?","acceptedAnswer":{"@type":"Answer","text":"The files and messages Neuron includes in a request go to the company serving the model. Free tiers of some of these services may use prompts to improve their models. The Zero-X gateway records usage metadata and is not designed to store prompt or response text. The privacy policy names every company that can receive a request."}}]},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Zero-X","item":"https://zero-x.live/"},{"@type":"ListItem","position":2,"name":"Free AI coding agent","item":"https://zero-x.live/free-ai-coding-agent"}]}]}</script>
+  <script type="module" src="/site-nav.js"></script>
 </head>
 <body>
   <a class="zx-skip" href="#main">Skip to content</a>
   <header class="zx-header">
     <div class="zx-container zx-header__inner">
       <a class="zx-brand" href="/"><img src="/Assets/zerox-mark.svg" width="28" height="28" alt="">Zero-X</a>
-      <nav class="zx-nav" aria-label="Main">
+      <button class="zx-nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" hidden><span class="zx-nav-toggle__bars" aria-hidden="true"></span>Menu</button>
+      <nav class="zx-nav" id="site-nav" aria-label="Main">
         <a href="/neuron-cli">Neuron CLI</a>
         <a href="/pricing">Pricing</a>
         <a href="/docs">Docs</a>

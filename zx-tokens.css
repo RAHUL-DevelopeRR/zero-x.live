@@ -162,6 +162,23 @@ li + li { margin-top: .35em; }
 .zx-nav a:not(.zx-btn):hover { color: var(--zx-heading); background: var(--zx-card-hover); }
 .zx-nav a[aria-current="page"] { color: var(--zx-heading); box-shadow: inset 0 -2px 0 var(--zx-accent-text); border-radius: 0; }
 .zx-nav .zx-btn { margin-left: 6px; }
+/* Phones: one compact row, the mark and a Menu button (site-nav.js) that opens the nav below it.
+   Without the script the header has no data-nav: the button stays hidden and the nav wraps in a
+   header that does not stick, so it never covers a fifth of the screen. */
+.zx-nav-toggle { display: none; }
+@media (max-width: 720px) {
+  .zx-header:not([data-nav]) { position: static; }
+  .zx-header[data-nav] .zx-header__inner { min-height: 56px; padding-block: 6px; }
+  .zx-header[data-nav] .zx-nav-toggle { display: inline-flex; align-items: center; gap: 10px; min-height: 44px; padding: 0 14px; border: 1px solid var(--zx-border); border-radius: var(--zx-radius-sm); background: transparent; color: var(--zx-heading); font: inherit; font-size: .95rem; font-weight: 600; cursor: pointer; }
+  .zx-header[data-nav] .zx-nav-toggle:hover { background: var(--zx-card-hover); }
+  .zx-header[data-nav] .zx-nav-toggle:focus-visible { outline: none; box-shadow: var(--zx-focus); }
+  .zx-nav-toggle__bars { position: relative; display: block; width: 16px; height: 2px; border-radius: 1px; background: currentColor; box-shadow: 0 -5px 0 currentColor, 0 5px 0 currentColor; }
+  .zx-header[data-nav="open"] .zx-nav-toggle__bars { box-shadow: none; }
+  .zx-header[data-nav="closed"] .zx-nav { display: none; }
+  .zx-header[data-nav="open"] .zx-nav { flex-basis: 100%; flex-direction: column; align-items: stretch; gap: 2px; padding-bottom: 10px; max-height: calc(100vh - 72px); overflow-y: auto; }
+  .zx-header[data-nav="open"] .zx-nav a[aria-current="page"] { box-shadow: inset 2px 0 0 var(--zx-accent-text); }
+  .zx-header[data-nav="open"] .zx-nav .zx-btn { margin: 6px 0 0; justify-content: center; }
+}
 .zx-breadcrumb { font-size: .9rem; color: var(--zx-faint); margin-bottom: 16px; }
 .zx-breadcrumb a { color: var(--zx-muted); }
 

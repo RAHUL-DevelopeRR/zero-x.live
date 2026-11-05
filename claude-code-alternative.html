@@ -25,13 +25,15 @@
   <link rel="stylesheet" href="/site-fonts.css">
   <link rel="stylesheet" href="/zx-tokens.css">
   <script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"TechArticle","@id":"https://zero-x.live/claude-code-alternative#article","headline":"Neuron compared with Claude Code, Codex CLI and Aider","description":"How Neuron, an open-source AI coding agent for the terminal, compares with Claude Code, OpenAI Codex CLI and Aider on licence, models and cost.","datePublished":"2026-11-05","dateModified":"2026-11-05","author":{"@id":"https://zero-x.live/#organization"},"publisher":{"@id":"https://zero-x.live/#organization"},"mainEntityOfPage":"https://zero-x.live/claude-code-alternative","isPartOf":{"@id":"https://zero-x.live/#website"},"about":[{"@type":"Thing","name":"AI coding agent"},{"@id":"https://zero-x.live/#neuron"}],"image":"https://zero-x.live/Assets/zerox-share.png"},{"@type":"FAQPage","@id":"https://zero-x.live/claude-code-alternative#faq","mainEntity":[{"@type":"Question","name":"Is Neuron made by Anthropic?","acceptedAnswer":{"@type":"Answer","text":"No. Neuron is built by Zero-X, an independent team in India. Zero-X is not affiliated with Anthropic, OpenAI or the Aider project. Claude is a trademark of Anthropic."}},{"@type":"Question","name":"Can Neuron use Claude models?","acceptedAnswer":{"@type":"Answer","text":"Yes, on the Pro and Max plans, where Claude Sonnet 5.5 and Claude Opus 5.5 are billed from included credits. The Free plan uses free open-weight models instead."}},{"@type":"Question","name":"Can I move my CLAUDE.md or AGENTS.md instructions to Neuron?","acceptedAnswer":{"@type":"Answer","text":"Yes, and you do not need to copy them. Neuron reads NEURON.md first and also reads AGENTS.md and CLAUDE.md in each folder from the root down to your project, so your existing instructions work as they are. Run /init only if you want a separate NEURON.md for Neuron-specific rules, and keep each rule in one file so Neuron does not read it twice."}}]},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Zero-X","item":"https://zero-x.live/"},{"@type":"ListItem","position":2,"name":"Neuron compared","item":"https://zero-x.live/claude-code-alternative"}]}]}</script>
+  <script type="module" src="/site-nav.js"></script>
 </head>
 <body>
   <a class="zx-skip" href="#main">Skip to content</a>
   <header class="zx-header">
     <div class="zx-container zx-header__inner">
       <a class="zx-brand" href="/"><img src="/Assets/zerox-mark.svg" width="28" height="28" alt="">Zero-X</a>
-      <nav class="zx-nav" aria-label="Main">
+      <button class="zx-nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" hidden><span class="zx-nav-toggle__bars" aria-hidden="true"></span>Menu</button>
+      <nav class="zx-nav" id="site-nav" aria-label="Main">
         <a href="/neuron-cli">Neuron CLI</a>
         <a href="/pricing">Pricing</a>
         <a href="/docs">Docs</a>

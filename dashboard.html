@@ -13,13 +13,15 @@
   <link rel="stylesheet" href="/zx-tokens.css">
   <script src="/zerox-auth.js" defer></script>
   <script type="module" src="/dashboard.js"></script>
+  <script type="module" src="/site-nav.js"></script>
 </head>
 <body>
   <a class="zx-skip" href="#main">Skip to content</a>
   <header class="zx-header">
     <div class="zx-container zx-header__inner">
       <a class="zx-brand" href="https://zero-x.live/" data-site-path="/"><img src="/Assets/zerox-mark.svg" width="28" height="28" alt="">Zero-X</a>
-      <nav class="zx-nav" aria-label="Main">
+      <button class="zx-nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" hidden><span class="zx-nav-toggle__bars" aria-hidden="true"></span>Menu</button>
+      <nav class="zx-nav" id="site-nav" aria-label="Main">
         <a href="https://zero-x.live/neuron-cli" data-site-path="/neuron-cli">Neuron CLI</a>
         <a href="https://zero-x.live/pricing" data-site-path="/pricing">Pricing</a>
         <a href="https://zero-x.live/docs" data-site-path="/docs">Docs</a>
