@@ -30,7 +30,7 @@
   <a class="zx-skip" href="#main">Skip to content</a>
   <header class="zx-header">
     <div class="zx-container zx-header__inner">
-      <a class="zx-brand" href="/"><img src="/Assets/zerox-favicon-32.png" width="28" height="28" alt="">Zero-X</a>
+      <a class="zx-brand" href="/"><img src="/Assets/zerox-mark.svg" width="28" height="28" alt="">Zero-X</a>
       <nav class="zx-nav" aria-label="Main">
         <a href="/neuron-cli">Neuron CLI</a>
         <a href="/pricing">Pricing</a>
@@ -87,7 +87,7 @@ neuron</code></pre></div>
                 <tr><th scope="row"><code>neuron prompt "…"</code>, <code>neuron -p "…"</code></th><td>Run one prompt and exit (scripts and CI). In a script, a tool call that needs approval is denied, and a run that denied one exits with code 2.</td></tr>
                 <tr><th scope="row"><code>neuron --continue [CHAT]</code></th><td>Reopen the latest chat for this folder (or CHAT) in the full-screen UI.</td></tr>
                 <tr><th scope="row"><code>neuron --resume latest</code></th><td>Continue the newest saved line-REPL session.</td></tr>
-                <tr><th scope="row"><code>neuron --model &lt;id&gt;</code></th><td>Start with a specific model, for example <code>auto</code> or <code>gemini/gemini-2.5-flash</code>.</td></tr>
+                <tr><th scope="row"><code>neuron --model &lt;id&gt;</code></th><td>Start with a specific model, for example <code>auto</code> or <code>openai/gpt-oss-120b</code>.</td></tr>
                 <tr><th scope="row"><code>neuron --permission-mode &lt;mode&gt;</code></th><td><code>read-only</code>, <code>workspace-write</code> (the default) or <code>danger-full-access</code>.</td></tr>
                 <tr><th scope="row"><code>neuron login</code> (or <code>neuron auth login</code>)</th><td>Sign in with a device code that you approve at <code>https://neuron.zero-x.live/device</code>; works over SSH, in WSL and in containers. The session goes to the macOS Keychain or Windows Credential Manager, or on Linux to <code>~/.neuroncli/credentials.json</code> (owner-only).</td></tr>
                 <tr><th scope="row"><code>neuron login --with-token</code></th><td>Read an <code>nzx_</code> API key or a <code>ses_</code> session from standard input, for CI.</td></tr>
@@ -165,21 +165,25 @@ neuron</code></pre></div>
           <h2 id="api-title">API reference</h2>
           <p>The gateway speaks the OpenAI Chat Completions protocol. Base URL: <code>https://zero-x.live/v1</code>. Authenticate with <code>Authorization: Bearer &lt;token&gt;</code>, where the token is an API key from the dashboard or a CLI session.</p>
           <h3 id="models-endpoint">GET /v1/models</h3>
-          <p>Lists the catalog. Authentication is optional; <code>available</code> is computed for your plan (anonymous callers see the Free plan).</p>
+          <p>Lists the catalog, one entry per model. Authentication is optional; <code>available</code> and <code>context_window</code> are computed for your plan (anonymous callers see the Free plan).</p>
           <div class="zx-code"><pre><code>curl https://zero-x.live/v1/models -H "Authorization: Bearer $NEURON_TOKEN"</code></pre></div>
           <div class="zx-code"><pre><code>{
   "object": "list",
   "data": [{
-    "id": "gemini/gemini-2.5-flash",
+    "id": "openai/gpt-oss-120b",
     "object": "model",
     "created": 0,
-    "owned_by": "gemini",
-    "display_name": "Gemini 2.5 Flash",
-    "context_window": 1048576,
-    "context_length": 1048576,
-    "max_output_tokens": 65536,
-    "capabilities": { "tools": true, "streaming": true, "vision": true, "reasoning": true },
-    "reasoning_efforts": ["none", "low", "medium", "high"],
+    "owned_by": "openai",
+    "display_name": "GPT-OSS 120B",
+    "maker": "openai",
+    "maker_name": "OpenAI",
+    "family": "openai/gpt-oss-120b",
+    "context_window": 8000,
+    "context_length": 8000,
+    "native_context_window": 131072,
+    "max_output_tokens": 8000,
+    "capabilities": { "tools": true, "streaming": true, "vision": false, "reasoning": true },
+    "reasoning_efforts": ["low", "medium", "high"],
     "tiers": ["free"],
     "available": true,
     "unavailable_reason": null,
@@ -189,7 +193,7 @@ neuron</code></pre></div>
     "checked_at": "2026-10-24T13:53:52.473Z"
   }]
 }</code></pre></div>
-          <p><code>unavailable_reason</code> is <code>null</code>, <code>upgrade_required</code>, <code>region_unavailable</code>, <code>policy_restricted</code> or <code>not_configured</code>. <code>pricing</code> is the paid-capacity price per million tokens (<code>input_per_mtok_usd</code>, <code>output_per_mtok_usd</code>, and for Claude <code>cache_read_per_mtok_usd</code> and <code>cache_write_per_mtok_usd</code>), or <code>null</code> for free-only models. Claude Sonnet 5.5 (<code>anthropic/claude-sonnet-5-5</code>) and Claude Opus 5.5 (<code>anthropic/claude-opus-5-5</code>) are paid models: Pro and Max can choose them and are billed from credits, Free sees them with <code>upgrade_required</code>, and <code>auto</code> never picks them. <code>status</code> is <code>available</code>, <code>degraded</code>, <code>busy</code> or <code>blurred</code>; a blurred model is temporarily unavailable until <code>available_again_at</code>. <code>GET /v1/models/status</code> returns the same availability fields for polling. The list includes the pseudo-model <code>auto</code>.</p>
+          <p><code>unavailable_reason</code> is <code>null</code>, <code>upgrade_required</code>, <code>region_unavailable</code>, <code>policy_restricted</code> or <code>not_configured</code>. <code>pricing</code> is the paid-capacity price per million tokens (<code>input_per_mtok_usd</code>, <code>output_per_mtok_usd</code>, and for Claude <code>cache_read_per_mtok_usd</code> and <code>cache_write_per_mtok_usd</code>), or <code>null</code> for free-only models. Claude Sonnet 5.5 (<code>anthropic/claude-sonnet-5-5</code>) and Claude Opus 5.5 (<code>anthropic/claude-opus-5-5</code>) are paid models: Pro and Max can choose them and are billed from credits, Free sees them with <code>upgrade_required</code>, and <code>auto</code> never picks them. <code>context_window</code> is what you can send on your plan; <code>native_context_window</code> is the model's own maximum (some free models take smaller requests on the Free plan). <code>maker</code> names the company that made the model. <code>status</code> comes from the gateway's health checker: <code>available</code>, <code>degraded</code> (slower than usual), <code>busy</code>, <code>unavailable</code> (until <code>available_again_at</code>; older clients may see <code>blurred</code>) or <code>unknown</code> (nobody has checked it lately). <code>GET /v1/models/status</code> returns the same availability fields, with <code>checked_at</code>, for polling every 30 seconds. The list includes the pseudo-model <code>auto</code>.</p>
 
           <h3 id="chat-completions">POST /v1/chat/completions</h3>
           <p>Standard OpenAI request body. <code>model</code> may be <code>auto</code>. Set <code>"stream": true</code> for server-sent events ending with <code>data: [DONE]</code>; streamed <code>tool_calls</code> deltas always include <code>index</code>.</p>
@@ -255,7 +259,7 @@ neuron</code></pre></div>
             <li>Daily caps reset at 00:00 UTC. Tokens are prompt plus completion tokens.</li>
             <li>Free counts tokens over a rolling 5-hour window: each request's tokens count for 5 hours from when it started, and a running request counts with what it reserved (its prompt plus up to 1,024 output tokens) until it finishes. A request that would take the window past 1,000,000 tokens gets <code>insufficient_quota</code> with <code>resets_at</code> and <code>Retry-After</code> set to when enough of the window frees up; a single request larger than the whole window gets neither, since waiting does not make it fit. <code>GET /api/account</code> reports it as <code>usage_window</code>.</li>
             <li>Every free pool also has a global daily budget shared by all users; when it is spent you get <code>capacity_exhausted</code> even if your own cap has room.</li>
-            <li>Groq's free tier allows about 8,000 tokens per minute, so large prompts go to models with more headroom.</li>
+            <li>Some free models take small requests only (about 8,000 tokens), so <code>auto</code> sends large prompts to models with more headroom.</li>
             <li>Paid-capacity requests cost credits at the upstream price plus 25%. Free-pool requests cost no credits.</li>
           </ul>
         </section>

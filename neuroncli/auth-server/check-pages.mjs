@@ -239,7 +239,10 @@ for (const file of allHtml) {
     assert.equal(script.crossorigin, 'anonymous', `${file}: SRI needs crossorigin=anonymous`);
   }
 }
-assert.doesNotMatch(read('zx-tokens.css'), /@import|url\((?!\s*['"]?data:)/, 'zx-tokens.css loads nothing remote');
+assert.doesNotMatch(read('zx-tokens.css'), /@import|url\((?!\s*['"]?(?:data:|\/[^/]))/, 'zx-tokens.css loads nothing remote');
+// Every maker logo the pane draws is vendored, with its licence notice.
+for (const m of read('zx-tokens.css').matchAll(/url\("(\/[^"]+)"\)/g)) assert.ok(isFile(m[1].slice(1)), 'zx-tokens.css: ' + m[1] + ' exists');
+assert.match(read('Assets/makers/NOTICE.txt'), /Simple Icons[\s\S]*CC0 1\.0/, 'maker logos carry their Simple Icons CC0 notice');
 for (const m of read('site-fonts.css').matchAll(/url\(['"]?(https:[^'")]+)/g)) assert.ok(CSP.font.includes(new URL(m[1]).origin), 'font origin ' + m[1]);
 for (const file of [...SITE_SCRIPTS, 'zerox-auth.js']) {
   for (const m of read(file).matchAll(/'(https:\/\/[^'\s]+)'/g)) {
@@ -690,10 +693,13 @@ assert.equal(checkout.normalizeCurrency('EUR'), 'USD');
   for (const id of ['step-install', 'cta-install']) assert.match(html, new RegExp(`<code id="${id}">${INSTALL_NPM}\\b`), `index.html #${id} starts with npm`);
   // npm's latest tag and PyPI (as a pre-release) serve Neuron 7: npm is the first tab, pip the second,
   // and the install scripts follow. Each command is labelled with the shell it is for.
-  for (const file of ['index.html', 'neuron-cli.html']) {
+  for (const [file, expected] of [['index.html', ['install-npm', 'install-pip', 'install-sh', 'install-ps1', 'install-cmd']],
+    ['neuron-cli.html', ['install-npm', 'install-pip', 'install-sh', 'install-ps1', 'install-cmd', 'install-source']]]) {
     const page = read(file);
     const tabs = [...page.matchAll(/<section class="zx-install" id="(install-[\w-]+)"/g)].map(m => m[1]);
-    assert.deepEqual(tabs, ['install-npm', 'install-pip', 'install-sh', 'install-ps1', 'install-source'], file + ': install tabs, best first');
+    assert.deepEqual(tabs, expected, file + ': install tabs, best first');
+    const labels = [...page.matchAll(/<section class="zx-install" id="install-[\w-]+" data-tab-label="([^"]+)"/g)].map(m => m[1]);
+    assert.deepEqual(labels.slice(0, 5), ['npm', 'pip', 'macOS and Linux', 'PowerShell', 'Command Prompt'], file + ': tab labels');
     for (const label of ['Any terminal', 'Terminal (sh, bash or zsh)', 'Command Prompt (cmd.exe)']) {
       assert.ok(page.includes(`<span class="zx-code__label">${label}`), `${file}: labels a command "${label}"`);
     }
@@ -711,22 +717,47 @@ assert.equal(checkout.normalizeCurrency('EUR'), 'USD');
     assert.doesNotMatch(read(file), /neuron auth login/, file + ': the sign-in command is neuron login');
   }
   for (const id of ['get-started', 'features', 'models', 'pricing', 'docs', 'faq', 'products']) assert.ok(ids(html).includes(id), 'index.html section #' + id);
+  // Every hero command has its own copy button.
+  for (const id of ['cmd-npm', 'cmd-pip', 'cmd-sh', 'cmd-ps1', 'cmd-cmd']) assert.ok(tags(html, 'button').some(b => b['data-copy-target'] === id), 'index.html copies #' + id);
+  assert.match(html, /<a class="zx-btn zx-btn--primary" href="#get-started">Start free<\/a>/, 'index.html: the free plan call to action');
   for (const plan of ['free', 'pro', 'max']) assert.match(html, new RegExp(`data-plan-price="${plan}"`), 'index.html hydrates the ' + plan + ' price');
   assert.match(html, /<main id="main" data-pricing-root>/, 'pricing.js hydrates the homepage');
   for (const button of tags(html, 'button').filter(b => 'data-copy-target' in b)) assert.ok(ids(html).includes(button['data-copy-target']), 'copy target ' + button['data-copy-target']);
-  assert.ok(ids(html).includes('models-list') && ids(html).includes('models-note'), 'live model list slots');
-  // The built-in list (before JavaScript, without it, or when the gateway cannot be reached)
-  // checked nothing: no row says Available, no switched-off or removed model, no route provider.
-  const staticList = html.slice(html.indexOf('id="models-list"'), html.indexOf('</ul>', html.indexOf('id="models-list"')));
-  const staticRows = staticList.match(/<li class="zx-model"[^>]*>/g) || [];
-  assert.ok(staticRows.length >= 5, 'index.html: a built-in model list');
-  assert.ok(staticRows.every(row => row.includes('data-tone="unknown"')), 'index.html: built-in rows are not checked');
-  assert.doesNotMatch(staticList, />Available</, 'index.html: a built-in row never claims Available');
-  assert.doesNotMatch(staticList, /MiniMax|Gemini|Workers AI|@cf\/|\(Groq\)|\(NVIDIA\)|OpenRouter|groq\//, 'index.html: only offered models, by their makers');
-  assert.match(html, /<li data-tone="unknown">Not checked recently<\/li>/, 'index.html: the legend names the not-checked state');
+  // The live model pane (home.js), on the homepage and the Neuron CLI page.
+  const home = await import(new URL('home.js', root));
+  for (const file of ['index.html', 'neuron-cli.html']) {
+    const page = read(file);
+    for (const id of ['models-list', 'models-note', 'models-live', 'models-live-text']) assert.ok(ids(page).includes(id), `${file}: live model pane #${id}`);
+    assert.match(page, /<div class="zx-modelpane" data-live-models>/, file + ': home.js drives the pane');
+    assert.ok(tags(page, 'script').some(s => s.src === '/home.js' && s.type === 'module'), file + ': loads home.js');
+    // The built-in list (before JavaScript, without it, or when the gateway cannot be reached)
+    // checked nothing: no row says Available, no switched-off or removed model, no provider, no route id.
+    const staticList = page.slice(page.indexOf('id="models-list"'), page.indexOf('</ul>', page.indexOf('id="models-list"')));
+    const staticRows = staticList.match(/<li class="zx-model"[^>]*>/g) || [];
+    assert.ok(staticRows.length >= 5, file + ': a built-in model list');
+    assert.ok(staticRows.every(row => row.includes('data-tone="unknown"')), file + ': built-in rows are not checked');
+    assert.doesNotMatch(staticList, />Available</, file + ': a built-in row never claims Available');
+    assert.doesNotMatch(staticList, /MiniMax|Gemini|Workers AI|Groq|OpenRouter|Cloudflare|@cf\/|groq\/|nvidia\/|:free/i, file + ': only offered models, by their makers');
+    assert.doesNotMatch(staticList, /<code\b/, file + ': no model ids in the pane');
+    // [maker logo] [model name] [usable context] [status] in every row.
+    for (const row of staticList.split('<li class="zx-model"').slice(1)) {
+      const maker = row.match(/<span class="zx-maker" data-maker="([\w-]+)"/)?.[1];
+      assert.ok(maker && home.MAKERS[maker], file + ': a known maker badge in every row');
+      assert.ok(home.MAKER_LOGOS.includes(maker) === / data-logo /.test(row.slice(0, row.indexOf('</span>'))), `${file}: ${maker} logo or monogram`);
+      assert.match(row, /class="zx-model__name">[^<]+</, file + ': model name');
+      assert.match(row, /class="zx-model__ctx[^"]*" title="[^"]+">(?:\d+(?:\.\d)?[KM]|Fits request)</, file + ': usable context with the native window on hover');
+      assert.match(row, /class="zx-model__status"><span class="zx-model__dot" aria-hidden="true"><\/span>Not checked recently</, file + ': status with a text label');
+    }
+    assert.match(page, /<li data-tone="unknown">Not checked recently<\/li>/, file + ': the legend names the not-checked state');
+    for (const tone of ['ok', 'warn', 'busy', 'off']) assert.match(page, new RegExp(`<li data-tone="${tone}">`), `${file}: the legend shows ${tone}`);
+  }
+  for (const maker of home.MAKER_LOGOS.filter(maker => maker !== 'zero-x')) {
+    assert.ok(isFile(`Assets/makers/${maker}.svg`), `Assets/makers/${maker}.svg is vendored`);
+    assert.match(read(`Assets/makers/${maker}.svg`), /^<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg" viewBox="0 0 24 24"><title>[^<]+<\/title><path d="[^"]+"\/><\/svg>\s*$/, `${maker}.svg is path data only`);
+    assert.match(read('zx-tokens.css'), new RegExp(`\\.zx-maker\\[data-maker="${maker}"\\] \\{ --zx-logo: url\\("/Assets/makers/${maker}\\.svg"\\); \\}`), `zx-tokens.css draws the ${maker} logo`);
+  }
   assert.match(html, /NeuCockpit local AI/, 'NeuCockpit stays on the homepage');
 
-  const home = await import(new URL('home.js', root));
   assert.equal(home.formatContext(1048576, 'x'), '1M');
   assert.equal(home.formatContext(131072, 'x'), '131K');
   assert.equal(home.formatContext(24000, 'auto'), 'Fits request');
@@ -756,10 +787,41 @@ assert.equal(checkout.normalizeCurrency('EUR'), 'USD');
     {id: 'odd/model', display_name: '<img src=x onerror=alert(1)>', owned_by: 'someone-else'},
   ]});
   assert.equal(rows.length, 2, 'invalid ids are dropped');
-  assert.deepEqual(rows[0], {id: 'gemini/gemini-2.5-pro', name: 'Gemini 2.5 Pro', provider: 'Google Gemini', context: '1M', reasoning: true, vision: true,
-    paidOnly: true, available: false, unavailable_reason: 'upgrade_required', status: 'available', available_again_at: null});
+  assert.deepEqual(rows[0], {id: 'gemini/gemini-2.5-pro', family: 'google/gemini-2.5-pro', maker: 'google', name: 'Gemini 2.5 Pro', context: 1048576, native: 1048576,
+    reasoning: true, vision: true, paidOnly: true, available: false, unavailable_reason: 'upgrade_required', status: 'available', available_again_at: null},
+    'a route of an older gateway is shown by its model and maker, never its provider');
   assert.equal(rows[1].name, '<img src=x onerror=alert(1)>', 'names stay plain text (rendered with textContent)');
-  assert.equal(rows[1].provider, 'someone-else');
+  assert.equal(rows[1].maker, 'other', 'an unknown maker gets a neutral badge');
+  // The family view (contract section 14): maker, family and the usable and native windows.
+  const [family] = home.modelRows({data: [{id: 'openai/gpt-oss-120b', display_name: 'GPT-OSS 120B', owned_by: 'openai', maker: 'openai', family: 'openai/gpt-oss-120b',
+    context_window: 8000, context_length: 8000, native_context_window: 131072, tiers: ['free']}]});
+  assert.deepEqual([family.family, family.maker, family.name, family.context, family.native], ['openai/gpt-oss-120b', 'openai', 'GPT-OSS 120B', 8000, 131072]);
+  assert.equal(home.formatContext(family.context, family.id), '8K');
+  assert.equal(home.contextNote(family), 'Up to 8K tokens per request on the Free plan. The model itself takes up to 131K.');
+  // An older gateway's routes of one model become one row, named without the provider.
+  const routes = home.modelRows({data: [
+    {id: 'groq/openai/gpt-oss-120b', display_name: 'GPT-OSS 120B (Groq)', owned_by: 'groq', context_window: 8000, native_context_window: 131072, tiers: ['free'], status: 'busy'},
+    {id: 'nvidia/openai/gpt-oss-120b', display_name: 'GPT-OSS 120B (NVIDIA)', owned_by: 'nvidia', context_window: 131072, tiers: ['free'], status: 'available'},
+    {id: 'openrouter/cohere/north-mini-code:free', display_name: 'North Mini Code (OpenRouter, free)', owned_by: 'openrouter', context_window: 256000, tiers: ['free'], status: 'unknown'},
+    {id: 'nvidia/nvidia/nemotron-3-ultra-550b-a55b', display_name: 'Nemotron 3 Ultra 550B (NVIDIA)', owned_by: 'nvidia', context_window: 1048576, tiers: ['free']},
+    {id: 'zai/glm-4.7-flash', display_name: 'GLM-4.7 Flash (Z.ai)', owned_by: 'zai', context_window: 200000, tiers: ['free']},
+    {id: 'groq/qwen/qwen3.8-27b', display_name: 'Qwen 3.8 27B (Groq)', owned_by: 'groq', context_window: 8000, tiers: ['free']},
+  ]});
+  const families = home.familyRows(routes);
+  assert.deepEqual(families.map(row => [row.family, row.maker, row.name]), [
+    ['openai/gpt-oss-120b', 'openai', 'GPT-OSS 120B'], ['cohere/north-mini-code', 'cohere', 'North Mini Code'],
+    ['nvidia/nemotron-3-ultra-550b', 'nvidia', 'Nemotron 3 Ultra 550B'], ['zhipu/glm-4.7-flash', 'zhipu', 'GLM-4.7 Flash'],
+    ['qwen/qwen3.8-27b', 'alibaba', 'Qwen 3.8 27B']]);
+  assert.deepEqual([families[0].status, families[0].context, families[0].native], ['available', 131072, 131072],
+    'a model takes the best route status and the context of the routes with it');
+  assert.doesNotMatch(JSON.stringify(families.map(({id, ...shown}) => shown)), /Groq|NVIDIA\)|OpenRouter|Z\.ai\)|groq|openrouter/, 'nothing shown names a provider');
+  // The live indicator.
+  assert.equal(home.sinceLabel(now - 12000, now), '12 s ago');
+  assert.equal(home.sinceLabel(now - 2000, now), 'just now');
+  assert.equal(home.sinceLabel(now - 180000, now), '3 min ago');
+  assert.equal(home.liveText('live', now - 12000, now), 'Live · checked 12 s ago');
+  assert.equal(home.liveText('stale', now - 120000, now), 'Reconnecting · last checked 2 min ago');
+  assert.equal(home.liveText('offline', 0, now), 'Offline · built-in list, not checked');
   assert.equal(home.modelRows({data: Array.from({length: 80}, (_, i) => ({id: 'm' + i}))}).length, 60, 'list is capped');
 
   const updated = home.applyStatus(rows, {data: [{id: 'gemini/gemini-2.5-pro', available: true, status: 'blurred', available_again_at: '2026-10-20T10:30:00Z'}, {id: 'unknown'}]});

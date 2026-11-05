@@ -822,7 +822,7 @@ for (const scenario of ['live', 'offline']) {
   vm.runInNewContext(script, {document: doc, fetch, Promise, Array, Math, isFinite, Error, TypeError});
   await settle();
   const tabs = doc.querySelectorAll('[role="tab"]');
-  assert.deepEqual(tabs.map(tab => tab.textContent), ['npm', 'pip', 'install.sh', 'install.ps1', 'From source']);
+  assert.deepEqual(tabs.map(tab => tab.textContent), ['npm', 'pip', 'macOS and Linux', 'PowerShell', 'Command Prompt', 'From source']);
   assert.equal(doc.getElementById('install-npm').hidden, false, 'npm is the default tab');
   assert.equal(doc.getElementById('install-ps1').hidden, true);
   tabs[2].click();
@@ -833,22 +833,9 @@ for (const scenario of ['live', 'offline']) {
   doc.querySelector('[role="tablist"]').dispatchEvent(makeEvent('keydown', {key: 'ArrowRight', bubbles: true}));
   assert.equal(doc.getElementById('install-ps1').hidden, false);
   assert.equal(doc.activeElement, tabs[3]);
-  const rows = doc.getElementById('models-body').querySelectorAll('tr');
-  if (scenario === 'live') {
-    assert.equal(rows.length, 3, 'Invalid catalog entries are skipped');
-    assert.equal(rows[1].querySelector('th').textContent, XSS);
-    assert.equal(rows[1].querySelectorAll('td')[2].textContent, '1,048,576');
-    assert.deepEqual(rows.map(row => row.querySelectorAll('td')[1].textContent), ['Zero-X', 'Google Gemini', 'Groq'], 'owned_by is shown as a provider name');
-    assert.equal(rows[1].querySelectorAll('td')[4].textContent, 'All plans (not in your region)');
-    assert.equal(rows[2].querySelectorAll('td')[4].textContent, 'Pro and Max');
-    assert.match(doc.getElementById('models-status').textContent, /Live catalog from the Zero-X gateway: 3 models/);
-  } else {
-    assert.equal(rows.length, 15, 'The static catalog (14 models plus auto) stays when /v1/models is unreachable');
-    assert.deepEqual(rows.slice(-2).map(row => [...row.querySelectorAll('td')].map(cell => cell.textContent)), [
-      ['anthropic/claude-sonnet-5-5', 'Anthropic', '200,000', 'Yes', 'Pro and Max'],
-      ['anthropic/claude-opus-5-5', 'Anthropic', '200,000', 'Yes', 'Pro and Max']], 'the static catalog lists Claude for Pro and Max');
-    assert.match(doc.getElementById('models-status').textContent, /Default catalog shown/);
-  }
+  // The model list is home.js's live pane now; the inline script only builds the install tabs.
+  assert.equal(doc.getElementById('models-body'), null);
+  if (scenario === 'live') assert.doesNotMatch(script, /fetch\(/, 'the inline script makes no network calls');
 }
 
 /* ───────────── zerox-auth.js development identity ───────────── */
@@ -1071,5 +1058,5 @@ async function loadAuth({hostname, config, session = makeStorage(), sdk = true})
   assert.equal(refused.$('pricing-error').querySelector('a').getAttribute('href'), 'https://zero-x.live/pricing#plans');
 }
 
-console.log('PASS: dashboard gate, contract-driven overview, hash tabs and keyboard, usage chart/table/pagination, key create-once/copy/revoke-confirm, billing cancel/top-up/verify, sessions, sign-out dev-token cleanup, 401/500 recovery, pricing currency/hydration/checkout/409/503/forged payloads, Neuron CLI tabs and models, zerox-auth dev identity and pinned SDK; untrusted data never reached innerHTML');
+console.log('PASS: dashboard gate, contract-driven overview, hash tabs and keyboard, usage chart/table/pagination, key create-once/copy/revoke-confirm, billing cancel/top-up/verify, sessions, sign-out dev-token cleanup, 401/500 recovery, pricing currency/hydration/checkout/409/503/forged payloads, Neuron CLI install tabs, zerox-auth dev identity and pinned SDK; untrusted data never reached innerHTML');
 process.exit(0);

@@ -26,12 +26,13 @@
   <link rel="stylesheet" href="/zx-tokens.css">
   <script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"SoftwareApplication","@id":"https://zero-x.live/#neuron","name":"Neuron CLI","applicationCategory":"DeveloperApplication","operatingSystem":"Windows, macOS, Linux","url":"https://zero-x.live/neuron-cli","description":"A repo-aware AI coding agent for the terminal that reads, edits and tests code with the user's permission.","publisher":{"@id":"https://zero-x.live/#organization"},"offers":{"@type":"Offer","name":"Free","price":"0","priceCurrency":"USD","url":"https://zero-x.live/pricing#plan-free"},"softwareVersion":"7.0.0-alpha.4","downloadUrl":"https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/tag/v7.0.0-alpha.4","alternateName":["Neuron","Neuron by Zero-X","Zero-X Neuron"],"applicationSubCategory":"AI coding agent","isAccessibleForFree":true,"license":"https://opensource.org/licenses/MIT","featureList":["Reads, writes and edits files in your repository","Runs shell or PowerShell commands, tests and builds","Permission modes: read-only, workspace-write and danger-full-access","Full-screen terminal UI and a line REPL","MCP servers and subagents","Headless runs for CI with neuron -p","Hosted models through Zero-X or your own OpenAI-compatible API key"]},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Zero-X","item":"https://zero-x.live/"},{"@type":"ListItem","position":2,"name":"Neuron CLI","item":"https://zero-x.live/neuron-cli"}]}]}</script>
   <script type="module" src="/pricing.js"></script>
+  <script type="module" src="/home.js"></script>
 </head>
 <body>
   <a class="zx-skip" href="#main">Skip to content</a>
   <header class="zx-header">
     <div class="zx-container zx-header__inner">
-      <a class="zx-brand" href="/"><img src="/Assets/zerox-favicon-32.png" width="28" height="28" alt="">Zero-X</a>
+      <a class="zx-brand" href="/"><img src="/Assets/zerox-mark.svg" width="28" height="28" alt="">Zero-X</a>
       <nav class="zx-nav" aria-label="Main">
         <a href="/neuron-cli" aria-current="page">Neuron CLI</a>
         <a href="/pricing">Pricing</a>
@@ -88,17 +89,21 @@ neuron --version</code></pre></div>
 neuron --version</code></pre></div>
           <p class="zx-help">Keep <code>--pre</code>: Neuron 7 is a pre-release, and without it pip installs the old, unsupported 6.2.4. Needs Python 3.8 or later. To upgrade: <code>python -m pip install --upgrade --pre neuroncli</code>.</p>
         </section>
-        <section class="zx-install" id="install-sh" data-tab-label="install.sh" aria-labelledby="install-sh-title">
-          <h3 id="install-sh-title">install.sh (macOS and Linux)</h3>
+        <section class="zx-install" id="install-sh" data-tab-label="macOS and Linux" aria-labelledby="install-sh-title">
+          <h3 id="install-sh-title">macOS and Linux (install.sh)</h3>
           <div class="zx-code"><span class="zx-code__label">Terminal (sh, bash or zsh)</span><pre><code>curl -fsSL https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.4/install.sh | sh -s -- --version 7.0.0-alpha.4
 neuron --version</code></pre></div>
           <p class="zx-help">Installs <code>neuron</code> and <code>neuron-tui</code> to <code>~/.local/bin</code> and tells you if that directory is not on your PATH. Linux needs glibc 2.35 or later (Ubuntu 22.04, Debian 12, Fedora 36 or newer); musl-based Linux such as Alpine is not supported.</p>
         </section>
-        <section class="zx-install" id="install-ps1" data-tab-label="install.ps1" aria-labelledby="install-ps1-title">
-          <h3 id="install-ps1-title">install.ps1 (Windows)</h3>
+        <section class="zx-install" id="install-ps1" data-tab-label="PowerShell" aria-labelledby="install-ps1-title">
+          <h3 id="install-ps1-title">Windows PowerShell (install.ps1)</h3>
           <div class="zx-code zx-code--wrap"><span class="zx-code__label">PowerShell (Windows PowerShell 5.1 or PowerShell 7)</span><pre><code>&amp; ([scriptblock]::Create((irm https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.4/install.ps1))) -Version 7.0.0-alpha.4 -AddToPath</code></pre></div>
+          <p class="zx-help">Installs to <code>%LOCALAPPDATA%\Programs\Neuron\bin</code> and, with <code>-AddToPath</code>, adds that folder to your user PATH. Open a new terminal, then run <code>neuron --version</code>.</p>
+        </section>
+        <section class="zx-install" id="install-cmd" data-tab-label="Command Prompt" aria-labelledby="install-cmd-title">
+          <h3 id="install-cmd-title">Windows Command Prompt</h3>
           <div class="zx-code zx-code--wrap"><span class="zx-code__label">Command Prompt (cmd.exe)</span><pre><code>powershell -NoProfile -ExecutionPolicy Bypass -Command "&amp; ([scriptblock]::Create((irm https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.4/install.ps1))) -Version 7.0.0-alpha.4 -AddToPath"</code></pre></div>
-          <p class="zx-help">Use the command for the window you have open: Command Prompt rejects the PowerShell one with "&amp; was unexpected at this time." Both install to <code>%LOCALAPPDATA%\Programs\Neuron\bin</code> and, with <code>-AddToPath</code>, add that folder to your user PATH. Open a new terminal, then run <code>neuron --version</code>.</p>
+          <p class="zx-help">Command Prompt rejects the PowerShell command with "&amp; was unexpected at this time.", so use this one there; it runs the same installer through PowerShell. Open a new terminal, then run <code>neuron --version</code>.</p>
         </section>
         <section class="zx-install" id="install-source" data-tab-label="From source" aria-labelledby="install-source-title">
           <h3 id="install-source-title">Build from source</h3>
@@ -143,31 +148,36 @@ neuron -p "Run the test suite and summarise the failures"</code></pre></div>
 
     <section class="zx-container zx-section" id="models" aria-labelledby="models-title">
       <h2 id="models-title">Models</h2>
-      <p class="zx-muted">The gateway publishes its live catalog at <code>https://zero-x.live/v1/models</code>. Choose <code>auto</code> and Neuron picks a tool-capable model whose context window fits the request.</p>
-      <div class="zx-table-wrap">
-        <table class="zx-table">
-          <caption id="models-status">Default catalog. Availability depends on shared pool capacity.</caption>
-          <thead><tr><th scope="col">Model</th><th scope="col">ID</th><th scope="col">Provider</th><th scope="col" class="zx-num">Context</th><th scope="col">Tools</th><th scope="col">Plans</th></tr></thead>
-          <tbody id="models-body">
-            <tr><th scope="row">Auto (best available model)</th><td><code>auto</code></td><td>Zero-X</td><td class="zx-num">Fits request</td><td>Yes</td><td>All plans</td></tr>
-            <tr><th scope="row">Gemini 2.5 Flash</th><td><code>gemini/gemini-2.5-flash</code></td><td>Google Gemini</td><td class="zx-num">1,048,576</td><td>Yes</td><td>All plans</td></tr>
-            <tr><th scope="row">Gemini 3.5 Flash</th><td><code>gemini/gemini-3.5-flash</code></td><td>Google Gemini</td><td class="zx-num">1,048,576</td><td>Yes</td><td>All plans</td></tr>
-            <tr><th scope="row">Gemini 3.6 Flash</th><td><code>gemini/gemini-3.6-flash</code></td><td>Google Gemini</td><td class="zx-num">1,048,576</td><td>Yes</td><td>All plans</td></tr>
-            <tr><th scope="row">GPT-OSS 120B (Groq)</th><td><code>groq/openai/gpt-oss-120b</code></td><td>Groq</td><td class="zx-num">131,072</td><td>Yes</td><td>All plans</td></tr>
-            <tr><th scope="row">Qwen 3.8 27B (Groq)</th><td><code>groq/qwen/qwen3.8-27b</code></td><td>Groq</td><td class="zx-num">131,072</td><td>Yes</td><td>All plans</td></tr>
-            <tr><th scope="row">GPT-OSS 20B (Groq)</th><td><code>groq/openai/gpt-oss-20b</code></td><td>Groq</td><td class="zx-num">131,072</td><td>Yes</td><td>All plans</td></tr>
-            <tr><th scope="row">Llama 3.3 70B (Workers AI)</th><td><code>@cf/meta/llama-3.3-70b-instruct-fp8-fast</code></td><td>Cloudflare Workers AI</td><td class="zx-num">24,000</td><td>Yes</td><td>All plans</td></tr>
-            <tr><th scope="row">GPT-OSS 20B (NVIDIA)</th><td><code>nvidia/openai/gpt-oss-20b</code></td><td>NVIDIA</td><td class="zx-num">131,072</td><td>Yes</td><td>All plans</td></tr>
-            <tr><th scope="row">Nemotron 3 Ultra 550B (NVIDIA)</th><td><code>nvidia/nvidia/nemotron-3-ultra-550b-a55b</code></td><td>NVIDIA</td><td class="zx-num">1,048,576</td><td>Yes</td><td>All plans</td></tr>
-            <tr><th scope="row">Step 5 Preview (NVIDIA)</th><td><code>nvidia/stepfun-ai/step-5-preview</code></td><td>NVIDIA</td><td class="zx-num">131,072</td><td>Yes</td><td>All plans</td></tr>
-            <tr><th scope="row">North Mini Code (OpenRouter, free)</th><td><code>cohere/north-mini-code:free</code></td><td>OpenRouter</td><td class="zx-num">256,000</td><td>Yes</td><td>All plans</td></tr>
-            <tr><th scope="row">MiniMax M3.1 Flash (OpenRouter, free)</th><td><code>minimax/minimax-m3.1-flash:free</code></td><td>OpenRouter</td><td class="zx-num">1,000,000</td><td>Yes</td><td>All plans</td></tr>
-            <tr><th scope="row">Claude Sonnet 5.5</th><td><code>anthropic/claude-sonnet-5-5</code></td><td>Anthropic</td><td class="zx-num">200,000</td><td>Yes</td><td>Pro and Max</td></tr>
-            <tr><th scope="row">Claude Opus 5.5</th><td><code>anthropic/claude-opus-5-5</code></td><td>Anthropic</td><td class="zx-num">200,000</td><td>Yes</td><td>Pro and Max</td></tr>
-          </tbody>
-        </table>
+      <p class="zx-muted">The models Neuron offers through Zero-X, by the company that makes them, with the context you can send on your plan (hover it for the model's own maximum). The status is live: the Zero-X gateway's health checker tests every model, and this list follows <code>GET /v1/models/status</code>. Choose <code>auto</code> and Neuron picks an available tool-capable model whose context window fits the request. The OpenAI-compatible catalog is at <code>https://zero-x.live/v1/models</code>.</p>
+      <div class="zx-modelpane" data-live-models>
+        <div class="zx-modelpane__head">
+          <p class="zx-live" id="models-live" data-state="offline"><span class="zx-live__dot" aria-hidden="true"></span><span id="models-live-text">Built-in list, not checked yet</span></p>
+          <ul class="zx-legend" aria-label="Status legend">
+            <li data-tone="ok">Available</li>
+            <li data-tone="warn">Slower than usual</li>
+            <li data-tone="busy">Busy</li>
+            <li data-tone="off">Unavailable</li>
+            <li data-tone="unknown">Not checked recently</li>
+          </ul>
+        </div>
+        <ul class="zx-models zx-models--split" id="models-list">
+          <li class="zx-model" data-tone="unknown"><span class="zx-maker" data-maker="zero-x" data-logo role="img" aria-label="Zero-X" title="Zero-X"></span><span class="zx-model__main"><span class="zx-model__name">Auto</span><span class="zx-model__sub">Best available model</span></span><span class="zx-model__ctx" title="Auto picks a model whose context fits each request.">Fits request<span class="zx-visually-hidden"> context. Auto picks a model whose context fits each request.</span></span><span class="zx-model__status"><span class="zx-model__dot" aria-hidden="true"></span>Not checked recently</span></li>
+          <li class="zx-model" data-tone="unknown"><span class="zx-maker" data-maker="openai" role="img" aria-label="OpenAI" title="OpenAI"><span aria-hidden="true">O</span></span><span class="zx-model__main"><span class="zx-model__name">GPT-OSS 120B</span></span><span class="zx-model__ctx" title="Up to 8K tokens per request on the Free plan. The model itself takes up to 131K.">8K<span class="zx-visually-hidden"> context. Up to 8K tokens per request on the Free plan. The model itself takes up to 131K.</span></span><span class="zx-model__status"><span class="zx-model__dot" aria-hidden="true"></span>Not checked recently</span></li>
+          <li class="zx-model" data-tone="unknown"><span class="zx-maker" data-maker="alibaba" data-logo role="img" aria-label="Alibaba" title="Alibaba"></span><span class="zx-model__main"><span class="zx-model__name">Qwen 3.8 27B</span></span><span class="zx-model__ctx" title="Up to 8K tokens per request on the Free plan. The model itself takes up to 131K.">8K<span class="zx-visually-hidden"> context. Up to 8K tokens per request on the Free plan. The model itself takes up to 131K.</span></span><span class="zx-model__status"><span class="zx-model__dot" aria-hidden="true"></span>Not checked recently</span></li>
+          <li class="zx-model" data-tone="unknown"><span class="zx-maker" data-maker="openai" role="img" aria-label="OpenAI" title="OpenAI"><span aria-hidden="true">O</span></span><span class="zx-model__main"><span class="zx-model__name">GPT-OSS 20B</span></span><span class="zx-model__ctx" title="Up to 131K tokens per request on the Free plan.">131K<span class="zx-visually-hidden"> context. Up to 131K tokens per request on the Free plan.</span></span><span class="zx-model__status"><span class="zx-model__dot" aria-hidden="true"></span>Not checked recently</span></li>
+          <li class="zx-model" data-tone="unknown"><span class="zx-maker" data-maker="nvidia" data-logo role="img" aria-label="NVIDIA" title="NVIDIA"></span><span class="zx-model__main"><span class="zx-model__name">Nemotron 3 Ultra 550B</span></span><span class="zx-model__ctx" title="Up to 1M tokens per request on the Free plan.">1M<span class="zx-visually-hidden"> context. Up to 1M tokens per request on the Free plan.</span></span><span class="zx-model__status"><span class="zx-model__dot" aria-hidden="true"></span>Not checked recently</span></li>
+          <li class="zx-model" data-tone="unknown"><span class="zx-maker" data-maker="stepfun" role="img" aria-label="StepFun" title="StepFun"><span aria-hidden="true">S</span></span><span class="zx-model__main"><span class="zx-model__name">Step 5 Preview</span></span><span class="zx-model__ctx" title="Up to 131K tokens per request on the Free plan.">131K<span class="zx-visually-hidden"> context. Up to 131K tokens per request on the Free plan.</span></span><span class="zx-model__status"><span class="zx-model__dot" aria-hidden="true"></span>Not checked recently</span></li>
+          <li class="zx-model" data-tone="unknown"><span class="zx-maker" data-maker="cohere" role="img" aria-label="Cohere" title="Cohere"><span aria-hidden="true">C</span></span><span class="zx-model__main"><span class="zx-model__name">North Mini Code</span></span><span class="zx-model__ctx" title="Up to 256K tokens per request on the Free plan.">256K<span class="zx-visually-hidden"> context. Up to 256K tokens per request on the Free plan.</span></span><span class="zx-model__status"><span class="zx-model__dot" aria-hidden="true"></span>Not checked recently</span></li>
+          <li class="zx-model" data-tone="unknown"><span class="zx-maker" data-maker="zhipu" role="img" aria-label="Z.ai" title="Z.ai"><span aria-hidden="true">Z</span></span><span class="zx-model__main"><span class="zx-model__name">GLM-4.7 Flash</span></span><span class="zx-model__ctx" title="Up to 200K tokens per request on the Free plan.">200K<span class="zx-visually-hidden"> context. Up to 200K tokens per request on the Free plan.</span></span><span class="zx-model__status"><span class="zx-model__dot" aria-hidden="true"></span>Not checked recently</span></li>
+          <li class="zx-model" data-tone="unknown"><span class="zx-maker" data-maker="zhipu" role="img" aria-label="Z.ai" title="Z.ai"><span aria-hidden="true">Z</span></span><span class="zx-model__main"><span class="zx-model__name">GLM-4.5 Flash</span></span><span class="zx-model__ctx" title="Up to 131K tokens per request on the Free plan.">131K<span class="zx-visually-hidden"> context. Up to 131K tokens per request on the Free plan.</span></span><span class="zx-model__status"><span class="zx-model__dot" aria-hidden="true"></span>Not checked recently</span></li>
+          <li class="zx-model" data-tone="unknown"><span class="zx-maker" data-maker="anthropic" data-logo role="img" aria-label="Anthropic" title="Anthropic"></span><span class="zx-model__main"><span class="zx-model__name">Claude Sonnet 5.5</span><span class="zx-badge zx-badge--purple">Pro and Max</span></span><span class="zx-model__ctx" title="Up to 200K tokens per request on Pro and Max.">200K<span class="zx-visually-hidden"> context. Up to 200K tokens per request on Pro and Max.</span></span><span class="zx-model__status"><span class="zx-model__dot" aria-hidden="true"></span>Not checked recently</span></li>
+          <li class="zx-model" data-tone="unknown"><span class="zx-maker" data-maker="anthropic" data-logo role="img" aria-label="Anthropic" title="Anthropic"></span><span class="zx-model__main"><span class="zx-model__name">Claude Opus 5.5</span><span class="zx-badge zx-badge--purple">Pro and Max</span></span><span class="zx-model__ctx" title="Up to 200K tokens per request on Pro and Max.">200K<span class="zx-visually-hidden"> context. Up to 200K tokens per request on Pro and Max.</span></span><span class="zx-model__status"><span class="zx-model__dot" aria-hidden="true"></span>Not checked recently</span></li>
+        </ul>
+        <div class="zx-modelpane__foot">
+          <p class="zx-help" id="models-note" role="status" aria-live="polite">Built-in list: nothing here is checked until the live list loads from the Zero-X gateway.</p>
+        </div>
       </div>
-      <p class="zx-help">Groq's free tier accepts small prompts only; larger requests are routed to a model with room. Gemini's free pool is not offered to callers in the EEA, the UK or Switzerland.</p>
+      <p class="zx-help zx-mt">Some free models take small requests only on the Free plan, so their context reads lower than the model's own; Neuron sends larger requests to a model with room.</p>
     </section>
 
     <section class="zx-container zx-section" id="pricing" aria-labelledby="pricing-teaser-title" data-pricing-root>
@@ -184,8 +194,8 @@ neuron -p "Run the test suite and summarise the failures"</code></pre></div>
       <h2 id="faq-title">Questions</h2>
       <div class="zx-faq">
         <details>
-          <summary>Which providers see my code?</summary>
-          <p>The files and messages Neuron includes in a request go to the provider serving the model you chose, such as Google Gemini, Groq, NVIDIA, OpenRouter or Cloudflare Workers AI through Zero-X, or the provider behind your own key. Free tiers of some providers may use prompts to improve their models and allow human review. The Zero-X gateway records usage metadata (model, tokens, cost, latency) but is not designed to store prompt or response text. Details are in the <a href="/privacy">privacy policy</a>.</p>
+          <summary>Who sees my code?</summary>
+          <p>The files and messages Neuron includes in a request go to the company serving the model you chose through Zero-X, or to the provider behind your own key. Free tiers of some of these services may use prompts to improve their models and allow human review; the privacy policy names every one. The Zero-X gateway records usage metadata (model, tokens, cost, latency) but is not designed to store prompt or response text. Details are in the <a href="/privacy">privacy policy</a>.</p>
         </details>
         <details>
           <summary>What are the limits?</summary>
@@ -279,52 +289,6 @@ neuron -p "Run the test suite and summarise the failures"</code></pre></div>
         root.insertBefore(list, root.firstChild);
         select(0, false);
       }
-
-      // Live model catalog. Every value is untrusted and rendered with textContent.
-      var body = document.getElementById('models-body');
-      var status = document.getElementById('models-status');
-      if (!body || typeof fetch !== 'function') return;
-      var cell = function (tag, value, className) {
-        var node = document.createElement(tag);
-        if (tag === 'th') node.setAttribute('scope', 'row');
-        if (className) node.className = className;
-        if (value && value.nodeType) node.appendChild(value); else node.textContent = value;
-        return node;
-      };
-      var code = function (value) { var node = document.createElement('code'); node.textContent = value; return node; };
-      var providers = { 'zero-x': 'Zero-X', gemini: 'Google Gemini', groq: 'Groq', cloudflare: 'Cloudflare Workers AI', nvidia: 'NVIDIA', openrouter: 'OpenRouter' };
-      var provider = function (model) {
-        if (typeof model.owned_by !== 'string') return '—';
-        return Object.prototype.hasOwnProperty.call(providers, model.owned_by) ? providers[model.owned_by] : model.owned_by.slice(0, 40);
-      };
-      var plans = function (model) {
-        var tiers = Array.isArray(model.tiers) ? model.tiers : [];
-        var label = tiers.indexOf('free') !== -1 ? 'All plans' : tiers.indexOf('paid') !== -1 ? 'Pro and Max' : '—';
-        if (model.available === false && model.unavailable_reason === 'region_unavailable') label += ' (not in your region)';
-        if (model.available === false && model.unavailable_reason === 'not_configured') label = 'Temporarily unavailable';
-        return label;
-      };
-      fetch('/v1/models', { headers: { Accept: 'application/json' }, cache: 'no-store' })
-        .then(function (response) { return response.ok ? response.json() : Promise.reject(new Error('HTTP ' + response.status)); })
-        .then(function (data) {
-          var models = (data && Array.isArray(data.data) ? data.data : []).filter(function (model) {
-            return model && typeof model.id === 'string' && model.id.length > 0 && model.id.length <= 120;
-          }).slice(0, 60);
-          if (!models.length) { status.textContent = 'Default catalog shown; no live models are available right now.'; return; }
-          var rows = models.map(function (model) {
-            var name = typeof model.display_name === 'string' && model.display_name ? model.display_name.slice(0, 80) : model.id;
-            var context = model.id === 'auto' ? 'Fits request' : (typeof model.context_window === 'number' && isFinite(model.context_window) && model.context_window > 0 ? Math.round(model.context_window).toLocaleString('en-US') : '—');
-            var tools = model.capabilities && model.capabilities.tools === true ? 'Yes' : 'No';
-            var row = document.createElement('tr');
-            [cell('th', name), cell('td', code(model.id)), cell('td', provider(model)),
-              cell('td', context, 'zx-num'), cell('td', tools), cell('td', plans(model))].forEach(function (node) { row.appendChild(node); });
-            return row;
-          });
-          while (body.firstChild) body.removeChild(body.firstChild);
-          rows.forEach(function (row) { body.appendChild(row); });
-          status.textContent = 'Live catalog from the Zero-X gateway: ' + models.length + ' models.';
-        })
-        .catch(function () { status.textContent = 'Default catalog shown; the live list could not be loaded.'; });
     })();
   </script>
 </body>
