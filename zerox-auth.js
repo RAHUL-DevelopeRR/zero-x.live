@@ -504,37 +504,35 @@
       modal.setAttribute('aria-labelledby', 'zerox-auth-title');
       modal.setAttribute('aria-describedby', 'zerox-auth-subtitle');
       modal.className = 'zerox-auth';
-      modal.style.cssText =
-        'width:min(460px,calc(100% - 32px));max-height:calc(100dvh - 32px);overflow:auto;' +
-        'margin:auto;background:#111114;color:#fff;border:1px solid #686877;border-radius:16px;padding:28px;';
 
+      // Styling lives in auth.css (tokens from zx-tokens.css when the page has them); nothing inline.
       modal.innerHTML =
-        '<div>' +
-          '<button type="button" aria-label="Close sign-in" data-auth-close="true" style="position:absolute;top:12px;right:12px;background:none;border:none;color:#A6A6B2;font-size:24px;cursor:pointer;min-width:44px;min-height:44px">×</button>' +
-          '<h2 id="zerox-auth-title" style="font-size:28px;font-weight:700;color:#fff;padding-right:28px" data-auth-title="true"></h2>' +
-          '<p id="zerox-auth-subtitle" style="font-size:14px;color:#A6A6B2;margin-top:6px;margin-bottom:22px" data-auth-subtitle="true"></p>' +
-          '<div role="status" aria-live="polite" data-auth-message="true" style="display:none;margin-bottom:16px;padding:12px 14px;border-radius:12px;font-size:13px"></div>' +
-          '<div data-auth-providers="true" style="display:flex;flex-direction:column;gap:10px"></div>' +
-          '<form data-auth-email-wrap="true" hidden style="margin-top:20px">' +
+        '<div class="zerox-auth__panel">' +
+          '<button type="button" class="zerox-auth__close" aria-label="Close sign-in" data-auth-close="true">&times;</button>' +
+          '<h2 id="zerox-auth-title" class="zerox-auth__title" data-auth-title="true"></h2>' +
+          '<p id="zerox-auth-subtitle" class="zerox-auth__subtitle" data-auth-subtitle="true"></p>' +
+          '<div role="status" aria-live="polite" class="zerox-auth__message" data-auth-message="true" hidden></div>' +
+          '<div class="zerox-auth__providers" data-auth-providers="true"></div>' +
+          '<form class="zerox-auth__form" data-auth-email-wrap="true" hidden>' +
             '<label for="zerox-auth-email">Email address</label>' +
             '<input id="zerox-auth-email" type="email" autocomplete="email" required placeholder="you@company.com"/>' +
             '<button type="submit" data-auth-email-submit="true">Email me a sign-in link</button>' +
           '</form>' +
-          '<form data-auth-phone-wrap="true" hidden style="margin-top:20px">' +
+          '<form class="zerox-auth__form" data-auth-phone-wrap="true" hidden>' +
             '<label for="zerox-auth-phone">Phone number with country code</label>' +
             '<input id="zerox-auth-phone" type="tel" autocomplete="tel" required pattern="\\+[1-9][0-9]{7,14}" placeholder="+91..."/>' +
             '<button type="submit" data-auth-phone-submit="true">Send SMS code</button>' +
           '</form>' +
-          '<form data-auth-verify-wrap="true" hidden style="margin-top:20px">' +
+          '<form class="zerox-auth__form" data-auth-verify-wrap="true" hidden>' +
             '<label for="zerox-auth-code">SMS verification code</label>' +
             '<input id="zerox-auth-code" inputmode="numeric" autocomplete="one-time-code" required pattern="[0-9]{6}" maxlength="6"/>' +
             '<button type="submit">Verify and sign in</button>' +
           '</form>' +
-          '<form data-auth-dev-wrap="true" hidden style="margin-top:20px">' +
+          '<form class="zerox-auth__form" data-auth-dev-wrap="true" hidden>' +
             '<label for="zerox-auth-dev-email">Developer email</label>' +
             '<input id="zerox-auth-dev-email" type="email" autocomplete="email" required placeholder="dev@example.com"/>' +
             '<button type="submit" data-auth-dev-submit="true">Sign in locally</button>' +
-            '<p style="font-size:12px;color:#A6A6B2;margin-top:10px">Local development identity. Only a gateway running on this computer with DEV_AUTH_ENABLED=true accepts it.</p>' +
+            '<p class="zerox-auth__note">Local development identity. Only a gateway running on this computer with DEV_AUTH_ENABLED=true accepts it.</p>' +
           '</form>' +
         '</div>';
 
@@ -570,26 +568,15 @@
         const button = document.createElement('button');
         button.type = 'button';
         button.textContent = 'Continue with ' + ({ azure: 'Microsoft', github: 'GitHub' }[provider] || titleCase(provider));
-        button.style.cssText =
-          'width:100%;background:#17171B;color:#fff;border:1px solid rgba(255,255,255,0.08);' +
-          'border-radius:14px;padding:13px 16px;font-size:14px;font-weight:600;cursor:pointer;' +
-          'transition:background .15s ease,border-color .15s ease;';
+        button.className = 'zerox-provider-button';
         if (provider === 'google' || provider === 'github') {
           const icon = document.createElement('img');
           icon.src = new URL(provider === 'google' ? 'Assets/auth-google-g.png' : 'Assets/auth-github.svg', stylesheet.href).href;
           icon.alt = '';
           icon.className = 'zerox-' + provider + '-icon';
           button.prepend(icon);
-          button.className = 'zerox-' + provider + '-button';
+          button.className = 'zerox-provider-button zerox-' + provider + '-button';
         }
-        button.addEventListener('mouseenter', function () {
-          button.style.background = '#1D1D22';
-          button.style.borderColor = 'rgba(0,229,255,0.25)';
-        });
-        button.addEventListener('mouseleave', function () {
-          button.style.background = '#17171B';
-          button.style.borderColor = 'rgba(255,255,255,0.08)';
-        });
         button.addEventListener('click', async function () {
           await runAuthAction(button, () => signInWithOAuth(provider));
         });
@@ -670,21 +657,14 @@
     if (!state.modal) return;
     const messageEl = state.modal.querySelector('[data-auth-message="true"]');
     if (!message) {
-      messageEl.style.display = 'none';
+      messageEl.hidden = true;
       messageEl.textContent = '';
+      messageEl.className = 'zerox-auth__message';
       return;
     }
-    messageEl.style.display = 'block';
+    messageEl.hidden = false;
     messageEl.textContent = message;
-    if (tone === 'success') {
-      messageEl.style.background = 'rgba(52,211,153,0.12)';
-      messageEl.style.border = '1px solid rgba(52,211,153,0.25)';
-      messageEl.style.color = '#86efac';
-      return;
-    }
-    messageEl.style.background = 'rgba(248,113,113,0.12)';
-    messageEl.style.border = '1px solid rgba(248,113,113,0.25)';
-    messageEl.style.color = '#fca5a5';
+    messageEl.className = 'zerox-auth__message ' + (tone === 'success' ? 'is-success' : 'is-error');
   }
 
   async function signInWithOAuth(provider) {
@@ -788,22 +768,13 @@
     const dimension = size || 32;
     if (profile.imageUrl) {
       return (
-        '<img src="' +
+        '<img class="zerox-avatar" src="' +
         escapeHtml(/^https?:\/\//.test(profile.imageUrl) ? profile.imageUrl : '') +
-        '" alt="" style="width:' +
-        dimension +
-        'px;height:' +
-        dimension +
-        'px;border-radius:999px;object-fit:cover;display:block"/>'
+        '" alt="" width="' + dimension + '" height="' + dimension + '"/>'
       );
     }
     return (
-      '<div style="width:' +
-      dimension +
-      'px;height:' +
-      dimension +
-      'px;border-radius:999px;background:rgba(0,229,255,0.18);color:#00E5FF;' +
-      'display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;letter-spacing:.04em">' +
+      '<div class="zerox-avatar zerox-avatar--initials" data-size="' + dimension + '">' +
       escapeHtml(initialsForProfile(profile)) +
       '</div>'
     );
@@ -820,19 +791,19 @@
 
     const afterSignOutUrl = options && options.afterSignOutUrl ? options.afterSignOutUrl : window.location.href;
     container.innerHTML =
-      '<div style="position:relative">' +
-        '<button type="button" aria-label="Open account menu" aria-expanded="false" data-auth-user-trigger="true" style="display:flex;align-items:center;gap:10px;background:none;border:none;color:#E8E8EC;cursor:pointer;padding:0;min-width:44px;min-height:44px">' +
+      '<div class="zerox-user">' +
+        '<button type="button" class="zerox-user__trigger" aria-label="Open account menu" aria-expanded="false" data-auth-user-trigger="true">' +
           renderAvatar(profile, 34) +
         '</button>' +
-        '<div data-auth-user-menu="true" style="display:none;position:absolute;top:44px;right:0;width:240px;background:#111114;border:1px solid rgba(255,255,255,0.08);border-radius:16px;padding:14px;box-shadow:0 30px 80px rgba(0,0,0,0.45);z-index:100">' +
-          '<div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">' +
+        '<div class="zerox-user__menu" data-auth-user-menu="true" hidden>' +
+          '<div class="zerox-user__who">' +
             renderAvatar(profile, 40) +
-            '<div style="min-width:0">' +
-              '<div style="font-size:14px;font-weight:700;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escapeHtml(profile.fullName) + '</div>' +
-              '<div style="font-size:12px;color:#A6A6B2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escapeHtml(profile.email || state.user?.phone || 'Signed in') + '</div>' +
+            '<div class="zerox-user__text">' +
+              '<div class="zerox-user__name">' + escapeHtml(profile.fullName) + '</div>' +
+              '<div class="zerox-user__email">' + escapeHtml(profile.email || state.user?.phone || 'Signed in') + '</div>' +
             '</div>' +
           '</div>' +
-          '<button type="button" data-auth-user-signout="true" style="width:100%;background:none;border:1px solid rgba(248,113,113,0.25);color:#f87171;border-radius:12px;padding:10px 12px;font-size:13px;font-weight:600;cursor:pointer">Sign Out</button>' +
+          '<button type="button" class="zerox-user__signout" data-auth-user-signout="true">Sign out</button>' +
         '</div>' +
       '</div>';
 
@@ -841,7 +812,7 @@
     const signOutButton = container.querySelector('[data-auth-user-signout="true"]');
 
     function closeMenu() {
-      menu.style.display = 'none';
+      menu.hidden = true;
       trigger.setAttribute('aria-expanded', 'false');
       document.removeEventListener('click', closeMenuOnOutsideClick);
     }
@@ -864,12 +835,12 @@
     trigger.addEventListener('click', function (event) {
       event.preventDefault();
       event.stopPropagation();
-      const isOpen = menu.style.display === 'block';
-      menu.style.display = isOpen ? 'none' : 'block';
+      const isOpen = !menu.hidden;
+      menu.hidden = isOpen;
       trigger.setAttribute('aria-expanded', String(!isOpen));
       if (!isOpen) {
         setTimeout(function () {
-          if (menu.isConnected && menu.style.display === 'block') document.addEventListener('click', closeMenuOnOutsideClick);
+          if (menu.isConnected && !menu.hidden) document.addEventListener('click', closeMenuOnOutsideClick);
         }, 0);
       } else {
         document.removeEventListener('click', closeMenuOnOutsideClick);
