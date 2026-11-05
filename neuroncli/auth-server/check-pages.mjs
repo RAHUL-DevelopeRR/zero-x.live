@@ -12,7 +12,7 @@ const isFile = file => existsSync(new URL(file, root)) && statSync(new URL(file,
 
 const PUBLIC_PAGES = ['index.html', 'pricing.html', 'neuron-cli.html', 'docs.html', 'ai-coding-agent.html', 'free-ai-coding-agent.html', 'claude-code-alternative.html', 'docs/trust.html', 'download.html', 'changelog.html', 'refund.html', 'contact.html', 'shipping.html', 'privacy.html', 'terms.html'];
 const PRIVATE_PAGES = ['dashboard.html', '404.html', 'neuroncli/index.html'];
-const SITE_SCRIPTS = ['dashboard.js', 'pricing.js', 'billing-checkout.js', 'home.js', 'download.js', 'changelog.js', 'site-nav.js'];
+const SITE_SCRIPTS = ['dashboard.js', 'pricing.js', 'billing-checkout.js', 'home.js', 'download.js', 'changelog.js', 'site-nav.js', 'announce.js'];
 const RELEASE_MANIFESTS = ['releases/cli/latest.json', 'releases/desktop/latest.json'];
 const SITE_FILES = [...PUBLIC_PAGES, ...PRIVATE_PAGES, ...SITE_SCRIPTS, ...RELEASE_MANIFESTS, 'zx-tokens.css', 'home.css', 'zerox-auth.js', 'neuroncli/login/index.html', 'neuroncli/callback/index.html'];
 const BASES = {'dashboard.html': 'https://dashboard.zero-x.live/', '404.html': 'https://zero-x.live/404', 'neuroncli/index.html': 'https://zero-x.live/neuroncli/'};
@@ -295,6 +295,115 @@ for (const file of [...SITE_SCRIPTS, 'zerox-auth.js']) {
 }
 assert.match(read('zerox-auth.js'), /SUPABASE_JS_VERSION = '\d+\.\d+\.\d+'/, 'zerox-auth pins supabase-js');
 assert.match(read('zerox-auth.js'), /SUPABASE_JS_INTEGRITY = 'sha384-[A-Za-z0-9+/]{64}'/);
+
+/* ───────────── Design system: fonts, icons, tokens, no AI-slop patterns ───────────── */
+
+// Pages that use the design system (the legacy product pages keep their own styles for now).
+const LEGACY_PAGES = ['find-files-by-content.html', 'wheres-that-file.html', 'neucockpit.html'];
+const DESIGN_PAGES = [...PUBLIC_PAGES, ...PRIVATE_PAGES].filter(f => f !== 'neuroncli/index.html' && !LEGACY_PAGES.includes(f));
+const plainText = file => stripScripts(read(file)).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+
+// Aspekta and JetBrains Mono are self-hosted (SIL OFL, licences next to the files); nothing is loaded from a font CDN.
+{
+  const css = read('zx-tokens.css');
+  const faces = [...css.matchAll(/@font-face \{ font-family: '([^']+)'; font-weight: (\d+); font-style: normal; font-display: swap; src: url\('(\/fonts\/[^']+\.woff2)'\)/g)];
+  assert.deepEqual(faces.map(m => m[1] + ' ' + m[2]), ['Aspekta 400', 'Aspekta 450', 'Aspekta 500', 'Aspekta 600', 'JetBrains Mono 400', 'JetBrains Mono 500', 'JetBrains Mono 700'], 'the font faces the design uses');
+  for (const m of faces) assert.ok(isFile(m[3].slice(1)), 'font file ' + m[3]);
+  assert.match(css, /font-family: 'Aspekta Fallback'; src: local\('Arial'\)[^}]*size-adjust/, 'a size-adjusted fallback for Aspekta');
+  assert.match(css, /font-family: 'JetBrains Mono Fallback'; src: local\('Courier New'\)[^}]*size-adjust/, 'a size-adjusted fallback for JetBrains Mono');
+  assert.match(read('fonts/OFL-Aspekta.txt'), /SIL OPEN FONT LICENSE Version 1\.1/, 'Aspekta licence text ships with the font');
+  assert.match(read('fonts/OFL-JetBrains-Mono.txt'), /SIL Open Font License, Version 1\.1/, 'JetBrains Mono licence text ships with the font');
+  const firstPaint = ['aspekta-400', 'aspekta-450', 'aspekta-500', 'aspekta-600', 'jetbrains-mono-400', 'jetbrains-mono-500']
+    .reduce((sum, name) => sum + statSync(new URL(`fonts/${name}.woff2`, root)).size, 0);
+  assert.ok(firstPaint < 150 * 1024, `fonts used for first paint are ${firstPaint} bytes (under 150 KB)`);
+}
+// Every page that uses the design system preloads the two faces used above the fold and links no font CDN.
+for (const file of [...DESIGN_PAGES, 'neuroncli/login/index.html', 'neuroncli/callback/index.html', 'neuroncli/device/index.html', 'neuroncli/admin/keys/index.html', 'neuroncli/admin/models/index.html']) {
+  const html = read(file);
+  const preloads = tags(html, 'link').filter(a => a.rel === 'preload');
+  assert.deepEqual(preloads.map(a => a.href), ['/fonts/aspekta-400.woff2', '/fonts/aspekta-500.woff2'], file + ': preloads the two faces used above the fold');
+  for (const link of preloads) assert.deepEqual([link.as, link.type, 'crossorigin' in link], ['font', 'font/woff2', true], file + ': font preload attributes');
+  assert.doesNotMatch(html, /site-fonts\.css|fontshare|fonts\.googleapis|fonts\.gstatic/, file + ': no hotlinked fonts');
+  assert.deepEqual(tags(html, 'meta').filter(a => a.name === 'theme-color').map(a => a.media), ['(prefers-color-scheme: light)', '(prefers-color-scheme: dark)'], file + ': theme colour for both schemes');
+}
+// One icon sprite, same origin, Lucide: every <use> resolves to a symbol in it.
+{
+  const sprite = read('icons.svg');
+  const symbols = new Set([...sprite.matchAll(/<symbol id="([\w-]+)" viewBox="0 0 24 24">/g)].map(m => m[1]));
+  assert.ok(symbols.size >= 60, 'the sprite has the icons the site needs');
+  for (const name of ['home', 'chat', 'lock', 'bar-chart', 'timer', 'check-circle', 'list', 'globe', 'box', 'user', 'credit-card', 'scroll', 'settings', 'arrow-right', 'x', 'menu',
+    'terminal', 'download', 'external-link', 'copy', 'check', 'search', 'book', 'shield', 'key']) assert.ok(symbols.has(name), 'sprite icon ' + name);
+  assert.match(sprite, /ISC License[\s\S]*Permission to use, copy, modify/, 'the sprite carries the Lucide ISC licence');
+  assert.doesNotMatch(sprite.replace(/<!--[\s\S]*?-->/, ''), /<(?:script|image|foreignObject|style)\b|\son[a-z]+=|href=/i, 'the sprite is plain vector paths');
+  for (const file of allHtml) {
+    for (const m of read(file).matchAll(/<use href="([^"]+)"/g)) {
+      assert.match(m[1], /^\/icons\.svg#[\w-]+$/, `${file}: icons come from the same-origin sprite (${m[1]})`);
+      assert.ok(symbols.has(m[1].split('#')[1]), `${file}: ${m[1]} exists in the sprite`);
+    }
+  }
+  assert.match(read('zx-tokens.css'), /\.zx-icon \{[^}]*stroke-width: 1\.5; stroke-linecap: round; stroke-linejoin: round;/, '.zx-icon: 1.5px stroke, round caps and joins');
+}
+// Anti-slop rules for the shared stylesheets: no gradients, glass, violet, stacked shadows; purple survives only as a legacy alias.
+for (const file of ['zx-tokens.css', 'home.css']) {
+  const css = read(file).replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.doesNotMatch(css, /gradient\(/i, file + ': no gradients');
+  assert.doesNotMatch(css, /backdrop-filter|filter:\s*blur/i, file + ': no glass or blur');
+  assert.doesNotMatch(css, /violet|#(?:7C4DFF|A58AFF|5B3FD0)/i, file + ': no violet');
+  assert.doesNotMatch(css.replace(/--zx-purple(?:-soft)?: [^;]+;|\.zx-badge--purple|var\(--zx-purple(?:-soft)?\)/g, ''), /purple/i, file + ': purple only survives as a legacy alias for the tan accent');
+  assert.doesNotMatch(css, /box-shadow:[^;{}]*\),\s*[^;{}]*\)/i, file + ': no stacked drop shadows');
+}
+{
+  const css = read('zx-tokens.css');
+  for (const token of ['bg', 'panel', 'surface-strong', 'border', 'ink', 'muted', 'accent', 'tan', 'green', 'amber', 'red', 'slate', 'radius', 'font-body', 'font-mono']) {
+    assert.ok(new RegExp('--zx-' + token + ':').test(css), 'token --zx-' + token);
+  }
+  // Light is the default; dark follows the system and data-theme.
+  assert.match(css, /@media \(prefers-color-scheme: dark\) \{\s*:root:not\(\[data-theme="light"\]\) \{/, 'dark through prefers-color-scheme unless data-theme="light"');
+  const light = css.match(/\n:root \{([\s\S]*?)\n\}/)[1];
+  const dark = css.match(/:root\[data-theme="dark"\] \{([\s\S]*?)\n\}/)[1];
+  assert.match(light, /--zx-bg: #FFFFFF;/, 'the default theme is light');
+  assert.match(light, /--zx-ink: #1B1B1B;/, 'ink');
+  assert.match(dark, /--zx-bg: #141413;/, 'dark paper');
+  assert.match(dark, /--zx-ink: #ECEBE8;/, 'dark ink');
+  // The media-query dark block and the data-theme block carry the same values.
+  const media = css.match(/:root:not\(\[data-theme="light"\]\) \{([\s\S]*?)\n  \}/)[1];
+  const values = block => Object.fromEntries([...block.matchAll(/(--zx-[\w-]+): ([^;]+);/g)].map(m => [m[1], m[2].trim()]));
+  const darkValues = values(dark);
+  const mediaValues = values(media);
+  for (const key of Object.keys(mediaValues)) assert.equal(darkValues[key], mediaValues[key], 'dark tokens agree: ' + key);
+  for (const key of Object.keys(darkValues).filter(k => k !== 'color-scheme')) assert.ok(key in mediaValues, 'dark tokens agree: ' + key);
+  // WCAG 4.5:1 for the text tokens on the surfaces they sit on, in both themes.
+  const lum = hex => { const [r, g, b] = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16) / 255).map(v => v <= .03928 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4); return .2126 * r + .7152 * g + .0722 * b; };
+  const ratio = (a, b) => { const [hi, lo] = [lum(a), lum(b)].sort((m, n) => n - m); return (hi + .05) / (lo + .05); };
+  for (const [name, block] of Object.entries({ light, dark })) {
+    const v = key => { const m = block.match(new RegExp('--zx-' + key + ': (#[0-9A-Fa-f]{6})')); assert.ok(m, `${name}: --zx-${key}`); return m[1]; };
+    for (const textToken of ['ink', 'muted', 'faint', 'accent-text', 'success', 'warning', 'danger', 'info', 'tan-text']) {
+      for (const surface of ['bg', 'panel']) assert.ok(ratio(v(textToken), v(surface)) >= 4.5, `${name}: --zx-${textToken} on --zx-${surface} is ${ratio(v(textToken), v(surface)).toFixed(2)}:1 (needs 4.5)`);
+    }
+    assert.ok(ratio(v('on-ink'), v('ink-fill')) >= 4.5, name + ': primary button label');
+    assert.ok(ratio(v('ink'), v('surface-strong')) >= 4.5 && ratio(v('muted'), v('surface-strong')) >= 4.5, name + ': text on the active pill');
+  }
+}
+for (const file of DESIGN_PAGES) assert.doesNotMatch(plainText(file), /supercharge|unlock the|seamless|revolutionary|next-gen|game-chang/i, file + ': no generic filler words');
+// The shared footer is the same on every page: three link groups and the brand, the current page marked.
+for (const file of DESIGN_PAGES) {
+  const footer = read(file).match(/<footer class="zx-footer">[\s\S]*?<\/footer>/)[0];
+  assert.deepEqual([...footer.matchAll(/<nav aria-label="([^"]+)"/g)].map(m => m[1]), ['Product', 'Company', 'Legal'], file + ': footer groups');
+  for (const path of ['/neuron-cli', '/pricing', '/docs', '/about', '/contact', '/terms', '/privacy', '/refund', '/shipping', '/download', '/changelog']) {
+    assert.ok(footer.includes(`href="${path}"`) || footer.includes(`href="https://zero-x.live${path}"`), `${file}: footer links ${path}`);
+  }
+  assert.match(footer, /<a class="zx-brand" href="[^"]+"[^>]*><img src="\/Assets\/zerox-mark\.svg" width="28" height="28" alt="">Zero-X<\/a>/, file + ': footer brand');
+  assert.match(read(file), /<button class="zx-nav-toggle"[^>]*><svg class="zx-icon zx-icon--menu"[^>]*><use href="\/icons\.svg#menu"\/><\/svg><svg class="zx-icon zx-icon--close"[^>]*><use href="\/icons\.svg#x"\/><\/svg>Menu<\/button>/, file + ': Menu button icons');
+}
+// The announcement bar on the homepage: a region, a pill, one line with an arrow link, a close button that stays hidden until announce.js runs.
+{
+  const html = read('index.html');
+  const bar = html.match(/<div class="zx-announce"[\s\S]*?<\/div>\s*<\/div>/)[0];
+  assert.match(bar, /role="region" aria-label="Announcement" data-announce="[\w-]+"/, 'announcement region');
+  assert.match(bar, /<span class="zx-badge zx-badge--ink">New<\/span>/, 'announcement pill');
+  assert.match(bar, /<button class="zx-announce__close" type="button" aria-label="Dismiss announcement" hidden>/, 'announcement close button is hidden without the script');
+  assert.ok(tags(html, 'script').some(a => a.type === 'module' && a.src === '/announce.js'), 'index loads announce.js');
+}
 assert.match(read('zerox-auth.js'), /getAccessToken: getAccessToken/);
 
 /* .assetsignore must not hide the new public files */
@@ -302,7 +411,7 @@ assert.match(read('zerox-auth.js'), /getAccessToken: getAccessToken/);
   const patterns = read('.assetsignore').split(/\r?\n/).map(line => line.trim()).filter(line => line && !line.startsWith('#'));
   const toRegex = pattern => new RegExp('^' + pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*\*\//g, '(?:.*/)?').replace(/\*/g, '[^/]*') + (pattern.endsWith('/') ? '' : '$'));
   for (const file of [...PUBLIC_PAGES, ...PRIVATE_PAGES, ...SITE_SCRIPTS, ...RELEASE_MANIFESTS, 'zx-tokens.css', 'site-fonts.css', 'home.css',
-    'neucockpit.html', 'favicon.ico', 'Assets/zerox-share.png']) {
+    'neucockpit.html', 'favicon.ico', 'Assets/zerox-share.png', 'icons.svg', 'announce.js', 'fonts/aspekta-400.woff2', 'fonts/aspekta-500.woff2', 'fonts/jetbrains-mono-400.woff2', 'fonts/OFL-Aspekta.txt', 'fonts/OFL-JetBrains-Mono.txt']) {
     assert.ok(isFile(file), `${file} exists`);
     assert.ok(!patterns.some(pattern => toRegex(pattern).test(file)), `${file} is excluded from the Worker assets`);
   }

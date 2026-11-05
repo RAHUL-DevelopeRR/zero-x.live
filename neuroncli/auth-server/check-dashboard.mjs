@@ -1013,6 +1013,42 @@ for (const scenario of ['live', 'offline']) {
   console.log('ok - site header menu: a disclosure button (aria-expanded, aria-controls), Escape returns focus, link, outside click and focus loss close it, hidden without the script');
 }
 
+/* ───────────── Announcement bar (announce.js) ───────────── */
+
+{
+  const {installAnnounce, DISMISSED_KEY} = await import(new URL('announce.js', root));
+  const html = read('index.html');
+  const fresh = () => parseDocument(html);
+  const memory = () => { const m = new Map(); return {getItem: k => m.get(k) ?? null, setItem: (k, v) => m.set(k, v), map: m}; };
+  // Without the script the bar shows and its close button is hidden (nothing that does nothing).
+  const bare = fresh();
+  assert.equal(bare.querySelector('.zx-announce__close').hidden, true, 'announce: the close button is hidden until the script runs');
+  assert.equal(bare.querySelector('.zx-announce').hidden, false, 'announce: the bar shows without the script');
+  // First visit: the button appears; closing hides the bar and remembers the id.
+  const doc = fresh();
+  const storage = memory();
+  const bar = installAnnounce(doc, storage);
+  assert.ok(bar, 'announce: the homepage has a bar');
+  assert.deepEqual([doc.querySelector('.zx-announce__close').hidden, bar.isHidden()], [false, false], 'announce: first visit shows the bar and its close button');
+  doc.querySelector('.zx-announce__close').click();
+  assert.equal(bar.isHidden(), true, 'announce: the close button hides the bar');
+  assert.equal(storage.map.get(DISMISSED_KEY), doc.querySelector('.zx-announce').dataset.announce, 'announce: the dismissed id is remembered');
+  // Next visit: the same id stays hidden; another id shows again.
+  const again = fresh();
+  assert.equal(installAnnounce(again, storage).isHidden(), true, 'announce: a dismissed bar stays hidden');
+  const next = fresh();
+  next.querySelector('.zx-announce').dataset.announce = 'something-new';
+  assert.equal(installAnnounce(next, storage).isHidden(), false, 'announce: a new announcement shows again');
+  // Storage that throws (private window, blocked site data) never breaks the bar.
+  const broken = {getItem() { throw new Error('blocked'); }, setItem() { throw new Error('blocked'); }};
+  const blocked = fresh();
+  const barB = installAnnounce(blocked, broken);
+  blocked.querySelector('.zx-announce__close').click();
+  assert.equal(barB.isHidden(), true, 'announce: closing works without storage');
+  assert.equal(installAnnounce(parseDocument('<!doctype html><html><body><main id="main"></main></body></html>'), storage), null, 'announce: no bar, nothing to wire');
+  console.log('ok - announcement bar: close button hidden without the script, dismissal remembered per announcement id, storage failures ignored');
+}
+
 /* ───────────── zerox-auth.js development identity ───────────── */
 
 async function loadAuth({hostname, config, session = makeStorage(), sdk = true}) {

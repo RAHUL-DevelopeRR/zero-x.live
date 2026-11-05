@@ -6,9 +6,11 @@
   <title>Page not found | Zero-X</title>
   <meta name="robots" content="noindex, follow">
   <meta name="description" content="The page you asked for does not exist on zero-x.live.">
-  <meta name="theme-color" content="#0A0A0C">
+  <meta name="theme-color" content="#FFFFFF" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#141413" media="(prefers-color-scheme: dark)">
   <link rel="icon" type="image/png" sizes="32x32" href="/Assets/zerox-favicon-32.png">
-  <link rel="stylesheet" href="/site-fonts.css">
+  <link rel="preload" href="/fonts/aspekta-400.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/fonts/aspekta-500.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/zx-tokens.css">
   <script type="module" src="/site-nav.js"></script>
 </head>
@@ -17,12 +19,12 @@
   <header class="zx-header">
     <div class="zx-container zx-header__inner">
       <a class="zx-brand" href="https://zero-x.live/"><img src="/Assets/zerox-mark.svg" width="28" height="28" alt="">Zero-X</a>
-      <button class="zx-nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" hidden><span class="zx-nav-toggle__bars" aria-hidden="true"></span>Menu</button>
+      <button class="zx-nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" hidden><svg class="zx-icon zx-icon--menu" aria-hidden="true"><use href="/icons.svg#menu"/></svg><svg class="zx-icon zx-icon--close" aria-hidden="true"><use href="/icons.svg#x"/></svg>Menu</button>
       <nav class="zx-nav" id="site-nav" aria-label="Main">
         <a href="/neuron-cli">Neuron CLI</a>
         <a href="/pricing">Pricing</a>
         <a href="/docs">Docs</a>
-        <a class="zx-btn zx-btn--sm" href="https://dashboard.zero-x.live/">Dashboard</a>
+        <a class="zx-btn zx-btn--sm" href="https://dashboard.zero-x.live/"><svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#user"/></svg>Dashboard</a>
       </nav>
     </div>
   </header>
@@ -42,9 +44,40 @@
     <p>Still stuck? Email <a href="mailto:support@zero-x.live">support@zero-x.live</a>.</p>
   </main>
   <footer class="zx-footer">
-    <div class="zx-container">
-      <p><a href="/terms">Terms</a> · <a href="/privacy">Privacy</a> · <a href="/contact">Contact</a></p>
+    <div class="zx-container zx-footer__grid">
+      <div>
+        <a class="zx-brand" href="https://zero-x.live/"><img src="/Assets/zerox-mark.svg" width="28" height="28" alt="">Zero-X</a>
+        <p>Neuron CLI and NeuCockpit. Built in Tamil Nadu, India.</p>
+      </div>
+      <nav aria-label="Product">
+        <h2>Product</h2>
+        <a href="https://zero-x.live/neuron-cli">Neuron CLI</a>
+        <a href="https://zero-x.live/download">Download</a>
+        <a href="https://zero-x.live/changelog">Changelog</a>
+        <a href="https://zero-x.live/pricing">Pricing</a>
+        <a href="https://zero-x.live/docs">Docs</a>
+        <a href="https://zero-x.live/ai-coding-agent">AI coding agent guide</a>
+        <a href="https://zero-x.live/free-ai-coding-agent">Free AI coding agent</a>
+        <a href="https://zero-x.live/claude-code-alternative">Neuron compared</a>
+        <a href="https://dashboard.zero-x.live/">Dashboard</a>
+        <a href="https://github.com/RAHUL-DevelopeRR/neuron-v2">GitHub <svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#arrow-up-right"/></svg></a>
+      </nav>
+      <nav aria-label="Company">
+        <h2>Company</h2>
+        <a href="https://zero-x.live/about">About</a>
+        <a href="https://zero-x.live/contact">Contact</a>
+        <a href="https://zero-x.live/docs/trust">Security and trust</a>
+        <a href="https://zero-x.live/neucockpit">NeuCockpit</a>
+      </nav>
+      <nav aria-label="Legal">
+        <h2>Legal</h2>
+        <a href="https://zero-x.live/terms">Terms of Service</a>
+        <a href="https://zero-x.live/privacy">Privacy Policy</a>
+        <a href="https://zero-x.live/refund">Cancellation and refunds</a>
+        <a href="https://zero-x.live/shipping">Shipping and delivery</a>
+      </nav>
     </div>
+    <p class="zx-container zx-footer__legal">© 2026 Zero-X · <a href="mailto:support@zero-x.live">support@zero-x.live</a></p>
   </footer>
 </body>
 </html>

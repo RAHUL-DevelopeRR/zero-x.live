@@ -6,10 +6,12 @@
   <title>Dashboard | Zero-X</title>
   <meta name="robots" content="noindex, nofollow">
   <meta name="description" content="Your Zero-X account: plan, daily usage, API keys, billing and Neuron CLI sessions.">
-  <meta name="theme-color" content="#0A0A0C">
+  <meta name="theme-color" content="#FFFFFF" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#141413" media="(prefers-color-scheme: dark)">
   <link rel="icon" type="image/png" sizes="32x32" href="/Assets/zerox-favicon-32.png">
   <link rel="apple-touch-icon" sizes="180x180" href="/Assets/zerox-apple-touch-icon.png">
-  <link rel="stylesheet" href="/site-fonts.css">
+  <link rel="preload" href="/fonts/aspekta-400.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/fonts/aspekta-500.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/zx-tokens.css">
   <script type="module" src="/site-nav.js"></script>
   <script src="/zerox-auth.js" defer></script>
@@ -20,7 +22,7 @@
   <header class="zx-header">
     <div class="zx-container zx-header__inner">
       <a class="zx-brand" href="https://zero-x.live/" data-site-path="/"><img src="/Assets/zerox-mark.svg" width="28" height="28" alt="">Zero-X</a>
-      <button class="zx-nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" hidden><span class="zx-nav-toggle__bars" aria-hidden="true"></span>Menu</button>
+      <button class="zx-nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" hidden><svg class="zx-icon zx-icon--menu" aria-hidden="true"><use href="/icons.svg#menu"/></svg><svg class="zx-icon zx-icon--close" aria-hidden="true"><use href="/icons.svg#x"/></svg>Menu</button>
       <nav class="zx-nav" id="site-nav" aria-label="Main">
         <a href="https://zero-x.live/neuron-cli" data-site-path="/neuron-cli">Neuron CLI</a>
         <a href="https://zero-x.live/pricing" data-site-path="/pricing">Pricing</a>
@@ -310,19 +312,28 @@ neuron -p "Run the tests and summarise failures"</code></pre></div>
   <footer class="zx-footer">
     <div class="zx-container zx-footer__grid">
       <div>
-        <a class="zx-brand" href="https://zero-x.live/" data-site-path="/">Zero-X</a>
+        <a class="zx-brand" href="https://zero-x.live/" data-site-path="/"><img src="/Assets/zerox-mark.svg" width="28" height="28" alt="">Zero-X</a>
         <p>Questions about your account: <a href="mailto:support@zero-x.live">support@zero-x.live</a></p>
       </div>
       <nav aria-label="Product">
         <h2>Product</h2>
         <a href="https://zero-x.live/neuron-cli" data-site-path="/neuron-cli">Neuron CLI</a>
+        <a href="https://zero-x.live/download" data-site-path="/download">Download</a>
+        <a href="https://zero-x.live/changelog" data-site-path="/changelog">Changelog</a>
         <a href="https://zero-x.live/pricing" data-site-path="/pricing">Pricing</a>
         <a href="https://zero-x.live/docs" data-site-path="/docs">Docs</a>
+        <a href="https://zero-x.live/ai-coding-agent" data-site-path="/ai-coding-agent">AI coding agent guide</a>
+        <a href="https://zero-x.live/free-ai-coding-agent" data-site-path="/free-ai-coding-agent">Free AI coding agent</a>
+        <a href="https://zero-x.live/claude-code-alternative" data-site-path="/claude-code-alternative">Neuron compared</a>
+        <a href="https://dashboard.zero-x.live/">Dashboard</a>
+        <a href="https://github.com/RAHUL-DevelopeRR/neuron-v2">GitHub <svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#arrow-up-right"/></svg></a>
       </nav>
       <nav aria-label="Company">
         <h2>Company</h2>
         <a href="https://zero-x.live/about" data-site-path="/about">About</a>
         <a href="https://zero-x.live/contact" data-site-path="/contact">Contact</a>
+        <a href="https://zero-x.live/docs/trust" data-site-path="/docs/trust">Security and trust</a>
+        <a href="https://zero-x.live/neucockpit">NeuCockpit</a>
       </nav>
       <nav aria-label="Legal">
         <h2>Legal</h2>
