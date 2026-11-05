@@ -14,7 +14,7 @@ const PUBLIC_PAGES = ['index.html', 'pricing.html', 'neuron-cli.html', 'docs.htm
 const PRIVATE_PAGES = ['dashboard.html', '404.html', 'neuroncli/index.html'];
 const SITE_SCRIPTS = ['dashboard.js', 'pricing.js', 'billing-checkout.js', 'home.js', 'download.js', 'changelog.js', 'site-nav.js', 'announce.js'];
 const RELEASE_MANIFESTS = ['releases/cli/latest.json', 'releases/desktop/latest.json'];
-const SITE_FILES = [...PUBLIC_PAGES, ...PRIVATE_PAGES, ...SITE_SCRIPTS, ...RELEASE_MANIFESTS, 'zx-tokens.css', 'home.css', 'zerox-auth.js', 'neuroncli/login/index.html', 'neuroncli/callback/index.html'];
+const SITE_FILES = [...PUBLIC_PAGES, ...PRIVATE_PAGES, ...SITE_SCRIPTS, ...RELEASE_MANIFESTS, 'zx-tokens.css', 'home.css', 'content.css', 'zerox-auth.js', 'neuroncli/login/index.html', 'neuroncli/callback/index.html'];
 const BASES = {'dashboard.html': 'https://dashboard.zero-x.live/', '404.html': 'https://zero-x.live/404', 'neuroncli/index.html': 'https://zero-x.live/neuroncli/'};
 const CSP = {
   script: ['https://cdn.jsdelivr.net', 'https://checkout.razorpay.com'],
@@ -299,8 +299,9 @@ assert.match(read('zerox-auth.js'), /SUPABASE_JS_INTEGRITY = 'sha384-[A-Za-z0-9+
 /* ───────────── Design system: fonts, icons, tokens, no AI-slop patterns ───────────── */
 
 // Pages that use the design system (the legacy product pages keep their own styles for now).
-const LEGACY_PAGES = ['find-files-by-content.html', 'wheres-that-file.html', 'neucockpit.html'];
-const DESIGN_PAGES = [...PUBLIC_PAGES, ...PRIVATE_PAGES].filter(f => f !== 'neuroncli/index.html' && !LEGACY_PAGES.includes(f));
+const LEGACY_PAGES = ['neucockpit.html'];
+const GUIDE_PAGES = ['find-files-by-content.html', 'wheres-that-file.html'];
+const DESIGN_PAGES = [...PUBLIC_PAGES, ...PRIVATE_PAGES, ...GUIDE_PAGES].filter(f => f !== 'neuroncli/index.html' && !LEGACY_PAGES.includes(f));
 const plainText = file => stripScripts(read(file)).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
 
 // Aspekta and JetBrains Mono are self-hosted (SIL OFL, licences next to the files); nothing is loaded from a font CDN.
@@ -344,7 +345,7 @@ for (const file of [...DESIGN_PAGES, 'neuroncli/login/index.html', 'neuroncli/ca
   assert.match(read('zx-tokens.css'), /\.zx-icon \{[^}]*stroke-width: 1\.5; stroke-linecap: round; stroke-linejoin: round;/, '.zx-icon: 1.5px stroke, round caps and joins');
 }
 // Anti-slop rules for the shared stylesheets: no gradients, glass, violet, stacked shadows; purple survives only as a legacy alias.
-for (const file of ['zx-tokens.css', 'home.css']) {
+for (const file of ['zx-tokens.css', 'home.css', 'content.css']) {
   const css = read(file).replace(/\/\*[\s\S]*?\*\//g, '');
   assert.doesNotMatch(css, /gradient\(/i, file + ': no gradients');
   assert.doesNotMatch(css, /backdrop-filter|filter:\s*blur/i, file + ': no glass or blur');
@@ -410,7 +411,7 @@ assert.match(read('zerox-auth.js'), /getAccessToken: getAccessToken/);
 {
   const patterns = read('.assetsignore').split(/\r?\n/).map(line => line.trim()).filter(line => line && !line.startsWith('#'));
   const toRegex = pattern => new RegExp('^' + pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*\*\//g, '(?:.*/)?').replace(/\*/g, '[^/]*') + (pattern.endsWith('/') ? '' : '$'));
-  for (const file of [...PUBLIC_PAGES, ...PRIVATE_PAGES, ...SITE_SCRIPTS, ...RELEASE_MANIFESTS, 'zx-tokens.css', 'site-fonts.css', 'home.css',
+  for (const file of [...PUBLIC_PAGES, ...PRIVATE_PAGES, ...SITE_SCRIPTS, ...RELEASE_MANIFESTS, 'zx-tokens.css', 'site-fonts.css', 'home.css', 'content.css',
     'neucockpit.html', 'favicon.ico', 'Assets/zerox-share.png', 'icons.svg', 'announce.js', 'fonts/aspekta-400.woff2', 'fonts/aspekta-500.woff2', 'fonts/jetbrains-mono-400.woff2', 'fonts/OFL-Aspekta.txt', 'fonts/OFL-JetBrains-Mono.txt']) {
     assert.ok(isFile(file), `${file} exists`);
     assert.ok(!patterns.some(pattern => toRegex(pattern).test(file)), `${file} is excluded from the Worker assets`);
