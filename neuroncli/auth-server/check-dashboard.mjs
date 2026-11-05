@@ -26,7 +26,7 @@ class Node {
   constructor(doc) { this.ownerDocument = doc; this.parentNode = null; this.childNodes = []; }
   get firstChild() { return this.childNodes[0] || null; }
   get children() { return this.childNodes.filter(n => n.nodeType === 1); }
-  appendChild(node) { if (node.parentNode) node.parentNode.removeChild(node); node.parentNode = this; this.childNodes.push(node); return node; }
+  appendChild(node) { if (node.nodeType === 11) { for (const child of [...node.childNodes]) this.appendChild(child); return node; } if (node.parentNode) node.parentNode.removeChild(node); node.parentNode = this; this.childNodes.push(node); return node; }
   append(...nodes) { for (const n of nodes) this.appendChild(typeof n === 'string' ? this.ownerDocument.createTextNode(n) : n); }
   prepend(...nodes) { for (const n of nodes.reverse()) this.insertBefore(typeof n === 'string' ? this.ownerDocument.createTextNode(n) : n, this.firstChild); }
   removeChild(node) { const i = this.childNodes.indexOf(node); if (i >= 0) { this.childNodes.splice(i, 1); node.parentNode = null; } return node; }
@@ -152,6 +152,7 @@ class Document extends Node {
   createElement(tag) { return new Element(this, tag); }
   createElementNS(ns, tag) { return new Element(this, tag, ns); }
   createTextNode(text) { return new Text(this, text); }
+  createDocumentFragment() { const fragment = new Node(this); fragment.nodeType = 11; return fragment; }
   getElementById(id) { let found = null; walk(this, n => { if (!found && n.nodeType === 1 && n.getAttribute('id') === id) found = n; }); return found; }
   querySelector(selector) { return Element.prototype.querySelector.call(this, selector); }
   querySelectorAll(selector) { return Element.prototype.querySelectorAll.call(this, selector); }
@@ -836,6 +837,87 @@ for (const scenario of ['live', 'offline']) {
   // The model list is home.js's live pane now; the inline script only builds the install tabs.
   assert.equal(doc.getElementById('models-body'), null);
   if (scenario === 'live') assert.doesNotMatch(script, /fetch\(/, 'the inline script makes no network calls');
+}
+
+/* ───────────── Live model pane (home.js) ───────────── */
+
+{
+  const {liveModels} = await import(new URL('home.js', root));
+  const mount = status => {
+    const doc = parseDocument(read('index.html'));
+    const pane = {doc, clock: Date.parse('2026-11-05T10:00:00Z'), up: true, timers: new Map(), ticks: [], next: 1};
+    const win = {
+      setTimeout: (fn, ms) => { const id = pane.next++; pane.timers.set(id, {fn, at: pane.clock + ms}); return id; },
+      clearTimeout: id => { pane.timers.delete(id); },
+      setInterval: fn => { pane.ticks.push(fn); return 0; },
+    };
+    const models = {object: 'list', data: [
+      {id: 'openai/gpt-oss-120b', model_name: 'GPT-OSS 120B', maker: 'openai', context_window: 8000, tiers: ['free'], available: true, status: 'available'},
+      {id: 'nvidia/nemotron-3-ultra-550b', model_name: 'Nemotron 3 Ultra 550B', maker: 'nvidia', context_window: 131072, tiers: ['free'], available: true, status: 'degraded'}]};
+    const fetchImpl = async path => {
+      if (!pane.up) throw new TypeError('gateway unreachable');
+      if (path === '/v1/models') return json(200, models);
+      assert.equal(path, '/v1/models/status');
+      return json(200, status(pane.clock));
+    };
+    pane.advance = async seconds => {
+      pane.clock += seconds * 1000;
+      for (const [id, timer] of [...pane.timers].sort((a, b) => a[1].at - b[1].at)) {
+        if (timer.at > pane.clock || !pane.timers.has(id)) continue;
+        pane.timers.delete(id);
+        timer.fn();
+        await settle();
+      }
+      pane.ticks.forEach(fn => fn());
+    };
+    pane.view = () => ({
+      live: doc.getElementById('models-live-text').textContent,
+      note: doc.getElementById('models-note').textContent,
+      rows: doc.querySelectorAll('#models-list .zx-model').map(row => [row.dataset.tone, row.querySelector('.zx-model__status').textContent]),
+    });
+    liveModels(doc, win, {fetchImpl, clock: () => pane.clock});
+    return pane;
+  };
+  const checked = clock => ({object: 'list', checked_at: new Date(clock - 5000).toISOString(), poll_interval_seconds: 30, stale_after_seconds: 1200, data: [
+    {id: 'openai/gpt-oss-120b', available: true, status: 'available'}, {id: 'nvidia/nemotron-3-ultra-550b', available: true, status: 'degraded'}]});
+
+  // Live, then the gateway stops answering: the last verdicts stand for one missed poll, then every row reads unknown.
+  const pane = mount(checked);
+  await settle();
+  let view = pane.view();
+  assert.equal(view.live, 'Live · checked 5 s ago', 'the indicator is the health checker time');
+  assert.deepEqual(view.rows, [['ok', 'Available'], ['warn', 'Slower than usual']]);
+  assert.match(view.note, /^1 of 2 models available on the Free plan right now/);
+  pane.up = false;
+  await pane.advance(30);
+  view = pane.view();
+  assert.match(view.live, /^Reconnecting · last checked/);
+  assert.deepEqual(view.rows, [['ok', 'Available'], ['warn', 'Slower than usual']], 'one missed poll keeps the last verdicts');
+  await pane.advance(31);
+  view = pane.view();
+  assert.match(view.live, /^Reconnecting · last checked 1 min ago/);
+  assert.deepEqual(view.rows, [['unknown', 'Not checked recently'], ['unknown', 'Not checked recently']], 'unchecked verdicts are never shown as available');
+  assert.match(view.note, /not being checked right now/);
+  assert.doesNotMatch(view.note, /available on the Free plan/);
+  pane.up = true;
+  await pane.advance(30);
+  view = pane.view();
+  assert.equal(view.live, 'Live · checked 5 s ago', 'the pane recovers when the gateway answers again');
+  assert.deepEqual(view.rows, [['ok', 'Available'], ['warn', 'Slower than usual']]);
+  assert.match(view.note, /^1 of 2 models available/);
+
+  // Verdicts older than stale_after_seconds expire even sooner than two polls.
+  const old = mount(clock => ({...checked(clock), checked_at: new Date(clock - 50000).toISOString(), stale_after_seconds: 60}));
+  await settle();
+  old.up = false;
+  await old.advance(30);
+  assert.deepEqual(old.view().rows.map(row => row[0]), ['unknown', 'unknown'], 'the health checker last looked 80 s ago, past its 60 s limit');
+
+  // No checked_at (the health checker has checked nothing yet): no time is invented.
+  const fresh = mount(clock => ({...checked(clock), checked_at: null, data: [{id: 'openai/gpt-oss-120b', available: true, status: 'unknown'}]}));
+  await settle();
+  assert.equal(fresh.view().live, 'Live · not checked yet');
+  assert.deepEqual(fresh.view().rows[0], ['unknown', 'Not checked recently']);
 }
 
 /* ───────────── zerox-auth.js development identity ───────────── */

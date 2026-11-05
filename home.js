@@ -196,6 +196,25 @@ export function pollSeconds(payload) {
   return Number.isFinite(value) && value >= 10 && value <= 600 ? value : DEFAULT_POLL_SECONDS;
 }
 
+/**
+ * How long a health verdict stays good without a new check: the health checker's own
+ * `stale_after_seconds`, or two poll intervals when the payload does not say.
+ */
+export function staleAfterSeconds(payload, poll = DEFAULT_POLL_SECONDS) {
+  const value = Number(payload && payload.stale_after_seconds);
+  return Number.isFinite(value) && value > 0 && value <= 86400 ? value : poll * 2;
+}
+
+/**
+ * True once the verdicts on screen are no longer being checked: the gateway has not answered for
+ * two poll intervals (or never has), or the health checker's newest verdict (`checkedAt`, 0 when
+ * the gateway sent none) is older than `staleAfter` seconds. All times are in milliseconds.
+ */
+export function verdictsExpired({ checkedAt = 0, answeredAt = 0, staleAfter = DEFAULT_POLL_SECONDS * 2, poll = DEFAULT_POLL_SECONDS }, now = Date.now()) {
+  if (!answeredAt || now - answeredAt > poll * 2 * 1000) return true;
+  return checkedAt > 0 && now - checkedAt > staleAfter * 1000;
+}
+
 /** "just now", "12 s ago", "3 min ago", "2 h ago". */
 export function sinceLabel(then, now = Date.now()) {
   const seconds = Math.max(0, Math.round((now - then) / 1000));
@@ -219,9 +238,12 @@ export function contextNote(row) {
     : `Up to ${usable} tokens per request ${plan}.`;
 }
 
-/** The "Live · checked 12 s ago" indicator: live, reconnecting (last poll failed) or offline. */
+/**
+ * The "Live · checked 12 s ago" indicator: live, reconnecting (last poll failed) or offline.
+ * `checkedAt` is the health checker's own time, 0 when it has not checked any model yet.
+ */
 export function liveText(state, checkedAt, now = Date.now()) {
-  if (state === 'live') return checkedAt ? `Live · checked ${sinceLabel(checkedAt, now)}` : 'Live';
+  if (state === 'live') return checkedAt ? `Live · checked ${sinceLabel(checkedAt, now)}` : 'Live · not checked yet';
   if (state === 'stale') return checkedAt ? `Reconnecting · last checked ${sinceLabel(checkedAt, now)}` : 'Reconnecting';
   if (state === 'offline') return 'Offline · built-in list, not checked';
   return 'Connecting to the gateway';
@@ -373,7 +395,10 @@ export function markUnchecked(body) {
   }
 }
 
-function liveModels(doc, win) {
+/**
+ * Drives the pane. `fetchImpl` and `clock` exist for the checks; the browser uses fetch and Date.now.
+ */
+export function liveModels(doc, win, { fetchImpl, clock = () => Date.now() } = {}) {
   const body = doc.getElementById('models-list');
   const note = doc.getElementById('models-note');
   const live = doc.getElementById('models-live');
@@ -383,7 +408,12 @@ function liveModels(doc, win) {
   let timer = 0;
   let state = 'connecting';
   let checkedAt = 0;
-  const now = () => Date.now();
+  let answeredAt = 0;
+  let poll = DEFAULT_POLL_SECONDS;
+  let staleAfter = DEFAULT_POLL_SECONDS * 2;
+  let expired = false;
+  const now = clock;
+  const get = path => apiFetch(path, { timeoutMs: 8000, fetchImpl });
   const paint = () => {
     if (live) live.dataset.state = state;
     if (liveLabel) liveLabel.textContent = liveText(state, checkedAt, now());
@@ -393,10 +423,22 @@ function liveModels(doc, win) {
     const up = families.filter(row => modelState(row, now()).tone === 'ok').length;
     note.textContent = `${up} of ${families.length} models available on the Free plan right now, from the Zero-X gateway's health checks.`;
   };
-  // checked_at is when the health checker last confirmed a verdict; without one, when we polled.
+  // checked_at is when the health checker last confirmed a verdict. The gateway sends null when it
+  // has checked nothing yet, and then the indicator shows no time rather than the poll's own.
   const stamp = payload => {
     const at = Date.parse((payload && payload.checked_at) || '');
-    checkedAt = Number.isFinite(at) ? Math.min(at, now()) : now();
+    checkedAt = Number.isFinite(at) ? Math.min(at, now()) : 0;
+    answeredAt = now();
+    poll = pollSeconds(payload);
+    staleAfter = staleAfterSeconds(payload, poll);
+  };
+  // While the gateway is not answering, the last verdicts stand only until they expire; after that
+  // no row may claim to be available, as when the gateway could not be reached at all.
+  const expire = () => {
+    if (expired || state !== 'stale' || !verdictsExpired({ checkedAt, answeredAt, staleAfter, poll }, now())) return;
+    expired = true;
+    markUnchecked(body);
+    note.textContent = 'The Zero-X gateway is not answering, so model availability is not being checked right now. Every model reads "Not checked recently" until it answers again.';
   };
   const schedule = (task, seconds) => {
     win.clearTimeout(timer);
@@ -405,17 +447,19 @@ function liveModels(doc, win) {
   async function refresh() {
     if (doc.hidden) { schedule(refresh, DEFAULT_POLL_SECONDS); return; }
     try {
-      const status = await apiFetch('/v1/models/status', { timeoutMs: 8000 });
+      const status = await get('/v1/models/status');
       rows = applyStatus(rows, status);
       renderModels(doc, body, rows, now());
+      expired = false;
       describe();
       state = 'live';
       stamp(status);
       paint();
-      schedule(refresh, pollSeconds(status));
+      schedule(refresh, poll);
     } catch {
       state = 'stale';
       paint();
+      expire();
       schedule(refresh, DEFAULT_POLL_SECONDS * 2);
     }
   }
@@ -428,7 +472,7 @@ function liveModels(doc, win) {
     schedule(load, DEFAULT_POLL_SECONDS * 2);
   };
   function load() {
-    apiFetch('/v1/models', { timeoutMs: 8000 })
+    get('/v1/models')
       .then(payload => {
         const parsed = modelRows(payload);
         if (!parsed || !parsed.length) {
@@ -437,6 +481,8 @@ function liveModels(doc, win) {
         }
         rows = parsed;
         renderModels(doc, body, rows, now());
+        expired = false;
+        answeredAt = now();
         describe();
         // The status poll follows at once, so the indicator reports the health checker's own time.
         refresh();
@@ -444,7 +490,7 @@ function liveModels(doc, win) {
       .catch(() => offline('The Zero-X gateway could not be reached, so this is the built-in list and nothing in it was checked. It tries again every minute.'));
   }
   paint();
-  win.setInterval(() => { if (!doc.hidden && (state === 'live' || state === 'stale')) paint(); }, 1000);
+  win.setInterval(() => { if (!doc.hidden && (state === 'live' || state === 'stale')) { paint(); expire(); } }, 1000);
   load();
   doc.addEventListener('visibilitychange', () => { if (!doc.hidden && rows) refresh(); });
 }

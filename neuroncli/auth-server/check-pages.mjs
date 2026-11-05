@@ -292,6 +292,7 @@ const ADDRESS = '6/2, N. Pugalur, Karur 639113, Tamil Nadu, India';
   assert.match(text('shipping.html'), /do not sell or ship physical goods/);
   assert.match(text('shipping.html'), /no shipping charges/);
   assert.match(text('shipping.html'), /as soon as Razorpay confirms the payment/);
+  assert.doesNotMatch(text('shipping.html'), /Gemini|Groq|OpenRouter|Workers AI|NVIDIA/, 'shipping.html names no provider or switched-off model');
 
   const contact = text('contact.html');
   assert.ok(contact.includes('Zero-X 6/2, N. Pugalur Karur 639113 Tamil Nadu, India'), 'contact: postal address');
@@ -822,6 +823,16 @@ assert.equal(checkout.normalizeCurrency('EUR'), 'USD');
   assert.equal(home.liveText('live', now - 12000, now), 'Live · checked 12 s ago');
   assert.equal(home.liveText('stale', now - 120000, now), 'Reconnecting · last checked 2 min ago');
   assert.equal(home.liveText('offline', 0, now), 'Offline · built-in list, not checked');
+  assert.equal(home.liveText('live', 0, now), 'Live · not checked yet', 'no checked_at: no time is invented');
+  assert.equal(home.liveText('stale', 0, now), 'Reconnecting');
+  assert.equal(home.staleAfterSeconds({stale_after_seconds: 1200}), 1200);
+  assert.equal(home.staleAfterSeconds({}, 30), 60, 'without the payload value, two poll intervals');
+  assert.equal(home.staleAfterSeconds({stale_after_seconds: -5}, 45), 90);
+  assert.equal(home.verdictsExpired({checkedAt: now - 20000, answeredAt: now - 33000, staleAfter: 1200, poll: 30}, now), false, 'one missed poll keeps the verdicts');
+  assert.equal(home.verdictsExpired({checkedAt: now - 20000, answeredAt: now - 61000, staleAfter: 1200, poll: 30}, now), true, 'two missed polls: not being checked');
+  assert.equal(home.verdictsExpired({checkedAt: now - 70000, answeredAt: now - 10000, staleAfter: 60, poll: 30}, now), true, 'verdicts older than stale_after_seconds expire');
+  assert.equal(home.verdictsExpired({checkedAt: 0, answeredAt: now - 10000, staleAfter: 60, poll: 30}, now), false);
+  assert.equal(home.verdictsExpired({checkedAt: now, answeredAt: 0}, now), true, 'never answered: never checked');
   assert.equal(home.modelRows({data: Array.from({length: 80}, (_, i) => ({id: 'm' + i}))}).length, 60, 'list is capped');
 
   const updated = home.applyStatus(rows, {data: [{id: 'gemini/gemini-2.5-pro', available: true, status: 'blurred', available_again_at: '2026-10-20T10:30:00Z'}, {id: 'unknown'}]});
