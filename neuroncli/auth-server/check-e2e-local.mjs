@@ -378,6 +378,13 @@ try {
     assert.equal(view['google/gemini-2.5-pro'].unavailable_reason, 'upgrade_required');
     // Free plan: Groq's free pool takes 8K tokens per minute, so that is the usable window.
     assert.deepEqual([view['openai/gpt-oss-120b'].context_window, view['openai/gpt-oss-120b'].native_context_window], [8000, 131072]);
+    // Neuron 7.0.0-alpha.4 sends max_tokens = min(max_output_tokens, 32000) and blocks locally a
+    // request whose ~4K first turn plus max_tokens exceeds context_window: every usable family
+    // must leave it that room (catalog.js listedMaxOutput).
+    for (const model of Object.values(view).filter(model => model.available && model.context_window > 0)) {
+      const maxTokens = Math.min(model.max_output_tokens, model.id === 'auto' ? 8192 : 32000);
+      assert.ok(4100 + maxTokens <= model.context_window, `${model.id}: alpha.4 preflight would block it`);
+    }
     assert.ok(!view['groq/openai/gpt-oss-120b'], 'route ids are listed only under ?routes=1');
   }
   const routeList = await call('/v1/models?routes=1', { token: ses });

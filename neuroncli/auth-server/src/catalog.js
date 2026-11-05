@@ -655,6 +655,21 @@ export function usableContextWindow(entry, pools) {
   return Math.min(entry.context_window, Math.max(...pools.map(pool => pool.limits?.tpm || entry.context_window)));
 }
 
+// Room the listed max_output_tokens leaves for the prompt. Clients size max_tokens from
+// max_output_tokens and refuse locally to send a request whose prompt plus max_tokens exceeds
+// context_window (Neuron 7.0.0-alpha.4, api providers/mod.rs preflight_message_request), so a
+// window listed with max_output_tokens equal to it blocked every request: Groq's 8K Free window
+// with 8K of output left no room for alpha.4's ~4K first turn. The router still fits max_tokens to
+// each request (router.js fitMaxTokens); this only keeps the listed pair sendable.
+export const AGENT_PROMPT_RESERVE = 6000;
+const MIN_LISTED_OUTPUT_TOKENS = 1024; // router.js MIN_OUTPUT_TOKENS
+
+// The max_output_tokens listed with a usable window: the model's own, but never so much of the
+// window that a coding agent's prompt no longer fits beside it.
+export function listedMaxOutput(maxOutputTokens, window) {
+  return Math.min(maxOutputTokens, window, Math.max(MIN_LISTED_OUTPUT_TOKENS, window - AGENT_PROMPT_RESERVE));
+}
+
 // The caller's data policy (src/oiop/policy.js) removes pools whose offer it rules out; a model
 // whose configured pools are all ruled out is unavailable with reason policy_restricted.
 function describeEntry(env, entry, tiers, country, policy) {
@@ -680,7 +695,7 @@ function describeEntry(env, entry, tiers, country, policy) {
     // OpenAI-compatible clients (opencode, Freebuff BYOK, Cursor) read context_length.
     context_length: window,
     native_context_window: entry.context_window,
-    max_output_tokens: Math.min(entry.max_output_tokens, window),
+    max_output_tokens: listedMaxOutput(entry.max_output_tokens, window),
     capabilities: {
       tools: entry.supports_tools, streaming: entry.supports_streaming,
       vision: entry.supports_vision, reasoning: entry.reasoning_efforts.length > 0,

@@ -10,7 +10,7 @@ import { RoutingEngine, fitMaxTokens } from './src/router.js';
 import { FailureKind, HealthState, ProviderHealthTracker } from './src/provider-health.js';
 import {
   AGENT_MIN_CONTEXT, BUILTIN_PLANS, CATALOG, EEA_COUNTRIES, MODEL_ALIASES, POOL_LIMITS, callerCountry, catalogEntry, catalogWarnings,
-  expandCountries, familyMembers, familyModels, isFamilyId, listModelsForCaller, loadPlanPolicies, modelIdentity, planPolicy,
+  expandCountries, familyMembers, familyModels, isFamilyId, listedMaxOutput, listModelsForCaller, loadPlanPolicies, modelIdentity, planPolicy,
   poolConfigured, poolKey, resolveModelId, withIdentity,
 } from './src/catalog.js';
 import { cleanModelName, MAKERS } from './src/model-families.js';
@@ -335,9 +335,27 @@ try {
     assert.deepEqual([flash.context_window, flash.native_context_window, flash.max_output_tokens], [120000, 1048576, 65536]);
     // Groq's free org takes 8K tokens per minute, prompt plus max_tokens: that is the whole window
     // a Free caller gets, however large the model's own.
+    // Its max_output_tokens leaves room for a coding agent's prompt (AGENT_PROMPT_RESERVE).
     const groq = byId['groq/openai/gpt-oss-120b'];
     assert.deepEqual([groq.context_window, groq.context_length, groq.native_context_window, groq.max_output_tokens],
-      [8000, 8000, 131072, 8000]);
+      [8000, 8000, 131072, 2000]);
+    assert.deepEqual([listedMaxOutput(65536, 8000), listedMaxOutput(65536, 131072), listedMaxOutput(8192, 24000),
+      listedMaxOutput(4096, 4096), listedMaxOutput(32768, 32768)], [2000, 65536, 8192, 1024, 26768]);
+    // Neuron 7.0.0-alpha.4 (still installed) sends max_tokens = min(max_output_tokens, 32000, or 8192
+    // for auto) and refuses locally to send a request whose prompt estimate plus max_tokens exceeds
+    // context_window (api providers/mod.rs preflight_message_request). Its first turn estimates at
+    // ~4.0K tokens, so every listed model, family or route, Free or Pro, must leave that room, or
+    // alpha.4 users who pick it get "Context window blocked" without a request being sent.
+    const ALPHA4_FIRST_TURN = 4100;
+    for (const plan of ['free', 'pro']) {
+      const listed = listModelsForCaller(KEYS, { plan, country: 'US' }).data;
+      for (const model of [...listed, ...familyModels(listed, KEYS)]) {
+        if (!model.available || !(model.context_window > 0)) continue;
+        const maxTokens = Math.min(model.max_output_tokens, model.id === 'auto' ? 8192 : 32000);
+        assert.ok(ALPHA4_FIRST_TURN + maxTokens <= model.context_window,
+          `${plan} ${model.id}: alpha.4 preflight blocks it (${ALPHA4_FIRST_TURN} + ${maxTokens} > ${model.context_window})`);
+      }
+    }
     assert.equal(byId['gemini/gemini-2.5-pro'].available, false);
     assert.equal(byId['gemini/gemini-2.5-pro'].unavailable_reason, 'upgrade_required');
     assert.equal(byId['groq/qwen/qwen3.8-27b'].pricing, null);

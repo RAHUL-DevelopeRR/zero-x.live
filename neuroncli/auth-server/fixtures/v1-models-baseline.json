@@ -1,6 +1,6 @@
 {
  "description": "GET /v1/models (listModelsForCaller) of the code catalog before the data-driven catalog, for a fixed matrix of deployments, plans, countries and data policies. data[] indexes items[]. Captured by scripts/capture-models-baseline.mjs; check-catalog-db.mjs compares the seeded database rows against it.",
- "captured_from": "feat/claude-data-catalog at 304fad2 (src/catalog.js before src/catalog-db.js was wired in); auto re-captured on fix/gateway-alpha3 after 2c13626 (auto no longer tries Workers AI llama-3.3); re-captured on fix/catalog-availability (context_window is the caller's usable window: a free pool's per-minute token budget caps it, native_context_window keeps the model's own; auto ignores candidates below 64K)",
+ "captured_from": "feat/claude-data-catalog at 304fad2 (src/catalog.js before src/catalog-db.js was wired in); auto re-captured on fix/gateway-alpha3 after 2c13626 (auto no longer tries Workers AI llama-3.3); re-captured on fix/catalog-availability (context_window is the caller's usable window: a free pool's per-minute token budget caps it, native_context_window keeps the model's own; auto ignores candidates below 64K); max_output_tokens of a tight window leaves 6000 tokens for the prompt (listedMaxOutput, Neuron alpha.4 preflight)",
  "models": [
   "auto",
   "gemini/gemini-2.5-flash",
@@ -676,7 +676,7 @@
    "context_window": 8000,
    "context_length": 8000,
    "native_context_window": 131072,
-   "max_output_tokens": 8000,
+   "max_output_tokens": 2000,
    "capabilities": {
     "tools": true,
     "streaming": true,
@@ -731,7 +731,7 @@
    "context_window": 8000,
    "context_length": 8000,
    "native_context_window": 131072,
-   "max_output_tokens": 8000,
+   "max_output_tokens": 2000,
    "capabilities": {
     "tools": true,
     "streaming": true,
@@ -774,7 +774,7 @@
    "context_window": 8000,
    "context_length": 8000,
    "native_context_window": 131072,
-   "max_output_tokens": 8000,
+   "max_output_tokens": 2000,
    "capabilities": {
     "tools": true,
     "streaming": true,
@@ -2328,7 +2328,7 @@
    "context_window": 8000,
    "context_length": 8000,
    "native_context_window": 8000,
-   "max_output_tokens": 8000,
+   "max_output_tokens": 2000,
    "capabilities": {
     "tools": true,
     "streaming": true,
@@ -2796,7 +2796,7 @@
    "context_window": 8000,
    "context_length": 8000,
    "native_context_window": 131072,
-   "max_output_tokens": 8000,
+   "max_output_tokens": 2000,
    "capabilities": {
     "tools": true,
     "streaming": true,
@@ -2978,7 +2978,7 @@
    "context_window": 8000,
    "context_length": 8000,
    "native_context_window": 8000,
-   "max_output_tokens": 8000,
+   "max_output_tokens": 2000,
    "capabilities": {
     "tools": true,
     "streaming": true,
