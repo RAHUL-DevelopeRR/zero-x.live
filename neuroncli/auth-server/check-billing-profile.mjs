@@ -367,8 +367,10 @@ assert.equal(details.valuesFromProfile({ ...publicProfile(row), tax_id: TN }).ta
   assert.match(details.RENEWAL_NOTICE, /renews monthly until you cancel.*bank or Razorpay may notify you before each charge/);
   assert.match(details.PROCESSOR_NOTICE, /Zero-X never sees your card details/);
   assert.ok(!/gst|tax/i.test(details.DATA_NOTICE + details.RENEWAL_NOTICE + details.ONE_TIME_NOTICE + details.PROCESSOR_NOTICE), 'no tax claims in the fixed texts');
-  // The tax id note says what is true and nothing more: own records, not sent to Razorpay, not registered, no GST, no GST invoice.
-  assert.equal(details.TAX_ID_HINT, 'Optional. It is saved with your billing details for your own records and is not sent to Razorpay. Zero-X is not registered for GST, so no GST is charged and no GST invoice is issued.');
+  // The tax id note says what is true and nothing more, with the privacy policy's purpose: Zero-X's billing records,
+  // not sent to Razorpay or on its receipt, not registered, no GST, no GST invoice.
+  assert.equal(details.TAX_ID_HINT, "Optional. Zero-X keeps it with your billing details for its billing records; it is not sent to Razorpay and does not appear on Razorpay's receipt. Zero-X is not registered for GST, so no GST is charged and no GST invoice is issued.");
+  assert.doesNotMatch(details.TAX_ID_HINT, /your own records|on your receipt|receipt details/i, 'the note promises no document the buyer gets');
   assert.doesNotMatch(details.TAX_ID_HINT, /input tax credit|claim|tax invoice will|we will issue|deductible|exempt/i);
 }
 // purchaseWithDetails: one retry for a stale step, never a loop.

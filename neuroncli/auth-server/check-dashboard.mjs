@@ -1151,8 +1151,12 @@ async function loadAuth({hostname, config, session = makeStorage(), sdk = true})
     assert.equal(labels.get('bd-tax-id'), 'GSTIN (optional)');
     assert.equal(field(doc, 'bd-tax-id-field').hidden, false, 'an individual can give a tax id too');
     assert.equal(field(doc, 'bd-tax-id').getAttribute('maxlength'), '40');
+    // A code, not words: capitals on a phone keyboard, no autocorrect, no spelling underline.
+    assert.equal(field(doc, 'bd-tax-id').getAttribute('autocapitalize'), 'characters');
+    assert.equal(field(doc, 'bd-tax-id').getAttribute('autocorrect'), 'off');
+    assert.equal(field(doc, 'bd-tax-id').getAttribute('spellcheck'), 'false');
     assert.equal(field(doc, 'bd-tax-id-hint').textContent,
-      'Optional. It is saved with your billing details for your own records and is not sent to Razorpay. Zero-X is not registered for GST, so no GST is charged and no GST invoice is issued.');
+      "Optional. Zero-X keeps it with your billing details for its billing records; it is not sent to Razorpay and does not appear on Razorpay's receipt. Zero-X is not registered for GST, so no GST is charged and no GST invoice is issued.");
     assert.ok(field(doc, 'bd-tax-id').getAttribute('aria-describedby').includes('bd-tax-id-hint'), 'the note describes the field');
     assert.equal(field(doc, 'bd-business-name-field').hidden, true, 'business fields appear only for a business');
     assert.equal(field(doc, 'bd-country').value, 'IN', 'paying in rupees: India is preselected (a guess the buyer can change)');
@@ -1204,6 +1208,9 @@ async function loadAuth({hostname, config, session = makeStorage(), sdk = true})
     submit(doc);
     await settle();
     assert.equal(field(doc, 'bd-tax-id-error').textContent, 'This GSTIN starts with 29, but the GST state code of Tamil Nadu is 33. Check the GSTIN or the state.');
+    // The error summary names the field with its own label ("GSTIN" in India), not a generic one.
+    assert.ok(field(doc, 'bd-errors').textContent.includes('GSTIN: This GSTIN starts with 29'), 'the summary uses the label of the field');
+    assert.ok(!field(doc, 'bd-errors').textContent.includes('GSTIN or tax ID'), 'no generic label in the summary');
     assert.equal(field(doc, 'bd-tax-id').getAttribute('aria-invalid'), 'true');
     fill(doc, {'bd-tax-id': GSTIN_TN.slice(0, 14) + 'A'});
     submit(doc);
@@ -1284,6 +1291,7 @@ async function loadAuth({hostname, config, session = makeStorage(), sdk = true})
     submit(doc);
     await settle();
     assert.equal(field(doc, 'bd-tax-id-error').textContent, 'Enter a VAT or tax ID of 2 to 20 letters, digits or hyphens.');
+    assert.ok(field(doc, 'bd-errors').textContent.includes('VAT or tax ID: Enter a VAT or tax ID'), 'outside India the summary says VAT or tax ID');
     assert.ok(!calls.some(call => call.method === 'PUT'));
     fill(doc, {'bd-tax-id': '100 2345 6789 0003'});
     submit(doc);

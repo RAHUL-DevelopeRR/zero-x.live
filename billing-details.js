@@ -6,7 +6,7 @@
 //
 // Only contact and address details, and an optional tax id (a GSTIN in India, a VAT or tax ID
 // elsewhere; since 2026-11-04), are asked for here. Zero-X is not registered for GST: the tax id is
-// kept for the buyer's own records and never sent to Razorpay. Card, UPI and bank details are typed
+// kept with the billing details for Zero-X's billing records and never sent to Razorpay. Card, UPI and bank details are typed
 // into Razorpay's own window and never reach Zero-X. Every value that comes back from the API is
 // treated as untrusted data (textContent only), and details are held in memory only: nothing is
 // written to browser storage.
@@ -42,7 +42,7 @@ export const ONE_TIME_NOTICE = 'This is a one-time payment. It does not renew.';
 export const PROCESSOR_NOTICE = 'Payments are processed by Razorpay. Zero-X never sees your card details.';
 export const DATA_NOTICE = 'Zero-X keeps these details with your account for billing records and support. Razorpay receives only your name, e-mail address and phone number, to fill in its payment window.';
 // Next to the optional tax id field. Zero-X is not registered for GST; nothing more is claimed about tax.
-export const TAX_ID_HINT = 'Optional. It is saved with your billing details for your own records and is not sent to Razorpay. Zero-X is not registered for GST, so no GST is charged and no GST invoice is issued.';
+export const TAX_ID_HINT = "Optional. Zero-X keeps it with your billing details for its billing records; it is not sent to Razorpay and does not appear on Razorpay's receipt. Zero-X is not registered for GST, so no GST is charged and no GST invoice is issued.";
 
 /* ───────────── Pure helpers (unit-tested in check-pages.mjs) ───────────── */
 
@@ -354,9 +354,9 @@ export async function collectBillingDetails({ kind, plan = null, pack = null, cu
     }, label);
 
     // ── Fields ──
-    function field(key, { type = 'text', autocomplete, inputmode, hint, control, maxlength = 120 } = {}) {
+    function field(key, { type = 'text', autocomplete, inputmode, hint, control, maxlength = 120, autocapitalize, autocorrect, spellcheck } = {}) {
       const id = 'bd-' + key.replace(/_/g, '-');
-      const input = control || h(doc, 'input', { class: 'zx-input', id, type, name: key, autocomplete, inputmode, maxlength });
+      const input = control || h(doc, 'input', { class: 'zx-input', id, type, name: key, autocomplete, inputmode, maxlength, autocapitalize, autocorrect, spellcheck });
       if (control) { control.setAttribute('id', id); control.setAttribute('name', key); control.setAttribute('autocomplete', autocomplete); }
       input.value = values[key] || '';
       refs.fields[key] = { input, id };
@@ -412,7 +412,8 @@ export async function collectBillingDetails({ kind, plan = null, pack = null, cu
         field('address_line1', { autocomplete: 'address-line1', hint: 'Optional for individuals; needed for a business.' }),
         field('address_line2', { autocomplete: 'address-line2' }),
         // With the business address, for individuals and businesses alike; its label follows the country.
-        field('tax_id', { autocomplete: 'off', maxlength: 40, hint: TAX_ID_HINT }),
+        // A code, not words: capitals on a phone keyboard, no autocorrect or spelling marks.
+        field('tax_id', { autocomplete: 'off', maxlength: 40, hint: TAX_ID_HINT, autocapitalize: 'characters', autocorrect: 'off', spellcheck: 'false' }),
         field('phone', { type: 'tel', autocomplete: 'tel', inputmode: 'tel', hint: 'Optional. With the country code, for example +91 98765 43210. Fills in the payment window for you.' }));
       refs.stateSlot = stateWrapper;
       countrySelect.value = values.country;
@@ -466,7 +467,9 @@ export async function collectBillingDetails({ kind, plan = null, pack = null, cu
       summary.append(h(doc, 'p', {}, entries.length === 1 ? 'One thing needs your attention.' : entries.length + ' things need your attention.'),
         h(doc, 'ul', {}, entries.map(([key, message]) => {
           const target = refs.fields[key] ? refs.fields[key].id : refs.boxes[key.replace(/^consent_/, '')] ? refs.boxes[key.replace(/^consent_/, '')].id : '';
-          const anchor = h(doc, 'a', { href: '#' + target }, (FIELD_LABELS[key] ? FIELD_LABELS[key] + ': ' : '') + message);
+          // The tax id's label follows the country ("GSTIN" or "VAT or tax ID"); the summary uses the same words.
+          const label = key === 'tax_id' && refs.fields.tax_id ? refs.fields.tax_id.label.textContent : FIELD_LABELS[key];
+          const anchor = h(doc, 'a', { href: '#' + target }, (label ? label + ': ' : '') + message);
           anchor.addEventListener('click', event => {
             event.preventDefault();
             const input = (refs.fields[key] || refs.boxes[key.replace(/^consent_/, '')] || {}).input;

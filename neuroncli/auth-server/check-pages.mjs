@@ -146,6 +146,10 @@ for (const file of ['neuron-cli.html', 'docs.html', 'ai-coding-agent.html']) {
   // The dialog and its form controls are built by the script (labels, autocomplete, errors: check-dashboard.mjs), so the pages carry no copy of it.
   for (const file of ['pricing.html', 'dashboard.html']) assert.doesNotMatch(read(file), /bd-form|bd-title|billing-details/, file + ': no markup of the step');
   assert.ok(read('zx-tokens.css').includes('.zx-dialog--billing'), 'the dialog styles ship with the shared tokens');
+  // In the two-column layout the long-hint fields (address lines, tax id, phone) span the full width.
+  const wide = read('zx-tokens.css').match(/@media \(min-width: 560px\) \{ \.zx-form-grid \{[^}]*\}([^{]*)\{ grid-column: 1 \/ -1; \}/);
+  assert.ok(wide, 'the details form has a two-column rule with full-width fields');
+  for (const id of ['bd-address-line1-field', 'bd-address-line2-field', 'bd-tax-id-field', 'bd-phone-field']) assert.ok(wide[1].includes('#' + id), id + ' spans both columns');
 }
 
 /* ───────────── Links resolve to files or routes ───────────── */

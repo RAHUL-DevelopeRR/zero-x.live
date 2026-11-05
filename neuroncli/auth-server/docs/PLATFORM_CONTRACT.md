@@ -1045,8 +1045,9 @@ the release notes).
 
 Migration `20261104000000_billing_tax_id.sql` (down script in `migrations/down/`); owner decision
 of 2026-11-04. Zero-X is still not registered for GST: the tax id is kept with the buyer's billing
-record for their own records only. No GST is charged and no GST invoice is issued, and the tax id is
-never sent to Razorpay (not in the prefill, not in `notes`, which hold only ids).
+details for Zero-X's billing records only (the purpose the privacy policy gives). No GST is charged
+and no GST invoice is issued, and the tax id is never sent to Razorpay (not in the prefill, not in
+`notes`, which hold only ids), so it is not on Razorpay's receipt either.
 
 - `profile.tax_id`: `null` or the stored value. `PUT` accepts an optional `tax_id` for individuals
   and businesses alike; absent, `null` or blank clears it (the `PUT` replaces the profile). The
@@ -1071,11 +1072,13 @@ never sent to Razorpay (not in the prefill, not in `notes`, which hold only ids)
   `[A-Z0-9-]` (no leading or trailing hyphen) and, for `IN`, the GSTIN shape; it does not repeat
   the check character or the state match.
 - Browser (`billing-details.js`): an optional field labelled "GSTIN (optional)" in India and "VAT or
-  tax ID (optional)" elsewhere, after the address lines, with the note "Optional. It is saved with
-  your billing details for your own records and is not sent to Razorpay. Zero-X is not registered
-  for GST, so no GST is charged and no GST invoice is issued." The browser checks the same rule with
-  the same messages before saving (`check-billing-profile.mjs` compares the two for every country,
-  customer type and Indian state).
+  tax ID (optional)" elsewhere, full width after the address lines, with the note "Optional. Zero-X
+  keeps it with your billing details for its billing records; it is not sent to Razorpay and does
+  not appear on Razorpay's receipt. Zero-X is not registered for GST, so no GST is charged and no
+  GST invoice is issued." The input has `autocapitalize="characters"`, `autocorrect="off"` and
+  `spellcheck="false"`, and the error summary names it with the same country-specific label. The
+  browser checks the same rule with the same messages before saving (`check-billing-profile.mjs`
+  compares the two for every country, customer type and Indian state).
 - The privacy policy names the optional GSTIN or tax ID; its version (`legal-versions.js`) is
   `2026-11-04`, so every buyer agrees to it again at their next checkout.
 

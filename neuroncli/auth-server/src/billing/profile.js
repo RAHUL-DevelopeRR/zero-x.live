@@ -3,7 +3,8 @@
 // the tests. Never card, UPI or bank details: those are typed into Razorpay's own window and
 // never reach Zero-X. An optional tax id (a GSTIN in India, a VAT or tax id elsewhere) has been
 // accepted since 20261104000000_billing_tax_id.sql (owner decision of 2026-11-04); Zero-X is still
-// not registered for GST, so it is kept for the buyer's own records only and never sent to Razorpay.
+// not registered for GST, so it is kept with the billing details for Zero-X's billing records only
+// and never sent to Razorpay.
 //
 // The server is the authority. The browser (billing-details.js) checks the same required fields
 // and the same tax id rule so a form fails fast, and shows the server's messages for everything
