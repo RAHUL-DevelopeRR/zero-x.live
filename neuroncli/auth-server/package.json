@@ -52,6 +52,7 @@
     "hono": "^4.3.0"
   },
   "devDependencies": {
-    "@electric-sql/pglite": "0.5.8"
+    "@electric-sql/pglite": "0.5.8",
+    "wrangler": "4.147.0"
   }
 }

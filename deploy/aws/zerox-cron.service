@@ -18,6 +18,9 @@ Environment=NODE_ENV=production AUTH_HOST=127.0.0.1
 ExecStart=/usr/bin/node /opt/zerox/current/neuroncli/auth-server/scripts/cron.mjs
 # A weekly research job can take minutes; a run never overlaps the next tick.
 TimeoutStartSec=540
+# Resource caps as the gateway's (zerox-gateway@.service), smaller: a run holds no streams.
+MemoryMax=512M
+TasksMax=128
 
 NoNewPrivileges=true
 CapabilityBoundingSet=

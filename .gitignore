@@ -4,11 +4,29 @@
 *.crdownload
 *.zip
 
-# Sensitive files
+# Sensitive files: environment files (the .example templates stay tracked), private keys and
+# certificates, the VM's environment file (CI builds it per deploy; a local copy must never be
+# committed), and the Razorpay export. Security audit 2026-11-05, F17.
 .env
+.env.*
 *.env.local
+*.pem
+*.key
+*.p12
+*.pfx
+gateway.env
+deploy/aws/*.env
 Assets/rzp-key.csv
 Assets/password.html
+
+# Working folders and agent state: business documents, scratch files and local tool
+# configuration that must never reach the public repository (nor a release: package-release.sh
+# refuses output/, tmp/ and Microsoft/; .assetsignore keeps them out of the Worker's assets).
+output/
+tmp/
+Microsoft/
+.claude/
+CLAUDE.md
 
 # Dependencies
 node_modules/

@@ -6,6 +6,22 @@ Assets/*.pdf
 Assets/*.mp4
 Assets/*.crdownload
 
+# Working folders, agent state, environment files and private keys never become public assets,
+# whichever tree a deploy runs from (security audit 2026-11-05, F4; check-aws-deploy.mjs proves it).
+output/
+tmp/
+Microsoft/
+.claude/
+CLAUDE.md
+.env
+.env.*
+*.env
+*.pem
+*.key
+*.p12
+*.pfx
+gateway.env
+
 # Exclude source code / server-side stuff from asset upload
 neuroncli/auth-server/node_modules/
 neuroncli/auth-server/.wrangler/
@@ -30,8 +46,6 @@ deploy/
 .github/
 anti-slop/
 seo-pages.json
-index2.html
-legacy.html
 start.html
 Changes27-04.txt
 neuroncli/auth-server/test.js
