@@ -154,7 +154,8 @@ neuron</code></pre></div>
                 <tr><th scope="row"><code>~/.neuron/settings.json</code></th><td>User settings for every project.</td></tr>
                 <tr><th scope="row"><code>.neuron.json</code>, <code>.neuron/settings.json</code></th><td>Project settings, safe to commit. They apply only after you trust the folder, and they cannot select a full-access mode.</td></tr>
                 <tr><th scope="row"><code>.neuron/settings.local.json</code></th><td>Machine-local overrides; keep out of version control.</td></tr>
-                <tr><th scope="row"><code>NEURON.md</code></th><td>Project instructions Neuron reads at the start of each session.</td></tr>
+                <tr><th scope="row"><code>NEURON.md</code></th><td>Project instructions Neuron reads at the start of each session, in every folder from the root down to the project.</td></tr>
+                <tr><th scope="row"><code>AGENTS.md</code>, <code>CLAUDE.md</code>, <code>CLAUDE.local.md</code></th><td>Instructions written for other coding agents. Neuron reads them after <code>NEURON.md</code>, so you do not need to copy them.</td></tr>
               </tbody>
             </table>
           </div>
