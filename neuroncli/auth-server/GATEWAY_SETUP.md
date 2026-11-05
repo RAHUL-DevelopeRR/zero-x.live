@@ -268,9 +268,9 @@ Claude Sonnet 5.5 and Claude Opus 5.5 are two of those rows: paid only (Pro and 
 credits at Anthropic's list price plus 25 % with cache reads and writes at their own rates.
 
 **Migration order.** The new Worker calls the 11-argument `zerox_settle_v2` and reads
-`zerox_catalog_snapshot`, so apply every migration **before** the deploy. Production main stops at
-`20261021000000`; check with `SELECT version FROM supabase_migrations.schema_migrations ORDER BY version;`
-and apply, in order (the ten catalog and app migrations were renumbered from 20261023-20261025 to
+`zerox_catalog_snapshot`, so apply every migration **before** the deploy. See which ones production is missing with
+`node scripts/apply-migrations.mjs --status` (or `SELECT version FROM supabase_migrations.schema_migrations ORDER BY version;`)
+and apply the missing ones, in order (the ten catalog and app migrations were renumbered from 20261023-20261025 to
 20261029 so that they come after the reservation leases, whose functions they keep):
 
 0. `20261028000000_reservation_leases.sql` (concurrency leases, section 8.5 of the contract)
@@ -287,6 +287,7 @@ and apply, in order (the ten catalog and app migrations were renumbered from 202
 11. `20261029001000_pool_concurrency.sql` (`p_pool.concurrency`: requests of a pool key running at once, for Z.ai's one-at-a-time free models)
 12. `20261102000000_free_token_window.sql` (Free: 1,000,000 tokens per rolling 5-hour window instead of 500K a day; see below)
 13. `20261104000000_health_probes.sql` (the active health checker's lease, verdict rows and `zerox_probe_take`; see below)
+14. `20261104300000_free_plan_features_lineup.sql` (the Free plan's feature line on the pricing page; no restart needed if applied late)
 
 **Free's 5-hour token window (`20261102000000_free_token_window.sql`).** Deploy the gateway that
 knows `user_window_tokens` (both runtimes: the Worker and the EC2 Node server) **before** pasting
