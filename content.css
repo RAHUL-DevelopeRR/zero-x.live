@@ -1,0 +1,119 @@
+/* Content pages: docs, security and trust, changelog, contact, about, legal, 404 and the file-search
+   guides. Builds on zx-tokens.css; every colour comes from its tokens, so the dark theme follows. */
+
+/* Reading pages sit on the same left edge as the header, with a reading-width column. */
+main.zx-container.zx-narrow, main.zx-container.zx-legal { max-width: var(--zx-max); }
+main.zx-container.zx-narrow > *, main.zx-container.zx-legal > * { max-width: 760px; }
+main.zx-container.zx-narrow > .zx-grid, main.zx-container.zx-legal > .zx-grid { max-width: 760px; }
+.zx-legal .zx-updated { font-family: var(--zx-font-mono); font-size: var(--zx-fs-label); letter-spacing: .02em; line-height: 1.6; }
+.zx-legal h2 { padding-top: var(--zx-s5); border-top: 1px solid var(--zx-border); font-size: 1.25rem; }
+.zx-legal h1 + .zx-updated + p, .zx-legal .zx-updated + p { margin-top: var(--zx-s4); }
+.zx-legal address, .zx-legal > .zx-grid address { font-style: normal; line-height: 1.7; }
+.zx-legal table, .zx-legal .zx-table-wrap { margin-block: var(--zx-s4); }
+.zx-legal li { margin-bottom: .35em; }
+
+/* Docs: a left rail with a mono label, a sticky list, and an article at reading width. */
+.zx-docs { gap: var(--zx-s5); }
+.zx-docs .zx-toc .zx-label { margin: 0 0 var(--zx-s2); padding: 0 8px; }
+.zx-docs .zx-toc a { padding: 4px 8px; line-height: 1.5; }
+@media (max-width: 899px) {
+  .zx-docs { gap: var(--zx-s4); }
+  .zx-docs .zx-toc { padding-bottom: var(--zx-s3); border-bottom: 1px solid var(--zx-border); }
+  .zx-docs .zx-toc ol { display: flex; gap: 4px; overflow-x: auto; scrollbar-width: thin; padding-bottom: 4px; }
+  .zx-docs .zx-toc li { flex: none; }
+  .zx-docs .zx-toc a { white-space: nowrap; border: 1px solid var(--zx-border); }
+}
+@media (min-width: 900px) {
+  .zx-docs { grid-template-columns: 200px minmax(0, 1fr); column-gap: var(--zx-s7); }
+  .zx-docs .zx-toc { max-height: calc(100vh - 96px); overflow-y: auto; }
+}
+.zx-docs article { min-width: 0; max-width: 840px; }
+.zx-docs article section { margin: 0; padding: var(--zx-s6) 0 var(--zx-s4); border-top: 1px solid var(--zx-border); scroll-margin-top: 72px; }
+.zx-docs article section:first-child { border-top: 0; padding-top: 0; }
+.zx-docs article h2 { padding: 0; margin-bottom: var(--zx-s4); font-size: 1.5rem; letter-spacing: -.02em; }
+.zx-docs article h3 { margin: var(--zx-s5) 0 var(--zx-s2); scroll-margin-top: 72px; }
+.zx-docs article h3[id] { font-family: var(--zx-font-mono); font-size: .9375rem; font-weight: 500; letter-spacing: 0; }
+.zx-docs article p, .zx-docs article li { max-width: 72ch; }
+.zx-docs article li { margin-bottom: .4em; }
+.zx-docs .zx-table-wrap { margin: var(--zx-s4) 0; }
+.zx-docs .zx-table caption { padding: 12px var(--zx-s4); border-bottom: 1px solid var(--zx-border); font-family: var(--zx-font-mono); font-size: var(--zx-fs-label); letter-spacing: var(--zx-tracking-label); text-transform: uppercase; color: var(--zx-faint); }
+.zx-docs .zx-table tbody th { min-width: 11rem; }
+.zx-docs .zx-table tbody th code { white-space: nowrap; }
+.zx-docs .zx-table td code { overflow-wrap: anywhere; }
+.zx-docs .zx-code { max-width: 100%; }
+.zx-docs .zx-code pre { font-size: .8125rem; }
+.zx-opts { list-style: none; margin: var(--zx-s3) 0 0; padding: 0; border-left: 1px solid var(--zx-border); }
+.zx-opts > li { max-width: none; margin: 0; padding: var(--zx-s2) 0 var(--zx-s2) var(--zx-s4); }
+.zx-opts > li > strong { font-weight: 500; color: var(--zx-ink); }
+.zx-opts .zx-code { margin: var(--zx-s2) 0; }
+.zx-docs .zx-faq { max-width: 72ch; }
+
+/* Contact */
+.zx-contact .zx-grid { margin-block: var(--zx-s5); }
+.zx-contact .zx-card > h2 { margin: 0 0 var(--zx-s3); font-family: var(--zx-font-mono); font-size: var(--zx-fs-label); font-weight: 400; letter-spacing: var(--zx-tracking-label); text-transform: uppercase; color: var(--zx-faint); }
+.zx-contact .zx-card p:first-of-type a { font-size: 1.25rem; font-weight: 500; letter-spacing: -.01em; }
+.zx-contact .zx-card address { font-style: normal; line-height: 1.7; color: var(--zx-ink); }
+.zx-contact > h2, .zx-about > h2 { margin-top: var(--zx-s6); padding-top: var(--zx-s5); border-top: 1px solid var(--zx-border); font-size: 1.25rem; }
+.zx-related { display: flex; flex-wrap: wrap; gap: var(--zx-s2) var(--zx-s5); list-style: none; margin: 0; padding: 0; }
+.zx-related li { margin: 0; }
+
+/* About */
+.zx-about h2 { margin-top: var(--zx-s6); padding-top: var(--zx-s5); border-top: 1px solid var(--zx-border); font-size: 1.25rem; }
+.zx-about h2:first-of-type { margin-top: var(--zx-s5); }
+
+/* Changelog: release notes as ruled rows, not boxed cards. */
+[data-changelog] #changelog-list > article.zx-card { margin: 0; padding: var(--zx-s5) 0; border: 0; border-top: 1px solid var(--zx-border); border-radius: 0; background: none; }
+[data-changelog] #changelog-list > article.zx-card:last-child { border-bottom: 1px solid var(--zx-border); }
+[data-changelog] #changelog-list h2 { margin-bottom: var(--zx-s2); font-size: 1.25rem; letter-spacing: -.015em; }
+[data-changelog] #changelog-list article > p.zx-muted { display: flex; flex-wrap: wrap; align-items: center; gap: var(--zx-s2) var(--zx-s3); margin-bottom: var(--zx-s4); font-family: var(--zx-font-mono); font-size: var(--zx-fs-label); letter-spacing: .02em; }
+[data-changelog] #changelog-list h3, [data-changelog] #changelog-list h4 { margin: var(--zx-s4) 0 var(--zx-s2); font-family: var(--zx-font-mono); font-size: var(--zx-fs-label); font-weight: 400; letter-spacing: var(--zx-tracking-label); text-transform: uppercase; color: var(--zx-faint); }
+[data-changelog] #changelog-list li { margin-bottom: .35em; }
+[data-changelog] #changelog-status:empty { display: none; }
+[data-changelog] #changelog-status { margin-block: var(--zx-s5); }
+
+/* 404 */
+.zx-404 .zx-eyebrow { font-size: var(--zx-fs-label); }
+.zx-404 .zx-linklist { margin-block: var(--zx-s5); max-width: 640px; grid-template-columns: minmax(0, 1fr); }
+.zx-404 .zx-linklist a { padding: var(--zx-s3) 0; }
+.zx-404 .zx-linklist span { font-size: var(--zx-fs-body); }
+
+/* File-search guides: an article column with a mono label above the title. */
+.zx-guide { max-width: 760px; }
+.zx-guide .zx-eyebrow { margin-bottom: var(--zx-s3); }
+.zx-guide h1 { max-width: 18ch; margin-bottom: var(--zx-s4); }
+.zx-guide .zx-lead { max-width: none; color: var(--zx-ink); }
+.zx-guide h2 { margin: var(--zx-s6) 0 var(--zx-s3); padding-top: var(--zx-s5); border-top: 1px solid var(--zx-border); font-size: 1.375rem; letter-spacing: -.02em; }
+.zx-guide li { margin-bottom: .5em; max-width: 68ch; }
+.zx-guide p { max-width: 68ch; }
+.zx-guide figure { margin: var(--zx-s5) 0; }
+.zx-guide figure img { display: block; max-width: 100%; height: auto; border: 1px solid var(--zx-border); border-radius: var(--zx-radius); }
+.zx-guide figcaption { margin-top: var(--zx-s2); font-size: var(--zx-fs-small); color: var(--zx-muted); }
+.zx-guide .zx-next { margin-top: var(--zx-s6); padding-top: var(--zx-s5); border-top: 1px solid var(--zx-border); }
+
+/* Reference pages: a smaller title so the rail and the first section are above the fold. */
+main:has(.zx-docs) > .zx-hero { padding-block: var(--zx-s6) var(--zx-s5); }
+main:has(.zx-docs) > .zx-hero h1 { font-size: clamp(1.75rem, 1.3rem + 1.8vw, 2.5rem); }
+main:has(.zx-docs) > .zx-hero .zx-lead { font-size: 1.0625rem; }
+.zx-legal .zx-card h2, .zx-legal .zx-card h3 { padding-top: 0; border-top: 0; }
+
+/* Link rows (the home page rules live in home.css, which these pages do not load). */
+.zx-404 .zx-linklist { list-style: none; padding: 0; border-top: 1px solid var(--zx-border); }
+.zx-404 .zx-linklist li { margin: 0; border-bottom: 1px solid var(--zx-border); }
+.zx-404 .zx-linklist a { display: flex; align-items: center; justify-content: space-between; gap: var(--zx-s4); color: var(--zx-ink); text-decoration: none; }
+.zx-404 .zx-linklist a:hover { background: var(--zx-panel); }
+.zx-404 .zx-linklist .zx-icon { color: var(--zx-faint); flex: none; }
+.zx-404 .zx-linklist a:focus-visible { outline: none; box-shadow: var(--zx-focus); border-radius: var(--zx-radius-sm); }
+
+/* NeuCockpit film page: text on the left, the portrait player on the right from tablet width. */
+.zx-film { max-width: var(--zx-max); }
+.zx-film__grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--zx-s6); align-items: start; }
+.zx-film__text h1 { max-width: 12ch; }
+.zx-film__text .zx-lead { max-width: 520px; }
+.zx-film__player { display: block; width: auto; max-width: 100%; height: auto; max-height: min(70svh, 640px); aspect-ratio: 9 / 16; background: var(--zx-code-bg); border: 1px solid var(--zx-border); border-radius: var(--zx-radius); }
+.zx-film__player:focus-visible { outline: none; box-shadow: var(--zx-focus); }
+.zx-film__transcript { max-width: 720px; margin-top: var(--zx-s7); padding-top: var(--zx-s5); border-top: 1px solid var(--zx-border); }
+.zx-film__transcript h2 { font-size: 1.375rem; }
+.zx-film__transcript p { color: var(--zx-muted); max-width: 68ch; }
+.zx-film__transcript strong { color: var(--zx-ink); font-weight: 500; }
+@media (min-width: 760px) { .zx-film__grid { grid-template-columns: minmax(0, 1fr) auto; gap: var(--zx-s8); } }
+.zx-film__transcript h2 { margin-top: 0; padding-top: 0; border-top: 0; }
