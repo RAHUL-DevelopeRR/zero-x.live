@@ -38,7 +38,7 @@ import { registerCatalogAdminRoutes } from './routes/catalog-admin.js';
 import { registerCreditRoutes } from './routes/credits.js';
 import { loadVaultKeys, vaultConfigured } from './provider-keys.js';
 import { accessConfigured, passedAccess } from './access-auth.js';
-import { chatRefusal, chatRoutedToEc2, forwardToEc2, proxyStatus, servingRuntime } from './ec2-proxy.js';
+import { WORKER_HOSTS, chatRefusal, chatRoutedToEc2, forwardToEc2, proxyStatus, servingRuntime } from './ec2-proxy.js';
 import { extraWebOrigins, isExtraWebHost } from './web-hosts.js';
 // Durable Object classes are exported from the Worker entry (wrangler.toml [[durable_objects]]),
 // each with its binding. RelayRoom (src/relay.js) is not bound for now, so it is not exported.
@@ -152,7 +152,13 @@ app.use('*', async (c, next) => {
   // The dashboard host (and a test host) are never indexed: their pages and APIs say so. Their
   // static files answer exactly as on the other hosts, because a shared cache keeps one copy of
   // each for all of them; their robots.txt keeps crawlers away from those files.
-  if (((url.hostname === 'dashboard.zero-x.live' || testHost) && !isStaticFile(url.pathname)) ||
+  // Any other host that reaches the Worker (its workers.dev or preview address, a staging Worker)
+  // serves the same pages as zero-x.live, the homepage included, so its pages are never indexed
+  // either: only the canonical hosts may compete in search. Worker only: on EC2 a forwarded
+  // request carries the proxy origin's host, which must not mark production pages noindex.
+  const host = url.hostname.replace(/\.$/, '');
+  const strayHost = servingRuntime(c.env) === 'worker' && !WORKER_HOSTS.includes(host) && !isLoopbackHost(url.host) && !testHost;
+  if (((url.hostname === 'dashboard.zero-x.live' || testHost || strayHost) && !isStaticFile(url.pathname)) ||
       url.pathname.startsWith('/neuroncli/') || path === '/health' ||
       ['/auth/', '/api/', '/v1/', '/admin/', '/webhooks/', '/relay/', '/oiop/'].some(prefix => path.startsWith(prefix))) {
     c.header('X-Robots-Tag', 'noindex, nofollow');
@@ -172,7 +178,7 @@ async function notFoundPage(c) {
 // Pages served from https://zero-x.live/<page> (clean URLs).
 const SITE_PAGES = ['/about', '/privacy', '/terms', '/find-files-by-content', '/wheres-that-file',
   '/pricing', '/neuron-cli', '/docs', '/docs/trust', '/download', '/changelog', '/refund', '/contact', '/shipping',
-  '/neucockpit', '/ai-coding-agent'];
+  '/neucockpit', '/ai-coding-agent', '/free-ai-coding-agent', '/claude-code-alternative'];
 
 // Hostname-based subdomain routing middleware
 app.use('*', async (c, next) => {
