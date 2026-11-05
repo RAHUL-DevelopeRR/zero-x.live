@@ -13,6 +13,7 @@
   <link rel="preload" href="/fonts/aspekta-400.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="/fonts/aspekta-500.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/zx-tokens.css">
+  <link rel="stylesheet" href="/dashboard.css">
   <script type="module" src="/site-nav.js"></script>
   <script src="/zerox-auth.js" defer></script>
   <script type="module" src="/dashboard.js"></script>
@@ -32,10 +33,21 @@
   </header>
   <script>(function(h){var b=h&&h.querySelector('.zx-nav-toggle');if(b&&'noModule'in HTMLScriptElement.prototype){h.dataset.nav='closed';b.hidden=false}})(document.querySelector('.zx-header'))</script>
 
+  <div class="dash-bar">
+    <div class="zx-container">
+      <nav aria-label="Breadcrumb">
+        <ol class="zx-crumbs">
+          <li><span class="zx-crumbs__avatar" aria-hidden="true">zx</span>Zero-X</li>
+          <li id="crumb-account">Account</li>
+          <li><span id="crumb-tab" aria-current="page">Overview</span></li>
+        </ol>
+      </nav>
+    </div>
+  </div>
+
   <main id="main" class="zx-container" data-dashboard-root tabindex="-1">
     <div class="zx-dash-head">
       <div>
-        <p class="zx-eyebrow">Dashboard</p>
         <h1>Your Zero-X account</h1>
         <p class="zx-muted" id="dash-subtitle">Plan, usage, API keys and billing for Neuron CLI.</p>
       </div>
@@ -46,7 +58,7 @@
       <noscript><p class="zx-alert zx-alert--warning">The dashboard needs JavaScript. Enable it and reload the page.</p></noscript>
     </section>
 
-    <section id="dash-gate" class="zx-card" aria-labelledby="gate-title" hidden>
+    <section id="dash-gate" class="zx-card dash-gate" aria-labelledby="gate-title" hidden>
       <h2 id="gate-title">Sign in to view your dashboard</h2>
       <p class="zx-muted">Use the same Zero-X account you use to approve <code>neuron login</code>.</p>
       <div id="gate-error" class="zx-alert zx-alert--error zx-mb" role="alert"></div>
@@ -59,94 +71,134 @@
     <div id="dash-app" hidden>
       <div id="dash-alert" class="zx-alert zx-alert--error zx-mb" role="alert"></div>
 
-      <div class="zx-tabs" role="tablist" aria-label="Dashboard sections" id="dash-tabs">
-        <button class="zx-tab" type="button" role="tab" id="tab-overview" aria-controls="panel-overview" aria-selected="true" tabindex="0">Overview</button>
-        <button class="zx-tab" type="button" role="tab" id="tab-usage" aria-controls="panel-usage" aria-selected="false" tabindex="-1">Usage</button>
-        <button class="zx-tab" type="button" role="tab" id="tab-keys" aria-controls="panel-keys" aria-selected="false" tabindex="-1">API keys</button>
-        <button class="zx-tab" type="button" role="tab" id="tab-billing" aria-controls="panel-billing" aria-selected="false" tabindex="-1">Billing</button>
-        <button class="zx-tab" type="button" role="tab" id="tab-sessions" aria-controls="panel-sessions" aria-selected="false" tabindex="-1">Sessions</button>
-        <button class="zx-tab" type="button" role="tab" id="tab-account" aria-controls="panel-account" aria-selected="false" tabindex="-1">Account</button>
-      </div>
+      <div class="dash-shell">
+        <aside class="dash-side">
+          <div class="zx-drawer" role="tablist" aria-label="Dashboard sections" aria-orientation="vertical" id="dash-tabs">
+            <span class="zx-drawer__label" role="presentation">Workspace</span>
+            <button class="zx-drawer__item" type="button" role="tab" id="tab-overview" aria-controls="panel-overview" aria-selected="true" tabindex="0"><svg class="zx-icon" aria-hidden="true"><use href="/icons.svg#home"/></svg>Overview</button>
+            <button class="zx-drawer__item" type="button" role="tab" id="tab-usage" aria-controls="panel-usage" aria-selected="false" tabindex="-1"><svg class="zx-icon" aria-hidden="true"><use href="/icons.svg#bar-chart"/></svg>Usage</button>
+            <span class="zx-drawer__label" role="presentation">Developer</span>
+            <button class="zx-drawer__item" type="button" role="tab" id="tab-keys" aria-controls="panel-keys" aria-selected="false" tabindex="-1"><svg class="zx-icon" aria-hidden="true"><use href="/icons.svg#key"/></svg>API keys</button>
+            <span class="zx-drawer__label" role="presentation">Settings</span>
+            <button class="zx-drawer__item" type="button" role="tab" id="tab-billing" aria-controls="panel-billing" aria-selected="false" tabindex="-1"><svg class="zx-icon" aria-hidden="true"><use href="/icons.svg#credit-card"/></svg>Billing</button>
+            <button class="zx-drawer__item" type="button" role="tab" id="tab-sessions" aria-controls="panel-sessions" aria-selected="false" tabindex="-1"><svg class="zx-icon" aria-hidden="true"><use href="/icons.svg#terminal"/></svg>Sessions</button>
+            <button class="zx-drawer__item" type="button" role="tab" id="tab-account" aria-controls="panel-account" aria-selected="false" tabindex="-1"><svg class="zx-icon" aria-hidden="true"><use href="/icons.svg#user"/></svg>Account</button>
+          </div>
+        </aside>
 
+        <div class="dash-main">
       <section class="zx-tabpanel" role="tabpanel" id="panel-overview" aria-labelledby="tab-overview" tabindex="0">
-        <div class="zx-row zx-row--between">
+        <div class="dash-panel-head">
           <h2>Overview</h2>
-          <button id="ov-refresh" class="zx-btn zx-btn--sm" type="button">Refresh</button>
+          <button id="ov-refresh" class="zx-btn zx-btn--sm" type="button"><svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#refresh"/></svg>Refresh</button>
         </div>
         <div id="overview-error" class="zx-alert zx-alert--error zx-mb" role="alert"></div>
-        <div class="zx-grid zx-grid--4">
-          <article class="zx-card" aria-labelledby="ov-plan-label">
-            <p class="zx-card__label" id="ov-plan-label">Plan</p>
-            <p class="zx-stat" id="ov-plan">—</p>
-            <p class="zx-help" id="ov-plan-detail"></p>
+        <div class="zx-tiles zx-tiles--4">
+          <article class="zx-tile" aria-labelledby="ov-plan-label">
+            <p class="zx-tile__label" id="ov-plan-label">Plan</p>
+            <p class="zx-tile__value" id="ov-plan">—</p>
+            <p class="zx-tile__note" id="ov-plan-detail"></p>
             <a id="ov-upgrade" class="zx-btn zx-btn--primary zx-btn--sm zx-mt" href="https://zero-x.live/pricing" data-site-path="/pricing" hidden>Upgrade</a>
           </article>
-          <article class="zx-card" aria-labelledby="ov-requests-label">
-            <p class="zx-card__label" id="ov-requests-label">Requests today</p>
-            <p class="zx-stat" id="ov-requests">—</p>
+          <article class="zx-tile" aria-labelledby="ov-requests-label">
+            <p class="zx-tile__label" id="ov-requests-label">Requests today</p>
+            <p class="zx-tile__value" id="ov-requests">—</p>
             <div class="zx-progress" id="ov-requests-bar" role="progressbar" aria-labelledby="ov-requests-label" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span class="zx-progress__bar"></span></div>
-            <p class="zx-help" id="ov-requests-detail"></p>
+            <p class="zx-tile__note" id="ov-requests-detail"></p>
           </article>
-          <article class="zx-card" aria-labelledby="ov-tokens-label">
-            <p class="zx-card__label" id="ov-tokens-label">Tokens today</p>
-            <p class="zx-stat" id="ov-tokens">—</p>
+          <article class="zx-tile" aria-labelledby="ov-tokens-label">
+            <p class="zx-tile__label" id="ov-tokens-label">Tokens today</p>
+            <p class="zx-tile__value" id="ov-tokens">—</p>
             <div class="zx-progress" id="ov-tokens-bar" role="progressbar" aria-labelledby="ov-tokens-label" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span class="zx-progress__bar"></span></div>
-            <p class="zx-help" id="ov-tokens-detail"></p>
+            <p class="zx-tile__note" id="ov-tokens-detail"></p>
           </article>
-          <article class="zx-card" aria-labelledby="ov-credits-label">
-            <p class="zx-card__label" id="ov-credits-label">Credit balance</p>
-            <p class="zx-stat" id="ov-credits">—</p>
-            <p class="zx-help" id="ov-credits-detail"></p>
+          <article class="zx-tile" aria-labelledby="ov-credits-label">
+            <p class="zx-tile__label" id="ov-credits-label">Credit balance</p>
+            <p class="zx-tile__value" id="ov-credits">—</p>
+            <p class="zx-tile__note" id="ov-credits-detail"></p>
           </article>
         </div>
-        <p class="zx-muted zx-mt" id="ov-reset">Daily limits reset at 00:00 UTC.</p>
+        <p class="zx-help dash-reset" id="ov-reset">Daily limits reset at 00:00 UTC.</p>
 
-        <section class="zx-card zx-card--flat zx-mt" aria-labelledby="qs-title">
-          <h3 id="qs-title">Quick start</h3>
+        <section class="zx-card zx-card--flush zx-mt" aria-labelledby="trend-title">
+          <div class="zx-card__head">
+            <h3 class="zx-card__title" id="trend-title">Daily trend</h3>
+            <div class="zx-segmented" role="group" aria-label="Chart metric">
+              <button type="button" data-metric="spend" aria-pressed="false">Spend</button>
+              <button type="button" data-metric="requests" aria-pressed="true">Requests</button>
+              <button type="button" data-metric="tokens" aria-pressed="false">Tokens</button>
+            </div>
+          </div>
+          <div class="zx-card__body">
+            <div class="zx-chart" id="trend-chart"><p class="zx-muted">Loading usage…</p></div>
+            <p class="zx-chart__caption" id="trend-caption"></p>
+          </div>
+        </section>
+
+        <section class="zx-card zx-card--flush zx-mt" aria-labelledby="limits-title">
+          <div class="zx-card__head"><h3 class="zx-card__title" id="limits-title">Plan limits</h3></div>
+          <div class="zx-card__body">
+            <dl class="zx-dl">
+              <div><dt>Requests per day</dt><dd id="lim-daily-requests">—</dd></div>
+              <div><dt>Tokens per day</dt><dd id="lim-daily-tokens">—</dd></div>
+              <div><dt>Requests per minute</dt><dd id="lim-rpm">—</dd></div>
+              <div><dt>Concurrent requests</dt><dd id="lim-concurrency">—</dd></div>
+            </dl>
+          </div>
+        </section>
+
+        <section class="zx-card zx-card--flush zx-mt" aria-labelledby="qs-title">
+          <div class="zx-card__head"><h3 class="zx-card__title" id="qs-title">Quick start</h3></div>
+          <div class="zx-card__body">
           <p class="zx-muted">Install Neuron 7.0.0-alpha.4 (a GitHub pre-release), sign in once with <code>neuron login</code> and approve the short code it shows, then run <code>neuron</code> in any project.</p>
           <div class="zx-code zx-code--copy"><span class="zx-code__label">Install with npm</span><pre><code id="qs-install">npm install -g @zero-x.live/neuron</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="qs-install" data-copy-label="npm install command">Copy</button></div>
           <div class="zx-code zx-code--copy"><span class="zx-code__label">Or with pip</span><pre><code id="qs-install-pip">python -m pip install --pre neuroncli</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="qs-install-pip" data-copy-label="pip install command">Copy</button></div>
           <p class="zx-help">Both work in any terminal on macOS, Linux or Windows. npm needs Node.js 22.14 or later; pip needs Python 3.8 or later; keep <code>--pre</code> while Neuron 7 is a pre-release. No Node.js or Python? The install scripts for macOS and Linux, Windows PowerShell and Command Prompt are on the <a href="https://zero-x.live/download#cli" data-site-path="/download#cli">download page</a>.</p>
-          <div class="zx-code zx-code--copy"><span class="zx-code__label">Sign in</span><pre><code id="qs-login">neuron login</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="qs-login" data-copy-label="Login command">Copy</button></div>
+          <div class="zx-code zx-code--copy zx-mt"><span class="zx-code__label">Sign in</span><pre><code id="qs-login">neuron login</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="qs-login" data-copy-label="Login command">Copy</button></div>
           <div class="zx-code zx-code--copy"><span class="zx-code__label">OpenAI-compatible base URL</span><pre><code id="qs-base">https://zero-x.live/v1</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="qs-base" data-copy-label="Base URL">Copy</button></div>
           <p class="zx-help">Need more? Read the <a href="https://zero-x.live/docs" data-site-path="/docs">documentation</a>.</p>
+          </div>
         </section>
       </section>
 
       <section class="zx-tabpanel" role="tabpanel" id="panel-usage" aria-labelledby="tab-usage" tabindex="0" hidden>
-        <div class="zx-row zx-row--between">
+        <div class="dash-panel-head">
           <h2>Usage</h2>
-          <div class="zx-row">
+          <button id="usage-refresh" class="zx-btn zx-btn--sm" type="button"><svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#refresh"/></svg>Refresh</button>
+        </div>
+        <div id="usage-error" class="zx-alert zx-alert--error zx-mb" role="alert"></div>
+        <div class="zx-tiles zx-tiles--4">
+          <div class="zx-tile"><p class="zx-tile__label">Requests, 30 days</p><p class="zx-tile__value" id="usage-total-requests">—</p></div>
+          <div class="zx-tile"><p class="zx-tile__label">Prompt tokens</p><p class="zx-tile__value" id="usage-total-prompt">—</p></div>
+          <div class="zx-tile"><p class="zx-tile__label">Completion tokens</p><p class="zx-tile__value" id="usage-total-completion">—</p></div>
+          <div class="zx-tile"><p class="zx-tile__label">Credits spent</p><p class="zx-tile__value" id="usage-total-cost">—</p></div>
+        </div>
+        <figure class="zx-card zx-card--flush zx-figure">
+          <div class="zx-card__head">
+            <figcaption id="usage-chart-caption" class="zx-card__title">Requests per day, last 30 days</figcaption>
             <div class="zx-segmented" role="group" aria-label="Chart metric">
+              <button type="button" data-metric="spend" aria-pressed="false">Spend</button>
               <button type="button" data-metric="requests" aria-pressed="true">Requests</button>
               <button type="button" data-metric="tokens" aria-pressed="false">Tokens</button>
             </div>
-            <button id="usage-refresh" class="zx-btn zx-btn--sm" type="button">Refresh</button>
           </div>
-        </div>
-        <div id="usage-error" class="zx-alert zx-alert--error zx-mb" role="alert"></div>
-        <div class="zx-grid zx-grid--4">
-          <div class="zx-card"><p class="zx-card__label">Requests, 30 days</p><p class="zx-stat" id="usage-total-requests">—</p></div>
-          <div class="zx-card"><p class="zx-card__label">Prompt tokens</p><p class="zx-stat" id="usage-total-prompt">—</p></div>
-          <div class="zx-card"><p class="zx-card__label">Completion tokens</p><p class="zx-stat" id="usage-total-completion">—</p></div>
-          <div class="zx-card"><p class="zx-card__label">Credits spent</p><p class="zx-stat" id="usage-total-cost">—</p></div>
-        </div>
-        <figure class="zx-card zx-figure">
-          <figcaption id="usage-chart-caption" class="zx-card__label">Requests per day, last 30 days</figcaption>
-          <div class="zx-chart" id="usage-chart"><p class="zx-muted">Loading usage…</p></div>
-          <details class="zx-mt">
-            <summary>Show daily usage as a table</summary>
-            <div class="zx-table-wrap zx-mt">
-              <table class="zx-table">
-                <caption class="zx-visually-hidden">Daily usage, newest first</caption>
-                <thead><tr><th scope="col">Day</th><th scope="col" class="zx-num">Requests</th><th scope="col" class="zx-num">Prompt tokens</th><th scope="col" class="zx-num">Completion tokens</th><th scope="col" class="zx-num">Cost</th></tr></thead>
-                <tbody id="usage-days"></tbody>
-              </table>
-            </div>
-          </details>
+          <div class="zx-card__body">
+            <div class="zx-chart" id="usage-chart"><p class="zx-muted">Loading usage…</p></div>
+            <p class="zx-chart__caption" id="usage-chart-peak"></p>
+            <details class="zx-mt">
+              <summary>Show daily usage as a table</summary>
+              <div class="zx-table-wrap zx-mt">
+                <table class="zx-table">
+                  <caption class="zx-visually-hidden">Daily usage, newest first</caption>
+                  <thead><tr><th scope="col">Day</th><th scope="col" class="zx-num">Requests</th><th scope="col" class="zx-num">Prompt tokens</th><th scope="col" class="zx-num">Completion tokens</th><th scope="col" class="zx-num">Cost</th></tr></thead>
+                  <tbody id="usage-days"></tbody>
+                </table>
+              </div>
+            </details>
+          </div>
         </figure>
 
-        <h3>By model</h3>
+        <h3 class="dash-sub">By model</h3>
         <div class="zx-table-wrap">
           <table class="zx-table">
             <caption class="zx-visually-hidden">Usage by model, last 30 days</caption>
@@ -154,9 +206,9 @@
             <tbody id="usage-models"></tbody>
           </table>
         </div>
-        <p class="zx-help">Cached prompt tokens are prompt tokens Anthropic served from its prompt cache; they are billed at $0.25 per million instead of the full input price.</p>
+        <p class="zx-help zx-mt">Cached prompt tokens are prompt tokens the model's provider served from its prompt cache; they are billed at $0.25 per million instead of the full input price.</p>
 
-        <h3 class="zx-mt-lg">Recent requests</h3>
+        <h3 class="dash-sub">Recent requests</h3>
         <div id="events-error" class="zx-alert zx-alert--error zx-mb" role="alert"></div>
         <div class="zx-table-wrap">
           <table class="zx-table">
@@ -173,8 +225,8 @@
       </section>
 
       <section class="zx-tabpanel" role="tabpanel" id="panel-keys" aria-labelledby="tab-keys" tabindex="0" hidden>
-        <h2>API keys</h2>
-        <p class="zx-muted">Use an API key to run Neuron in CI or on a server without a browser: set <code>NEURON_TOKEN</code> to the key. Keys can call <code>/v1</code> and read usage; they cannot manage keys, sessions or billing.</p>
+        <div class="dash-panel-head"><h2>API keys</h2></div>
+        <p class="zx-muted dash-intro">Use an API key to run Neuron in CI or on a server without a browser: set <code>NEURON_TOKEN</code> to the key. Keys can call <code>/v1</code> and read usage; they cannot manage keys, sessions or billing.</p>
         <div id="keys-error" class="zx-alert zx-alert--error zx-mb" role="alert"></div>
         <form id="key-form" class="zx-card zx-card--flat" novalidate>
           <div class="zx-form-row">
@@ -209,42 +261,46 @@ neuron -p "Run the tests and summarise failures"</code></pre></div>
       </section>
 
       <section class="zx-tabpanel" role="tabpanel" id="panel-billing" aria-labelledby="tab-billing" tabindex="0" hidden>
-        <div class="zx-row zx-row--between">
+        <div class="dash-panel-head">
           <h2>Billing</h2>
-          <button id="billing-refresh" class="zx-btn zx-btn--sm" type="button">Refresh</button>
+          <button id="billing-refresh" class="zx-btn zx-btn--sm" type="button"><svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#refresh"/></svg>Refresh</button>
         </div>
         <div id="billing-error" class="zx-alert zx-alert--error zx-mb" role="alert"></div>
         <p id="billing-status" class="zx-muted" role="status" aria-live="polite"></p>
         <div id="billing-notice" class="zx-alert zx-alert--info" hidden><p>Online payments are not enabled yet. Email <a href="mailto:support@zero-x.live">support@zero-x.live</a> to upgrade your plan.</p></div>
         <div class="zx-grid zx-grid--2 zx-mt">
-          <article class="zx-card" aria-labelledby="sub-title">
-            <h3 id="sub-title">Subscription</h3>
-            <dl class="zx-kv">
-              <dt>Plan</dt><dd id="sub-plan">—</dd>
-              <dt>Status</dt><dd id="sub-status">—</dd>
-              <dt id="sub-period-label">Period</dt><dd id="sub-period">—</dd>
-            </dl>
-            <p id="sub-note" class="zx-help zx-mt"></p>
-            <div class="zx-row">
-              <a id="sub-upgrade" class="zx-btn zx-btn--primary" href="https://zero-x.live/pricing" data-site-path="/pricing">See plans</a>
-              <button id="sub-cancel" class="zx-btn zx-btn--danger" type="button" hidden>Cancel subscription</button>
+          <article class="zx-card zx-card--flush" aria-labelledby="sub-title">
+            <div class="zx-card__head"><h3 class="zx-card__title" id="sub-title">Subscription</h3></div>
+            <div class="zx-card__body">
+              <dl class="zx-dl">
+                <div><dt>Plan</dt><dd id="sub-plan">—</dd></div>
+                <div><dt>Status</dt><dd id="sub-status">—</dd></div>
+                <div><dt id="sub-period-label">Period</dt><dd id="sub-period">—</dd></div>
+              </dl>
+              <p id="sub-note" class="zx-help zx-mt"></p>
+              <div class="zx-row">
+                <a id="sub-upgrade" class="zx-btn zx-btn--primary" href="https://zero-x.live/pricing" data-site-path="/pricing">See plans</a>
+                <button id="sub-cancel" class="zx-btn zx-btn--danger" type="button" hidden>Cancel subscription</button>
+              </div>
             </div>
           </article>
-          <article class="zx-card" aria-labelledby="topup-title">
-            <h3 id="topup-title">Add credits</h3>
-            <p class="zx-muted">Credits pay for Claude Sonnet 5.5, Claude Opus 5.5 and other paid capacity on Pro and Max. Free models never use credits.</p>
-            <div class="zx-field zx-mb zx-field--short">
-              <label for="topup-currency">Pay in</label>
-              <select id="topup-currency" class="zx-select"><option value="USD">USD</option><option value="INR">INR</option></select>
+          <article class="zx-card zx-card--flush" aria-labelledby="topup-title">
+            <div class="zx-card__head"><h3 class="zx-card__title" id="topup-title">Add credits</h3></div>
+            <div class="zx-card__body">
+              <p class="zx-muted">Credits pay for Claude Sonnet 5.5, Claude Opus 5.5 and other paid capacity on Pro and Max. Free models never use credits.</p>
+              <div class="zx-field zx-mb zx-field--short">
+                <label for="topup-currency">Pay in</label>
+                <select id="topup-currency" class="zx-select"><option value="USD">USD</option><option value="INR">INR</option></select>
+              </div>
+              <div class="zx-row">
+                <button class="zx-btn" type="button" data-topup="credits_5">Add $5 credit</button>
+                <button class="zx-btn" type="button" data-topup="credits_20">Add $20 credit</button>
+              </div>
+              <p id="topup-note" class="zx-help zx-mt" hidden></p>
             </div>
-            <div class="zx-row">
-              <button class="zx-btn" type="button" data-topup="credits_5">Add $5 credit</button>
-              <button class="zx-btn" type="button" data-topup="credits_20">Add $20 credit</button>
-            </div>
-            <p id="topup-note" class="zx-help zx-mt" hidden></p>
           </article>
         </div>
-        <h3 class="zx-mt-lg">Payment history</h3>
+        <h3 class="dash-sub">Payment history</h3>
         <div class="zx-table-wrap">
           <table class="zx-table">
             <caption class="zx-visually-hidden">Payments, newest first</caption>
@@ -256,8 +312,8 @@ neuron -p "Run the tests and summarise failures"</code></pre></div>
       </section>
 
       <section class="zx-tabpanel" role="tabpanel" id="panel-sessions" aria-labelledby="tab-sessions" tabindex="0" hidden>
-        <h2>CLI sessions</h2>
-        <p class="zx-muted">Each <code>neuron login</code> signs in one device. A session stays signed in while you use it and ends after 30 days without use. Sign out a device you no longer use, or every device at once if a computer is lost or a session token was exposed.</p>
+        <div class="dash-panel-head"><h2>CLI sessions</h2></div>
+        <p class="zx-muted dash-intro">Each <code>neuron login</code> signs in one device. A session stays signed in while you use it and ends after 30 days without use. Sign out a device you no longer use, or every device at once if a computer is lost or a session token was exposed.</p>
         <div id="sessions-error" class="zx-alert zx-alert--error zx-mb" role="alert"></div>
         <div class="zx-table-wrap zx-mb">
           <table class="zx-table">
@@ -266,7 +322,7 @@ neuron -p "Run the tests and summarise failures"</code></pre></div>
             <tbody id="sessions-list"><tr><td colspan="6" class="zx-empty">Loading devices…</td></tr></tbody>
           </table>
         </div>
-        <p class="zx-mb"><input id="sessions-keys" type="checkbox"> <label for="sessions-keys">Also revoke every API key (do this if a session token may have leaked, since a session can create keys)</label></p>
+        <p class="dash-check"><input id="sessions-keys" type="checkbox"> <label for="sessions-keys">Also revoke every API key (do this if a session token may have leaked, since a session can create keys)</label></p>
         <div class="zx-row">
           <button id="sessions-revoke" class="zx-btn zx-btn--danger" type="button">Sign out all CLI sessions</button>
         </div>
@@ -275,27 +331,33 @@ neuron -p "Run the tests and summarise failures"</code></pre></div>
       </section>
 
       <section class="zx-tabpanel" role="tabpanel" id="panel-account" aria-labelledby="tab-account" tabindex="0" hidden>
-        <h2>Account</h2>
+        <div class="dash-panel-head"><h2>Account</h2></div>
         <div id="account-error" class="zx-alert zx-alert--error zx-mb" role="alert"></div>
-        <div class="zx-card">
-          <div class="zx-row zx-mb">
-            <img id="acct-avatar" class="zx-avatar" src="/Assets/zerox-favicon-centered.png" width="56" height="56" alt="">
-            <div>
-              <p class="zx-stat zx-stat--sm" id="acct-name">—</p>
-              <p class="zx-muted" id="acct-email">—</p>
+        <div class="zx-card zx-card--flush">
+          <div class="zx-card__head">
+            <div class="dash-person">
+              <img id="acct-avatar" class="zx-avatar" src="/Assets/zerox-favicon-centered.png" width="56" height="56" alt="">
+              <div>
+                <p class="zx-card__title" id="acct-name">—</p>
+                <p class="zx-muted dash-email" id="acct-email">—</p>
+              </div>
             </div>
           </div>
-          <dl class="zx-kv">
-            <dt>User ID</dt><dd class="zx-mono" id="acct-id">—</dd>
-            <dt>Sign-in method</dt><dd id="acct-provider">—</dd>
-            <dt>Plan</dt><dd id="acct-plan">—</dd>
-          </dl>
+          <div class="zx-card__body">
+            <dl class="zx-dl">
+              <div><dt>User ID</dt><dd class="zx-mono" id="acct-id">—</dd></div>
+              <div><dt>Sign-in method</dt><dd id="acct-provider">—</dd></div>
+              <div><dt>Plan</dt><dd id="acct-plan">—</dd></div>
+            </dl>
+          </div>
         </div>
         <div class="zx-row zx-mt">
-          <button id="acct-signout" class="zx-btn" type="button">Sign out</button>
+          <button id="acct-signout" class="zx-btn" type="button"><svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#log-out"/></svg>Sign out</button>
         </div>
         <p class="zx-help zx-mt">To export or delete your data, email <a href="mailto:support@zero-x.live">support@zero-x.live</a> from your account address. See the <a href="https://zero-x.live/privacy" data-site-path="/privacy">privacy policy</a>.</p>
       </section>
+        </div>
+      </div>
     </div>
 
     <dialog id="confirm-dialog" class="zx-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-body">

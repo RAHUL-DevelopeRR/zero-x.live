@@ -804,7 +804,7 @@ assert.equal(checkout.normalizeCurrency('EUR'), 'USD');
   assert.equal(sub.key, 'rzp_live_AbCdEf123456');
   assert.equal(sub.subscription_id, 'sub_ABC123456');
   assert.equal(sub.order_id, undefined);
-  assert.deepEqual(sub.theme, {color: '#00E5FF'});
+  assert.deepEqual(sub.theme, {color: '#3B82F6'});
   assert.deepEqual(sub.notes, {plan: 'pro', user_id: 'u1'});
   assert.equal(sub.handler, handlers.onPayment);
   assert.equal(sub.modal.ondismiss, handlers.onDismiss);
