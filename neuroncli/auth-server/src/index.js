@@ -38,11 +38,13 @@ import { registerCatalogAdminRoutes } from './routes/catalog-admin.js';
 import { registerCreditRoutes } from './routes/credits.js';
 import { loadVaultKeys, vaultConfigured } from './provider-keys.js';
 import { accessConfigured, passedAccess } from './access-auth.js';
-import { chatRefusal, chatRoutedToEc2, forwardToEc2, proxyStatus, servingRuntime } from './ec2-proxy.js';
+import { WORKER_HOSTS, chatRefusal, chatRoutedToEc2, forwardToEc2, proxyStatus, servingRuntime } from './ec2-proxy.js';
 import { extraWebOrigins, isExtraWebHost } from './web-hosts.js';
 // Durable Object classes are exported from the Worker entry (wrangler.toml [[durable_objects]]),
 // each with its binding. RelayRoom (src/relay.js) is not bound for now, so it is not exported.
 export { HealthHub } from './health-hub.js';
+import { hubSendsTestRequests } from './health-hub.js';
+import { probeCheckerState } from './health-probes.js';
 import { registerWebhookRoutes } from './routes/webhooks.js';
 
 const SERVICE = 'neuroncli-gateway-worker';
@@ -152,7 +154,13 @@ app.use('*', async (c, next) => {
   // The dashboard host (and a test host) are never indexed: their pages and APIs say so. Their
   // static files answer exactly as on the other hosts, because a shared cache keeps one copy of
   // each for all of them; their robots.txt keeps crawlers away from those files.
-  if (((url.hostname === 'dashboard.zero-x.live' || testHost) && !isStaticFile(url.pathname)) ||
+  // Any other host that reaches the Worker (its workers.dev or preview address, a staging Worker)
+  // serves the same pages as zero-x.live, the homepage included, so its pages are never indexed
+  // either: only the canonical hosts may compete in search. Worker only: on EC2 a forwarded
+  // request carries the proxy origin's host, which must not mark production pages noindex.
+  const host = url.hostname.replace(/\.$/, '');
+  const strayHost = servingRuntime(c.env) === 'worker' && !WORKER_HOSTS.includes(host) && !isLoopbackHost(url.host) && !testHost;
+  if (((url.hostname === 'dashboard.zero-x.live' || testHost || strayHost) && !isStaticFile(url.pathname)) ||
       url.pathname.startsWith('/neuroncli/') || path === '/health' ||
       ['/auth/', '/api/', '/v1/', '/admin/', '/webhooks/', '/relay/', '/oiop/'].some(prefix => path.startsWith(prefix))) {
     c.header('X-Robots-Tag', 'noindex, nofollow');
@@ -172,7 +180,7 @@ async function notFoundPage(c) {
 // Pages served from https://zero-x.live/<page> (clean URLs).
 const SITE_PAGES = ['/about', '/privacy', '/terms', '/find-files-by-content', '/wheres-that-file',
   '/pricing', '/neuron-cli', '/docs', '/docs/trust', '/download', '/changelog', '/refund', '/contact', '/shipping',
-  '/neucockpit', '/ai-coding-agent'];
+  '/neucockpit', '/ai-coding-agent', '/free-ai-coding-agent', '/claude-code-alternative'];
 
 // Hostname-based subdomain routing middleware
 app.use('*', async (c, next) => {
@@ -592,8 +600,22 @@ api.get('/health', async (c) => {
     admin_access_configured: accessConfigured(c.env),
     csp_enforced: c.env.CSP_ENFORCE === 'true',
     ec2_proxy: proxyStatus(c.env),
+    health_checker: healthCheckerStatus(c.env),
   });
 });
+
+// Which checker sends model test requests from the runtime that answered (one checker per pool,
+// src/health-hub.js hubSendsTestRequests). The Node gateway reports its own checker's state; with
+// it not running, nothing tests the pools while the Worker forwards chat here (HEALTH_HUB_PROBES
+// auto), so the operator view says so. The Worker reports whether its HealthHub tests.
+function healthCheckerStatus(env) {
+  if (servingRuntime(env) === 'node') {
+    const node = probeCheckerState();
+    return node === 'running' ? { node_probes: node }
+      : { node_probes: node, warning: 'The Node checker is not testing the pools; set HEALTH_HUB_PROBES=on on the Worker until it runs' };
+  }
+  return { hub_test_requests: hubSendsTestRequests(env), chat_routed_to_node: chatRoutedToEc2(env) };
+}
 
 api.get('/ready', async c => {
   await loadPlanLimits(c.env);

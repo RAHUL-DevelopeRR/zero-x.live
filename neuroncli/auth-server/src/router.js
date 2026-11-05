@@ -1,6 +1,6 @@
 import { globalHealthTracker, HealthState } from './provider-health.js';
 import {
-  AUTO_MODEL_ID, loadPlanPolicies, offeredEntries, planPolicy, poolKey, poolVerdicts, resolveModelId,
+  AUTO_MODEL_ID, familyOf, isFamilyId, loadPlanPolicies, offeredEntries, planPolicy, poolKey, poolVerdicts, resolveModelId,
 } from './catalog.js';
 import { providerType } from './catalog-types.js';
 import { BYOK_OFFERS, offerById, servesOwnKeys } from './oiop/offers.js';
@@ -160,11 +160,26 @@ export class RoutingEngine {
     const resolved = resolveModelId(requestedModel, env);
     if (!resolved) return failure('model_not_found');
     const auto = resolved === AUTO_MODEL_ID;
+    const family = !auto && isFamilyId(resolved, env);
     const offered = offeredEntries(env);
     let entries;
     if (auto) {
       entries = offered.filter(entry => entry.auto_rank != null && !lacks(entry, required) && !cannotForce(entry, required))
         .sort((left, right) => left.auto_rank - right.auto_rank);
+    } else if (family) {
+      // A family id (contract section 14): every offered route of the model that can serve the
+      // request, ranked like auto (routes auto never picks after the others, then list order). The
+      // ordering below then puts free before paid and healthy before penalised routes.
+      const members = offered.filter(entry => familyOf(entry).toLowerCase() === resolved.toLowerCase());
+      if (!members.length) return failure('model_not_found', { message: 'This model is not available on this deployment.' });
+      const capable = members.filter(entry => !lacks(entry, required));
+      if (!capable.length) return failure('invalid_request', { message: LACKS_MESSAGE[lacks(members[0], required)] });
+      // A forced tool call goes to routes that can force it whenever one exists; otherwise the
+      // route serves it unforced, as for a model asked for by its route id.
+      const forcing = capable.filter(entry => !cannotForce(entry, required));
+      const rank = entry => (entry.auto_rank ?? Number.MAX_SAFE_INTEGER);
+      entries = (forcing.length ? forcing : capable).map((entry, index) => ({ entry, index }))
+        .sort((left, right) => rank(left.entry) - rank(right.entry) || left.index - right.index).map(item => item.entry);
     } else {
       const entry = offered.find(item => item.id === resolved);
       if (!entry) return failure('model_not_found');
@@ -188,7 +203,8 @@ export class RoutingEngine {
           healthy: this.healthTracker.isAvailable(key, now) && !sharedUnavailable(sharedHealth?.get(key), now) });
       }
     }
-    const sticky = auto && affinity && conversation ? `${affinity}|${conversation}` : null;
+    // auto and family requests keep a conversation on the route that served it (its prompt cache).
+    const sticky = (auto || family) && affinity && conversation ? `${affinity}|${conversation}` : null;
     const stickyModel = this.sticky.get(sticky, now);
     const usable = evaluated
       .filter(item => item.configured && !item.blocked && item.inPlan && item.region && item.fits && item.healthy)
@@ -202,7 +218,8 @@ export class RoutingEngine {
       .map(({ item }) => item);
     if (usable.length) {
       return {
-        ok: true, auto, model: auto ? AUTO_MODEL_ID : entries[0].id, sticky,
+        ok: true, auto, family: family ? familyOf(entries[0]) : null,
+        model: auto ? AUTO_MODEL_ID : family ? familyOf(entries[0]) : entries[0].id, sticky,
         candidates: usable.map(({ entry, pool, key, offer, maxTokens: max }) => ({ entry, pool, key, offer, maxTokens: max })),
       };
     }

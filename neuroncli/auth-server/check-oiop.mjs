@@ -569,7 +569,8 @@ try {
       put: async (key, value) => { kvData.set(key, value); },
     };
     const env = { GROQ_API_KEY: 'groq-key', GEMINI_API_KEY: 'gemini-key', ALLOW_UNKNOWN_COUNTRY: 'true', SESSIONS_KV: kv };
-    const list = async (headers = {}, callEnv = env) => (await app.request('https://zero-x.live/v1/models', { headers }, callEnv)).json();
+    // ?routes=1 (contract section 14): the provider and offers of each route.
+    const list = async (headers = {}, callEnv = env) => (await app.request('https://zero-x.live/v1/models?routes=1', { headers }, callEnv)).json();
     resetModelsDevCache();
     const before = await list();
     const groq = before.data.find(model => model.id === 'groq/openai/gpt-oss-120b');
@@ -578,6 +579,13 @@ try {
     assert.deepEqual(groq.offers, [{ id: 'groq.free', tier: 'free', owner: 'operator', trust_tier: 'T1', trains_on_inputs: 'unknown' }]);
     assert.equal(groq.models_dev_id, 'groq/openai/gpt-oss-120b');
     assert.equal(groq.facts, null, 'no facts until the cron stored them');
+    // The default list names the maker, never the serving provider.
+    const family = (await (await app.request('https://zero-x.live/v1/models', {}, env)).json()).data.find(model => model.id === 'openai/gpt-oss-120b');
+    assert.deepEqual([family.provider.id, family.provider.name, family.owned_by, family.display_name], ['openai', 'OpenAI', 'openai', 'GPT-OSS 120B']);
+    // The data-policy fields of its routes' offers stay listed, without the offer id that names the
+    // provider; models_dev_id (provider-qualified) is null.
+    assert.deepEqual(family.offers, groq.offers.map(({ id: _id, ...offer }) => offer), 'the offers of its routes stay listed for data policy');
+    assert.equal(family.models_dev_id, null);
     assert.equal(before.data.find(model => model.id === 'gemini/gemini-2.5-flash').provider.logo_url, 'https://models.dev/logos/google.svg');
     const t1 = await list({ [TRUST_HEADER]: 'T1' });
     const flash = t1.data.find(model => model.id === 'gemini/gemini-2.5-flash');
@@ -605,6 +613,9 @@ try {
       models_dev_id: 'groq/openai/gpt-oss-120b', name: 'GPT OSS 120B', family: 'gpt-oss', canonical_model_id: null,
       release_date: '2025-08-05', knowledge: '2024-06', open_weights: true, reasoning: true, structured_output: true,
       modalities: { input: ['text'], output: ['text'] }, list_price_per_million: { input: 0.15, output: 0.6 } });
+    const familyFacts = (await (await app.request('https://zero-x.live/v1/models', {}, env)).json()).data
+      .find(model => model.id === 'openai/gpt-oss-120b').facts;
+    assert.deepEqual([familyFacts.name, familyFacts.models_dev_id], ['GPT OSS 120B', null], 'family facts without the provider-qualified id');
     const day = Date.now() + 25 * 3600_000;
     const warn = console.warn;
     console.warn = () => {};
@@ -724,8 +735,12 @@ try {
     assert.equal(updates.length, 2, 'one event at the start, one when Groq went down; keep-alives in between');
     assert.ok(events.some(event => event.comment), 'keep-alive comments while nothing changes');
     const [firstUpdate, secondUpdate] = updates.map(event => JSON.parse(event.data));
-    assert.equal(firstUpdate.data.find(model => model.id === groqEntry.id).status, 'available');
-    assert.equal(secondUpdate.data.find(model => model.id === groqEntry.id).status, 'blurred');
+    // The stream carries family rows (contract section 14); Groq is the only route of this one here.
+    // Nobody observed Groq before the failure: unknown (never available), then unavailable.
+    assert.equal(firstUpdate.data.find(model => model.id === 'openai/gpt-oss-120b').status, 'unknown');
+    // The stream rows carry both words (section 15.1): alpha.4 greys out `blurred` in status.
+    const down = secondUpdate.data.find(model => model.id === 'openai/gpt-oss-120b');
+    assert.deepEqual([down.availability, down.status], ['unavailable', 'blurred']);
     assert.notEqual(updates[0].id, updates[1].id, 'each event carries the status ETag as its id');
     const resumed = await readEvents(await app.request('https://zero-x.live/v1/models/stream',
       { headers: { 'Last-Event-ID': updates[0].id } }, env));
@@ -733,7 +748,7 @@ try {
     const t1 = await readEvents(await app.request('https://zero-x.live/v1/models/stream', { headers: { [TRUST_HEADER]: 'T1' } },
       { ...env, MODELS_STREAM_LIFETIME_MS: '50' }));
     assert.equal(JSON.parse(t1.find(event => event.event === 'catalog.updated').data).data
-      .find(model => model.id === 'gemini/gemini-2.5-flash').unavailable_reason, 'policy_restricted', 'the stream follows the caller policy');
+      .find(model => model.id === 'google/gemini-2.5-flash').unavailable_reason, 'policy_restricted', 'the stream follows the caller policy');
     ok('catalog push: /v1/models/stream emits catalog.updated (id = status ETag) at start and on every change, keep-alives otherwise, ends after its lifetime, resumes by Last-Event-ID and follows the caller policy');
   }
 
@@ -785,8 +800,11 @@ try {
     assert.notEqual(updates[0].id, updates[1].id, 'the ETag changed with catalog_version');
     assert.deepEqual([first.catalog_version, second.catalog_version], [before.catalog_version, approval.catalog_version]);
     assert.notEqual(approval.catalog_version, before.catalog_version);
-    const models = await (await app.request('https://zero-x.live/v1/models', {}, env)).json();
+    const models = await (await app.request('https://zero-x.live/v1/models?routes=1', {}, env)).json();
     assert.equal(models.data.find(model => model.id === id).display_name, 'Qwen 3.8 27B (Groq, renamed)', 'clients reload and see the change');
+    // The family entry shows the clean name: the route suffix in parentheses is dropped.
+    const families = await (await app.request('https://zero-x.live/v1/models', {}, env)).json();
+    assert.equal(families.data.find(model => model.id === 'qwen/qwen3.8-27b').display_name, 'Qwen 3.8 27B');
     const resumed = await readEvents(await app.request('https://zero-x.live/v1/models/stream',
       { headers: { 'Last-Event-ID': updates[1].id } }, { ...env, MODELS_STREAM_LIFETIME_MS: '100' }));
     assert.equal(resumed.filter(event => event.event === 'catalog.updated').length, 0, 'a reconnect with the new ETag gets none');

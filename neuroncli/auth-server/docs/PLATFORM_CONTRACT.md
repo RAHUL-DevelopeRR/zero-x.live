@@ -1,6 +1,6 @@
 # Neuron × Zero-X platform contract
 
-Status: v1.8 (2026-10-25; amendments v1.1 to v1.8 in sections 6 to 13). This document is the source of truth shared by the Neuron CLI
+Status: v1.10 (2026-11-04; amendments v1.1 to v1.10 in sections 6 to 15). This document is the source of truth shared by the Neuron CLI
 (`RAHUL-DevelopeRR/neuron-v2`) and the Zero-X gateway + website
 (`RAHUL-DevelopeRR/zero-x.live`, `neuroncli/auth-server`). A copy lives in both repos;
 change both together.
@@ -131,7 +131,8 @@ credential (never an `nzx_` key). Session tokens are stored hashed (SHA-256) in 
   capabilities:{tools, streaming}, tiers:['free'|'paid'], available:boolean,
   unavailable_reason:null|'upgrade_required'|'region_unavailable'|'policy_restricted'|'not_configured',
   pricing:null|{input_per_mtok_usd, output_per_mtok_usd}}`. Includes a pseudo-model
-  `auto`. `available` is computed for the caller's plan (anonymous = free).
+  `auto`. `available` is computed for the caller's plan (anonymous = free). Since v1.9 the list
+  has one entry per model family, not per route (section 14).
 - `POST /v1/chat/completions` — OpenAI body; `model` may be `auto`. Streaming SSE with
   `data: [DONE]`. Every streamed `tool_calls[]` delta carries `index`. Response headers:
   `x-request-id`, `x-neuron-plan`, `x-neuron-model` (resolved public id),
@@ -400,6 +401,8 @@ Sync the copy in `neuron-v2`; nothing here changes what the CLI sends or must ha
   clients), `reasoning_efforts[]`, `capabilities.vision`, `capabilities.reasoning`, and runtime
   health: `status` (`available` | `degraded` | `busy` | `blurred`), `available_again_at`
   (ISO time or `null`) and `checked_at` (ISO time of the newest observation, or `null`).
+  Section 15 (v1.10) adds `unknown` and the field `availability`, in which `blurred` reads
+  `unavailable`; `status` keeps these words for the clients that read them (section 15.1).
   - `busy`: a short rate-limit cooldown (60 s or less); keep the model selectable and show the wait.
   - `blurred`: grey the model out until `available_again_at` (quota spent, model gone, provider down).
   - `available` stays the plan/region/configuration verdict; a client greys out a model when
@@ -542,8 +545,10 @@ nothing settled the attempt's reservation, so it held one of the user's concurre
 ### 8.6 Per-pool concurrency (2026-10-29)
 
 Some free tiers limit requests in flight instead of (or as well as) requests per minute: Z.ai's
-free GLM Flash models serve one request at a time per account and model, and answer a second one
-with HTTP 429 (code 1302). Migration `20261029001000_pool_concurrency.sql`:
+free GLM Flash models serve one request at a time, and answer a second one with HTTP 429 (code
+1302). Users' reservations count the limit per model (below). Whether Z.ai counts it per model or
+for the whole account is not established, so the health checker treats it as per account (section
+15.3). Migration `20261029001000_pool_concurrency.sql`:
 
 - **`p_pool.concurrency`** (`zerox_reserve_v2`): at most that many reservations of the pool key
   may be running at once, across every user. Running means active with a running lease (section
@@ -963,3 +968,254 @@ Code: `src/catalog-types.js`, `src/list-prices.js`, `src/catalog-guardrails.js`,
 Tiers, limits, prices and credits are unchanged (section 1). The plan features
 (`zerox_plan_policy.features`, `/api/plans`, the site fallback) name Claude Sonnet 5.5 and Claude
 Opus 5.5 billed from credits on Pro and Max, and say every plan has the same Neuron features.
+
+## 14. v1.9 amendments (model families, usable context, 2026-11-04)
+
+Code: `src/model-families.js` (identity), `src/catalog.js` (`familyModels`, `withIdentity`,
+`isFamilyId`, `familyMembers`), `src/router.js` (family routing), `src/routes/plans.js`
+(`/v1/models`, `/v1/models/status`, `/v1/models/stream`); checks `check-routing-v2.mjs`,
+`check-health-share.mjs`, `check-e2e-local.mjs`.
+
+A catalog entry is a route: one model behind one provider type (`groq/openai/gpt-oss-120b` is
+GPT-OSS 120B served by Groq). Several routes can serve the same model. The public list names the
+model and the company that made it, never the route or the provider that serves it.
+
+### 14.1 Model identity
+
+Every route has an identity derived from its `upstream_model` (database rows included):
+
+- `maker`: slug of the company that made the model: `openai`, `anthropic`, `google`, `meta`,
+  `alibaba` (Qwen), `nvidia`, `stepfun`, `cohere`, `zhipu` (Z.ai, GLM), `minimax`, `deepseek`,
+  `moonshot`, `mistral`, `xai`, `microsoft`, `ibm`, `poolside`, `thinkingmachines`, or `other`.
+  Clients pick the logo by this slug. `maker_name` is its display name (`OpenAI`, `Z.ai`, ...).
+- `model_name`: the clean name without a route or provider suffix (`GPT-OSS 120B`, `Qwen 3.8 27B`,
+  `Nemotron 3 Ultra 550B`, `North Mini Code`, `GLM-4.7 Flash`, `Claude Sonnet 5.5`).
+- `family`: the model id without the route (`openai/gpt-oss-120b`, `qwen/qwen3.8-27b`,
+  `nvidia/nemotron-3-ultra-550b`, `cohere/north-mini-code`, `zhipu/glm-4.7-flash`,
+  `anthropic/claude-sonnet-5-5`). Quantized or provider-specific variants share the family of the
+  model they serve (`@cf/meta/llama-3.3-70b-instruct-fp8-fast` is `meta/llama-3.3-70b`).
+
+### 14.2 Context windows
+
+- `context_window` (and `context_length`) is the window the caller can actually use on its plan:
+  the largest prompt plus output any pool the caller can use takes, after per-minute token
+  budgets. Groq's free org takes about 8K tokens per minute, so a Free caller sees 8,000 for a
+  Groq-only model whose own window is 131,072.
+- `native_context_window` is the model's own window.
+
+### 14.3 `GET /v1/models`
+
+- `data[]` has `auto` first, then one entry per family, in catalog order of its first route.
+  A family entry has every field of section 3.2, 8.1 and 12.4 plus `maker`, `maker_name`,
+  `model_name` and `family`, rolled up from the routes the caller can use (all routes when none
+  can):
+  - `id` = `family`; `display_name` = `model_name`; `owned_by` = `maker`;
+    `provider` = `{id: maker, name: maker_name, logo_url: null, logo_fallback_url: null}`.
+  - `context_window` (and `context_length`): the largest window of those routes that can serve
+    now, that is, routes not `busy` or `blurred` (when every route is, the routes with the best
+    status). The router skips routes a request does not fit, so a busy route never advertises a
+    window the healthy ones cannot serve: GPT-OSS 20B with NVIDIA busy shows Groq free's 8,000,
+    not 131,072. `max_output_tokens`: the largest of the same routes, at most `context_window`.
+    `native_context_window`: the largest of all those routes (the model's own window does not
+    change with health).
+  - `capabilities`: a capability any of those routes has; `tiers`, `reasoning_efforts`: the union.
+  - `available`: true when any route is usable; otherwise `unavailable_reason` is the first of
+    `upgrade_required`, `region_unavailable`, `policy_restricted`, `not_configured` that a route
+    reports.
+  - `status`: the best route status (`available` > `degraded` > `busy` > `blurred`), with that
+    route's `available_again_at` (the earliest among equals); `checked_at`: the newest observation.
+    One busy route therefore does not grey out a model another route still serves. Section 15
+    (v1.10) adds `unknown` and `availability` (where `blurred` reads `unavailable`; `status` keeps
+    `blurred`, section 15.1) and takes `checked_at` from the
+    best route.
+  - `pricing`: the highest-priced usable route (credits are never under-held).
+  - Nothing names a serving provider. `offers`: the data-policy fields of those routes' offers
+    (section 12.4: `{tier, owner, trust_tier, trains_on_inputs}`, duplicates removed) without the
+    offer `id`, which names the provider (`groq.free`). `models_dev_id` is `null` (models.dev ids
+    are provider-qualified, `groq/openai/gpt-oss-120b`), and so is `facts.models_dev_id`. Route
+    ids, offer ids and models.dev ids stay on `?routes=1`.
+- `auto` carries `maker: 'zero-x'`, `maker_name: 'Zero-X'`, `family: 'auto'`, `model_name: 'Auto'`.
+- `?routes=1` (also `true`, `yes`) lists the routes instead, for diagnostics: one entry per route
+  with its route id, provider and display name, plus `maker`, `maker_name`, `family` and
+  `model_name`. BYOK sessions (own OpenRouter key) list their own models as before.
+
+### 14.4 `GET /v1/models/status` and `/v1/models/stream`
+
+Rows follow the same view as `/v1/models` (families, or routes with `?routes=1`) and add the fields
+a live list needs, so a page can draw it from this endpoint alone:
+`{id, family, maker, display_name, context_window, native_context_window, available,
+unavailable_reason, status, availability, available_again_at, checked_at, stale_after_seconds}`
+(`availability` and the per-row `stale_after_seconds`: sections 15.1 and 15.2). `checked_at` is left out of the ETag
+(it moves with every observation), so `If-None-Match` still answers `304` while nothing else
+changed. The website's model list polls this endpoint every `poll_interval_seconds`.
+
+### 14.5 Routing
+
+- `model` in `/v1/chat/completions` may be a family id. Lookup order: route
+  id, then family id, then alias; all case-insensitive, with the optional `openai/` transport
+  prefix. Route ids keep working and keep their route (old clients).
+- An alias equal to the leaf of its route's family names the model, not that route:
+  `gpt-oss-20b`, `gpt-oss-120b`, `qwen3.8-27b`, `gemini-2.5-flash`, `glm-4.7-flash` and
+  `llama-3.3-70b` resolve to their families (`openai/gpt-oss-20b`, ...). This matters because the
+  `openai/` transport prefix and the `openai/` family prefix look alike: Neuron strips `openai/`
+  (and `xai/`) before sending, so the listed family `openai/gpt-oss-20b` arrives as
+  `gpt-oss-20b`, and must fall back from a rate-limited or too-small Groq route to NVIDIA like the
+  family id does. A bare name that is no route, family or alias resolves to the family
+  `openai/<name>` or `xai/<name>` when one exists. Provider-qualified aliases
+  (`workers-ai/gpt-oss-120b`, `openrouter/cohere/north-mini-code:free`) keep their route.
+- A family id is served by every offered route of the family that has the capabilities the
+  request needs (routes that can force a tool call first when the request forces one), ranked by
+  `auto_rank` (routes `auto` never picks after the others, then catalog order). The usual order
+  then applies: free pools before paid, last-resort pools after the others, the conversation's
+  previous route first, healthier pools first. A route the request does not fit, or that is
+  rate-limited or down, is skipped; when none is left the error is the same as for a route id
+  (`capacity_exhausted`, `context_length_exceeded`, `upgrade_required`, ...). An unknown or
+  unserved family answers `model_not_found`.
+- Family requests are sticky per conversation like `auto` (the route that served it keeps its
+  prompt cache).
+- `x-neuron-model` and the completion's `model` name the route that served the request, as for
+  `auto`.
+- A family whose id is also its only route id (Claude) is that route.
+
+### 14.6 Clients
+
+Neuron's TUI already strips route suffixes from display names client-side; with `maker` and
+`family` it can show the maker's logo, list one row per model and send the family id, so a request
+follows the healthiest route instead of failing on one busy provider. Clients that send route ids
+are unaffected.
+
+## 15. v1.10 amendments (active health checks, 2026-11-04)
+
+The 2026-11-04 status said MiniMax M3.1 Flash and both GLM Flash models were available while
+OpenRouter had delisted MiniMax and GLM refused requests while its one free slot was busy: on the
+Node gateway a status came only from real requests that failed on that instance, and a model
+nobody had used counted as available.
+
+### 15.1 Statuses
+
+Every model on `/v1/models`, `/v1/models/status` and `/v1/models/stream` carries two fields with
+the same verdict:
+
+- **`availability`** (added 2026-11-05): the statuses below, in these words. The website and
+  clients written for this section read it.
+- **`status`**: the same verdict in the words of section 8.1 (v1.3), which Neuron
+  7.0.0-alpha.4 and every Neuron release so far read: it greys a model out (and warns on
+  `/model` and `--model`) only when `status` is `blurred`, and treats every other word as usable.
+  So `unavailable` is sent as `blurred` here, with the same `available_again_at`; `available`,
+  `degraded`, `busy` and `unknown` are sent as they are (a v1.3 client shows `unknown` like
+  `available`, which is what `unknown` means: selectable, tried by routing). A client reads
+  `availability` when present and falls back to `status`, reading `blurred` as `unavailable`.
+  `status` keeps the v1.3 words for as long as releases that read only it are supported.
+
+The statuses (`availability`):
+
+- `available`: the newest observation (a test request or real traffic) says it answers. A model
+  list only shows the model is still offered; it never renews a verdict.
+- `degraded`: it answers, but slowly (a 3-token test answer over 8 s), after a first 5xx or
+  timeout, without calling tools any more, or users' requests failed upstream more recently than
+  one succeeded.
+- `busy`: a one-at-a-time slot or a rate limit is in use; `available_again_at` says when it frees.
+  Keep the model selectable and show the wait.
+- `unknown`: no observation within the route's `stale_after_seconds` (section 15.2). Never
+  reported as `available`. Selectable; routing still tries it after the known-good routes.
+- `unavailable` (`status`: `blurred`): failing (two failures in a row, or three users' upstream failures
+  in ten minutes with no success), delisted by its provider, its key rejected or its quota spent; grey it out until `available_again_at` when there is one.
+
+A family (section 14.3) takes the best status of the routes the caller can use, in the order
+`available` > `degraded` > `unknown` > `busy` > `unavailable` (a busy route is skipped by routing,
+an unknown one is tried), and that route's `available_again_at`, `checked_at`, `latency_ms`,
+`last_success_at` and `last_failure_class`. `auto` takes its best candidate's.
+
+### 15.2 Fields
+
+Every model on `/v1/models` and every row of `/v1/models/status` (and its stream) adds:
+
+- `checked_at`: when the verdict in `status` was last confirmed by a test request, real traffic or
+  a slot or rate limit in use (null: never); a model list never moves it, and an observation from
+  users' traffic carries the time of their request. Per model, not the newest observation of any
+  of its routes.
+- `latency_ms`: the latency of the last test request (or real attempt on this instance), or null.
+- `last_success_at`: the last successful test request or user request, or null.
+- `last_failure_class`: the class of the last failure, or null: `rate_limited`, `quota`,
+  `delisted`, `model_unavailable`, `auth`, `server`, `timeout`, `slow`, `tool_call`,
+  `upstream_errors` (users' requests failed upstream) or `probe_misconfigured` (the provider
+  refused the checker's own test request with a 400: the request needs fixing, and no verdict was
+  recorded from it). Never a provider name or message.
+- `stale_after_seconds`: how long the verdict in `availability` stands without a new observation
+  before the model reads `unknown`. Per route on the Node gateway while its checker runs: the
+  larger of `HEALTH_STALE_SECONDS` (1,200 by default) and 1.5 times the route's own chat test
+  interval (section 15.3), rounded up to the second, so a verdict outlives the next scheduled test
+  with room for a late or skipped turn: Groq free (hourly) 5,400 s, paid pools and Claude (every
+  30 min) 2,700 s, NVIDIA and Z.ai free (every 15 min) 1,350 s, OpenRouter free (every 8 h)
+  43,200 s, Gemini free (daily) 129,600 s. Without the checker (the Worker, `HEALTH_PROBES=off`)
+  every route uses `HEALTH_STALE_SECONDS`. A family and `auto` take the horizon of the route whose
+  verdict they show.
+
+`/v1/models/status` also sends `stale_after_seconds` at the top level: `HEALTH_STALE_SECONDS`, the
+floor of every row's horizon (pages written before the per-row field read it). A page applies each
+row's own horizon between polls (`checked_at` + `stale_after_seconds` in the past, and no timed
+state running until a later `available_again_at`: show it as not checked), and shows every row as
+not checked once the gateway has not answered for two poll intervals. `checked_at`, `latency_ms`
+and `last_success_at` stay out of the ETag, so `If-None-Match` answers `304` while the verdicts
+are unchanged.
+
+### 15.3 The checker
+
+On the Node gateway every instance runs `src/health-probes.js`; only the holder of the
+`health_probes` lease in Postgres (`zerox_health_lease`, 90 s, renewed every 15 s) checks model
+lists every 10 minutes, one-at-a-time slots every tick (from Postgres, without a request) and sends
+test requests on a schedule sized to each pool's free quota (GATEWAY_SETUP.md, "Active model health
+checks"): 3 output tokens for a chat test, 160 for a tool-call test. `zerox_probe_take` counts each
+test request in the pool's shared budget (`zerox_pool_usage`), refuses it while users are busy on
+the pool, and reports users' outcomes of the last ten minutes, which count as observations (read
+for every pool once a minute; an upstream failure newer than any success brings the next test
+forward). On a one-at-a-time pool a test request holds the slot until it ends.
+
+- **Z.ai's free slot is one per account for the checker.** Users' reservations count the
+  one-request limit per model (section 8.6), but whether Z.ai's limit spans the account is not
+  established. A test request on a Z.ai free model is sent only while no request (a user's or a
+  test) runs on any Z.ai free model of the same key; while it runs it holds the slot of every one
+  of them (`zerox_probe_take` with `p_take` on each; each hold counts one request in that model's
+  buckets, which have no budget), and it ends within 15 s (`HEALTH_PROBE_TIMEOUT_SECONDS`, capped
+  at 15 s and at 5 s under `POOL_SLOT_WAIT_MS`), with a slot lease of that plus 5 s. A user
+  request that arrives meanwhile, on either model, waits for the slot as for another user's
+  (`POOL_SLOT_WAIT_MS`, 20 s) and never reaches Z.ai beside a test request.
+- **Claude.** Neither 5.5 model accepts `thinking: {type: 'disabled'}` or `budget_tokens`, and a
+  forced `tool_choice` is a 400. A test request uses the model's lowest setting: Sonnet 5.5
+  `{type: 'between_tools'}` at effort `low` (thinking off, 3 output tokens for the chat test, 160
+  for the tool call); Opus 5.5 adaptive thinking at effort `low` (thinking cannot be turned off and
+  counts toward `max_tokens`, so 64 tokens for the chat test and 512 for the tool call). Tool calls
+  use `tool_choice: 'auto'`.
+- **A plain 400 to a test request** (kind `invalid` or `context`, see below) says the request needs fixing, not that the model is down: it is
+  logged once per pool (until a test request passes again), recorded as `probe_misconfigured`, and
+  changes no verdict. Verdicts
+are stored in `zerox_pool_health` and read by every instance; the freshest of a verdict and this
+instance's own attempts wins, so a real failure flips a model at once. Routing on the Node gateway
+skips pools the verdicts mark busy or unavailable until their time ends, judging staleness per
+route as above. `HEALTH_PROBES=off` turns the checker off. The Worker keeps its HealthHub (section
+8.1) with the same statuses and the `HEALTH_STALE_SECONDS` horizon. One checker probes a pool in
+production: while the Worker forwards chat to the Node gateway (`EC2_PROXY_PREFIXES` covers
+`/v1/chat/completions`), the HealthHub sends no test requests or canaries and keeps its free list,
+key and status-page checks and the isolates' reports; when the forward is removed (the rollback),
+its test requests resume at the next alarm. `HEALTH_HUB_PROBES` (`on`, `off`, default `auto`)
+overrides that; `auto` cannot see whether the Node checker runs, so it must be set to `on` while
+that checker is off. The operator's `/health` adds `health_checker`: on Node
+`{ node_probes: "running" }`, or `node_probes` `off`, `no_database`, `migration_missing` or
+`not_started` with a `warning`; on the Worker `{ hub_test_requests, chat_routed_to_node }` (booleans).
+
+A probe's 400 is classified like a user's request (`classifyUpstreamFailure`): only a plain request rejection (`invalid`
+or `context`) is `probe_misconfigured`. A 400 the classifier names more precisely keeps its verdict:
+`model_decommissioned` or `model_not_found` is `model_unavailable`, Gemini `API_KEY_INVALID` or
+`FAILED_PRECONDITION` is `auth` (both unavailable at once), and Groq `tool_use_failed` is the
+model's own error (no verdict, not a misconfigured test).
+
+### 15.4 RPCs (migration 20261104000000_health_probes.sql, service_role only)
+
+| Function | Arguments → result |
+|---|---|
+| `zerox_health_lease` | `(p_holder text, p_ttl_seconds int)` → `{leader, holder, expires_at}`. Takes or renews the lease; `p_ttl_seconds = 0` releases it. |
+| `zerox_probe_take` | `(p_model, p_tier, p_pool_key, p_pool jsonb, p_tokens, p_cost_microusd, p_take boolean, p_lease_seconds int = 60)` → `{status: ok \| pool_full \| pool_exhausted \| pool_busy, retry_after_seconds, running, minute_requests, minute_tokens, day_requests, recent_ok, recent_failed, last_ok_at, last_failed_at, slot_id}`. `p_take` counts the request when `ok`; on a pool with a concurrency limit it also holds a slot for `p_lease_seconds` (5-300), `slot_id`. `recent_failed` counts users' attempts whose error code is `model_unavailable`, `upstream_error`, `upstream_timeout` or `upstream_auth`. |
+| `zerox_probe_release` | `(p_slot_id uuid)` → true when the test request's slot was still held and is now free. |
+| `zerox_pool_health_put` | `(p_rows jsonb)` → rows written (at most 500; rows not written for 7 days are deleted). A row carries `verdict_at` (the last request-level verdict), `checked_at` (when the state in `status` was observed) and `listed_at` (the last model list that showed it). |
+| `zerox_pool_health_get` | `(p_since_seconds int)` → the rows written within that time. |
+

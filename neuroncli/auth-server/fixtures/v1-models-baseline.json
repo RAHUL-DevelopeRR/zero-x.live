@@ -1,6 +1,6 @@
 {
  "description": "GET /v1/models (listModelsForCaller) of the code catalog before the data-driven catalog, for a fixed matrix of deployments, plans, countries and data policies. data[] indexes items[]. Captured by scripts/capture-models-baseline.mjs; check-catalog-db.mjs compares the seeded database rows against it.",
- "captured_from": "feat/claude-data-catalog at 304fad2 (src/catalog.js before src/catalog-db.js was wired in); auto re-captured on fix/gateway-alpha3 after 2c13626 (auto no longer tries Workers AI llama-3.3)",
+ "captured_from": "feat/claude-data-catalog at 304fad2 (src/catalog.js before src/catalog-db.js was wired in); auto re-captured on fix/gateway-alpha3 after 2c13626 (auto no longer tries Workers AI llama-3.3); re-captured on fix/catalog-availability (context_window is the caller's usable window: a free pool's per-minute token budget caps it, native_context_window keeps the model's own; auto ignores candidates below 64K); max_output_tokens of a tight window leaves 6000 tokens for the prompt (listedMaxOutput, Neuron alpha.4 preflight)",
  "models": [
   "auto",
   "gemini/gemini-2.5-flash",
@@ -27,6 +27,7 @@
    "display_name": "Auto (best available model)",
    "context_window": 131072,
    "context_length": 131072,
+   "native_context_window": 131072,
    "max_output_tokens": 40960,
    "capabilities": {
     "tools": true,
@@ -59,6 +60,7 @@
    "display_name": "Gemini 2.5 Flash",
    "context_window": 1048576,
    "context_length": 1048576,
+   "native_context_window": 1048576,
    "max_output_tokens": 65536,
    "capabilities": {
     "tools": true,
@@ -111,6 +113,7 @@
    "display_name": "Gemini 3.5 Flash",
    "context_window": 1048576,
    "context_length": 1048576,
+   "native_context_window": 1048576,
    "max_output_tokens": 65536,
    "capabilities": {
     "tools": true,
@@ -154,6 +157,7 @@
    "display_name": "Gemini 3.6 Flash",
    "context_window": 1048576,
    "context_length": 1048576,
+   "native_context_window": 1048576,
    "max_output_tokens": 65536,
    "capabilities": {
     "tools": true,
@@ -205,6 +209,7 @@
    "display_name": "Gemini 2.5 Pro",
    "context_window": 1048576,
    "context_length": 1048576,
+   "native_context_window": 1048576,
    "max_output_tokens": 65536,
    "capabilities": {
     "tools": true,
@@ -248,6 +253,7 @@
    "display_name": "GPT-OSS 120B (Groq)",
    "context_window": 131072,
    "context_length": 131072,
+   "native_context_window": 131072,
    "max_output_tokens": 65536,
    "capabilities": {
     "tools": true,
@@ -299,6 +305,7 @@
    "display_name": "Qwen 3.8 27B (Groq)",
    "context_window": 131072,
    "context_length": 131072,
+   "native_context_window": 131072,
    "max_output_tokens": 40960,
    "capabilities": {
     "tools": true,
@@ -341,6 +348,7 @@
    "display_name": "GPT-OSS 20B (Groq)",
    "context_window": 131072,
    "context_length": 131072,
+   "native_context_window": 131072,
    "max_output_tokens": 65536,
    "capabilities": {
     "tools": true,
@@ -384,6 +392,7 @@
    "display_name": "Llama 3.3 70B (Workers AI)",
    "context_window": 24000,
    "context_length": 24000,
+   "native_context_window": 24000,
    "max_output_tokens": 8192,
    "capabilities": {
     "tools": true,
@@ -429,8 +438,9 @@
    "created": 0,
    "owned_by": "zero-x",
    "display_name": "Auto (best available model)",
-   "context_window": 131072,
-   "context_length": 131072,
+   "context_window": 120000,
+   "context_length": 120000,
+   "native_context_window": 120000,
    "max_output_tokens": 32768,
    "capabilities": {
     "tools": true,
@@ -461,8 +471,9 @@
    "created": 0,
    "owned_by": "gemini",
    "display_name": "Gemini 2.5 Flash",
-   "context_window": 1048576,
-   "context_length": 1048576,
+   "context_window": 120000,
+   "context_length": 120000,
+   "native_context_window": 1048576,
    "max_output_tokens": 65536,
    "capabilities": {
     "tools": true,
@@ -516,8 +527,9 @@
    "created": 0,
    "owned_by": "gemini",
    "display_name": "Gemini 3.5 Flash",
-   "context_window": 1048576,
-   "context_length": 1048576,
+   "context_window": 120000,
+   "context_length": 120000,
+   "native_context_window": 1048576,
    "max_output_tokens": 65536,
    "capabilities": {
     "tools": true,
@@ -559,8 +571,9 @@
    "created": 0,
    "owned_by": "gemini",
    "display_name": "Gemini 3.6 Flash",
-   "context_window": 1048576,
-   "context_length": 1048576,
+   "context_window": 120000,
+   "context_length": 120000,
+   "native_context_window": 1048576,
    "max_output_tokens": 65536,
    "capabilities": {
     "tools": true,
@@ -615,6 +628,7 @@
    "display_name": "Gemini 2.5 Pro",
    "context_window": 1048576,
    "context_length": 1048576,
+   "native_context_window": 1048576,
    "max_output_tokens": 65536,
    "capabilities": {
     "tools": true,
@@ -659,9 +673,10 @@
    "created": 0,
    "owned_by": "groq",
    "display_name": "GPT-OSS 120B (Groq)",
-   "context_window": 131072,
-   "context_length": 131072,
-   "max_output_tokens": 65536,
+   "context_window": 8000,
+   "context_length": 8000,
+   "native_context_window": 131072,
+   "max_output_tokens": 2000,
    "capabilities": {
     "tools": true,
     "streaming": true,
@@ -713,9 +728,10 @@
    "created": 0,
    "owned_by": "groq",
    "display_name": "Qwen 3.8 27B (Groq)",
-   "context_window": 131072,
-   "context_length": 131072,
-   "max_output_tokens": 40960,
+   "context_window": 8000,
+   "context_length": 8000,
+   "native_context_window": 131072,
+   "max_output_tokens": 2000,
    "capabilities": {
     "tools": true,
     "streaming": true,
@@ -755,9 +771,10 @@
    "created": 0,
    "owned_by": "groq",
    "display_name": "GPT-OSS 20B (Groq)",
-   "context_window": 131072,
-   "context_length": 131072,
-   "max_output_tokens": 65536,
+   "context_window": 8000,
+   "context_length": 8000,
+   "native_context_window": 131072,
+   "max_output_tokens": 2000,
    "capabilities": {
     "tools": true,
     "streaming": true,
@@ -800,6 +817,7 @@
    "display_name": "Llama 3.3 70B (Workers AI)",
    "context_window": 24000,
    "context_length": 24000,
+   "native_context_window": 24000,
    "max_output_tokens": 8192,
    "capabilities": {
     "tools": true,
@@ -850,6 +868,7 @@
    "display_name": "GPT-OSS 20B (NVIDIA)",
    "context_window": 131072,
    "context_length": 131072,
+   "native_context_window": 131072,
    "max_output_tokens": 32768,
    "capabilities": {
     "tools": true,
@@ -889,6 +908,7 @@
    "display_name": "Nemotron 3 Ultra 550B (NVIDIA)",
    "context_window": 1048576,
    "context_length": 1048576,
+   "native_context_window": 1048576,
    "max_output_tokens": 32768,
    "capabilities": {
     "tools": true,
@@ -928,6 +948,7 @@
    "display_name": "Step 5 Preview (NVIDIA)",
    "context_window": 131072,
    "context_length": 131072,
+   "native_context_window": 131072,
    "max_output_tokens": 16384,
    "capabilities": {
     "tools": true,
@@ -967,6 +988,7 @@
    "display_name": "North Mini Code (OpenRouter, free)",
    "context_window": 256000,
    "context_length": 256000,
+   "native_context_window": 256000,
    "max_output_tokens": 64000,
    "capabilities": {
     "tools": true,
@@ -1006,6 +1028,7 @@
    "display_name": "MiniMax M3.1 Flash (OpenRouter, free)",
    "context_window": 1000000,
    "context_length": 1000000,
+   "native_context_window": 1000000,
    "max_output_tokens": 65536,
    "capabilities": {
     "tools": true,
@@ -1043,8 +1066,9 @@
    "created": 0,
    "owned_by": "zero-x",
    "display_name": "Auto (best available model)",
-   "context_window": 1048576,
-   "context_length": 1048576,
+   "context_window": 120000,
+   "context_length": 120000,
+   "native_context_window": 120000,
    "max_output_tokens": 65536,
    "capabilities": {
     "tools": true,
@@ -1077,6 +1101,7 @@
    "display_name": "GPT-OSS 120B (Groq)",
    "context_window": 131072,
    "context_length": 131072,
+   "native_context_window": 131072,
    "max_output_tokens": 65536,
    "capabilities": {
     "tools": true,
@@ -1128,6 +1153,7 @@
    "display_name": "Qwen 3.8 27B (Groq)",
    "context_window": 131072,
    "context_length": 131072,
+   "native_context_window": 131072,
    "max_output_tokens": 40960,
    "capabilities": {
     "tools": true,
@@ -1170,6 +1196,7 @@
    "display_name": "GPT-OSS 20B (Groq)",
    "context_window": 131072,
    "context_length": 131072,
+   "native_context_window": 131072,
    "max_output_tokens": 65536,
    "capabilities": {
     "tools": true,
@@ -1213,6 +1240,7 @@
    "display_name": "Llama 3.3 70B (Workers AI)",
    "context_window": 24000,
    "context_length": 24000,
+   "native_context_window": 24000,
    "max_output_tokens": 8192,
    "capabilities": {
     "tools": true,
@@ -1260,6 +1288,7 @@
    "display_name": "GPT-OSS 20B (NVIDIA)",
    "context_window": 131072,
    "context_length": 131072,
+   "native_context_window": 131072,
    "max_output_tokens": 32768,
    "capabilities": {
     "tools": true,
@@ -1299,6 +1328,7 @@
    "display_name": "Nemotron 3 Ultra 550B (NVIDIA)",
    "context_window": 1048576,
    "context_length": 1048576,
+   "native_context_window": 1048576,
    "max_output_tokens": 32768,
    "capabilities": {
     "tools": true,
@@ -1338,6 +1368,7 @@
    "display_name": "Step 5 Preview (NVIDIA)",
    "context_window": 131072,
    "context_length": 131072,
+   "native_context_window": 131072,
    "max_output_tokens": 16384,
    "capabilities": {
     "tools": true,
@@ -1377,6 +1408,7 @@
    "display_name": "North Mini Code (OpenRouter, free)",
    "context_window": 256000,
    "context_length": 256000,
+   "native_context_window": 256000,
    "max_output_tokens": 64000,
    "capabilities": {
     "tools": true,
@@ -1416,6 +1448,7 @@
    "display_name": "MiniMax M3.1 Flash (OpenRouter, free)",
    "context_window": 1000000,
    "context_length": 1000000,
+   "native_context_window": 1000000,
    "max_output_tokens": 65536,
    "capabilities": {
     "tools": true,
@@ -1455,6 +1488,7 @@
    "display_name": "Auto (best available model)",
    "context_window": 256000,
    "context_length": 256000,
+   "native_context_window": 256000,
    "max_output_tokens": 64000,
    "capabilities": {
     "tools": true,
@@ -1486,6 +1520,7 @@
    "display_name": "Gemini 2.5 Flash",
    "context_window": 1048576,
    "context_length": 1048576,
+   "native_context_window": 1048576,
    "max_output_tokens": 65536,
    "capabilities": {
     "tools": true,
@@ -1533,6 +1568,7 @@
    "display_name": "Gemini 3.5 Flash",
    "context_window": 1048576,
    "context_length": 1048576,
+   "native_context_window": 1048576,
    "max_output_tokens": 65536,
    "capabilities": {
     "tools": true,
@@ -1576,6 +1612,7 @@
    "display_name": "Gemini 3.6 Flash",
    "context_window": 1048576,
    "context_length": 1048576,
+   "native_context_window": 1048576,
    "max_output_tokens": 65536,
    "capabilities": {
     "tools": true,
@@ -1615,6 +1652,39 @@
    "models_dev_id": "google/gemini-3.6-flash"
   },
   {
+   "id": "auto",
+   "object": "model",
+   "created": 0,
+   "owned_by": "zero-x",
+   "display_name": "Auto (best available model)",
+   "context_window": 131072,
+   "context_length": 131072,
+   "native_context_window": 131072,
+   "max_output_tokens": 32768,
+   "capabilities": {
+    "tools": true,
+    "streaming": true,
+    "vision": false,
+    "reasoning": true
+   },
+   "reasoning_efforts": [],
+   "tiers": [
+    "free",
+    "paid"
+   ],
+   "available": true,
+   "unavailable_reason": null,
+   "pricing": null,
+   "provider": {
+    "id": "zero-x",
+    "name": "Zero-X",
+    "logo_url": null,
+    "logo_fallback_url": null
+   },
+   "offers": [],
+   "models_dev_id": null
+  },
+  {
    "id": "gemini/gemini-2.5-flash",
    "object": "model",
    "created": 0,
@@ -1622,6 +1692,7 @@
    "display_name": "Gemini 2.5 Flash",
    "context_window": 1048576,
    "context_length": 1048576,
+   "native_context_window": 1048576,
    "max_output_tokens": 65536,
    "capabilities": {
     "tools": true,
@@ -1677,6 +1748,7 @@
    "display_name": "Gemini 3.5 Flash",
    "context_window": 1048576,
    "context_length": 1048576,
+   "native_context_window": 1048576,
    "max_output_tokens": 65536,
    "capabilities": {
     "tools": true,
@@ -1720,6 +1792,7 @@
    "display_name": "Gemini 3.6 Flash",
    "context_window": 1048576,
    "context_length": 1048576,
+   "native_context_window": 1048576,
    "max_output_tokens": 65536,
    "capabilities": {
     "tools": true,
@@ -1774,6 +1847,7 @@
    "display_name": "Auto (best available model)",
    "context_window": 131072,
    "context_length": 131072,
+   "native_context_window": 131072,
    "max_output_tokens": 32768,
    "capabilities": {
     "tools": true,
@@ -1799,6 +1873,117 @@
    "models_dev_id": null
   },
   {
+   "id": "gemini/gemini-2.5-flash",
+   "object": "model",
+   "created": 0,
+   "owned_by": "gemini",
+   "display_name": "Gemini 2.5 Flash",
+   "context_window": 1048576,
+   "context_length": 1048576,
+   "native_context_window": 1048576,
+   "max_output_tokens": 65536,
+   "capabilities": {
+    "tools": true,
+    "streaming": true,
+    "vision": true,
+    "reasoning": true
+   },
+   "reasoning_efforts": [
+    "none",
+    "low",
+    "medium",
+    "high"
+   ],
+   "tiers": [
+    "free",
+    "paid"
+   ],
+   "available": true,
+   "unavailable_reason": null,
+   "pricing": {
+    "input_per_mtok_usd": 0.375,
+    "output_per_mtok_usd": 3.125
+   },
+   "provider": {
+    "id": "gemini",
+    "name": "Google",
+    "logo_url": "https://models.dev/logos/google.svg",
+    "logo_fallback_url": "https://ai.google.dev/favicon.ico"
+   },
+   "offers": [
+    {
+     "id": "gemini.free",
+     "tier": "free",
+     "owner": "operator",
+     "trust_tier": "T0",
+     "trains_on_inputs": "yes"
+    },
+    {
+     "id": "gemini.paid",
+     "tier": "paid",
+     "owner": "operator",
+     "trust_tier": "T0",
+     "trains_on_inputs": "no"
+    }
+   ],
+   "models_dev_id": "google/gemini-2.5-flash"
+  },
+  {
+   "id": "gemini/gemini-3.6-flash",
+   "object": "model",
+   "created": 0,
+   "owned_by": "gemini",
+   "display_name": "Gemini 3.6 Flash",
+   "context_window": 1048576,
+   "context_length": 1048576,
+   "native_context_window": 1048576,
+   "max_output_tokens": 65536,
+   "capabilities": {
+    "tools": true,
+    "streaming": true,
+    "vision": true,
+    "reasoning": true
+   },
+   "reasoning_efforts": [
+    "low",
+    "medium",
+    "high"
+   ],
+   "tiers": [
+    "free",
+    "paid"
+   ],
+   "available": true,
+   "unavailable_reason": null,
+   "pricing": {
+    "input_per_mtok_usd": 0.9375,
+    "output_per_mtok_usd": 4.6875
+   },
+   "provider": {
+    "id": "gemini",
+    "name": "Google",
+    "logo_url": "https://models.dev/logos/google.svg",
+    "logo_fallback_url": "https://ai.google.dev/favicon.ico"
+   },
+   "offers": [
+    {
+     "id": "gemini.free",
+     "tier": "free",
+     "owner": "operator",
+     "trust_tier": "T0",
+     "trains_on_inputs": "yes"
+    },
+    {
+     "id": "gemini.paid",
+     "tier": "paid",
+     "owner": "operator",
+     "trust_tier": "T0",
+     "trains_on_inputs": "no"
+    }
+   ],
+   "models_dev_id": "google/gemini-3.6-flash"
+  },
+  {
    "id": "gemini/gemini-2.5-pro",
    "object": "model",
    "created": 0,
@@ -1806,6 +1991,7 @@
    "display_name": "Gemini 2.5 Pro",
    "context_window": 1048576,
    "context_length": 1048576,
+   "native_context_window": 1048576,
    "max_output_tokens": 65536,
    "capabilities": {
     "tools": true,
@@ -1845,6 +2031,61 @@
    "models_dev_id": "google/gemini-2.5-pro"
   },
   {
+   "id": "groq/openai/gpt-oss-120b",
+   "object": "model",
+   "created": 0,
+   "owned_by": "groq",
+   "display_name": "GPT-OSS 120B (Groq)",
+   "context_window": 131072,
+   "context_length": 131072,
+   "native_context_window": 131072,
+   "max_output_tokens": 65536,
+   "capabilities": {
+    "tools": true,
+    "streaming": true,
+    "vision": false,
+    "reasoning": true
+   },
+   "reasoning_efforts": [
+    "low",
+    "medium",
+    "high"
+   ],
+   "tiers": [
+    "free",
+    "paid"
+   ],
+   "available": true,
+   "unavailable_reason": null,
+   "pricing": {
+    "input_per_mtok_usd": 0.1875,
+    "output_per_mtok_usd": 0.75
+   },
+   "provider": {
+    "id": "groq",
+    "name": "Groq",
+    "logo_url": "https://models.dev/logos/groq.svg",
+    "logo_fallback_url": "https://groq.com/favicon.ico"
+   },
+   "offers": [
+    {
+     "id": "groq.free",
+     "tier": "free",
+     "owner": "operator",
+     "trust_tier": "T1",
+     "trains_on_inputs": "unknown"
+    },
+    {
+     "id": "groq.paid",
+     "tier": "paid",
+     "owner": "operator",
+     "trust_tier": "T1",
+     "trains_on_inputs": "unknown"
+    }
+   ],
+   "models_dev_id": "groq/openai/gpt-oss-120b"
+  },
+  {
    "id": "auto",
    "object": "model",
    "created": 0,
@@ -1852,6 +2093,7 @@
    "display_name": "Auto (best available model)",
    "context_window": 256000,
    "context_length": 256000,
+   "native_context_window": 256000,
    "max_output_tokens": 64000,
    "capabilities": {
     "tools": true,
@@ -1884,6 +2126,7 @@
    "display_name": "Gemini 2.5 Flash",
    "context_window": 1048576,
    "context_length": 1048576,
+   "native_context_window": 1048576,
    "max_output_tokens": 65536,
    "capabilities": {
     "tools": true,
@@ -1931,6 +2174,7 @@
    "display_name": "Gemini 3.6 Flash",
    "context_window": 1048576,
    "context_length": 1048576,
+   "native_context_window": 1048576,
    "max_output_tokens": 65536,
    "capabilities": {
     "tools": true,
@@ -1975,9 +2219,10 @@
    "created": 0,
    "owned_by": "zero-x",
    "display_name": "Auto (best available model)",
-   "context_window": 131072,
-   "context_length": 131072,
-   "max_output_tokens": 40960,
+   "context_window": 1048576,
+   "context_length": 1048576,
+   "native_context_window": 1048576,
+   "max_output_tokens": 65536,
    "capabilities": {
     "tools": true,
     "streaming": true,
@@ -2009,6 +2254,7 @@
    "display_name": "Llama 3.3 70B (Workers AI)",
    "context_window": 24000,
    "context_length": 24000,
+   "native_context_window": 24000,
    "max_output_tokens": 8192,
    "capabilities": {
     "tools": true,
@@ -2048,6 +2294,7 @@
    "display_name": "Auto (best available model)",
    "context_window": 131072,
    "context_length": 131072,
+   "native_context_window": 131072,
    "max_output_tokens": 40960,
    "capabilities": {
     "tools": true,
@@ -2078,8 +2325,42 @@
    "created": 0,
    "owned_by": "zero-x",
    "display_name": "Auto (best available model)",
+   "context_window": 8000,
+   "context_length": 8000,
+   "native_context_window": 8000,
+   "max_output_tokens": 2000,
+   "capabilities": {
+    "tools": true,
+    "streaming": true,
+    "vision": false,
+    "reasoning": true
+   },
+   "reasoning_efforts": [],
+   "tiers": [
+    "free",
+    "paid"
+   ],
+   "available": true,
+   "unavailable_reason": null,
+   "pricing": null,
+   "provider": {
+    "id": "zero-x",
+    "name": "Zero-X",
+    "logo_url": null,
+    "logo_fallback_url": null
+   },
+   "offers": [],
+   "models_dev_id": null
+  },
+  {
+   "id": "auto",
+   "object": "model",
+   "created": 0,
+   "owned_by": "zero-x",
+   "display_name": "Auto (best available model)",
    "context_window": 131072,
    "context_length": 131072,
+   "native_context_window": 131072,
    "max_output_tokens": 40960,
    "capabilities": {
     "tools": true,
@@ -2112,6 +2393,7 @@
    "display_name": "Auto (best available model)",
    "context_window": 1048576,
    "context_length": 1048576,
+   "native_context_window": 1048576,
    "max_output_tokens": 65536,
    "capabilities": {
     "tools": true,
@@ -2136,13 +2418,47 @@
    "models_dev_id": null
   },
   {
+   "id": "auto",
+   "object": "model",
+   "created": 0,
+   "owned_by": "zero-x",
+   "display_name": "Auto (best available model)",
+   "context_window": 131072,
+   "context_length": 131072,
+   "native_context_window": 131072,
+   "max_output_tokens": 65536,
+   "capabilities": {
+    "tools": true,
+    "streaming": true,
+    "vision": false,
+    "reasoning": true
+   },
+   "reasoning_efforts": [],
+   "tiers": [
+    "free",
+    "paid"
+   ],
+   "available": true,
+   "unavailable_reason": null,
+   "pricing": null,
+   "provider": {
+    "id": "zero-x",
+    "name": "Zero-X",
+    "logo_url": null,
+    "logo_fallback_url": null
+   },
+   "offers": [],
+   "models_dev_id": null
+  },
+  {
    "id": "@cf/openai/gpt-oss-120b",
    "object": "model",
    "created": 0,
    "owned_by": "cloudflare",
    "display_name": "GPT-OSS 120B (Workers AI)",
-   "context_window": 131072,
-   "context_length": 131072,
+   "context_window": 60000,
+   "context_length": 60000,
+   "native_context_window": 131072,
    "max_output_tokens": 32768,
    "capabilities": {
     "tools": true,
@@ -2193,6 +2509,7 @@
    "display_name": "GPT-OSS 120B (Workers AI)",
    "context_window": 131072,
    "context_length": 131072,
+   "native_context_window": 131072,
    "max_output_tokens": 32768,
    "capabilities": {
     "tools": true,
@@ -2238,9 +2555,10 @@
    "created": 0,
    "owned_by": "zero-x",
    "display_name": "Auto (best available model)",
-   "context_window": 131072,
-   "context_length": 131072,
-   "max_output_tokens": 32768,
+   "context_window": 256000,
+   "context_length": 256000,
+   "native_context_window": 256000,
+   "max_output_tokens": 64000,
    "capabilities": {
     "tools": true,
     "streaming": true,
@@ -2265,6 +2583,57 @@
    "models_dev_id": null
   },
   {
+   "id": "@cf/openai/gpt-oss-120b",
+   "object": "model",
+   "created": 0,
+   "owned_by": "cloudflare",
+   "display_name": "GPT-OSS 120B (Workers AI)",
+   "context_window": 131072,
+   "context_length": 131072,
+   "native_context_window": 131072,
+   "max_output_tokens": 32768,
+   "capabilities": {
+    "tools": true,
+    "streaming": true,
+    "vision": false,
+    "reasoning": false
+   },
+   "reasoning_efforts": [],
+   "tiers": [
+    "free",
+    "paid"
+   ],
+   "available": true,
+   "unavailable_reason": null,
+   "pricing": {
+    "input_per_mtok_usd": 0.4375,
+    "output_per_mtok_usd": 0.9375
+   },
+   "provider": {
+    "id": "cloudflare",
+    "name": "Cloudflare Workers AI",
+    "logo_url": "https://models.dev/logos/cloudflare-workers-ai.svg",
+    "logo_fallback_url": "https://developers.cloudflare.com/favicon.ico"
+   },
+   "offers": [
+    {
+     "id": "cloudflare.free",
+     "tier": "free",
+     "owner": "operator",
+     "trust_tier": "T1",
+     "trains_on_inputs": "no"
+    },
+    {
+     "id": "cloudflare.paid",
+     "tier": "paid",
+     "owner": "operator",
+     "trust_tier": "T1",
+     "trains_on_inputs": "no"
+    }
+   ],
+   "models_dev_id": "cloudflare-workers-ai/@cf/openai/gpt-oss-120b"
+  },
+  {
    "id": "auto",
    "object": "model",
    "created": 0,
@@ -2272,6 +2641,7 @@
    "display_name": "Auto (best available model)",
    "context_window": 131072,
    "context_length": 131072,
+   "native_context_window": 131072,
    "max_output_tokens": 32768,
    "capabilities": {
     "tools": true,
@@ -2302,9 +2672,10 @@
    "created": 0,
    "owned_by": "zero-x",
    "display_name": "Auto (best available model)",
-   "context_window": 131072,
-   "context_length": 131072,
-   "max_output_tokens": 40960,
+   "context_window": 120000,
+   "context_length": 120000,
+   "native_context_window": 120000,
+   "max_output_tokens": 65536,
    "capabilities": {
     "tools": true,
     "streaming": true,
@@ -2333,8 +2704,9 @@
    "created": 0,
    "owned_by": "gemini",
    "display_name": "Gemini 2.5 Flash",
-   "context_window": 1048576,
-   "context_length": 1048576,
+   "context_window": 120000,
+   "context_length": 120000,
+   "native_context_window": 1048576,
    "max_output_tokens": 65536,
    "capabilities": {
     "tools": true,
@@ -2377,8 +2749,9 @@
    "created": 0,
    "owned_by": "gemini",
    "display_name": "Gemini 3.6 Flash",
-   "context_window": 1048576,
-   "context_length": 1048576,
+   "context_window": 120000,
+   "context_length": 120000,
+   "native_context_window": 1048576,
    "max_output_tokens": 65536,
    "capabilities": {
     "tools": true,
@@ -2420,9 +2793,10 @@
    "created": 0,
    "owned_by": "groq",
    "display_name": "GPT-OSS 120B (Groq)",
-   "context_window": 131072,
-   "context_length": 131072,
-   "max_output_tokens": 65536,
+   "context_window": 8000,
+   "context_length": 8000,
+   "native_context_window": 131072,
+   "max_output_tokens": 2000,
    "capabilities": {
     "tools": true,
     "streaming": true,
@@ -2463,39 +2837,9 @@
    "created": 0,
    "owned_by": "zero-x",
    "display_name": "Auto (best available model)",
-   "context_window": 1048576,
-   "context_length": 1048576,
-   "max_output_tokens": 65536,
-   "capabilities": {
-    "tools": true,
-    "streaming": true,
-    "vision": false,
-    "reasoning": true
-   },
-   "reasoning_efforts": [],
-   "tiers": [
-    "free"
-   ],
-   "available": true,
-   "unavailable_reason": null,
-   "pricing": null,
-   "provider": {
-    "id": "zero-x",
-    "name": "Zero-X",
-    "logo_url": null,
-    "logo_fallback_url": null
-   },
-   "offers": [],
-   "models_dev_id": null
-  },
-  {
-   "id": "auto",
-   "object": "model",
-   "created": 0,
-   "owned_by": "zero-x",
-   "display_name": "Auto (best available model)",
    "context_window": 131072,
    "context_length": 131072,
+   "native_context_window": 131072,
    "max_output_tokens": 40960,
    "capabilities": {
     "tools": true,
@@ -2528,6 +2872,7 @@
    "display_name": "Gemini 2.5 Flash",
    "context_window": 1048576,
    "context_length": 1048576,
+   "native_context_window": 1048576,
    "max_output_tokens": 65536,
    "capabilities": {
     "tools": true,
@@ -2580,6 +2925,7 @@
    "display_name": "Gemini 3.6 Flash",
    "context_window": 1048576,
    "context_length": 1048576,
+   "native_context_window": 1048576,
    "max_output_tokens": 65536,
    "capabilities": {
     "tools": true,
@@ -2624,6 +2970,38 @@
    "models_dev_id": "google/gemini-3.6-flash"
   },
   {
+   "id": "auto",
+   "object": "model",
+   "created": 0,
+   "owned_by": "zero-x",
+   "display_name": "Auto (best available model)",
+   "context_window": 8000,
+   "context_length": 8000,
+   "native_context_window": 8000,
+   "max_output_tokens": 2000,
+   "capabilities": {
+    "tools": true,
+    "streaming": true,
+    "vision": false,
+    "reasoning": true
+   },
+   "reasoning_efforts": [],
+   "tiers": [
+    "free"
+   ],
+   "available": true,
+   "unavailable_reason": null,
+   "pricing": null,
+   "provider": {
+    "id": "zero-x",
+    "name": "Zero-X",
+    "logo_url": null,
+    "logo_fallback_url": null
+   },
+   "offers": [],
+   "models_dev_id": null
+  },
+  {
    "id": "gemini/gemini-2.5-flash",
    "object": "model",
    "created": 0,
@@ -2631,6 +3009,7 @@
    "display_name": "Gemini 2.5 Flash",
    "context_window": 1048576,
    "context_length": 1048576,
+   "native_context_window": 1048576,
    "max_output_tokens": 65536,
    "capabilities": {
     "tools": true,
@@ -2675,6 +3054,7 @@
    "display_name": "Gemini 3.6 Flash",
    "context_window": 1048576,
    "context_length": 1048576,
+   "native_context_window": 1048576,
    "max_output_tokens": 65536,
    "capabilities": {
     "tools": true,
@@ -2718,6 +3098,7 @@
    "display_name": "Auto (best available model)",
    "context_window": 131072,
    "context_length": 131072,
+   "native_context_window": 131072,
    "max_output_tokens": 40960,
    "capabilities": {
     "tools": true,
@@ -4587,10 +4968,10 @@
     }
    },
    "data": [
-    9,
     37,
     38,
     39,
+    40,
     13,
     14,
     15,
@@ -4629,10 +5010,10 @@
     }
    },
    "data": [
-    40,
-    37,
+    41,
     38,
     39,
+    40,
     13,
     24,
     25,
@@ -4847,10 +5228,10 @@
     }
    },
    "data": [
-    9,
     37,
     38,
     39,
+    40,
     13,
     14,
     15,
@@ -4889,10 +5270,10 @@
     }
    },
    "data": [
-    40,
-    37,
+    41,
     38,
     39,
+    40,
     13,
     24,
     25,
@@ -4977,10 +5358,10 @@
     }
    },
    "data": [
-    9,
     37,
     38,
     39,
+    40,
     13,
     14,
     15,
@@ -5019,10 +5400,10 @@
     }
    },
    "data": [
-    40,
-    37,
+    41,
     38,
     39,
+    40,
     13,
     24,
     25,
@@ -5249,10 +5630,10 @@
     }
    },
    "data": [
-    9,
     37,
     38,
     39,
+    40,
     13,
     14,
     15,
@@ -5294,10 +5675,10 @@
     }
    },
    "data": [
-    40,
-    37,
+    41,
     38,
     39,
+    40,
     13,
     24,
     25,
@@ -5527,10 +5908,10 @@
     }
    },
    "data": [
-    9,
     37,
     38,
     39,
+    40,
     13,
     14,
     15,
@@ -5572,10 +5953,10 @@
     }
    },
    "data": [
-    40,
-    37,
+    41,
     38,
     39,
+    40,
     13,
     24,
     25,
@@ -5666,10 +6047,10 @@
     }
    },
    "data": [
-    9,
     37,
     38,
     39,
+    40,
     13,
     14,
     15,
@@ -5711,10 +6092,10 @@
     }
    },
    "data": [
-    40,
-    37,
+    41,
     38,
     39,
+    40,
     13,
     24,
     25,
@@ -5807,11 +6188,11 @@
    },
    "data": [
     9,
-    10,
+    42,
     11,
-    12,
-    41,
-    14,
+    43,
+    44,
+    45,
     15,
     16,
     17,
@@ -5853,10 +6234,10 @@
    },
    "data": [
     23,
-    10,
+    42,
     11,
-    12,
-    41,
+    43,
+    44,
     24,
     25,
     26,
@@ -5900,11 +6281,11 @@
     }
    },
    "data": [
-    42,
-    43,
+    46,
+    47,
     35,
+    48,
     44,
-    41,
     24,
     25,
     26,
@@ -5948,12 +6329,12 @@
     }
    },
    "data": [
-    9,
-    10,
-    38,
-    12,
-    41,
-    14,
+    37,
+    42,
+    39,
+    43,
+    44,
+    45,
     15,
     16,
     17,
@@ -5994,11 +6375,11 @@
     }
    },
    "data": [
-    23,
-    10,
-    38,
-    12,
-    41,
+    49,
+    42,
+    39,
+    43,
+    44,
     24,
     25,
     26,
@@ -6042,11 +6423,11 @@
     }
    },
    "data": [
-    42,
-    43,
+    46,
+    47,
     35,
+    48,
     44,
-    41,
     24,
     25,
     26,
@@ -6091,11 +6472,11 @@
    },
    "data": [
     9,
-    10,
+    42,
     11,
-    12,
-    41,
-    14,
+    43,
+    44,
+    45,
     15,
     16,
     17,
@@ -6137,10 +6518,10 @@
    },
    "data": [
     23,
-    10,
+    42,
     11,
-    12,
-    41,
+    43,
+    44,
     24,
     25,
     26,
@@ -6184,11 +6565,11 @@
     }
    },
    "data": [
-    42,
-    43,
+    46,
+    47,
     35,
+    48,
     44,
-    41,
     24,
     25,
     26,
@@ -6232,12 +6613,12 @@
     }
    },
    "data": [
-    9,
-    10,
-    38,
-    12,
-    41,
-    14,
+    37,
+    42,
+    39,
+    43,
+    44,
+    45,
     15,
     16,
     17,
@@ -6278,11 +6659,11 @@
     }
    },
    "data": [
-    23,
-    10,
-    38,
-    12,
-    41,
+    49,
+    42,
+    39,
+    43,
+    44,
     24,
     25,
     26,
@@ -6326,11 +6707,11 @@
     }
    },
    "data": [
-    42,
-    43,
+    46,
+    47,
     35,
+    48,
     44,
-    41,
     24,
     25,
     26,
@@ -6374,12 +6755,12 @@
     }
    },
    "data": [
-    9,
-    10,
-    38,
-    12,
-    41,
-    14,
+    37,
+    42,
+    39,
+    43,
+    44,
+    45,
     15,
     16,
     17,
@@ -6420,11 +6801,11 @@
     }
    },
    "data": [
-    23,
-    10,
-    38,
-    12,
-    41,
+    49,
+    42,
+    39,
+    43,
+    44,
     24,
     25,
     26,
@@ -6468,11 +6849,11 @@
     }
    },
    "data": [
-    42,
-    43,
+    46,
+    47,
     35,
+    48,
     44,
-    41,
     24,
     25,
     26,
@@ -6513,11 +6894,11 @@
    },
    "data": [
     9,
-    10,
+    42,
     11,
-    12,
-    41,
-    14,
+    43,
+    44,
+    45,
     15,
     16,
     17,
@@ -6555,10 +6936,10 @@
    },
    "data": [
     23,
-    10,
+    42,
     11,
-    12,
-    41,
+    43,
+    44,
     24,
     25,
     26,
@@ -6598,11 +6979,11 @@
     }
    },
    "data": [
-    42,
-    43,
+    46,
+    47,
     35,
+    48,
     44,
-    41,
     24,
     25,
     26,
@@ -6642,12 +7023,12 @@
     }
    },
    "data": [
-    9,
-    10,
-    38,
-    12,
-    41,
-    14,
+    37,
+    42,
+    39,
+    43,
+    44,
+    45,
     15,
     16,
     17,
@@ -6684,11 +7065,11 @@
     }
    },
    "data": [
-    23,
-    10,
-    38,
-    12,
-    41,
+    49,
+    42,
+    39,
+    43,
+    44,
     24,
     25,
     26,
@@ -6728,11 +7109,11 @@
     }
    },
    "data": [
-    42,
-    43,
+    46,
+    47,
     35,
+    48,
     44,
-    41,
     24,
     25,
     26,
@@ -6773,11 +7154,11 @@
    },
    "data": [
     9,
-    10,
+    42,
     11,
-    12,
-    41,
-    14,
+    43,
+    44,
+    45,
     15,
     16,
     17,
@@ -6815,10 +7196,10 @@
    },
    "data": [
     23,
-    10,
+    42,
     11,
-    12,
-    41,
+    43,
+    44,
     24,
     25,
     26,
@@ -6858,11 +7239,11 @@
     }
    },
    "data": [
-    42,
-    43,
+    46,
+    47,
     35,
+    48,
     44,
-    41,
     24,
     25,
     26,
@@ -6902,12 +7283,12 @@
     }
    },
    "data": [
-    9,
-    10,
-    38,
-    12,
-    41,
-    14,
+    37,
+    42,
+    39,
+    43,
+    44,
+    45,
     15,
     16,
     17,
@@ -6944,11 +7325,11 @@
     }
    },
    "data": [
-    23,
-    10,
-    38,
-    12,
-    41,
+    49,
+    42,
+    39,
+    43,
+    44,
     24,
     25,
     26,
@@ -6988,11 +7369,11 @@
     }
    },
    "data": [
-    42,
-    43,
+    46,
+    47,
     35,
+    48,
     44,
-    41,
     24,
     25,
     26,
@@ -7032,12 +7413,12 @@
     }
    },
    "data": [
-    9,
-    10,
-    38,
-    12,
-    41,
-    14,
+    37,
+    42,
+    39,
+    43,
+    44,
+    45,
     15,
     16,
     17,
@@ -7074,11 +7455,11 @@
     }
    },
    "data": [
-    23,
-    10,
-    38,
-    12,
-    41,
+    49,
+    42,
+    39,
+    43,
+    44,
     24,
     25,
     26,
@@ -7118,11 +7499,11 @@
     }
    },
    "data": [
-    42,
-    43,
+    46,
+    47,
     35,
+    48,
     44,
-    41,
     24,
     25,
     26,
@@ -7159,7 +7540,7 @@
     }
    },
    "data": [
-    45,
+    23,
     10,
     11,
     12,
@@ -7167,7 +7548,7 @@
     14,
     15,
     16,
-    46
+    50
    ]
   },
   {
@@ -7229,7 +7610,7 @@
     }
    },
    "data": [
-    47,
+    51,
     34,
     35,
     36,
@@ -7237,7 +7618,7 @@
     24,
     25,
     26,
-    46
+    50
    ]
   },
   {
@@ -7265,15 +7646,15 @@
     }
    },
    "data": [
-    45,
-    37,
+    52,
     38,
     39,
+    40,
     13,
     14,
     15,
     16,
-    46
+    50
    ]
   },
   {
@@ -7299,10 +7680,10 @@
     }
    },
    "data": [
-    48,
-    37,
+    53,
     38,
     39,
+    40,
     13,
     24,
     25,
@@ -7335,7 +7716,7 @@
     }
    },
    "data": [
-    47,
+    51,
     34,
     35,
     36,
@@ -7343,7 +7724,7 @@
     24,
     25,
     26,
-    46
+    50
    ]
   },
   {
@@ -7371,7 +7752,7 @@
     }
    },
    "data": [
-    45,
+    23,
     10,
     11,
     12,
@@ -7379,7 +7760,7 @@
     14,
     15,
     16,
-    46
+    50
    ]
   },
   {
@@ -7441,7 +7822,7 @@
     }
    },
    "data": [
-    47,
+    51,
     34,
     35,
     36,
@@ -7449,7 +7830,7 @@
     24,
     25,
     26,
-    46
+    50
    ]
   },
   {
@@ -7477,15 +7858,15 @@
     }
    },
    "data": [
-    45,
-    37,
+    52,
     38,
     39,
+    40,
     13,
     14,
     15,
     16,
-    46
+    50
    ]
   },
   {
@@ -7511,10 +7892,10 @@
     }
    },
    "data": [
-    48,
-    37,
+    53,
     38,
     39,
+    40,
     13,
     24,
     25,
@@ -7547,7 +7928,7 @@
     }
    },
    "data": [
-    47,
+    51,
     34,
     35,
     36,
@@ -7555,7 +7936,7 @@
     24,
     25,
     26,
-    46
+    50
    ]
   },
   {
@@ -7583,15 +7964,15 @@
     }
    },
    "data": [
-    45,
-    37,
+    52,
     38,
     39,
+    40,
     13,
     14,
     15,
     16,
-    46
+    50
    ]
   },
   {
@@ -7617,10 +7998,10 @@
     }
    },
    "data": [
-    48,
-    37,
+    53,
     38,
     39,
+    40,
     13,
     24,
     25,
@@ -7653,7 +8034,7 @@
     }
    },
    "data": [
-    47,
+    51,
     34,
     35,
     36,
@@ -7661,7 +8042,7 @@
     24,
     25,
     26,
-    46
+    50
    ]
   },
   {
@@ -7692,7 +8073,7 @@
     }
    },
    "data": [
-    45,
+    23,
     10,
     11,
     12,
@@ -7700,7 +8081,7 @@
     14,
     15,
     16,
-    46
+    50
    ]
   },
   {
@@ -7768,7 +8149,7 @@
     }
    },
    "data": [
-    47,
+    51,
     34,
     35,
     36,
@@ -7776,7 +8157,7 @@
     24,
     25,
     26,
-    46
+    50
    ]
   },
   {
@@ -7807,15 +8188,15 @@
     }
    },
    "data": [
-    45,
-    37,
+    52,
     38,
     39,
+    40,
     13,
     14,
     15,
     16,
-    46
+    50
    ]
   },
   {
@@ -7844,10 +8225,10 @@
     }
    },
    "data": [
-    48,
-    37,
+    53,
     38,
     39,
+    40,
     13,
     24,
     25,
@@ -7883,7 +8264,7 @@
     }
    },
    "data": [
-    47,
+    51,
     34,
     35,
     36,
@@ -7891,7 +8272,7 @@
     24,
     25,
     26,
-    46
+    50
    ]
   },
   {
@@ -7922,7 +8303,7 @@
     }
    },
    "data": [
-    45,
+    23,
     10,
     11,
     12,
@@ -7930,7 +8311,7 @@
     14,
     15,
     16,
-    46
+    50
    ]
   },
   {
@@ -7998,7 +8379,7 @@
     }
    },
    "data": [
-    47,
+    51,
     34,
     35,
     36,
@@ -8006,7 +8387,7 @@
     24,
     25,
     26,
-    46
+    50
    ]
   },
   {
@@ -8037,15 +8418,15 @@
     }
    },
    "data": [
-    45,
-    37,
+    52,
     38,
     39,
+    40,
     13,
     14,
     15,
     16,
-    46
+    50
    ]
   },
   {
@@ -8074,10 +8455,10 @@
     }
    },
    "data": [
-    48,
-    37,
+    53,
     38,
     39,
+    40,
     13,
     24,
     25,
@@ -8113,7 +8494,7 @@
     }
    },
    "data": [
-    47,
+    51,
     34,
     35,
     36,
@@ -8121,7 +8502,7 @@
     24,
     25,
     26,
-    46
+    50
    ]
   },
   {
@@ -8152,15 +8533,15 @@
     }
    },
    "data": [
-    45,
-    37,
+    52,
     38,
     39,
+    40,
     13,
     14,
     15,
     16,
-    46
+    50
    ]
   },
   {
@@ -8189,10 +8570,10 @@
     }
    },
    "data": [
-    48,
-    37,
+    53,
     38,
     39,
+    40,
     13,
     24,
     25,
@@ -8228,7 +8609,7 @@
     }
    },
    "data": [
-    47,
+    51,
     34,
     35,
     36,
@@ -8236,7 +8617,7 @@
     24,
     25,
     26,
-    46
+    50
    ]
   },
   {
@@ -8268,15 +8649,15 @@
     }
    },
    "data": [
-    45,
-    10,
+    23,
+    42,
     11,
-    12,
-    41,
-    14,
+    43,
+    44,
+    45,
     15,
     16,
-    46
+    50
    ]
   },
   {
@@ -8307,10 +8688,10 @@
    },
    "data": [
     23,
-    10,
+    42,
     11,
-    12,
-    41,
+    43,
+    44,
     24,
     25,
     26,
@@ -8346,15 +8727,15 @@
     }
    },
    "data": [
-    49,
-    43,
+    54,
+    47,
     35,
+    48,
     44,
-    41,
     24,
     25,
     26,
-    46
+    50
    ]
   },
   {
@@ -8386,15 +8767,15 @@
     }
    },
    "data": [
+    55,
+    42,
+    39,
+    43,
+    44,
     45,
-    10,
-    38,
-    12,
-    41,
-    14,
     15,
     16,
-    46
+    50
    ]
   },
   {
@@ -8424,11 +8805,11 @@
     }
    },
    "data": [
-    23,
-    10,
-    38,
-    12,
-    41,
+    49,
+    42,
+    39,
+    43,
+    44,
     24,
     25,
     26,
@@ -8464,15 +8845,15 @@
     }
    },
    "data": [
-    49,
-    43,
+    54,
+    47,
     35,
+    48,
     44,
-    41,
     24,
     25,
     26,
-    46
+    50
    ]
   },
   {
@@ -8504,15 +8885,15 @@
     }
    },
    "data": [
-    45,
-    10,
+    23,
+    42,
     11,
-    12,
-    41,
-    14,
+    43,
+    44,
+    45,
     15,
     16,
-    46
+    50
    ]
   },
   {
@@ -8543,10 +8924,10 @@
    },
    "data": [
     23,
-    10,
+    42,
     11,
-    12,
-    41,
+    43,
+    44,
     24,
     25,
     26,
@@ -8582,15 +8963,15 @@
     }
    },
    "data": [
-    49,
-    43,
+    54,
+    47,
     35,
+    48,
     44,
-    41,
     24,
     25,
     26,
-    46
+    50
    ]
   },
   {
@@ -8622,15 +9003,15 @@
     }
    },
    "data": [
+    55,
+    42,
+    39,
+    43,
+    44,
     45,
-    10,
-    38,
-    12,
-    41,
-    14,
     15,
     16,
-    46
+    50
    ]
   },
   {
@@ -8660,11 +9041,11 @@
     }
    },
    "data": [
-    23,
-    10,
-    38,
-    12,
-    41,
+    49,
+    42,
+    39,
+    43,
+    44,
     24,
     25,
     26,
@@ -8700,15 +9081,15 @@
     }
    },
    "data": [
-    49,
-    43,
+    54,
+    47,
     35,
+    48,
     44,
-    41,
     24,
     25,
     26,
-    46
+    50
    ]
   },
   {
@@ -8740,15 +9121,15 @@
     }
    },
    "data": [
+    55,
+    42,
+    39,
+    43,
+    44,
     45,
-    10,
-    38,
-    12,
-    41,
-    14,
     15,
     16,
-    46
+    50
    ]
   },
   {
@@ -8778,11 +9159,11 @@
     }
    },
    "data": [
-    23,
-    10,
-    38,
-    12,
-    41,
+    49,
+    42,
+    39,
+    43,
+    44,
     24,
     25,
     26,
@@ -8818,15 +9199,15 @@
     }
    },
    "data": [
-    49,
-    43,
+    54,
+    47,
     35,
+    48,
     44,
-    41,
     24,
     25,
     26,
-    46
+    50
    ]
   },
   {
@@ -8854,15 +9235,15 @@
     }
    },
    "data": [
-    45,
-    10,
+    23,
+    42,
     11,
-    12,
-    41,
-    14,
+    43,
+    44,
+    45,
     15,
     16,
-    46
+    50
    ]
   },
   {
@@ -8889,10 +9270,10 @@
    },
    "data": [
     23,
-    10,
+    42,
     11,
-    12,
-    41,
+    43,
+    44,
     24,
     25,
     26,
@@ -8924,15 +9305,15 @@
     }
    },
    "data": [
-    49,
-    43,
+    54,
+    47,
     35,
+    48,
     44,
-    41,
     24,
     25,
     26,
-    46
+    50
    ]
   },
   {
@@ -8960,15 +9341,15 @@
     }
    },
    "data": [
+    55,
+    42,
+    39,
+    43,
+    44,
     45,
-    10,
-    38,
-    12,
-    41,
-    14,
     15,
     16,
-    46
+    50
    ]
   },
   {
@@ -8994,11 +9375,11 @@
     }
    },
    "data": [
-    23,
-    10,
-    38,
-    12,
-    41,
+    49,
+    42,
+    39,
+    43,
+    44,
     24,
     25,
     26,
@@ -9030,15 +9411,15 @@
     }
    },
    "data": [
-    49,
-    43,
+    54,
+    47,
     35,
+    48,
     44,
-    41,
     24,
     25,
     26,
-    46
+    50
    ]
   },
   {
@@ -9066,15 +9447,15 @@
     }
    },
    "data": [
-    45,
-    10,
+    23,
+    42,
     11,
-    12,
-    41,
-    14,
+    43,
+    44,
+    45,
     15,
     16,
-    46
+    50
    ]
   },
   {
@@ -9101,10 +9482,10 @@
    },
    "data": [
     23,
-    10,
+    42,
     11,
-    12,
-    41,
+    43,
+    44,
     24,
     25,
     26,
@@ -9136,15 +9517,15 @@
     }
    },
    "data": [
-    49,
-    43,
+    54,
+    47,
     35,
+    48,
     44,
-    41,
     24,
     25,
     26,
-    46
+    50
    ]
   },
   {
@@ -9172,15 +9553,15 @@
     }
    },
    "data": [
+    55,
+    42,
+    39,
+    43,
+    44,
     45,
-    10,
-    38,
-    12,
-    41,
-    14,
     15,
     16,
-    46
+    50
    ]
   },
   {
@@ -9206,11 +9587,11 @@
     }
    },
    "data": [
-    23,
-    10,
-    38,
-    12,
-    41,
+    49,
+    42,
+    39,
+    43,
+    44,
     24,
     25,
     26,
@@ -9242,15 +9623,15 @@
     }
    },
    "data": [
-    49,
-    43,
+    54,
+    47,
     35,
+    48,
     44,
-    41,
     24,
     25,
     26,
-    46
+    50
    ]
   },
   {
@@ -9278,15 +9659,15 @@
     }
    },
    "data": [
+    55,
+    42,
+    39,
+    43,
+    44,
     45,
-    10,
-    38,
-    12,
-    41,
-    14,
     15,
     16,
-    46
+    50
    ]
   },
   {
@@ -9312,11 +9693,11 @@
     }
    },
    "data": [
-    23,
-    10,
-    38,
-    12,
-    41,
+    49,
+    42,
+    39,
+    43,
+    44,
     24,
     25,
     26,
@@ -9348,15 +9729,15 @@
     }
    },
    "data": [
-    49,
-    43,
+    54,
+    47,
     35,
+    48,
     44,
-    41,
     24,
     25,
     26,
-    46
+    50
    ]
   },
   {
@@ -9396,7 +9777,7 @@
     14,
     15,
     16,
-    50,
+    56,
     18,
     21,
     22
@@ -9437,7 +9818,7 @@
     24,
     25,
     26,
-    51,
+    57,
     28,
     31,
     32
@@ -9474,13 +9855,13 @@
     }
    },
    "data": [
-    52,
+    58,
     34,
     13,
     24,
     25,
     26,
-    50,
+    56,
     28,
     21,
     22
@@ -9517,13 +9898,13 @@
     }
    },
    "data": [
-    9,
     37,
+    38,
     13,
     14,
     15,
     16,
-    50,
+    56,
     18,
     21,
     22
@@ -9558,13 +9939,13 @@
     }
    },
    "data": [
-    40,
-    37,
+    41,
+    38,
     13,
     24,
     25,
     26,
-    51,
+    57,
     28,
     31,
     32
@@ -9601,13 +9982,13 @@
     }
    },
    "data": [
-    52,
+    58,
     34,
     13,
     24,
     25,
     26,
-    50,
+    56,
     28,
     21,
     22
@@ -9650,7 +10031,7 @@
     14,
     15,
     16,
-    50,
+    56,
     18,
     21,
     22
@@ -9691,7 +10072,7 @@
     24,
     25,
     26,
-    51,
+    57,
     28,
     31,
     32
@@ -9728,13 +10109,13 @@
     }
    },
    "data": [
-    52,
+    58,
     34,
     13,
     24,
     25,
     26,
-    50,
+    56,
     28,
     21,
     22
@@ -9771,13 +10152,13 @@
     }
    },
    "data": [
-    9,
     37,
+    38,
     13,
     14,
     15,
     16,
-    50,
+    56,
     18,
     21,
     22
@@ -9812,13 +10193,13 @@
     }
    },
    "data": [
-    40,
-    37,
+    41,
+    38,
     13,
     24,
     25,
     26,
-    51,
+    57,
     28,
     31,
     32
@@ -9855,13 +10236,13 @@
     }
    },
    "data": [
-    52,
+    58,
     34,
     13,
     24,
     25,
     26,
-    50,
+    56,
     28,
     21,
     22
@@ -9898,13 +10279,13 @@
     }
    },
    "data": [
-    9,
     37,
+    38,
     13,
     14,
     15,
     16,
-    50,
+    56,
     18,
     21,
     22
@@ -9939,13 +10320,13 @@
     }
    },
    "data": [
-    40,
-    37,
+    41,
+    38,
     13,
     24,
     25,
     26,
-    51,
+    57,
     28,
     31,
     32
@@ -9982,13 +10363,13 @@
     }
    },
    "data": [
-    52,
+    58,
     34,
     13,
     24,
     25,
     26,
-    50,
+    56,
     28,
     21,
     22
@@ -10034,7 +10415,7 @@
     14,
     15,
     16,
-    50,
+    56,
     18,
     21,
     22
@@ -10078,7 +10459,7 @@
     24,
     25,
     26,
-    51,
+    57,
     28,
     31,
     32
@@ -10118,13 +10499,13 @@
     }
    },
    "data": [
-    52,
+    58,
     34,
     13,
     24,
     25,
     26,
-    50,
+    56,
     28,
     21,
     22
@@ -10164,13 +10545,13 @@
     }
    },
    "data": [
-    9,
     37,
+    38,
     13,
     14,
     15,
     16,
-    50,
+    56,
     18,
     21,
     22
@@ -10208,13 +10589,13 @@
     }
    },
    "data": [
-    40,
-    37,
+    41,
+    38,
     13,
     24,
     25,
     26,
-    51,
+    57,
     28,
     31,
     32
@@ -10254,13 +10635,13 @@
     }
    },
    "data": [
-    52,
+    58,
     34,
     13,
     24,
     25,
     26,
-    50,
+    56,
     28,
     21,
     22
@@ -10306,7 +10687,7 @@
     14,
     15,
     16,
-    50,
+    56,
     18,
     21,
     22
@@ -10350,7 +10731,7 @@
     24,
     25,
     26,
-    51,
+    57,
     28,
     31,
     32
@@ -10390,13 +10771,13 @@
     }
    },
    "data": [
-    52,
+    58,
     34,
     13,
     24,
     25,
     26,
-    50,
+    56,
     28,
     21,
     22
@@ -10436,13 +10817,13 @@
     }
    },
    "data": [
-    9,
     37,
+    38,
     13,
     14,
     15,
     16,
-    50,
+    56,
     18,
     21,
     22
@@ -10480,13 +10861,13 @@
     }
    },
    "data": [
-    40,
-    37,
+    41,
+    38,
     13,
     24,
     25,
     26,
-    51,
+    57,
     28,
     31,
     32
@@ -10526,13 +10907,13 @@
     }
    },
    "data": [
-    52,
+    58,
     34,
     13,
     24,
     25,
     26,
-    50,
+    56,
     28,
     21,
     22
@@ -10572,13 +10953,13 @@
     }
    },
    "data": [
-    9,
     37,
+    38,
     13,
     14,
     15,
     16,
-    50,
+    56,
     18,
     21,
     22
@@ -10616,13 +10997,13 @@
     }
    },
    "data": [
-    40,
-    37,
+    41,
+    38,
     13,
     24,
     25,
     26,
-    51,
+    57,
     28,
     31,
     32
@@ -10662,13 +11043,13 @@
     }
    },
    "data": [
-    52,
+    58,
     34,
     13,
     24,
     25,
     26,
-    50,
+    56,
     28,
     21,
     22
@@ -10709,13 +11090,13 @@
     }
    },
    "data": [
-    9,
-    10,
-    41,
-    14,
+    37,
+    42,
+    44,
+    45,
     15,
     16,
-    50,
+    59,
     18,
     21,
     22
@@ -10754,13 +11135,13 @@
     }
    },
    "data": [
-    23,
-    10,
-    41,
+    49,
+    42,
+    44,
     24,
     25,
     26,
-    51,
+    57,
     28,
     31,
     32
@@ -10801,13 +11182,13 @@
     }
    },
    "data": [
-    53,
-    43,
-    41,
+    60,
+    47,
+    44,
     24,
     25,
     26,
-    50,
+    59,
     28,
     21,
     22
@@ -10848,13 +11229,13 @@
     }
    },
    "data": [
-    9,
-    10,
-    41,
-    14,
+    37,
+    42,
+    44,
+    45,
     15,
     16,
-    50,
+    59,
     18,
     21,
     22
@@ -10893,13 +11274,13 @@
     }
    },
    "data": [
-    23,
-    10,
-    41,
+    49,
+    42,
+    44,
     24,
     25,
     26,
-    51,
+    57,
     28,
     31,
     32
@@ -10940,13 +11321,13 @@
     }
    },
    "data": [
-    53,
-    43,
-    41,
+    60,
+    47,
+    44,
     24,
     25,
     26,
-    50,
+    59,
     28,
     21,
     22
@@ -10987,13 +11368,13 @@
     }
    },
    "data": [
-    9,
-    10,
-    41,
-    14,
+    37,
+    42,
+    44,
+    45,
     15,
     16,
-    50,
+    59,
     18,
     21,
     22
@@ -11032,13 +11413,13 @@
     }
    },
    "data": [
-    23,
-    10,
-    41,
+    49,
+    42,
+    44,
     24,
     25,
     26,
-    51,
+    57,
     28,
     31,
     32
@@ -11079,13 +11460,13 @@
     }
    },
    "data": [
-    53,
-    43,
-    41,
+    60,
+    47,
+    44,
     24,
     25,
     26,
-    50,
+    59,
     28,
     21,
     22
@@ -11126,13 +11507,13 @@
     }
    },
    "data": [
-    9,
-    10,
-    41,
-    14,
+    37,
+    42,
+    44,
+    45,
     15,
     16,
-    50,
+    59,
     18,
     21,
     22
@@ -11171,13 +11552,13 @@
     }
    },
    "data": [
-    23,
-    10,
-    41,
+    49,
+    42,
+    44,
     24,
     25,
     26,
-    51,
+    57,
     28,
     31,
     32
@@ -11218,13 +11599,13 @@
     }
    },
    "data": [
-    53,
-    43,
-    41,
+    60,
+    47,
+    44,
     24,
     25,
     26,
-    50,
+    59,
     28,
     21,
     22
@@ -11265,13 +11646,13 @@
     }
    },
    "data": [
-    9,
-    10,
-    41,
-    14,
+    37,
+    42,
+    44,
+    45,
     15,
     16,
-    50,
+    59,
     18,
     21,
     22
@@ -11310,13 +11691,13 @@
     }
    },
    "data": [
-    23,
-    10,
-    41,
+    49,
+    42,
+    44,
     24,
     25,
     26,
-    51,
+    57,
     28,
     31,
     32
@@ -11357,13 +11738,13 @@
     }
    },
    "data": [
-    53,
-    43,
-    41,
+    60,
+    47,
+    44,
     24,
     25,
     26,
-    50,
+    59,
     28,
     21,
     22
@@ -11400,13 +11781,13 @@
     }
    },
    "data": [
-    9,
-    10,
-    41,
-    14,
+    37,
+    42,
+    44,
+    45,
     15,
     16,
-    50,
+    59,
     18,
     21,
     22
@@ -11441,13 +11822,13 @@
     }
    },
    "data": [
-    23,
-    10,
-    41,
+    49,
+    42,
+    44,
     24,
     25,
     26,
-    51,
+    57,
     28,
     31,
     32
@@ -11484,13 +11865,13 @@
     }
    },
    "data": [
-    53,
-    43,
-    41,
+    60,
+    47,
+    44,
     24,
     25,
     26,
-    50,
+    59,
     28,
     21,
     22
@@ -11527,13 +11908,13 @@
     }
    },
    "data": [
-    9,
-    10,
-    41,
-    14,
+    37,
+    42,
+    44,
+    45,
     15,
     16,
-    50,
+    59,
     18,
     21,
     22
@@ -11568,13 +11949,13 @@
     }
    },
    "data": [
-    23,
-    10,
-    41,
+    49,
+    42,
+    44,
     24,
     25,
     26,
-    51,
+    57,
     28,
     31,
     32
@@ -11611,13 +11992,13 @@
     }
    },
    "data": [
-    53,
-    43,
-    41,
+    60,
+    47,
+    44,
     24,
     25,
     26,
-    50,
+    59,
     28,
     21,
     22
@@ -11654,13 +12035,13 @@
     }
    },
    "data": [
-    9,
-    10,
-    41,
-    14,
+    37,
+    42,
+    44,
+    45,
     15,
     16,
-    50,
+    59,
     18,
     21,
     22
@@ -11695,13 +12076,13 @@
     }
    },
    "data": [
-    23,
-    10,
-    41,
+    49,
+    42,
+    44,
     24,
     25,
     26,
-    51,
+    57,
     28,
     31,
     32
@@ -11738,13 +12119,13 @@
     }
    },
    "data": [
-    53,
-    43,
-    41,
+    60,
+    47,
+    44,
     24,
     25,
     26,
-    50,
+    59,
     28,
     21,
     22
@@ -11781,13 +12162,13 @@
     }
    },
    "data": [
-    9,
-    10,
-    41,
-    14,
+    37,
+    42,
+    44,
+    45,
     15,
     16,
-    50,
+    59,
     18,
     21,
     22
@@ -11822,13 +12203,13 @@
     }
    },
    "data": [
-    23,
-    10,
-    41,
+    49,
+    42,
+    44,
     24,
     25,
     26,
-    51,
+    57,
     28,
     31,
     32
@@ -11865,13 +12246,13 @@
     }
    },
    "data": [
-    53,
-    43,
-    41,
+    60,
+    47,
+    44,
     24,
     25,
     26,
-    50,
+    59,
     28,
     21,
     22
@@ -11908,13 +12289,13 @@
     }
    },
    "data": [
-    9,
-    10,
-    41,
-    14,
+    37,
+    42,
+    44,
+    45,
     15,
     16,
-    50,
+    59,
     18,
     21,
     22
@@ -11949,13 +12330,13 @@
     }
    },
    "data": [
-    23,
-    10,
-    41,
+    49,
+    42,
+    44,
     24,
     25,
     26,
-    51,
+    57,
     28,
     31,
     32
@@ -11992,13 +12373,13 @@
     }
    },
    "data": [
-    53,
-    43,
-    41,
+    60,
+    47,
+    44,
     24,
     25,
     26,
-    50,
+    59,
     28,
     21,
     22
@@ -12025,15 +12406,15 @@
     }
    },
    "data": [
-    54,
-    55,
+    61,
+    62,
     11,
-    56,
+    63,
     4,
-    57,
+    64,
     15,
     16,
-    46
+    50
    ]
   },
   {
@@ -12055,10 +12436,10 @@
     }
    },
    "data": [
-    58,
-    55,
+    61,
+    62,
     11,
-    56,
+    63,
     4,
     24,
     25,
@@ -12087,15 +12468,15 @@
     }
    },
    "data": [
-    59,
-    60,
+    65,
+    66,
     35,
-    61,
+    67,
     4,
     24,
     25,
     26,
-    46
+    50
    ]
   },
   {
@@ -12119,15 +12500,15 @@
     }
    },
    "data": [
-    54,
-    62,
-    38,
-    63,
+    68,
+    69,
+    39,
+    70,
     4,
-    57,
+    64,
     15,
     16,
-    46
+    50
    ]
   },
   {
@@ -12149,10 +12530,10 @@
     }
    },
    "data": [
-    64,
-    62,
-    38,
-    63,
+    71,
+    69,
+    39,
+    70,
     4,
     24,
     25,
@@ -12181,15 +12562,15 @@
     }
    },
    "data": [
-    59,
-    60,
+    65,
+    66,
     35,
-    61,
+    67,
     4,
     24,
     25,
     26,
-    46
+    50
    ]
   },
   {
@@ -12213,15 +12594,15 @@
     }
    },
    "data": [
-    54,
-    55,
+    61,
+    62,
     11,
-    56,
+    63,
     4,
-    57,
+    64,
     15,
     16,
-    46
+    50
    ]
   },
   {
@@ -12243,10 +12624,10 @@
     }
    },
    "data": [
-    58,
-    55,
+    61,
+    62,
     11,
-    56,
+    63,
     4,
     24,
     25,
@@ -12275,15 +12656,15 @@
     }
    },
    "data": [
-    59,
-    60,
+    65,
+    66,
     35,
-    61,
+    67,
     4,
     24,
     25,
     26,
-    46
+    50
    ]
   },
   {
@@ -12307,15 +12688,15 @@
     }
    },
    "data": [
-    54,
-    62,
-    38,
-    63,
+    68,
+    69,
+    39,
+    70,
     4,
-    57,
+    64,
     15,
     16,
-    46
+    50
    ]
   },
   {
@@ -12337,10 +12718,10 @@
     }
    },
    "data": [
-    64,
-    62,
-    38,
-    63,
+    71,
+    69,
+    39,
+    70,
     4,
     24,
     25,
@@ -12369,15 +12750,15 @@
     }
    },
    "data": [
-    59,
-    60,
+    65,
+    66,
     35,
-    61,
+    67,
     4,
     24,
     25,
     26,
-    46
+    50
    ]
   },
   {
@@ -12401,15 +12782,15 @@
     }
    },
    "data": [
-    54,
-    55,
+    61,
+    62,
     11,
-    56,
+    63,
     4,
-    57,
+    64,
     15,
     16,
-    46
+    50
    ]
   },
   {
@@ -12431,10 +12812,10 @@
     }
    },
    "data": [
-    58,
-    55,
+    61,
+    62,
     11,
-    56,
+    63,
     4,
     24,
     25,
@@ -12463,15 +12844,15 @@
     }
    },
    "data": [
-    59,
-    60,
+    65,
+    66,
     35,
-    61,
+    67,
     4,
     24,
     25,
     26,
-    46
+    50
    ]
   },
   {
@@ -12498,15 +12879,15 @@
     }
    },
    "data": [
-    54,
-    55,
+    61,
+    62,
     11,
-    56,
+    63,
     4,
-    57,
+    64,
     15,
     16,
-    46
+    50
    ]
   },
   {
@@ -12531,10 +12912,10 @@
     }
    },
    "data": [
-    58,
-    55,
+    61,
+    62,
     11,
-    56,
+    63,
     4,
     24,
     25,
@@ -12566,15 +12947,15 @@
     }
    },
    "data": [
-    59,
-    60,
+    65,
+    66,
     35,
-    61,
+    67,
     4,
     24,
     25,
     26,
-    46
+    50
    ]
   },
   {
@@ -12601,15 +12982,15 @@
     }
    },
    "data": [
-    54,
-    62,
-    38,
-    63,
+    68,
+    69,
+    39,
+    70,
     4,
-    57,
+    64,
     15,
     16,
-    46
+    50
    ]
   },
   {
@@ -12634,10 +13015,10 @@
     }
    },
    "data": [
-    64,
-    62,
-    38,
-    63,
+    71,
+    69,
+    39,
+    70,
     4,
     24,
     25,
@@ -12669,15 +13050,15 @@
     }
    },
    "data": [
-    59,
-    60,
+    65,
+    66,
     35,
-    61,
+    67,
     4,
     24,
     25,
     26,
-    46
+    50
    ]
   },
   {
@@ -12704,15 +13085,15 @@
     }
    },
    "data": [
-    54,
-    55,
+    61,
+    62,
     11,
-    56,
+    63,
     4,
-    57,
+    64,
     15,
     16,
-    46
+    50
    ]
   },
   {
@@ -12737,10 +13118,10 @@
     }
    },
    "data": [
-    58,
-    55,
+    61,
+    62,
     11,
-    56,
+    63,
     4,
     24,
     25,
@@ -12772,15 +13153,15 @@
     }
    },
    "data": [
-    59,
-    60,
+    65,
+    66,
     35,
-    61,
+    67,
     4,
     24,
     25,
     26,
-    46
+    50
    ]
   },
   {
@@ -12807,15 +13188,15 @@
     }
    },
    "data": [
-    54,
-    62,
-    38,
-    63,
+    68,
+    69,
+    39,
+    70,
     4,
-    57,
+    64,
     15,
     16,
-    46
+    50
    ]
   },
   {
@@ -12840,10 +13221,10 @@
     }
    },
    "data": [
-    64,
-    62,
-    38,
-    63,
+    71,
+    69,
+    39,
+    70,
     4,
     24,
     25,
@@ -12875,15 +13256,15 @@
     }
    },
    "data": [
-    59,
-    60,
+    65,
+    66,
     35,
-    61,
+    67,
     4,
     24,
     25,
     26,
-    46
+    50
    ]
   },
   {
@@ -12910,15 +13291,15 @@
     }
    },
    "data": [
-    54,
-    55,
+    61,
+    62,
     11,
-    56,
+    63,
     4,
-    57,
+    64,
     15,
     16,
-    46
+    50
    ]
   },
   {
@@ -12943,10 +13324,10 @@
     }
    },
    "data": [
-    58,
-    55,
+    61,
+    62,
     11,
-    56,
+    63,
     4,
     24,
     25,
@@ -12978,15 +13359,15 @@
     }
    },
    "data": [
-    59,
-    60,
+    65,
+    66,
     35,
-    61,
+    67,
     4,
     24,
     25,
     26,
-    46
+    50
    ]
   },
   {
@@ -13014,15 +13395,15 @@
     }
    },
    "data": [
-    54,
-    55,
+    61,
+    62,
     11,
-    56,
+    63,
     4,
-    57,
+    64,
     15,
     16,
-    46
+    50
    ]
   },
   {
@@ -13048,10 +13429,10 @@
     }
    },
    "data": [
-    58,
-    55,
+    61,
+    62,
     11,
-    56,
+    63,
     4,
     24,
     25,
@@ -13084,15 +13465,15 @@
     }
    },
    "data": [
-    59,
-    60,
+    65,
+    66,
     35,
-    61,
+    67,
     4,
     24,
     25,
     26,
-    46
+    50
    ]
   },
   {
@@ -13120,15 +13501,15 @@
     }
    },
    "data": [
-    54,
-    62,
-    38,
-    63,
+    68,
+    69,
+    39,
+    70,
     4,
-    57,
+    64,
     15,
     16,
-    46
+    50
    ]
   },
   {
@@ -13154,10 +13535,10 @@
     }
    },
    "data": [
-    64,
-    62,
-    38,
-    63,
+    71,
+    69,
+    39,
+    70,
     4,
     24,
     25,
@@ -13190,15 +13571,15 @@
     }
    },
    "data": [
-    59,
-    60,
+    65,
+    66,
     35,
-    61,
+    67,
     4,
     24,
     25,
     26,
-    46
+    50
    ]
   },
   {
@@ -13226,15 +13607,15 @@
     }
    },
    "data": [
-    54,
-    55,
+    61,
+    62,
     11,
-    56,
+    63,
     4,
-    57,
+    64,
     15,
     16,
-    46
+    50
    ]
   },
   {
@@ -13260,10 +13641,10 @@
     }
    },
    "data": [
-    58,
-    55,
+    61,
+    62,
     11,
-    56,
+    63,
     4,
     24,
     25,
@@ -13296,15 +13677,15 @@
     }
    },
    "data": [
-    59,
-    60,
+    65,
+    66,
     35,
-    61,
+    67,
     4,
     24,
     25,
     26,
-    46
+    50
    ]
   },
   {
@@ -13332,15 +13713,15 @@
     }
    },
    "data": [
-    54,
-    62,
-    38,
-    63,
+    68,
+    69,
+    39,
+    70,
     4,
-    57,
+    64,
     15,
     16,
-    46
+    50
    ]
   },
   {
@@ -13366,10 +13747,10 @@
     }
    },
    "data": [
-    64,
-    62,
-    38,
-    63,
+    71,
+    69,
+    39,
+    70,
     4,
     24,
     25,
@@ -13402,15 +13783,15 @@
     }
    },
    "data": [
-    59,
-    60,
+    65,
+    66,
     35,
-    61,
+    67,
     4,
     24,
     25,
     26,
-    46
+    50
    ]
   },
   {
@@ -13438,15 +13819,15 @@
     }
    },
    "data": [
-    54,
-    55,
+    61,
+    62,
     11,
-    56,
+    63,
     4,
-    57,
+    64,
     15,
     16,
-    46
+    50
    ]
   },
   {
@@ -13472,10 +13853,10 @@
     }
    },
    "data": [
-    58,
-    55,
+    61,
+    62,
     11,
-    56,
+    63,
     4,
     24,
     25,
@@ -13508,15 +13889,15 @@
     }
    },
    "data": [
-    59,
-    60,
+    65,
+    66,
     35,
-    61,
+    67,
     4,
     24,
     25,
     26,
-    46
+    50
    ]
   },
   {
@@ -13540,15 +13921,15 @@
     }
    },
    "data": [
-    54,
-    55,
+    61,
+    62,
     11,
-    56,
+    63,
     4,
-    57,
+    64,
     15,
     16,
-    46
+    50
    ]
   },
   {
@@ -13570,10 +13951,10 @@
     }
    },
    "data": [
-    58,
-    55,
+    61,
+    62,
     11,
-    56,
+    63,
     4,
     24,
     25,
@@ -13602,15 +13983,15 @@
     }
    },
    "data": [
-    59,
-    60,
+    65,
+    66,
     35,
-    61,
+    67,
     4,
     24,
     25,
     26,
-    46
+    50
    ]
   },
   {
@@ -13634,15 +14015,15 @@
     }
    },
    "data": [
-    54,
-    62,
-    38,
-    63,
+    68,
+    69,
+    39,
+    70,
     4,
-    57,
+    64,
     15,
     16,
-    46
+    50
    ]
   },
   {
@@ -13664,10 +14045,10 @@
     }
    },
    "data": [
-    64,
-    62,
-    38,
-    63,
+    71,
+    69,
+    39,
+    70,
     4,
     24,
     25,
@@ -13696,15 +14077,15 @@
     }
    },
    "data": [
-    59,
-    60,
+    65,
+    66,
     35,
-    61,
+    67,
     4,
     24,
     25,
     26,
-    46
+    50
    ]
   },
   {
@@ -13728,15 +14109,15 @@
     }
    },
    "data": [
-    54,
-    55,
+    61,
+    62,
     11,
-    56,
+    63,
     4,
-    57,
+    64,
     15,
     16,
-    46
+    50
    ]
   },
   {
@@ -13758,10 +14139,10 @@
     }
    },
    "data": [
-    58,
-    55,
+    61,
+    62,
     11,
-    56,
+    63,
     4,
     24,
     25,
@@ -13790,15 +14171,15 @@
     }
    },
    "data": [
-    59,
-    60,
+    65,
+    66,
     35,
-    61,
+    67,
     4,
     24,
     25,
     26,
-    46
+    50
    ]
   },
   {
@@ -13822,15 +14203,15 @@
     }
    },
    "data": [
-    54,
-    62,
-    38,
-    63,
+    68,
+    69,
+    39,
+    70,
     4,
-    57,
+    64,
     15,
     16,
-    46
+    50
    ]
   },
   {
@@ -13852,10 +14233,10 @@
     }
    },
    "data": [
-    64,
-    62,
-    38,
-    63,
+    71,
+    69,
+    39,
+    70,
     4,
     24,
     25,
@@ -13884,15 +14265,15 @@
     }
    },
    "data": [
-    59,
-    60,
+    65,
+    66,
     35,
-    61,
+    67,
     4,
     24,
     25,
     26,
-    46
+    50
    ]
   },
   {
@@ -13916,15 +14297,15 @@
     }
    },
    "data": [
-    54,
-    55,
+    61,
+    62,
     11,
-    56,
+    63,
     4,
-    57,
+    64,
     15,
     16,
-    46
+    50
    ]
   },
   {
@@ -13946,10 +14327,10 @@
     }
    },
    "data": [
-    58,
-    55,
+    61,
+    62,
     11,
-    56,
+    63,
     4,
     24,
     25,
@@ -13978,15 +14359,15 @@
     }
    },
    "data": [
-    59,
-    60,
+    65,
+    66,
     35,
-    61,
+    67,
     4,
     24,
     25,
     26,
-    46
+    50
    ]
   }
  ]

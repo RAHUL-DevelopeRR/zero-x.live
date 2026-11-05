@@ -259,7 +259,7 @@ try {
 
   // 5. /v1/models with vault keys only: the env-less deployment still serves; no key id leaks.
   const vaultOnly = { ...env, GROQ_API_KEY: undefined, GEMINI_API_KEY: undefined };
-  const models = await app.request('https://zero-x.live/v1/models', {}, vaultOnly);
+  const models = await app.request('https://zero-x.live/v1/models?routes=1', {}, vaultOnly);
   const modelsText = await models.text();
   const byId = Object.fromEntries(JSON.parse(modelsText).data.map(model => [model.id, model]));
   assert.equal(byId['groq/openai/gpt-oss-120b'].available, true, 'vault keys alone configure the model');

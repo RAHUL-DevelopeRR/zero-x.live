@@ -10,9 +10,9 @@ const root = new URL('../../', import.meta.url);
 const read = file => readFileSync(new URL(file, root), 'utf8');
 const isFile = file => existsSync(new URL(file, root)) && statSync(new URL(file, root)).isFile();
 
-const PUBLIC_PAGES = ['index.html', 'pricing.html', 'neuron-cli.html', 'docs.html', 'ai-coding-agent.html', 'docs/trust.html', 'download.html', 'changelog.html', 'refund.html', 'contact.html', 'shipping.html', 'privacy.html', 'terms.html'];
+const PUBLIC_PAGES = ['index.html', 'pricing.html', 'neuron-cli.html', 'docs.html', 'ai-coding-agent.html', 'free-ai-coding-agent.html', 'claude-code-alternative.html', 'docs/trust.html', 'download.html', 'changelog.html', 'refund.html', 'contact.html', 'shipping.html', 'privacy.html', 'terms.html'];
 const PRIVATE_PAGES = ['dashboard.html', '404.html', 'neuroncli/index.html'];
-const SITE_SCRIPTS = ['dashboard.js', 'pricing.js', 'billing-checkout.js', 'home.js', 'download.js', 'changelog.js'];
+const SITE_SCRIPTS = ['dashboard.js', 'pricing.js', 'billing-checkout.js', 'home.js', 'download.js', 'changelog.js', 'site-nav.js'];
 const RELEASE_MANIFESTS = ['releases/cli/latest.json', 'releases/desktop/latest.json'];
 const SITE_FILES = [...PUBLIC_PAGES, ...PRIVATE_PAGES, ...SITE_SCRIPTS, ...RELEASE_MANIFESTS, 'zx-tokens.css', 'home.css', 'zerox-auth.js', 'neuroncli/login/index.html', 'neuroncli/callback/index.html'];
 const BASES = {'dashboard.html': 'https://dashboard.zero-x.live/', '404.html': 'https://zero-x.live/404', 'neuroncli/index.html': 'https://zero-x.live/neuroncli/'};
@@ -27,6 +27,8 @@ const tags = (html, name) => [...html.matchAll(new RegExp(`<${name}\\b[^>]*>`, '
 const ids = html => [...html.matchAll(/\sid="([^"]+)"/g)].map(m => m[1]);
 const stripScripts = html => html.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '').replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, '');
 const inlineScripts = html => [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(m => m[1]);
+// The menu-mode script every page with the shared header runs right after </header> (site-nav.js).
+const NAV_PRESET = `<script>(function(h){var b=h&&h.querySelector('.zx-nav-toggle');if(b&&'noModule'in HTMLScriptElement.prototype){h.dataset.nav='closed';b.hidden=false}})(document.querySelector('.zx-header'))</script>`;
 const meta = html => Object.fromEntries(tags(html, 'meta').map(a => [a.name || a.property || a['http-equiv'], a.content]));
 
 const seoPages = JSON.parse(read('seo-pages.json'));
@@ -35,6 +37,30 @@ routeFiles.set('zero-x.live/dashboard', 'dashboard.html');
 routeFiles.set('dashboard.zero-x.live/', 'dashboard.html');
 routeFiles.set('neuron.zero-x.live/device', 'neuroncli/device/index.html');
 const {TABS} = await import(new URL('dashboard.js', root));
+
+/* ───────────── Mobile header (zx-tokens.css) ───────────── */
+
+// At 375 px the shared header used to wrap into three rows (about 153 px, a fifth of a phone screen,
+// on every page). Below 720 px it is one row: 56 px inside plus its 1 px border, never over 64 px.
+// Desktop keeps the full nav: the menu button exists only inside the phone media query.
+{
+  const css = read('zx-tokens.css');
+  const phone = css.match(/@media \(max-width: 720px\) \{([\s\S]*?)^\}/m);
+  assert.ok(phone, 'zx-tokens.css: a phone block for the header');
+  const block = phone[1];
+  assert.match(css, /^\.zx-nav-toggle \{ display: none; \}$/m, 'the menu button is hidden outside the phone block (desktop unchanged)');
+  assert.match(block, /\.zx-header:not\(\[data-nav\]\) \{ position: static; \}/, 'without site-nav.js the wrapped header does not stick');
+  assert.match(block, /\.zx-header\[data-nav="closed"\] \.zx-nav \{ display: none; \}/, 'the closed menu hides the nav');
+  assert.match(block, /\.zx-header\[data-nav="open"\] \.zx-nav \{ flex-basis: 100%;/, 'the open menu is a full-width row under the bar');
+  const inner = block.match(/\.zx-header\[data-nav\] \.zx-header__inner \{ min-height: (\d+)px; padding-block: (\d+)px; \}/);
+  assert.ok(inner, 'the bar height is set in the phone block');
+  const toggleHeight = Number(block.match(/\.zx-header\[data-nav\] \.zx-nav-toggle \{[^}]*min-height: (\d+)px/)[1]);
+  const brandHeight = Number(css.match(/\.zx-brand \{[^}]*min-height: (\d+)px/)[1]);
+  const rowHeight = Math.max(Number(inner[1]), Math.max(toggleHeight, brandHeight) + 2 * Number(inner[2]));
+  assert.ok(rowHeight + 1 <= 64, `the phone header is ${rowHeight + 1} px tall (at most 64)`);
+  assert.ok(toggleHeight >= 44, 'the Menu button is a 44 px touch target');
+  assert.doesNotMatch(css.replace(phone[0], ''), /\.zx-header\[data-nav/, 'menu mode styles only apply on phones');
+}
 
 /* ───────────── Page structure, accessibility, SEO flags ───────────── */
 
@@ -53,6 +79,22 @@ for (const file of [...PUBLIC_PAGES, ...PRIVATE_PAGES]) {
     assert.ok(body.includes('<header') && body.includes('<footer'), file + ': header and footer landmarks');
     assert.match(body, /<a class="zx-skip" href="#main">Skip to content<\/a>/, file + ': skip link');
     assert.ok(tags(html, 'nav').some(a => a['aria-label']), file + ': labelled navigation');
+    // Phones: the shared header is one row, the mark and a Menu button (site-nav.js) that opens the
+    // main nav as a disclosure; hidden until the script runs, so without it the nav wraps.
+    const toggle = tags(body, 'button').find(a => (a.class || '').split(' ').includes('zx-nav-toggle'));
+    assert.ok(toggle, file + ': header menu button');
+    assert.deepEqual([toggle.type, toggle['aria-expanded'], toggle['aria-controls'], 'hidden' in toggle], ['button', 'false', 'site-nav', true],
+      file + ': the menu button is a hidden disclosure button for #site-nav');
+    assert.ok(tags(body, 'nav').some(a => a.id === 'site-nav' && a['aria-label'] === 'Main'), file + ': the main nav is #site-nav');
+    assert.match(body, /<button class="zx-nav-toggle"[^>]*>[\s\S]*?Menu<\/button>\s*<nav class="zx-nav" id="site-nav"/, file + ': the button has a visible name and sits before the nav');
+    assert.ok(tags(html, 'script').some(a => a.type === 'module' && a.src === '/site-nav.js'), file + ': loads /site-nav.js');
+    // Review 2026-11-05: menu mode before first paint (no wrapped header that then jumps 96 px):
+    // the same inline script right after </header>, and site-nav.js first of the scripts that run
+    // after parsing (deferred and module scripts run in document order).
+    assert.ok(html.includes('</header>\n  ' + NAV_PRESET) || html.includes('</header>\r\n  ' + NAV_PRESET),
+      file + ': the menu-mode inline script right after </header>');
+    const ordered = tags(html, 'script').filter(a => a.src && (a.type === 'module' || 'defer' in a));
+    assert.equal(ordered[0].src, '/site-nav.js', file + ': site-nav.js runs first of the deferred and module scripts');
   }
   assert.ok(tags(html, 'link').some(a => a.rel === 'stylesheet' && a.href === '/zx-tokens.css'), file + ': uses zx-tokens.css');
   assert.doesNotMatch(html, /rahultech|@gmail\.com/i, file + ': personal Gmail address');
@@ -189,10 +231,11 @@ for (const file of SITE_SCRIPTS) {
   for (const m of read(file).matchAll(/from '(\.\/[\w.-]+)'/g)) assert.ok(isFile(m[1].slice(2)), `${file}: import ${m[1]} missing`);
 }
 
-/* Footer legal links on every public page (Razorpay requires them to be reachable) */
+/* Footer legal links on every public page (Razorpay requires them to be reachable), plus the
+   three landing pages so each one has an internal link from every indexable page */
 for (const file of PUBLIC_PAGES) {
   const footer = read(file).match(/<footer[\s\S]*<\/footer>/)[0];
-  for (const path of ['/terms', '/privacy', '/refund', '/shipping', '/contact', '/pricing']) assert.ok(footer.includes(`href="${path}"`), `${file}: footer links ${path}`);
+  for (const path of ['/terms', '/privacy', '/refund', '/shipping', '/contact', '/pricing', '/ai-coding-agent', '/free-ai-coding-agent', '/claude-code-alternative']) assert.ok(footer.includes(`href="${path}"`), `${file}: footer links ${path}`);
   assert.ok(footer.includes('support@zero-x.live'), file + ': footer support email');
 }
 
@@ -239,7 +282,10 @@ for (const file of allHtml) {
     assert.equal(script.crossorigin, 'anonymous', `${file}: SRI needs crossorigin=anonymous`);
   }
 }
-assert.doesNotMatch(read('zx-tokens.css'), /@import|url\((?!\s*['"]?data:)/, 'zx-tokens.css loads nothing remote');
+assert.doesNotMatch(read('zx-tokens.css'), /@import|url\((?!\s*['"]?(?:data:|\/[^/]))/, 'zx-tokens.css loads nothing remote');
+// Every maker logo the pane draws is vendored, with its licence notice.
+for (const m of read('zx-tokens.css').matchAll(/url\("(\/[^"]+)"\)/g)) assert.ok(isFile(m[1].slice(1)), 'zx-tokens.css: ' + m[1] + ' exists');
+assert.match(read('Assets/makers/NOTICE.txt'), /Simple Icons[\s\S]*CC0 1\.0/, 'maker logos carry their Simple Icons CC0 notice');
 for (const m of read('site-fonts.css').matchAll(/url\(['"]?(https:[^'")]+)/g)) assert.ok(CSP.font.includes(new URL(m[1]).origin), 'font origin ' + m[1]);
 for (const file of [...SITE_SCRIPTS, 'zerox-auth.js']) {
   for (const m of read(file).matchAll(/'(https:\/\/[^'\s]+)'/g)) {
@@ -289,6 +335,7 @@ const ADDRESS = '6/2, N. Pugalur, Karur 639113, Tamil Nadu, India';
   assert.match(text('shipping.html'), /do not sell or ship physical goods/);
   assert.match(text('shipping.html'), /no shipping charges/);
   assert.match(text('shipping.html'), /as soon as Razorpay confirms the payment/);
+  assert.doesNotMatch(text('shipping.html'), /Gemini|Groq|OpenRouter|Workers AI|NVIDIA/, 'shipping.html names no provider or switched-off model');
 
   const contact = text('contact.html');
   assert.ok(contact.includes('Zero-X 6/2, N. Pugalur Karur 639113 Tamil Nadu, India'), 'contact: postal address');
@@ -389,13 +436,14 @@ for (const file of ['pricing.html', 'neuron-cli.html']) {
   }
   for (const cell of dataCells(html, 'data-topup-credit')) assert.equal(cell.text, formatUsdAmount(PLAN_CATALOG.topups.find(t => t.id === cell.key).credit_usd));
 }
-// The coding-agent guide quotes Free plan limits without loading pricing.js, so its static text must match the catalog.
-{
-  const cells = dataCells(read('ai-coding-agent.html'), 'data-plan-limit');
-  assert.ok(cells.length >= 2, 'ai-coding-agent.html: limit cells');
+// The coding-agent guide and the free and comparison landing pages quote Free plan limits without
+// loading pricing.js, so their static text must match the catalog.
+for (const file of ['ai-coding-agent.html', 'free-ai-coding-agent.html', 'claude-code-alternative.html']) {
+  const cells = dataCells(read(file), 'data-plan-limit');
+  assert.ok(cells.length >= 2, file + ': limit cells');
   for (const cell of cells) {
     const [id, field] = cell.key.split(':');
-    assert.equal(cell.text, limitLabel(PLAN_CATALOG.plans.find(p => p.id === id), field), `ai-coding-agent.html: ${cell.key}`);
+    assert.equal(cell.text, limitLabel(PLAN_CATALOG.plans.find(p => p.id === id), field), `${file}: ${cell.key}`);
   }
 }
 {
@@ -587,7 +635,7 @@ assert.equal(pricing.tokenAllowance({limits: {daily_tokens: 500000, window_token
 assert.equal(limitLabel(PLAN_CATALOG.plans[0], 'token_phrase'), '1M tokens every 5 hours');
 assert.equal(limitLabel({limits: {daily_tokens: 500000, window_tokens: null, window_seconds: null}}, 'token_phrase'), '500K tokens per day');
 assert.equal(limitLabel(PLAN_CATALOG.plans[1], 'token_phrase'), '10M tokens per day');
-for (const page of ['index.html', 'neuron-cli.html', 'ai-coding-agent.html']) {
+for (const page of ['index.html', 'neuron-cli.html', 'ai-coding-agent.html', 'free-ai-coding-agent.html', 'claude-code-alternative.html']) {
   const html = read(page);
   assert.doesNotMatch(html, /data-plan-limit="free:window_tokens"/, `${page}: no bare window number next to static "every 5 hours"`);
   assert.match(html, /<span data-plan-limit="free:token_phrase">1M tokens every 5 hours<\/span>/, `${page}: the whole phrase is hydrated`);
@@ -690,10 +738,13 @@ assert.equal(checkout.normalizeCurrency('EUR'), 'USD');
   for (const id of ['step-install', 'cta-install']) assert.match(html, new RegExp(`<code id="${id}">${INSTALL_NPM}\\b`), `index.html #${id} starts with npm`);
   // npm's latest tag and PyPI (as a pre-release) serve Neuron 7: npm is the first tab, pip the second,
   // and the install scripts follow. Each command is labelled with the shell it is for.
-  for (const file of ['index.html', 'neuron-cli.html']) {
+  for (const [file, expected] of [['index.html', ['install-npm', 'install-pip', 'install-sh', 'install-ps1', 'install-cmd']],
+    ['neuron-cli.html', ['install-npm', 'install-pip', 'install-sh', 'install-ps1', 'install-cmd', 'install-source']]]) {
     const page = read(file);
     const tabs = [...page.matchAll(/<section class="zx-install" id="(install-[\w-]+)"/g)].map(m => m[1]);
-    assert.deepEqual(tabs, ['install-npm', 'install-pip', 'install-sh', 'install-ps1', 'install-source'], file + ': install tabs, best first');
+    assert.deepEqual(tabs, expected, file + ': install tabs, best first');
+    const labels = [...page.matchAll(/<section class="zx-install" id="install-[\w-]+" data-tab-label="([^"]+)"/g)].map(m => m[1]);
+    assert.deepEqual(labels.slice(0, 5), ['npm', 'pip', 'macOS and Linux', 'PowerShell', 'Command Prompt'], file + ': tab labels');
     for (const label of ['Any terminal', 'Terminal (sh, bash or zsh)', 'Command Prompt (cmd.exe)']) {
       assert.ok(page.includes(`<span class="zx-code__label">${label}`), `${file}: labels a command "${label}"`);
     }
@@ -711,13 +762,47 @@ assert.equal(checkout.normalizeCurrency('EUR'), 'USD');
     assert.doesNotMatch(read(file), /neuron auth login/, file + ': the sign-in command is neuron login');
   }
   for (const id of ['get-started', 'features', 'models', 'pricing', 'docs', 'faq', 'products']) assert.ok(ids(html).includes(id), 'index.html section #' + id);
+  // Every hero command has its own copy button.
+  for (const id of ['cmd-npm', 'cmd-pip', 'cmd-sh', 'cmd-ps1', 'cmd-cmd']) assert.ok(tags(html, 'button').some(b => b['data-copy-target'] === id), 'index.html copies #' + id);
+  assert.match(html, /<a class="zx-btn zx-btn--primary" href="#get-started">Start free<\/a>/, 'index.html: the free plan call to action');
   for (const plan of ['free', 'pro', 'max']) assert.match(html, new RegExp(`data-plan-price="${plan}"`), 'index.html hydrates the ' + plan + ' price');
   assert.match(html, /<main id="main" data-pricing-root>/, 'pricing.js hydrates the homepage');
   for (const button of tags(html, 'button').filter(b => 'data-copy-target' in b)) assert.ok(ids(html).includes(button['data-copy-target']), 'copy target ' + button['data-copy-target']);
-  assert.ok(ids(html).includes('models-list') && ids(html).includes('models-note'), 'live model list slots');
+  // The live model pane (home.js), on the homepage and the Neuron CLI page.
+  const home = await import(new URL('home.js', root));
+  for (const file of ['index.html', 'neuron-cli.html']) {
+    const page = read(file);
+    for (const id of ['models-list', 'models-note', 'models-live', 'models-live-text']) assert.ok(ids(page).includes(id), `${file}: live model pane #${id}`);
+    assert.match(page, /<div class="zx-modelpane" data-live-models>/, file + ': home.js drives the pane');
+    assert.ok(tags(page, 'script').some(s => s.src === '/home.js' && s.type === 'module'), file + ': loads home.js');
+    // The built-in list (before JavaScript, without it, or when the gateway cannot be reached)
+    // checked nothing: no row says Available, no switched-off or removed model, no provider, no route id.
+    const staticList = page.slice(page.indexOf('id="models-list"'), page.indexOf('</ul>', page.indexOf('id="models-list"')));
+    const staticRows = staticList.match(/<li class="zx-model"[^>]*>/g) || [];
+    assert.ok(staticRows.length >= 5, file + ': a built-in model list');
+    assert.ok(staticRows.every(row => row.includes('data-tone="unknown"')), file + ': built-in rows are not checked');
+    assert.doesNotMatch(staticList, />Available</, file + ': a built-in row never claims Available');
+    assert.doesNotMatch(staticList, /MiniMax|Gemini|Workers AI|Groq|OpenRouter|Cloudflare|@cf\/|groq\/|nvidia\/|:free/i, file + ': only offered models, by their makers');
+    assert.doesNotMatch(staticList, /<code\b/, file + ': no model ids in the pane');
+    // [maker logo] [model name] [usable context] [status] in every row.
+    for (const row of staticList.split('<li class="zx-model"').slice(1)) {
+      const maker = row.match(/<span class="zx-maker" data-maker="([\w-]+)"/)?.[1];
+      assert.ok(maker && home.MAKERS[maker], file + ': a known maker badge in every row');
+      assert.ok(home.MAKER_LOGOS.includes(maker) === / data-logo /.test(row.slice(0, row.indexOf('</span>'))), `${file}: ${maker} logo or monogram`);
+      assert.match(row, /class="zx-model__name">[^<]+</, file + ': model name');
+      assert.match(row, /class="zx-model__ctx[^"]*" title="[^"]+">(?:\d+(?:\.\d)?[KM]|Fits request)</, file + ': usable context with the native window on hover');
+      assert.match(row, /class="zx-model__status"><span class="zx-model__dot" aria-hidden="true"><\/span>Not checked recently</, file + ': status with a text label');
+    }
+    assert.match(page, /<li data-tone="unknown">Not checked recently<\/li>/, file + ': the legend names the not-checked state');
+    for (const tone of ['ok', 'warn', 'busy', 'off']) assert.match(page, new RegExp(`<li data-tone="${tone}">`), `${file}: the legend shows ${tone}`);
+  }
+  for (const maker of home.MAKER_LOGOS.filter(maker => maker !== 'zero-x')) {
+    assert.ok(isFile(`Assets/makers/${maker}.svg`), `Assets/makers/${maker}.svg is vendored`);
+    assert.match(read(`Assets/makers/${maker}.svg`), /^<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg" viewBox="0 0 24 24"><title>[^<]+<\/title><path d="[^"]+"\/><\/svg>\s*$/, `${maker}.svg is path data only`);
+    assert.match(read('zx-tokens.css'), new RegExp(`\\.zx-maker\\[data-maker="${maker}"\\] \\{ --zx-logo: url\\("/Assets/makers/${maker}\\.svg"\\); \\}`), `zx-tokens.css draws the ${maker} logo`);
+  }
   assert.match(html, /NeuCockpit local AI/, 'NeuCockpit stays on the homepage');
 
-  const home = await import(new URL('home.js', root));
   assert.equal(home.formatContext(1048576, 'x'), '1M');
   assert.equal(home.formatContext(131072, 'x'), '131K');
   assert.equal(home.formatContext(24000, 'auto'), 'Fits request');
@@ -729,10 +814,28 @@ assert.equal(checkout.normalizeCurrency('EUR'), 'USD');
   assert.equal(state({available: true, status: 'busy'}).tone, 'busy');
   assert.deepEqual(state({available: true, status: 'blurred', available_again_at: '2026-10-20T10:04:10Z'}), {tone: 'off', label: 'Back in about 5 min'});
   assert.equal(state({available: true, status: 'blurred', available_again_at: null}).label, 'Temporarily unavailable');
+  // The gateway's health checker (contract section 15): unavailable replaces blurred, and a model
+  // nobody confirmed lately is unknown, never shown as available.
+  assert.deepEqual(state({available: true, status: 'unavailable', available_again_at: '2026-10-20T10:04:10Z'}), {tone: 'off', label: 'Back in about 5 min'});
+  assert.deepEqual(state({available: true, status: 'unknown'}), {tone: 'unknown', label: 'Not checked recently'});
+  assert.equal(state({available: true}).tone, 'unknown', 'no status: not shown as available');
+  assert.equal(state({available: true, status: 'something-new'}).tone, 'unknown');
   assert.deepEqual(state({available: false, unavailable_reason: 'upgrade_required'}), {tone: 'locked', label: 'Pro and Max plans'});
   assert.equal(state({available: false, unavailable_reason: 'region_unavailable'}).label, 'Not offered in your region');
   assert.equal(state({available: false, unavailable_reason: 'not_configured'}).tone, 'off');
   assert.equal(state(null).tone, 'off');
+  // section 15.1: availability (section 15 words) wins over status (the v1.3 words alpha.4 reads).
+  assert.equal(home.healthWord({availability: 'unavailable', status: 'blurred'}), 'unavailable');
+  assert.equal(home.healthWord({status: 'blurred'}), 'blurred', 'an older gateway: status');
+  assert.equal(home.healthWord({}), 'unknown');
+  // section 15.2: each row's verdict expires after its own horizon, between polls too.
+  const fresh = {available: true, status: 'available', checked_at: '2026-10-20T09:00:00Z', stale_after_seconds: 5400};
+  assert.deepEqual(state(fresh), {tone: 'ok', label: 'Available'}, 'a Groq verdict 60 min old within its 90 min horizon');
+  assert.deepEqual(state({...fresh, stale_after_seconds: 1350}), {tone: 'unknown', label: 'Not checked recently'}, 'an NVIDIA one past 22.5 min');
+  assert.equal(state({...fresh, status: 'busy', stale_after_seconds: 60, available_again_at: '2026-10-20T10:01:00Z'}).tone, 'busy',
+    'a timed state still running is not expired');
+  assert.equal(state({...fresh, stale_after_seconds: null}).tone, 'ok', 'no horizon: the gateway decides');
+  assert.equal(home.verdictExpired({checked_at: null, stale_after_seconds: 60}, now), false);
 
   assert.equal(home.modelRows({nope: true}), null, 'unusable payload keeps the static catalog');
   const rows = home.modelRows({data: [
@@ -741,10 +844,51 @@ assert.equal(checkout.normalizeCurrency('EUR'), 'USD');
     {id: 'odd/model', display_name: '<img src=x onerror=alert(1)>', owned_by: 'someone-else'},
   ]});
   assert.equal(rows.length, 2, 'invalid ids are dropped');
-  assert.deepEqual(rows[0], {id: 'gemini/gemini-2.5-pro', name: 'Gemini 2.5 Pro', provider: 'Google Gemini', context: '1M', reasoning: true, vision: true,
-    paidOnly: true, available: false, unavailable_reason: 'upgrade_required', status: 'available', available_again_at: null});
+  assert.deepEqual(rows[0], {id: 'gemini/gemini-2.5-pro', family: 'google/gemini-2.5-pro', maker: 'google', name: 'Gemini 2.5 Pro', context: 1048576, native: 1048576,
+    reasoning: true, vision: true, paidOnly: true, available: false, unavailable_reason: 'upgrade_required', status: 'available', available_again_at: null,
+    checked_at: null, stale_after_seconds: null},
+    'a route of an older gateway is shown by its model and maker, never its provider');
   assert.equal(rows[1].name, '<img src=x onerror=alert(1)>', 'names stay plain text (rendered with textContent)');
-  assert.equal(rows[1].provider, 'someone-else');
+  assert.equal(rows[1].maker, 'other', 'an unknown maker gets a neutral badge');
+  // The family view (contract section 14): maker, family and the usable and native windows.
+  const [family] = home.modelRows({data: [{id: 'openai/gpt-oss-120b', display_name: 'GPT-OSS 120B', owned_by: 'openai', maker: 'openai', family: 'openai/gpt-oss-120b',
+    context_window: 8000, context_length: 8000, native_context_window: 131072, tiers: ['free']}]});
+  assert.deepEqual([family.family, family.maker, family.name, family.context, family.native], ['openai/gpt-oss-120b', 'openai', 'GPT-OSS 120B', 8000, 131072]);
+  assert.equal(home.formatContext(family.context, family.id), '8K');
+  assert.equal(home.contextNote(family), 'Up to 8K tokens per request on the Free plan. The model itself takes up to 131K.');
+  // An older gateway's routes of one model become one row, named without the provider.
+  const routes = home.modelRows({data: [
+    {id: 'groq/openai/gpt-oss-120b', display_name: 'GPT-OSS 120B (Groq)', owned_by: 'groq', context_window: 8000, native_context_window: 131072, tiers: ['free'], status: 'busy'},
+    {id: 'nvidia/openai/gpt-oss-120b', display_name: 'GPT-OSS 120B (NVIDIA)', owned_by: 'nvidia', context_window: 131072, tiers: ['free'], status: 'available'},
+    {id: 'openrouter/cohere/north-mini-code:free', display_name: 'North Mini Code (OpenRouter, free)', owned_by: 'openrouter', context_window: 256000, tiers: ['free'], status: 'unknown'},
+    {id: 'nvidia/nvidia/nemotron-3-ultra-550b-a55b', display_name: 'Nemotron 3 Ultra 550B (NVIDIA)', owned_by: 'nvidia', context_window: 1048576, tiers: ['free']},
+    {id: 'zai/glm-4.7-flash', display_name: 'GLM-4.7 Flash (Z.ai)', owned_by: 'zai', context_window: 200000, tiers: ['free']},
+    {id: 'groq/qwen/qwen3.8-27b', display_name: 'Qwen 3.8 27B (Groq)', owned_by: 'groq', context_window: 8000, tiers: ['free']},
+  ]});
+  const families = home.familyRows(routes);
+  assert.deepEqual(families.map(row => [row.family, row.maker, row.name]), [
+    ['openai/gpt-oss-120b', 'openai', 'GPT-OSS 120B'], ['cohere/north-mini-code', 'cohere', 'North Mini Code'],
+    ['nvidia/nemotron-3-ultra-550b', 'nvidia', 'Nemotron 3 Ultra 550B'], ['zhipu/glm-4.7-flash', 'zhipu', 'GLM-4.7 Flash'],
+    ['qwen/qwen3.8-27b', 'alibaba', 'Qwen 3.8 27B']]);
+  assert.deepEqual([families[0].status, families[0].context, families[0].native], ['available', 131072, 131072],
+    'a model takes the best route status and the context of the routes with it');
+  assert.doesNotMatch(JSON.stringify(families.map(({id, ...shown}) => shown)), /Groq|NVIDIA\)|OpenRouter|Z\.ai\)|groq|openrouter/, 'nothing shown names a provider');
+  // The live indicator.
+  assert.equal(home.sinceLabel(now - 12000, now), '12 s ago');
+  assert.equal(home.sinceLabel(now - 2000, now), 'just now');
+  assert.equal(home.sinceLabel(now - 180000, now), '3 min ago');
+  assert.equal(home.liveText('live', now - 12000, now), 'Live · checked 12 s ago');
+  assert.equal(home.liveText('stale', now - 120000, now), 'Reconnecting · last checked 2 min ago');
+  assert.equal(home.liveText('offline', 0, now), 'Offline · built-in list, not checked');
+  assert.equal(home.liveText('live', 0, now), 'Live · not checked yet', 'no checked_at: no time is invented');
+  assert.equal(home.liveText('stale', 0, now), 'Reconnecting');
+  assert.equal(home.staleAfterSeconds({stale_after_seconds: 1200}), 1200);
+  assert.equal(home.staleAfterSeconds({}, 30), 60, 'without the payload value, two poll intervals');
+  assert.equal(home.staleAfterSeconds({stale_after_seconds: -5}, 45), 90);
+  assert.equal(home.verdictsExpired({answeredAt: now - 33000, poll: 30}, now), false, 'one missed poll keeps the verdicts');
+  assert.equal(home.verdictsExpired({answeredAt: now - 61000, poll: 30}, now), true, 'two missed polls: not being checked');
+  assert.equal(home.verdictsExpired({answeredAt: now - 10000, poll: 30}, now), false, 'an answering gateway: rows expire one by one');
+  assert.equal(home.verdictsExpired({answeredAt: 0}, now), true, 'never answered: never checked');
   assert.equal(home.modelRows({data: Array.from({length: 80}, (_, i) => ({id: 'm' + i}))}).length, 60, 'list is capped');
 
   const updated = home.applyStatus(rows, {data: [{id: 'gemini/gemini-2.5-pro', available: true, status: 'blurred', available_again_at: '2026-10-20T10:30:00Z'}, {id: 'unknown'}]});
@@ -752,6 +896,14 @@ assert.equal(checkout.normalizeCurrency('EUR'), 'USD');
   assert.equal(updated[0].available, true);
   assert.equal(updated[0].status, 'blurred', 'a model that goes down greys out');
   assert.equal(home.applyStatus(updated, {data: [{id: 'gemini/gemini-2.5-pro', available: true, status: 'available'}]})[0].status, 'available', 'and brightens again');
+  const split = home.applyStatus(rows, {stale_after_seconds: 1200, checked_at: '2026-10-20T09:59:00Z', data: [
+    {id: 'gemini/gemini-2.5-pro', available: true, status: 'blurred', availability: 'unavailable', checked_at: '2026-10-20T09:58:00Z', stale_after_seconds: 2700},
+    {id: 'odd/model', available: true, status: 'available'}]});
+  assert.deepEqual([split[0].status, split[0].checked_at, split[0].stale_after_seconds], ['unavailable', '2026-10-20T09:58:00Z', 2700],
+    'the row reads availability and its own horizon');
+  assert.deepEqual([split[1].checked_at, split[1].stale_after_seconds], ['2026-10-20T09:59:00Z', 1200], 'an older gateway: the payload horizon');
+  assert.equal(home.stateSignature(split, now), home.stateSignature(split, now), 'a stable signature');
+  assert.notEqual(home.stateSignature(split, now), home.stateSignature(split, now + 3600000), 'and it changes once a verdict expires');
   assert.equal(home.pollSeconds({poll_interval_seconds: 30}), 30);
   assert.equal(home.pollSeconds({poll_interval_seconds: 1}), 30, 'too-fast polling falls back to 30 s');
   assert.equal(home.pollSeconds(null), 30);
