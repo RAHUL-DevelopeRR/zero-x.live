@@ -365,7 +365,7 @@ export class HealthProber {
       } catch (error) {
         if (missingFunction(error)) {
           this.disabled = 'migration_missing';
-          this.log.warn('Health probes need migration 20261104000000_health_probes.sql; probes are off until it is applied and the gateway restarts');
+          this.log.warn('Health probes need migration 20261104000000_health_probes.sql; probes are off until it is applied and the gateway restarts; set HEALTH_HUB_PROBES=on on the Worker meanwhile');
         } else {
           this.log.warn('Health probe tick failed', { name: error?.name ?? null, code: error?.code ?? null });
         }
@@ -890,8 +890,13 @@ export class HealthProber {
   failed(item, row, outcome, now) {
     const kind = outcome.kind;
     row.source = 'probe';
-    if (outcome.status === 400 || [FailureKind.CONTEXT, FailureKind.INVALID].includes(kind)) {
-      // The upstream refused the test request itself (a 400): the request needs fixing, which says
+    // The kind decides first: classifyUpstreamFailure already gives some 400s a specific kind
+    // (Groq model_decommissioned: model_unavailable; Gemini API_KEY_INVALID or
+    // FAILED_PRECONDITION: auth; Groq tool_use_failed: model_error), and those keep their own
+    // branches below. Only a 400 the classifier left as a plain request rejection (or unclassified)
+    // means the test request needs fixing.
+    if ([FailureKind.CONTEXT, FailureKind.INVALID].includes(kind) || (outcome.status === 400 && kind == null)) {
+      // The upstream refused the test request itself: the request needs fixing, which says
       // nothing about the model. No verdict is recorded (status, its time and the failure count
       // stay, so the row goes unknown in time, never down); the row says probe_misconfigured, and
       // the warning is logged once per pool until a test request passes again.
@@ -985,24 +990,42 @@ function listHeaders(header, secret) {
   return {};
 }
 
+// Why startHealthProbes started no prober in this process (probeCheckerState).
+let starting = 'not_started';
+
 /**
  * Starts this process's prober (server.js), or returns null when HEALTH_PROBES is off or the
  * gateway has no database. Logs which.
  */
 export function startHealthProbes(env, options = {}) {
   const settings = probeSettings(env);
+  // The Worker's HealthHub sends no test requests while chat is routed here (HEALTH_HUB_PROBES
+  // auto), so with this checker off nothing probes the pools unless that var is set to "on".
+  const hubHint = 'the Worker HealthHub sends no test requests while chat is routed here, so set HEALTH_HUB_PROBES=on on the Worker to keep one checker';
   if (!settings.enabled) {
-    console.log('Health probes off (HEALTH_PROBES=off): models without recent traffic report unknown');
+    starting = 'off';
+    console.log(`Health probes off (HEALTH_PROBES=off): models without recent traffic report unknown; ${hubHint}`);
     return null;
   }
   if (!databaseConfigured(env)) {
-    console.log('Health probes off: no database (they share one leader and their results through Postgres)');
+    starting = 'no_database';
+    console.log(`Health probes off: no database (they share one leader and their results through Postgres); ${hubHint}`);
     return null;
   }
   if (active) return active;
   active = new HealthProber(env, { ...options, settings }).start();
   console.log('Health probes on', { tick_seconds: settings.tickMs / 1000, stale_seconds: settings.staleMs / 1000 });
   return active;
+}
+
+/**
+ * What this process's checker does, for the operator's /health: "running", "off"
+ * (HEALTH_PROBES=off), "no_database", "migration_missing" (it stopped itself) or "not_started"
+ * (the Worker, which has no Node checker, or a process that has not started one).
+ */
+export function probeCheckerState() {
+  if (active) return active.disabled || 'running';
+  return starting;
 }
 
 // The rows this process last read (pool key -> row), or null when no prober runs here.

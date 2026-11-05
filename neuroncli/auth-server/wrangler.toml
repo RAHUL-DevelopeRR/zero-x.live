@@ -126,6 +126,9 @@ binding = "AI"
 # EC2_PROXY_PREFIXES routes chat to the Node gateway, whose checker (src/health-probes.js) tests
 # the pools, the hub sends no test requests or canaries (free list checks and isolates' reports go
 # on); deleting the secret brings them back. HEALTH_HUB_PROBES = "on" or "off" overrides that.
+# auto does not know whether the Node checker runs: while it is off on the VM (HEALTH_PROBES=off,
+# no database, or migration 20261104000000_health_probes.sql missing; the operator's /health on
+# Node says node_probes and a warning), set HEALTH_HUB_PROBES = "on" here, or nothing tests the pools.
 # HEALTH_HUB_PROBES = "auto"
 [[durable_objects.bindings]]
 name = "HEALTH_HUB"

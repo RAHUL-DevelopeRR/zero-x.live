@@ -234,7 +234,12 @@ HealthHub Durable Object (`HEALTH_CANARIES`) for the paths it still serves; the 
 on the Node gateway. One checker tests a pool: while `EC2_PROXY_PREFIXES` routes chat to the Node
 gateway, the HealthHub sends no test requests or canaries (its free list, key and status-page
 checks and the isolates' reports go on), and when the secret is deleted they resume.
-`HEALTH_HUB_PROBES` (Worker var: `on`, `off`, default `auto`) overrides that.
+`HEALTH_HUB_PROBES` (Worker var: `on`, `off`, default `auto`) overrides that. `auto` does not know
+whether the Node checker actually runs: while it is off on the VM (`HEALTH_PROBES=off`, no
+database, or the migration missing), set `HEALTH_HUB_PROBES=on` on the Worker, or no checker tests
+the pools at all. The operator's `/health` shows it: on Node, `health_checker.node_probes` is
+`running`, or `off`, `no_database`, `migration_missing` with a warning; on the Worker,
+`health_checker.hub_test_requests` says whether the hub tests.
 
 ### Provider discovery
 

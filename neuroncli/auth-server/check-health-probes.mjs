@@ -17,6 +17,7 @@ import { withHealth } from './src/health-share.js';
 import { toClaudeRequest } from './src/anthropic-request.js';
 import { lowestEffort, probeMaxTokens, probePayload, probeThinks, THINKING_CHAT_MAX_TOKENS, THINKING_TOOL_MAX_TOKENS } from './src/health-probes.js';
 import { FailureKind, ProviderHealthTracker } from './src/provider-health.js';
+import { classifyUpstreamFailure } from './src/providers.js';
 
 const passed = [];
 const ok = name => { passed.push(name); console.log(`ok - ${name}`); };
@@ -240,6 +241,54 @@ const entry = id => CATALOG.find(item => item.id === id);
     { probeRows: rows, staleMsFor: key => horizons[key], now: now + 31 * 60000, readRows: async () => new Map() });
   assert.equal(later.data[0].status, 'unknown', 'past 1.5 x its hour: unknown');
   ok("per-route stale horizon: 1.5 x the route's test interval, at least HEALTH_STALE_SECONDS, reported per row");
+}
+
+/* ───────────── 2c. A 400 with a specific kind is a verdict, not a misconfigured test ───────────── */
+
+{
+  // Review 2026-11-05: a 400 the classifier gives a specific kind keeps that kind's verdict.
+  const now = Date.parse('2026-11-05T09:00:00Z');
+  const warned = [];
+  const prober = new HealthProber({}, { store: {}, now: () => now, log: { info() {}, log() {}, warn: (...args) => warned.push(args) } });
+  const fresh = () => ({ pool: 'p', status: 'available', base_status: 'available', until: null, consecutive_failures: 0,
+    verdict_at: now - 60_000, checked_at: now - 60_000 });
+  const run = (key, status, body) => {
+    const row = fresh();
+    const outcome = { ok: false, status, latencyMs: 120, ...classifyUpstreamFailure(status, JSON.stringify(body)) };
+    prober.failed({ key }, row, outcome, now);
+    return { row, outcome };
+  };
+  const misconfiguredWarnings = key => warned.filter(args => /fix the test request/.test(args[0]) && args[1]?.pool === key).length;
+
+  const groqGone = run('groq-gone', 400, { error: { message: 'The model has been decommissioned', type: 'invalid_request_error',
+    code: 'model_decommissioned' } });
+  assert.deepEqual([groqGone.outcome.status, groqGone.outcome.kind], [400, FailureKind.MODEL_UNAVAILABLE]);
+  assert.deepEqual([groqGone.row.status, groqGone.row.base_status, groqGone.row.failure_class, groqGone.row.verdict_at],
+    ['unavailable', 'unavailable', 'model_unavailable', now], 'Groq 400 model_decommissioned: unavailable at once');
+  assert.equal(misconfiguredWarnings('groq-gone'), 0);
+
+  const geminiKey = run('gemini-key', 400, { error: { code: 400, message: 'API key not valid.', status: 'INVALID_ARGUMENT',
+    details: [{ '@type': 'type.googleapis.com/google.rpc.ErrorInfo', reason: 'API_KEY_INVALID', domain: 'googleapis.com' }] } });
+  assert.deepEqual([geminiKey.outcome.status, geminiKey.outcome.kind], [400, FailureKind.AUTH]);
+  assert.deepEqual([geminiKey.row.status, geminiKey.row.failure_class], ['unavailable', 'auth'], 'Gemini 400 API_KEY_INVALID: auth');
+
+  const geminiRegion = run('gemini-region', 400, { error: { code: 400, message: 'User location is not supported.',
+    status: 'FAILED_PRECONDITION' } });
+  assert.deepEqual([geminiRegion.outcome.kind, geminiRegion.row.status, geminiRegion.row.failure_class],
+    [FailureKind.AUTH, 'unavailable', 'auth'], 'Gemini 400 FAILED_PRECONDITION: auth');
+
+  const toolUse = run('groq-tool', 400, { error: { message: 'Failed to call a function.', type: 'invalid_request_error',
+    code: 'tool_use_failed' } });
+  assert.equal(toolUse.outcome.kind, FailureKind.MODEL_ERROR);
+  assert.notEqual(toolUse.row.failure_class, 'probe_misconfigured', 'a bad tool call by the model is not a misconfigured test');
+  assert.equal(toolUse.row.status, 'available', 'and no verdict either');
+  assert.equal(misconfiguredWarnings('groq-tool'), 0, 'no "fix the test request" warning');
+
+  const plain = run('plain', 400, { error: { message: 'max_tokens too small', type: 'invalid_request_error' } });
+  assert.deepEqual([plain.outcome.kind, plain.row.failure_class, plain.row.status], [FailureKind.INVALID, 'probe_misconfigured', 'available'],
+    'a plain 400 is still a misconfigured test request, no verdict');
+  assert.equal(misconfiguredWarnings('plain'), 1);
+  ok('a 400 the classifier gives a specific kind (model gone, rejected key, bad tool call) keeps that verdict; only a plain 400 is probe_misconfigured');
 }
 
 /* ───────────── 3. Against Postgres and mock providers ───────────── */

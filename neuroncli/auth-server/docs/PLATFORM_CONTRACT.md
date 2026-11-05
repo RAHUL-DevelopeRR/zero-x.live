@@ -1186,7 +1186,7 @@ forward). On a one-at-a-time pool a test request holds the slot until it ends.
   for the tool call); Opus 5.5 adaptive thinking at effort `low` (thinking cannot be turned off and
   counts toward `max_tokens`, so 64 tokens for the chat test and 512 for the tool call). Tool calls
   use `tool_choice: 'auto'`.
-- **A 400 to a test request** says the request needs fixing, not that the model is down: it is
+- **A plain 400 to a test request** (kind `invalid` or `context`, see below) says the request needs fixing, not that the model is down: it is
   logged once per pool (until a test request passes again), recorded as `probe_misconfigured`, and
   changes no verdict. Verdicts
 are stored in `zerox_pool_health` and read by every instance; the freshest of a verdict and this
@@ -1198,7 +1198,16 @@ production: while the Worker forwards chat to the Node gateway (`EC2_PROXY_PREFI
 `/v1/chat/completions`), the HealthHub sends no test requests or canaries and keeps its free list,
 key and status-page checks and the isolates' reports; when the forward is removed (the rollback),
 its test requests resume at the next alarm. `HEALTH_HUB_PROBES` (`on`, `off`, default `auto`)
-overrides that.
+overrides that; `auto` cannot see whether the Node checker runs, so it must be set to `on` while
+that checker is off. The operator's `/health` adds `health_checker`: on Node
+`{ node_probes: "running" }`, or `node_probes` `off`, `no_database`, `migration_missing` or
+`not_started` with a `warning`; on the Worker `{ hub_test_requests, chat_routed_to_node }` (booleans).
+
+A probe's 400 is classified like a user's request (`classifyUpstreamFailure`): only a plain request rejection (`invalid`
+or `context`) is `probe_misconfigured`. A 400 the classifier names more precisely keeps its verdict:
+`model_decommissioned` or `model_not_found` is `model_unavailable`, Gemini `API_KEY_INVALID` or
+`FAILED_PRECONDITION` is `auth` (both unavailable at once), and Groq `tool_use_failed` is the
+model's own error (no verdict, not a misconfigured test).
 
 ### 15.4 RPCs (migration 20261104000000_health_probes.sql, service_role only)
 

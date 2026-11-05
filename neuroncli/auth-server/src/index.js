@@ -43,6 +43,8 @@ import { extraWebOrigins, isExtraWebHost } from './web-hosts.js';
 // Durable Object classes are exported from the Worker entry (wrangler.toml [[durable_objects]]),
 // each with its binding. RelayRoom (src/relay.js) is not bound for now, so it is not exported.
 export { HealthHub } from './health-hub.js';
+import { hubSendsTestRequests } from './health-hub.js';
+import { probeCheckerState } from './health-probes.js';
 import { registerWebhookRoutes } from './routes/webhooks.js';
 
 const SERVICE = 'neuroncli-gateway-worker';
@@ -598,8 +600,22 @@ api.get('/health', async (c) => {
     admin_access_configured: accessConfigured(c.env),
     csp_enforced: c.env.CSP_ENFORCE === 'true',
     ec2_proxy: proxyStatus(c.env),
+    health_checker: healthCheckerStatus(c.env),
   });
 });
+
+// Which checker sends model test requests from the runtime that answered (one checker per pool,
+// src/health-hub.js hubSendsTestRequests). The Node gateway reports its own checker's state; with
+// it not running, nothing tests the pools while the Worker forwards chat here (HEALTH_HUB_PROBES
+// auto), so the operator view says so. The Worker reports whether its HealthHub tests.
+function healthCheckerStatus(env) {
+  if (servingRuntime(env) === 'node') {
+    const node = probeCheckerState();
+    return node === 'running' ? { node_probes: node }
+      : { node_probes: node, warning: 'The Node checker is not testing the pools; set HEALTH_HUB_PROBES=on on the Worker until it runs' };
+  }
+  return { hub_test_requests: hubSendsTestRequests(env), chat_routed_to_node: chatRoutedToEc2(env) };
+}
 
 api.get('/ready', async c => {
   await loadPlanLimits(c.env);

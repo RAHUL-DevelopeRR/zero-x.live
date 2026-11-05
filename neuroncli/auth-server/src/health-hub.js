@@ -320,7 +320,7 @@ export class HealthHub {
     if (!hubSendsTestRequests(this.env)) {
       if (!this.testsOffLogged) {
         this.testsOffLogged = true;
-        console.info('HealthHub test requests off: the Node gateway checker probes the pools (chat is routed to EC2)');
+        console.info('HealthHub test requests off: chat is routed to EC2, whose Node checker should probe the pools (check node_probes in its operator /health; set HEALTH_HUB_PROBES=on while it is off)');
       }
       return;
     }
