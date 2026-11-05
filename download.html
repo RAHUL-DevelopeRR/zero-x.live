@@ -26,6 +26,7 @@
   <link rel="preload" href="/fonts/aspekta-400.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="/fonts/aspekta-500.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/zx-tokens.css">
+  <link rel="stylesheet" href="/home.css">
   <script type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Zero-X","item":"https://zero-x.live/"},{"@type":"ListItem","position":2,"name":"Download Neuron","item":"https://zero-x.live/download"}]}</script>
   <script type="module" src="/site-nav.js"></script>
   <script type="module" src="/download.js"></script>
@@ -83,21 +84,21 @@
       <p>Installs the <code>neuron</code> command and its full-screen terminal UI. npm and pip work on every system; the install scripts are the option without Node.js or Python.</p>
       <p id="cli-release-note" class="zx-muted">Neuron 7.0.0-alpha.4 is a <a href="https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/tag/v7.0.0-alpha.4">GitHub pre-release</a>, published on 3 November 2026. It adds a status bar under the prompt that shows the model, thinking level, folder and branch, permission mode and how full the context is.</p>
       <div>
-        <div>
+        <div class="zx-cmd">
           <h3>npm</h3>
           <div class="zx-code zx-code--copy zx-code--wrap"><span class="zx-code__label">Any terminal</span><pre><code id="cmd-npm">npm install -g @zero-x.live/neuron</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="cmd-npm" data-copy-label="npm install command">Copy</button></div>
           <p class="zx-help">Needs Node.js 22.14 or later. Run the same command again to upgrade.</p>
         </div>
-        <div>
+        <div class="zx-cmd">
           <h3>pip</h3>
           <div class="zx-code zx-code--copy zx-code--wrap"><span class="zx-code__label">Any terminal</span><pre><code id="cmd-pip">python -m pip install --pre neuroncli</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="cmd-pip" data-copy-label="pip install command">Copy</button></div>
           <p class="zx-help">Keep <code>--pre</code> while Neuron 7 is a pre-release: without it, pip installs the old, unsupported 6.2.4. Needs Python 3.8 or later.</p>
         </div>
-        <div>
+        <div class="zx-cmd">
           <h3>macOS and Linux install script</h3>
           <div class="zx-code zx-code--copy zx-code--wrap"><span class="zx-code__label">Terminal (sh, bash or zsh)</span><pre><code id="cmd-shell">curl -fsSL https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.4/install.sh | sh -s -- --version 7.0.0-alpha.4</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="cmd-shell" data-copy-label="curl install command">Copy</button></div>
         </div>
-        <div>
+        <div class="zx-cmd">
           <h3>Windows install script</h3>
           <div class="zx-code zx-code--copy zx-code--wrap"><span class="zx-code__label">PowerShell</span><pre><code id="cmd-powershell">&amp; ([scriptblock]::Create((irm https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.4/install.ps1))) -Version 7.0.0-alpha.4 -AddToPath</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="cmd-powershell" data-copy-label="PowerShell install command">Copy</button></div>
           <div class="zx-code zx-code--copy zx-code--wrap"><span class="zx-code__label">Command Prompt (cmd.exe)</span><pre><code id="cmd-cmd">powershell -NoProfile -ExecutionPolicy Bypass -Command "&amp; ([scriptblock]::Create((irm https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.4/install.ps1))) -Version 7.0.0-alpha.4 -AddToPath"</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="cmd-cmd" data-copy-label="Command Prompt install command">Copy</button></div>

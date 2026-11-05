@@ -102,3 +102,9 @@ a.zx-product:hover { color: inherit; }
 
 /* FAQ: a reading-width column that stays on the page's left edge */
 .zx-home-faq > * { max-width: 760px; }
+
+/* Command blocks on the download page: a heading, the command, a short note, with room between blocks */
+.zx-cmd { margin-top: var(--zx-s5); }
+.zx-cmd > h3 { margin: 0 0 var(--zx-s2); }
+.zx-cmd > .zx-code { margin-bottom: var(--zx-s2); }
+.zx-cmd > .zx-help { margin-bottom: var(--zx-s2); }

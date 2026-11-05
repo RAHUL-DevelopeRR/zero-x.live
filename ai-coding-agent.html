@@ -86,7 +86,7 @@
     <p>The agent is the loop and its tools; the model decides each step. Neuron can use:</p>
     <ul>
       <li>Hosted models through Zero-X after <code>neuron login</code>, such as GPT-OSS, Qwen, Nemotron and GLM on the Free plan, and Claude Sonnet 5.5 and Claude Opus 5.5 on Pro and Max. Choose <code>auto</code> and Neuron picks a tool-capable model whose context window fits the request. See the <a href="/neuron-cli#models">current model list</a>.</li>
-      <li>Your own provider. Set <code>OPENAI_API_KEY</code> and <code>OPENAI_BASE_URL</code> for any OpenAI-compatible endpoint, or connect your own OpenRouter account.</li>
+      <li>Your own provider. Set <code>OPENAI_API_KEY</code> and <code>OPENAI_BASE_URL</code> for any OpenAI-compatible endpoint.</li>
     </ul>
     <p>The files and messages an agent includes in a request go to the company serving the model. Free tiers of some of these services may use prompts to improve their models. The Zero-X gateway records usage metadata (model, tokens, cost, latency) and is not designed to store prompt or response text. Read the <a href="/privacy">privacy policy</a> before you point an agent at code you cannot share.</p>
 
