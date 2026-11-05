@@ -129,8 +129,9 @@ function positiveInt(value, fallback) {
 }
 
 // A full pool (p_pool.concurrency: Z.ai's free GLM Flash models run one request at a time for
-// every user of the operator's account) frees its slot as soon as the running request settles,
-// yet zerox_reserve_v2 names the end of that request's lease (up to 60 s) as the retry delay.
+// every user of the operator's account; Postgres counts it per model, and the health checker's test
+// requests hold every Z.ai free model's slot while they run, src/health-probes.js slotSiblings)
+// frees its slot as soon as the running request settles, yet zerox_reserve_v2 names the end of that request's lease (up to 60 s) as the retry delay.
 // With no other pool left to try, the request waits for the slot (POOL_SLOT_WAIT_MS, default
 // 20 s, polled every POOL_SLOT_POLL_MS) instead of failing; once it gives up, the pool is
 // parked and the client told to retry after at most CONCURRENCY_RETRY_SECONDS.

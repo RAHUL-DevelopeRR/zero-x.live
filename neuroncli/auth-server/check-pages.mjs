@@ -12,7 +12,7 @@ const isFile = file => existsSync(new URL(file, root)) && statSync(new URL(file,
 
 const PUBLIC_PAGES = ['index.html', 'pricing.html', 'neuron-cli.html', 'docs.html', 'ai-coding-agent.html', 'free-ai-coding-agent.html', 'claude-code-alternative.html', 'docs/trust.html', 'download.html', 'changelog.html', 'refund.html', 'contact.html', 'shipping.html', 'privacy.html', 'terms.html'];
 const PRIVATE_PAGES = ['dashboard.html', '404.html', 'neuroncli/index.html'];
-const SITE_SCRIPTS = ['dashboard.js', 'pricing.js', 'billing-checkout.js', 'home.js', 'download.js', 'changelog.js'];
+const SITE_SCRIPTS = ['dashboard.js', 'pricing.js', 'billing-checkout.js', 'home.js', 'download.js', 'changelog.js', 'site-nav.js'];
 const RELEASE_MANIFESTS = ['releases/cli/latest.json', 'releases/desktop/latest.json'];
 const SITE_FILES = [...PUBLIC_PAGES, ...PRIVATE_PAGES, ...SITE_SCRIPTS, ...RELEASE_MANIFESTS, 'zx-tokens.css', 'home.css', 'zerox-auth.js', 'neuroncli/login/index.html', 'neuroncli/callback/index.html'];
 const BASES = {'dashboard.html': 'https://dashboard.zero-x.live/', '404.html': 'https://zero-x.live/404', 'neuroncli/index.html': 'https://zero-x.live/neuroncli/'};
@@ -36,6 +36,30 @@ routeFiles.set('dashboard.zero-x.live/', 'dashboard.html');
 routeFiles.set('neuron.zero-x.live/device', 'neuroncli/device/index.html');
 const {TABS} = await import(new URL('dashboard.js', root));
 
+/* ───────────── Mobile header (zx-tokens.css) ───────────── */
+
+// At 375 px the shared header used to wrap into three rows (about 153 px, a fifth of a phone screen,
+// on every page). Below 720 px it is one row: 56 px inside plus its 1 px border, never over 64 px.
+// Desktop keeps the full nav: the menu button exists only inside the phone media query.
+{
+  const css = read('zx-tokens.css');
+  const phone = css.match(/@media \(max-width: 720px\) \{([\s\S]*?)^\}/m);
+  assert.ok(phone, 'zx-tokens.css: a phone block for the header');
+  const block = phone[1];
+  assert.match(css, /^\.zx-nav-toggle \{ display: none; \}$/m, 'the menu button is hidden outside the phone block (desktop unchanged)');
+  assert.match(block, /\.zx-header:not\(\[data-nav\]\) \{ position: static; \}/, 'without site-nav.js the wrapped header does not stick');
+  assert.match(block, /\.zx-header\[data-nav="closed"\] \.zx-nav \{ display: none; \}/, 'the closed menu hides the nav');
+  assert.match(block, /\.zx-header\[data-nav="open"\] \.zx-nav \{ flex-basis: 100%;/, 'the open menu is a full-width row under the bar');
+  const inner = block.match(/\.zx-header\[data-nav\] \.zx-header__inner \{ min-height: (\d+)px; padding-block: (\d+)px; \}/);
+  assert.ok(inner, 'the bar height is set in the phone block');
+  const toggleHeight = Number(block.match(/\.zx-header\[data-nav\] \.zx-nav-toggle \{[^}]*min-height: (\d+)px/)[1]);
+  const brandHeight = Number(css.match(/\.zx-brand \{[^}]*min-height: (\d+)px/)[1]);
+  const rowHeight = Math.max(Number(inner[1]), Math.max(toggleHeight, brandHeight) + 2 * Number(inner[2]));
+  assert.ok(rowHeight + 1 <= 64, `the phone header is ${rowHeight + 1} px tall (at most 64)`);
+  assert.ok(toggleHeight >= 44, 'the Menu button is a 44 px touch target');
+  assert.doesNotMatch(css.replace(phone[0], ''), /\.zx-header\[data-nav/, 'menu mode styles only apply on phones');
+}
+
 /* ───────────── Page structure, accessibility, SEO flags ───────────── */
 
 for (const file of [...PUBLIC_PAGES, ...PRIVATE_PAGES]) {
@@ -53,6 +77,15 @@ for (const file of [...PUBLIC_PAGES, ...PRIVATE_PAGES]) {
     assert.ok(body.includes('<header') && body.includes('<footer'), file + ': header and footer landmarks');
     assert.match(body, /<a class="zx-skip" href="#main">Skip to content<\/a>/, file + ': skip link');
     assert.ok(tags(html, 'nav').some(a => a['aria-label']), file + ': labelled navigation');
+    // Phones: the shared header is one row, the mark and a Menu button (site-nav.js) that opens the
+    // main nav as a disclosure; hidden until the script runs, so without it the nav wraps.
+    const toggle = tags(body, 'button').find(a => (a.class || '').split(' ').includes('zx-nav-toggle'));
+    assert.ok(toggle, file + ': header menu button');
+    assert.deepEqual([toggle.type, toggle['aria-expanded'], toggle['aria-controls'], 'hidden' in toggle], ['button', 'false', 'site-nav', true],
+      file + ': the menu button is a hidden disclosure button for #site-nav');
+    assert.ok(tags(body, 'nav').some(a => a.id === 'site-nav' && a['aria-label'] === 'Main'), file + ': the main nav is #site-nav');
+    assert.match(body, /<button class="zx-nav-toggle"[^>]*>[\s\S]*?Menu<\/button>\s*<nav class="zx-nav" id="site-nav"/, file + ': the button has a visible name and sits before the nav');
+    assert.ok(tags(html, 'script').some(a => a.type === 'module' && a.src === '/site-nav.js'), file + ': loads /site-nav.js');
   }
   assert.ok(tags(html, 'link').some(a => a.rel === 'stylesheet' && a.href === '/zx-tokens.css'), file + ': uses zx-tokens.css');
   assert.doesNotMatch(html, /rahultech|@gmail\.com/i, file + ': personal Gmail address');
@@ -782,6 +815,18 @@ assert.equal(checkout.normalizeCurrency('EUR'), 'USD');
   assert.equal(state({available: false, unavailable_reason: 'region_unavailable'}).label, 'Not offered in your region');
   assert.equal(state({available: false, unavailable_reason: 'not_configured'}).tone, 'off');
   assert.equal(state(null).tone, 'off');
+  // section 15.1: availability (section 15 words) wins over status (the v1.3 words alpha.4 reads).
+  assert.equal(home.healthWord({availability: 'unavailable', status: 'blurred'}), 'unavailable');
+  assert.equal(home.healthWord({status: 'blurred'}), 'blurred', 'an older gateway: status');
+  assert.equal(home.healthWord({}), 'unknown');
+  // section 15.2: each row's verdict expires after its own horizon, between polls too.
+  const fresh = {available: true, status: 'available', checked_at: '2026-10-20T09:00:00Z', stale_after_seconds: 5400};
+  assert.deepEqual(state(fresh), {tone: 'ok', label: 'Available'}, 'a Groq verdict 60 min old within its 90 min horizon');
+  assert.deepEqual(state({...fresh, stale_after_seconds: 1350}), {tone: 'unknown', label: 'Not checked recently'}, 'an NVIDIA one past 22.5 min');
+  assert.equal(state({...fresh, status: 'busy', stale_after_seconds: 60, available_again_at: '2026-10-20T10:01:00Z'}).tone, 'busy',
+    'a timed state still running is not expired');
+  assert.equal(state({...fresh, stale_after_seconds: null}).tone, 'ok', 'no horizon: the gateway decides');
+  assert.equal(home.verdictExpired({checked_at: null, stale_after_seconds: 60}, now), false);
 
   assert.equal(home.modelRows({nope: true}), null, 'unusable payload keeps the static catalog');
   const rows = home.modelRows({data: [
@@ -791,7 +836,8 @@ assert.equal(checkout.normalizeCurrency('EUR'), 'USD');
   ]});
   assert.equal(rows.length, 2, 'invalid ids are dropped');
   assert.deepEqual(rows[0], {id: 'gemini/gemini-2.5-pro', family: 'google/gemini-2.5-pro', maker: 'google', name: 'Gemini 2.5 Pro', context: 1048576, native: 1048576,
-    reasoning: true, vision: true, paidOnly: true, available: false, unavailable_reason: 'upgrade_required', status: 'available', available_again_at: null},
+    reasoning: true, vision: true, paidOnly: true, available: false, unavailable_reason: 'upgrade_required', status: 'available', available_again_at: null,
+    checked_at: null, stale_after_seconds: null},
     'a route of an older gateway is shown by its model and maker, never its provider');
   assert.equal(rows[1].name, '<img src=x onerror=alert(1)>', 'names stay plain text (rendered with textContent)');
   assert.equal(rows[1].maker, 'other', 'an unknown maker gets a neutral badge');
@@ -830,11 +876,10 @@ assert.equal(checkout.normalizeCurrency('EUR'), 'USD');
   assert.equal(home.staleAfterSeconds({stale_after_seconds: 1200}), 1200);
   assert.equal(home.staleAfterSeconds({}, 30), 60, 'without the payload value, two poll intervals');
   assert.equal(home.staleAfterSeconds({stale_after_seconds: -5}, 45), 90);
-  assert.equal(home.verdictsExpired({checkedAt: now - 20000, answeredAt: now - 33000, staleAfter: 1200, poll: 30}, now), false, 'one missed poll keeps the verdicts');
-  assert.equal(home.verdictsExpired({checkedAt: now - 20000, answeredAt: now - 61000, staleAfter: 1200, poll: 30}, now), true, 'two missed polls: not being checked');
-  assert.equal(home.verdictsExpired({checkedAt: now - 70000, answeredAt: now - 10000, staleAfter: 60, poll: 30}, now), true, 'verdicts older than stale_after_seconds expire');
-  assert.equal(home.verdictsExpired({checkedAt: 0, answeredAt: now - 10000, staleAfter: 60, poll: 30}, now), false);
-  assert.equal(home.verdictsExpired({checkedAt: now, answeredAt: 0}, now), true, 'never answered: never checked');
+  assert.equal(home.verdictsExpired({answeredAt: now - 33000, poll: 30}, now), false, 'one missed poll keeps the verdicts');
+  assert.equal(home.verdictsExpired({answeredAt: now - 61000, poll: 30}, now), true, 'two missed polls: not being checked');
+  assert.equal(home.verdictsExpired({answeredAt: now - 10000, poll: 30}, now), false, 'an answering gateway: rows expire one by one');
+  assert.equal(home.verdictsExpired({answeredAt: 0}, now), true, 'never answered: never checked');
   assert.equal(home.modelRows({data: Array.from({length: 80}, (_, i) => ({id: 'm' + i}))}).length, 60, 'list is capped');
 
   const updated = home.applyStatus(rows, {data: [{id: 'gemini/gemini-2.5-pro', available: true, status: 'blurred', available_again_at: '2026-10-20T10:30:00Z'}, {id: 'unknown'}]});
@@ -842,6 +887,14 @@ assert.equal(checkout.normalizeCurrency('EUR'), 'USD');
   assert.equal(updated[0].available, true);
   assert.equal(updated[0].status, 'blurred', 'a model that goes down greys out');
   assert.equal(home.applyStatus(updated, {data: [{id: 'gemini/gemini-2.5-pro', available: true, status: 'available'}]})[0].status, 'available', 'and brightens again');
+  const split = home.applyStatus(rows, {stale_after_seconds: 1200, checked_at: '2026-10-20T09:59:00Z', data: [
+    {id: 'gemini/gemini-2.5-pro', available: true, status: 'blurred', availability: 'unavailable', checked_at: '2026-10-20T09:58:00Z', stale_after_seconds: 2700},
+    {id: 'odd/model', available: true, status: 'available'}]});
+  assert.deepEqual([split[0].status, split[0].checked_at, split[0].stale_after_seconds], ['unavailable', '2026-10-20T09:58:00Z', 2700],
+    'the row reads availability and its own horizon');
+  assert.deepEqual([split[1].checked_at, split[1].stale_after_seconds], ['2026-10-20T09:59:00Z', 1200], 'an older gateway: the payload horizon');
+  assert.equal(home.stateSignature(split, now), home.stateSignature(split, now), 'a stable signature');
+  assert.notEqual(home.stateSignature(split, now), home.stateSignature(split, now + 3600000), 'and it changes once a verdict expires');
   assert.equal(home.pollSeconds({poll_interval_seconds: 30}), 30);
   assert.equal(home.pollSeconds({poll_interval_seconds: 1}), 30, 'too-fast polling falls back to 30 s');
   assert.equal(home.pollSeconds(null), 30);

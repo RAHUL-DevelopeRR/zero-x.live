@@ -29,6 +29,27 @@ const PUBLIC_STATUS = Object.freeze({ available: 'available', degraded: 'degrade
 // The public statuses in the same order (catalog.js rolls families up with it too).
 export const PUBLIC_RANK = Object.freeze({ available: 0, degraded: 1, unknown: 2, busy: 3, unavailable: 4, blurred: 4 });
 
+// Clients written for contract v1.3 (Neuron 7.0.0-alpha.4, still in use) read `status` and grey a
+// model out only when it says `blurred` (gateway_catalog.rs is_blurred); any other word, `unavailable`
+// included, reads as usable. So `status` keeps the v1.3 word and `availability` carries the section
+// 15 statuses (available | degraded | unknown | busy | unavailable), which the website and newer
+// clients read. `unknown` is the same in both: a v1.3 client shows it like available, which is what
+// section 15 asks (selectable; routing still tries it).
+export const LEGACY_STATUS = Object.freeze({ unavailable: 'blurred' });
+
+/**
+ * Splits a listed model's public status (withHealth, then the family roll-up) into the two fields
+ * of docs/PLATFORM_CONTRACT.md section 15.1: `availability` (section 15 words) and `status` (the
+ * v1.3 words). A model without a status is left as it is. Returns the model.
+ */
+export function withLegacyStatus(model) {
+  if (!model || typeof model.status !== 'string') return model;
+  const availability = model.status === 'blurred' ? 'unavailable' : model.status;
+  model.status = LEGACY_STATUS[availability] ?? availability;
+  model.availability = availability;
+  return model;
+}
+
 // Last value this isolate published or read per pool: { status, until, at }.
 const known = new Map();
 
@@ -81,8 +102,8 @@ export async function readShared(env, keys) {
 }
 
 /**
- * Adds status, available_again_at, checked_at, latency_ms, last_success_at and
- * last_failure_class to a /v1/models payload (docs/PLATFORM_CONTRACT.md section 15). A model's
+ * Adds status, available_again_at, checked_at, latency_ms, last_success_at, last_failure_class and
+ * stale_after_seconds to a /v1/models payload (docs/PLATFORM_CONTRACT.md section 15). A model's
  * status is that of its best pool among the tiers the caller can use; `auto` takes its best
  * candidate. `poolKeysFor(model)` returns the pool keys behind a listed model id.
  *
@@ -90,20 +111,23 @@ export async function readShared(env, keys) {
  * rows (`readRows`: the HealthHub snapshot on Workers, KV otherwise) and the active checker's rows
  * (`probeRows`, src/health-probes.js, on the Node gateway). The freshest one wins, so a real
  * failure flips a model at once and a passing test request brightens it again. A pool whose
- * newest observation is older than `staleMs` (HEALTH_STALE_SECONDS, 20 minutes) is unknown: no
- * observation is never reported as available. `budgetState(key, now)` returns { until, at } while
+ * newest observation is older than its stale horizon is unknown: no observation is never reported
+ * as available. The horizon is `staleMsFor(key)` when given (on the Node gateway, the checker's
+ * per-route horizon: health-probes.js routeStaleMs), else `staleMs` (HEALTH_STALE_SECONDS, 20
+ * minutes); stale_after_seconds reports the horizon of the pool whose verdict is shown. `budgetState(key, now)` returns { until, at } while
  * the pool's shared budget is spent (pool-budget.js): such a pool refuses every request, however
  * healthy. Public statuses: available | degraded | busy | unknown | unavailable (the pool rows'
  * `blurred`).
  */
 export async function withHealth(env, payload, poolKeysFor,
   { tracker, autoId = null, isAutoCandidate = () => false, readRows = null, probeRows = null, staleMs = healthStaleMs(env),
-    budgetState = () => null, now = Date.now() } = {}) {
+    staleMsFor = null, budgetState = () => null, now = Date.now() } = {}) {
   const models = payload.data;
   const keysByModel = new Map(models.map(model => [model.id, poolKeysFor(model)]));
   const allKeys = [...new Set([...keysByModel.values()].flat())];
   const shared = (readRows && await readRows(allKeys)) || await readShared(env, allKeys);
   const describePool = key => {
+    const stale = Number(staleMsFor?.(key)) > 0 ? Number(staleMsFor(key)) : staleMs;
     const local = tracker?.records?.get(key);
     const localStatus = local ? {
       ...publicStatus(local, now), at: local.last_attempt_at || null, latency_ms: local.last_latency_ms ?? null,
@@ -114,13 +138,14 @@ export async function withHealth(env, payload, poolKeysFor,
     const remote = !row ? null
       : row.status === 'degraded' || (row.until || 0) > now ? row
         : { status: 'available', until: 0, at: row.at };
-    const probe = probeRows?.get(key) ? probeView(probeRows.get(key), now, staleMs) : null;
+    const probe = probeRows?.get(key) ? probeView(probeRows.get(key), now, stale) : null;
     // The fresher verdict wins (a probe row that is stale, or listed but never asked, reads
     // unknown and carries none).
     let pick = [localStatus, remote, probe].filter(item => item && item.at && item.status !== 'unknown')
       .sort((a, b) => (b.at || 0) - (a.at || 0))[0]
       || { status: 'unknown', until: 0, at: null };
-    if (!pick.at || now - pick.at > staleMs) pick = { ...pick, status: 'unknown', until: 0 };
+    if (!pick.at || now - pick.at > stale) pick = { ...pick, status: 'unknown', until: 0 };
+    pick = { ...pick, stale_ms: stale };
     // A spent per-minute budget is busy until the next minute, a spent daily budget blurred.
     const spent = budgetState(key, now);
     if (spent?.until > now) {
@@ -140,7 +165,7 @@ export async function withHealth(env, payload, poolKeysFor,
           || (pick.status === best.status && (pick.until || 0) < (best.until || 0))
           || (pick.status === best.status && (pick.until || 0) === (best.until || 0) && (pick.at || 0) > (best.at || 0))) best = pick;
     }
-    return best || { status: 'unknown', until: 0, at: null };
+    return best || { status: 'unknown', until: 0, at: null, stale_ms: staleMs };
   };
   for (const model of models) {
     const keys = keysByModel.get(model.id) || [];
@@ -152,6 +177,7 @@ export async function withHealth(env, payload, poolKeysFor,
     model.latency_ms = Number.isFinite(state.latency_ms) ? state.latency_ms : null;
     model.last_success_at = state.last_success_at ? new Date(state.last_success_at).toISOString() : null;
     model.last_failure_class = typeof state.failure_class === 'string' ? state.failure_class : null;
+    model.stale_after_seconds = Math.round((state.stale_ms || staleMs) / 1000);
   }
   const auto = autoId ? models.find(model => model.id === autoId) : null;
   if (auto) {
@@ -163,6 +189,7 @@ export async function withHealth(env, payload, poolKeysFor,
     auto.latency_ms = best?.latency_ms ?? null;
     auto.last_success_at = best?.last_success_at ?? null;
     auto.last_failure_class = best?.last_failure_class ?? null;
+    auto.stale_after_seconds = best?.stale_after_seconds ?? Math.round(staleMs / 1000);
   }
   return payload;
 }

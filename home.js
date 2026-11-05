@@ -82,11 +82,36 @@ export function identityOf(model) {
 }
 
 /**
+ * A row's health word (docs/PLATFORM_CONTRACT.md section 15.1): `availability` when the gateway
+ * sends it (available, degraded, unknown, busy, unavailable), else `status`, where `blurred` is the
+ * v1.3 word for unavailable that the gateway keeps for Neuron 7.0.0-alpha.4.
+ */
+export function healthWord(entry) {
+  if (entry && typeof entry.availability === 'string' && entry.availability) return entry.availability;
+  return entry && typeof entry.status === 'string' ? entry.status : 'unknown';
+}
+
+/**
+ * True once a row's verdict has gone without a new check for longer than its own horizon
+ * (`stale_after_seconds`, per route: 1.5 times that route's test interval, at least the
+ * gateway's HEALTH_STALE_SECONDS), unless a timed state (busy or unavailable until
+ * `available_again_at`) is still running. A row without `checked_at` or a horizon never expires here.
+ */
+export function verdictExpired(model, now = Date.now()) {
+  const at = Date.parse((model && model.checked_at) || '');
+  const stale = Number(model && model.stale_after_seconds);
+  if (!Number.isFinite(at) || !(stale > 0)) return false;
+  const until = Date.parse((model && model.available_again_at) || '');
+  if (Number.isFinite(until) && until > now) return false;
+  return now - at > stale * 1000;
+}
+
+/**
  * How a model is shown: `tone` drives the dot and dimming (ok, warn, busy, unknown, off, locked),
  * `label` is the visible status. Unavailable models stay listed, greyed out, with the reason.
- * The gateway's health checker reports `unknown` for a model nobody has confirmed lately
- * (`stale_after_seconds`); it is never shown as available. `blurred` is the older word for
- * `unavailable`.
+ * The gateway's health checker reports `unknown` for a model nobody has confirmed lately, and a
+ * verdict whose own horizon passes between polls reads unknown here too (verdictExpired); neither
+ * is ever shown as available. `blurred` is the older word for `unavailable`.
  */
 export function modelState(model, now = Date.now()) {
   if (!model || typeof model !== 'object') return { tone: 'off', label: 'Unavailable' };
@@ -95,6 +120,7 @@ export function modelState(model, now = Date.now()) {
     if (model.unavailable_reason === 'region_unavailable') return { tone: 'off', label: 'Not offered in your region' };
     return { tone: 'off', label: 'Not offered right now' };
   }
+  if (verdictExpired(model, now)) return { tone: 'unknown', label: 'Not checked recently' };
   if (model.status === 'degraded') return { tone: 'warn', label: 'Slower than usual' };
   if (model.status === 'busy') return { tone: 'busy', label: 'Busy, retry soon' };
   if (model.status === 'unknown') return { tone: 'unknown', label: 'Not checked recently' };
@@ -110,6 +136,8 @@ export function modelState(model, now = Date.now()) {
   return { tone: 'unknown', label: 'Not checked recently' };
 }
 
+const horizon = value => (Number.isFinite(Number(value)) && Number(value) > 0 && Number(value) <= 7 * 86400 ? Number(value) : null);
+const isoTime = value => (typeof value === 'string' && Number.isFinite(Date.parse(value)) ? value : null);
 const tokenCount = value => (Number.isFinite(Number(value)) && Number(value) > 0 ? Math.round(Number(value)) : 0);
 const plainText = (value, max) => (typeof value === 'string' && value.trim() ? value.trim().slice(0, max) : null);
 
@@ -135,17 +163,25 @@ export function modelRows(payload) {
       paidOnly: tiers.length > 0 && !tiers.includes('free'),
       available: model.available !== false,
       unavailable_reason: typeof model.unavailable_reason === 'string' ? model.unavailable_reason : null,
-      status: typeof model.status === 'string' ? model.status : 'unknown',
+      status: healthWord(model),
       available_again_at: typeof model.available_again_at === 'string' ? model.available_again_at : null,
+      checked_at: isoTime(model.checked_at),
+      stale_after_seconds: horizon(model.stale_after_seconds),
     });
     if (rows.length === MAX_MODELS) break;
   }
   return rows;
 }
 
-/** Applies a GET /v1/models/status payload to known rows (unknown ids are ignored). */
+/**
+ * Applies a GET /v1/models/status payload to known rows (unknown ids are ignored). A row's own
+ * checked_at and stale_after_seconds win; a gateway that sends neither per row (older than the
+ * per-route horizons of contract section 15.2) is read with the payload's.
+ */
 export function applyStatus(rows, payload) {
   if (!Array.isArray(rows) || !payload || !Array.isArray(payload.data)) return rows;
+  const fallbackStale = horizon(payload.stale_after_seconds);
+  const fallbackChecked = isoTime(payload.checked_at);
   const byId = new Map(payload.data.filter(entry => entry && typeof entry.id === 'string').map(entry => [entry.id, entry]));
   return rows.map(row => {
     const entry = byId.get(row.id);
@@ -156,8 +192,10 @@ export function applyStatus(rows, payload) {
       ...(context ? { context, native: Math.max(context, tokenCount(entry.native_context_window), row.native) } : {}),
       available: entry.available !== false,
       unavailable_reason: typeof entry.unavailable_reason === 'string' ? entry.unavailable_reason : null,
-      status: typeof entry.status === 'string' ? entry.status : 'unknown',
+      status: healthWord(entry),
       available_again_at: typeof entry.available_again_at === 'string' ? entry.available_again_at : null,
+      checked_at: 'checked_at' in entry ? isoTime(entry.checked_at) : fallbackChecked,
+      stale_after_seconds: horizon(entry.stale_after_seconds) ?? fallbackStale,
     };
   });
 }
@@ -197,8 +235,9 @@ export function pollSeconds(payload) {
 }
 
 /**
- * How long a health verdict stays good without a new check: the health checker's own
- * `stale_after_seconds`, or two poll intervals when the payload does not say.
+ * The gateway's floor for how long a health verdict stays good without a new check (the top-level
+ * `stale_after_seconds`), or two poll intervals when the payload does not say. Each row carries its
+ * own horizon too (verdictExpired).
  */
 export function staleAfterSeconds(payload, poll = DEFAULT_POLL_SECONDS) {
   const value = Number(payload && payload.stale_after_seconds);
@@ -206,13 +245,12 @@ export function staleAfterSeconds(payload, poll = DEFAULT_POLL_SECONDS) {
 }
 
 /**
- * True once the verdicts on screen are no longer being checked: the gateway has not answered for
- * two poll intervals (or never has), or the health checker's newest verdict (`checkedAt`, 0 when
- * the gateway sent none) is older than `staleAfter` seconds. All times are in milliseconds.
+ * True once nothing on screen is being checked any more: the gateway has not answered for two poll
+ * intervals (or never has). Times are in milliseconds. A single row whose verdict outlives its own
+ * horizon reads unknown on its own (verdictExpired), whether or not the gateway answers.
  */
-export function verdictsExpired({ checkedAt = 0, answeredAt = 0, staleAfter = DEFAULT_POLL_SECONDS * 2, poll = DEFAULT_POLL_SECONDS }, now = Date.now()) {
-  if (!answeredAt || now - answeredAt > poll * 2 * 1000) return true;
-  return checkedAt > 0 && now - checkedAt > staleAfter * 1000;
+export function verdictsExpired({ answeredAt = 0, poll = DEFAULT_POLL_SECONDS }, now = Date.now()) {
+  return !answeredAt || now - answeredAt > poll * 2 * 1000;
 }
 
 /** "just now", "12 s ago", "3 min ago", "2 h ago". */
@@ -339,6 +377,14 @@ export function makerBadge(doc, maker) {
   return badge;
 }
 
+/** What the rows show now, to redraw only when a state or label changes between polls. */
+export function stateSignature(rows, now = Date.now()) {
+  return familyRows(rows).map(row => {
+    const state = modelState(row, now);
+    return row.id + ':' + state.tone + ':' + state.label;
+  }).join('|');
+}
+
 function renderModels(doc, body, rows, now) {
   const fragment = doc.createDocumentFragment();
   for (const row of familyRows(rows)) {
@@ -410,8 +456,8 @@ export function liveModels(doc, win, { fetchImpl, clock = () => Date.now() } = {
   let checkedAt = 0;
   let answeredAt = 0;
   let poll = DEFAULT_POLL_SECONDS;
-  let staleAfter = DEFAULT_POLL_SECONDS * 2;
   let expired = false;
+  let shown = '';
   const now = clock;
   const get = path => apiFetch(path, { timeoutMs: 8000, fetchImpl });
   const paint = () => {
@@ -430,12 +476,22 @@ export function liveModels(doc, win, { fetchImpl, clock = () => Date.now() } = {
     checkedAt = Number.isFinite(at) ? Math.min(at, now()) : 0;
     answeredAt = now();
     poll = pollSeconds(payload);
-    staleAfter = staleAfterSeconds(payload, poll);
   };
-  // While the gateway is not answering, the last verdicts stand only until they expire; after that
-  // no row may claim to be available, as when the gateway could not be reached at all.
+  const draw = () => {
+    renderModels(doc, body, rows, now());
+    shown = stateSignature(rows, now());
+  };
+  // Between polls a row whose verdict outlives its own horizon reads unknown (verdictExpired):
+  // redraw when what the rows say changes.
+  const recheck = () => {
+    if (expired || !rows || shown === stateSignature(rows, now())) return;
+    draw();
+    describe();
+  };
+  // While the gateway is not answering, the last verdicts stand for two poll intervals at most;
+  // after that no row may claim to be available, as when the gateway could not be reached at all.
   const expire = () => {
-    if (expired || state !== 'stale' || !verdictsExpired({ checkedAt, answeredAt, staleAfter, poll }, now())) return;
+    if (expired || state !== 'stale' || !verdictsExpired({ answeredAt, poll }, now())) return;
     expired = true;
     markUnchecked(body);
     note.textContent = 'The Zero-X gateway is not answering, so model availability is not being checked right now. Every model reads "Not checked recently" until it answers again.';
@@ -449,7 +505,7 @@ export function liveModels(doc, win, { fetchImpl, clock = () => Date.now() } = {
     try {
       const status = await get('/v1/models/status');
       rows = applyStatus(rows, status);
-      renderModels(doc, body, rows, now());
+      draw();
       expired = false;
       describe();
       state = 'live';
@@ -480,7 +536,7 @@ export function liveModels(doc, win, { fetchImpl, clock = () => Date.now() } = {
           return;
         }
         rows = parsed;
-        renderModels(doc, body, rows, now());
+        draw();
         expired = false;
         answeredAt = now();
         describe();
@@ -490,7 +546,7 @@ export function liveModels(doc, win, { fetchImpl, clock = () => Date.now() } = {
       .catch(() => offline('The Zero-X gateway could not be reached, so this is the built-in list and nothing in it was checked. It tries again every minute.'));
   }
   paint();
-  win.setInterval(() => { if (!doc.hidden && (state === 'live' || state === 'stale')) { paint(); expire(); } }, 1000);
+  win.setInterval(() => { if (!doc.hidden && (state === 'live' || state === 'stale')) { paint(); recheck(); expire(); } }, 1000);
   load();
   doc.addEventListener('visibilitychange', () => { if (!doc.hidden && rows) refresh(); });
 }

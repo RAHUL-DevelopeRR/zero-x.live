@@ -913,11 +913,83 @@ for (const scenario of ['live', 'offline']) {
   await old.advance(30);
   assert.deepEqual(old.view().rows.map(row => row[0]), ['unknown', 'unknown'], 'the health checker last looked 80 s ago, past its 60 s limit');
 
+  // Per-route horizons (contract section 15.2) while the gateway keeps answering: a verdict expires
+  // once it outlives its own route's horizon, between polls, and the other rows keep theirs.
+  const t0 = Date.parse('2026-11-05T10:00:00Z');
+  const perRow = mount(() => ({object: 'list', checked_at: new Date(t0 - 20 * 60000).toISOString(), poll_interval_seconds: 30, stale_after_seconds: 1200, data: [
+    {id: 'openai/gpt-oss-120b', available: true, status: 'available', availability: 'available', checked_at: new Date(t0 - 60 * 60000).toISOString(), stale_after_seconds: 5400},
+    {id: 'nvidia/nemotron-3-ultra-550b', available: true, status: 'available', availability: 'available', checked_at: new Date(t0 - 20 * 60000).toISOString(), stale_after_seconds: 1350}]}));
+  await settle();
+  assert.deepEqual(perRow.view().rows, [['ok', 'Available'], ['ok', 'Available']], 'both verdicts within their horizons');
+  await perRow.advance(180);
+  assert.match(perRow.view().live, /^Live/, 'the gateway still answers');
+  assert.deepEqual(perRow.view().rows, [['ok', 'Available'], ['unknown', 'Not checked recently']],
+    'the NVIDIA verdict (22.5 min) expired; the hourly-checked Groq one (90 min) still stands');
+  assert.match(perRow.view().note, /^1 of 2 models available/);
+  // A gateway alpha.4 reads: status says blurred, availability says unavailable; the site greys it out.
+  const split = mount(clock => ({...checked(clock), data: [
+    {id: 'openai/gpt-oss-120b', available: true, status: 'blurred', availability: 'unavailable', checked_at: new Date(clock - 5000).toISOString(), stale_after_seconds: 5400},
+    {id: 'nvidia/nemotron-3-ultra-550b', available: true, status: 'unknown', availability: 'unknown'}]}));
+  await settle();
+  assert.deepEqual(split.view().rows, [['off', 'Temporarily unavailable'], ['unknown', 'Not checked recently']]);
+
   // No checked_at (the health checker has checked nothing yet): no time is invented.
   const fresh = mount(clock => ({...checked(clock), checked_at: null, data: [{id: 'openai/gpt-oss-120b', available: true, status: 'unknown'}]}));
   await settle();
   assert.equal(fresh.view().live, 'Live · not checked yet');
   assert.deepEqual(fresh.view().rows[0], ['unknown', 'Not checked recently']);
+}
+
+/* ───────────── Site header menu on phones (site-nav.js) ───────────── */
+
+{
+  const {installNav} = await import(new URL('site-nav.js', root));
+  for (const file of ['index.html', 'pricing.html', 'docs/trust.html', 'dashboard.html']) {
+    const doc = parseDocument(read(file));
+    const header = doc.querySelector('.zx-header');
+    const button = header.querySelector('.zx-nav-toggle');
+    const nav = doc.getElementById('site-nav');
+    assert.equal(button.hidden, true, `${file}: without the script the menu button is hidden (the wrapped nav shows)`);
+    assert.equal(header.dataset.nav, undefined, `${file}: and the header is not in menu mode`);
+    const menu = installNav(doc);
+    assert.ok(menu, `${file}: the header has a menu`);
+    assert.equal(button.hidden, false, `${file}: the script shows the button`);
+    assert.deepEqual([button.getAttribute('aria-expanded'), button.getAttribute('aria-controls'), header.dataset.nav], ['false', 'site-nav', 'closed']);
+    assert.equal(nav.getAttribute('aria-label'), 'Main');
+    button.click();
+    assert.deepEqual([button.getAttribute('aria-expanded'), header.dataset.nav], ['true', 'open'], `${file}: the button opens the nav`);
+    button.click();
+    assert.deepEqual([button.getAttribute('aria-expanded'), header.dataset.nav], ['false', 'closed'], `${file}: and closes it`);
+    // Escape closes it and puts focus back on the button.
+    button.click();
+    const link = nav.querySelector('a');
+    link.focus();
+    const escape = makeEvent('keydown', {bubbles: true, cancelable: true, key: 'Escape'});
+    link.dispatchEvent(escape);
+    assert.equal(menu.isOpen(), false, `${file}: Escape closes the menu`);
+    assert.equal(escape.defaultPrevented, true);
+    assert.equal(doc.activeElement, button, `${file}: focus returns to the Menu button`);
+    // Escape with the menu closed does nothing.
+    const idle = makeEvent('keydown', {bubbles: true, cancelable: true, key: 'Escape'});
+    button.dispatchEvent(idle);
+    assert.equal(idle.defaultPrevented, false);
+    // Following a link closes it; so does a click outside the header or focus leaving it.
+    button.click();
+    link.click();
+    assert.equal(menu.isOpen(), false, `${file}: following a link closes the menu`);
+    button.click();
+    doc.querySelector('main').click();
+    assert.equal(menu.isOpen(), false, `${file}: a click outside closes it`);
+    button.click();
+    header.querySelector('.zx-brand').click();
+    assert.equal(menu.isOpen(), true, `${file}: a click inside the header leaves it open`);
+    const leave = makeEvent('focusout', {bubbles: true});
+    leave.relatedTarget = doc.querySelector('main');
+    link.dispatchEvent(leave);
+    assert.equal(menu.isOpen(), false, `${file}: focus leaving the header closes it`);
+  }
+  assert.equal(installNav(parseDocument('<!doctype html><html><head></head><body><main id="main"></main></body></html>')), null, 'no header: nothing to wire');
+  console.log('ok - site header menu: a disclosure button (aria-expanded, aria-controls), Escape returns focus, link, outside click and focus loss close it, hidden without the script');
 }
 
 /* ───────────── zerox-auth.js development identity ───────────── */

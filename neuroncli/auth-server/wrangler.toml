@@ -122,7 +122,11 @@ binding = "AI"
 
 # HealthHub (src/health-hub.js): one Durable Object holding every pool's health, with a 30 s
 # alarm for free checks and capped test requests. /v1/models reads it; without the binding the
-# gateway falls back to sharing health through SESSIONS_KV.
+# gateway falls back to sharing health through SESSIONS_KV. One checker per pool: while
+# EC2_PROXY_PREFIXES routes chat to the Node gateway, whose checker (src/health-probes.js) tests
+# the pools, the hub sends no test requests or canaries (free list checks and isolates' reports go
+# on); deleting the secret brings them back. HEALTH_HUB_PROBES = "on" or "off" overrides that.
+# HEALTH_HUB_PROBES = "auto"
 [[durable_objects.bindings]]
 name = "HEALTH_HUB"
 class_name = "HealthHub"

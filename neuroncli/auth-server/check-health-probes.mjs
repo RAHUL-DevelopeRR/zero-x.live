@@ -10,9 +10,12 @@ import { closeAllPglite, getPgliteHandle } from './src/db/pglite.js';
 import { CATALOG, POOL_LIMITS, poolKey } from './src/catalog.js';
 import {
   CHAT_MAX_TOKENS, HealthProber, MAX_PROBE_SHARE, PROBE_SCHEDULES, TOOL_MAX_TOKENS, databaseProbeStore, healthStaleMs,
-  probeHealthRows, probePlan, probeRoutingRows, probeSettings, probeView, setActiveProber, startHealthProbes,
+  probeHealthRows, probePlan, probeRoutingRows, probeSettings, probeStaleMsFor, probeView, routeStaleMap, routeStaleMs,
+  setActiveProber, slotProbeTimeoutMs, SLOT_PROBE_TIMEOUT_MS, startHealthProbes, STALE_INTERVAL_FACTOR,
 } from './src/health-probes.js';
 import { withHealth } from './src/health-share.js';
+import { toClaudeRequest } from './src/anthropic-request.js';
+import { lowestEffort, probeMaxTokens, probePayload, probeThinks, THINKING_CHAT_MAX_TOKENS, THINKING_TOOL_MAX_TOKENS } from './src/health-probes.js';
 import { FailureKind, ProviderHealthTracker } from './src/provider-health.js';
 
 const passed = [];
@@ -143,6 +146,102 @@ const entry = id => CATALOG.find(item => item.id === id);
   ok('stale rows read unknown; the freshest of real traffic and test requests wins');
 }
 
+/* ───────────── 2a. Claude test requests the API accepts (no network) ───────────── */
+
+{
+  // Anthropic's rules for the 5.5 models (checked 2026-11-05): thinking {type:'disabled'} and
+  // budget_tokens are 400s on both; between_tools is Sonnet 5.5 only, with no other thinking field
+  // and effort high or below; forced tool_choice is a 400; sampling parameters are refused;
+  // effort is low | medium | high | xhigh | max. Thinking counts toward max_tokens.
+  const claudes = CATALOG.filter(item => item.provider === 'anthropic');
+  assert.deepEqual(claudes.map(item => item.upstream_model).sort(), ['claude-opus-5-5', 'claude-sonnet-5-5'], 'every Claude model in the catalog');
+  const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
+  for (const item of claudes) {
+    for (const kind of ['chat', 'tool']) {
+      const payload = probePayload(item, kind);
+      const { body } = toClaudeRequest(item, payload);
+      const where = `${item.upstream_model} ${kind}`;
+      assert.equal(body.model, item.upstream_model, where);
+      assert.ok(['adaptive', 'between_tools'].includes(body.thinking?.type), `${where}: thinking adaptive or between_tools, never disabled`);
+      assert.ok(!('budget_tokens' in body.thinking), `${where}: no budget_tokens`);
+      assert.ok(EFFORTS.includes(body.output_config?.effort), `${where}: a valid effort`);
+      assert.equal(body.output_config.effort, 'low', `${where}: the cheapest effort`);
+      if (body.thinking.type === 'between_tools') {
+        assert.equal(item.upstream_model, 'claude-sonnet-5-5', `${where}: between_tools is Sonnet 5.5 only`);
+        assert.deepEqual(Object.keys(body.thinking), ['type'], `${where}: no other field with between_tools`);
+        assert.ok(['low', 'medium', 'high'].includes(body.output_config.effort), `${where}: between_tools at high or below`);
+      }
+      for (const field of ['temperature', 'top_p', 'top_k']) assert.ok(!(field in body), `${where}: no ${field}`);
+      assert.equal(body.messages.at(-1).role, 'user', `${where}: no assistant prefill`);
+      if (kind === 'tool') {
+        assert.deepEqual(body.tool_choice, { type: 'auto' }, `${where}: tool_choice auto, never forced`);
+        assert.equal(body.tools.length, 1);
+      } else assert.ok(!body.tools && !body.tool_choice, `${where}: no tools on the chat test`);
+      assert.ok(Number.isSafeInteger(body.max_tokens) && body.max_tokens >= 1, `${where}: max_tokens`);
+      if (body.thinking.type === 'adaptive') {
+        assert.ok(body.max_tokens >= THINKING_CHAT_MAX_TOKENS, `${where}: room for thinking and the answer`);
+      }
+    }
+  }
+  const sonnet = claudes.find(item => item.upstream_model === 'claude-sonnet-5-5');
+  const opus = claudes.find(item => item.upstream_model === 'claude-opus-5-5');
+  assert.deepEqual([lowestEffort(sonnet), probeThinks(sonnet), probeMaxTokens(sonnet, 'chat'), probeMaxTokens(sonnet, 'tool')],
+    ['none', false, CHAT_MAX_TOKENS, TOOL_MAX_TOKENS], 'Sonnet 5.5: between_tools, so the 3-token test');
+  assert.equal(toClaudeRequest(sonnet, probePayload(sonnet, 'chat')).body.thinking.type, 'between_tools');
+  assert.deepEqual([lowestEffort(opus), probeThinks(opus), probeMaxTokens(opus, 'chat'), probeMaxTokens(opus, 'tool')],
+    ['low', true, THINKING_CHAT_MAX_TOKENS, THINKING_TOOL_MAX_TOKENS], 'Opus 5.5 keeps thinking: room for it');
+  assert.equal(toClaudeRequest(opus, probePayload(opus, 'chat')).body.thinking.type, 'adaptive');
+  // Other providers keep the tiny requests.
+  assert.equal(probeMaxTokens(entry('groq/openai/gpt-oss-120b'), 'chat'), CHAT_MAX_TOKENS);
+  assert.equal(probePayload(entry('groq/openai/gpt-oss-120b'), 'chat').max_tokens, CHAT_MAX_TOKENS);
+  ok('Claude test requests: a shape the API accepts for each catalog model (no disabled thinking, no forced tool, room for Opus thinking)');
+}
+
+/* ───────────── 2b. Per-route stale horizon (section 15.2) ───────────── */
+
+{
+  // A verdict stays current for max(HEALTH_STALE_SECONDS, 1.5 x the route's chat test interval).
+  assert.equal(STALE_INTERVAL_FACTOR, 1.5);
+  const horizon = (id, tier = 'free', env = {}) => {
+    const item = entry(id);
+    return routeStaleMs(env, item, item.pools.find(pool => pool.tier === tier)) / 60000;
+  };
+  assert.equal(horizon('groq/openai/gpt-oss-120b'), 90, 'Groq free, tested hourly: 90 min');
+  assert.equal(horizon('groq/openai/gpt-oss-120b', 'paid'), 45, 'paid pools, every 30 min: 45 min');
+  assert.equal(horizon('nvidia/openai/gpt-oss-20b'), 22.5, 'NVIDIA, every 15 min: 22.5 min');
+  assert.equal(horizon('zai/glm-4.7-flash'), 22.5, 'Z.ai, every 15 min: 22.5 min');
+  assert.equal(horizon('cohere/north-mini-code:free'), 720, 'OpenRouter, every 8 h: 12 h');
+  assert.equal(horizon('anthropic/claude-opus-5-5', 'paid'), 45, 'Claude, every 30 min: 45 min');
+  assert.equal(horizon('nvidia/openai/gpt-oss-20b', 'free', { HEALTH_STALE_SECONDS: '3600' }), 60, 'never under the floor');
+  for (const item of CATALOG) {
+    for (const pool of item.pools) {
+      const ms = routeStaleMs({}, item, pool);
+      assert.ok(ms >= healthStaleMs({}) && ms >= probePlan(item, pool).chatMs, `${item.id}: the horizon outlasts its schedule`);
+    }
+  }
+  // The stale map covers the offered pools; without a prober here there is no per-route function.
+  const mapEnv = { GROQ_API_KEY: 'g', NVIDIA_API_KEY: 'n', NVIDIA_HOSTED: 'true' };
+  const map = routeStaleMap(mapEnv);
+  assert.equal(map.get(poolKey(entry('groq/openai/gpt-oss-120b'), entry('groq/openai/gpt-oss-120b').pools[0])), 90 * 60000);
+  assert.equal(probeStaleMsFor(), null, 'no prober: withHealth uses HEALTH_STALE_SECONDS');
+
+  // withHealth applies the per-route horizon: a Groq verdict 60 min old is still available (it is
+  // tested hourly), an NVIDIA one 60 min old is unknown; stale_after_seconds says which horizon.
+  const now = Date.now();
+  const rows = new Map([
+    ['groq', { pool: 'groq', status: 'available', base_status: 'available', checked_at: now - 60 * 60000, verdict_at: now - 60 * 60000 }],
+    ['nv', { pool: 'nv', status: 'available', base_status: 'available', checked_at: now - 60 * 60000, verdict_at: now - 60 * 60000 }],
+  ]);
+  const horizons = { groq: 90 * 60000, nv: 22.5 * 60000 };
+  const out = await withHealth({}, { data: [{ id: 'g', available: true }, { id: 'n', available: true }] },
+    model => [model.id === 'g' ? 'groq' : 'nv'], { probeRows: rows, staleMsFor: key => horizons[key], now, readRows: async () => new Map() });
+  assert.deepEqual(out.data.map(model => [model.status, model.stale_after_seconds]), [['available', 5400], ['unknown', 1350]]);
+  const later = await withHealth({}, { data: [{ id: 'g', available: true }] }, () => ['groq'],
+    { probeRows: rows, staleMsFor: key => horizons[key], now: now + 31 * 60000, readRows: async () => new Map() });
+  assert.equal(later.data[0].status, 'unknown', 'past 1.5 x its hour: unknown');
+  ok("per-route stale horizon: 1.5 x the route's test interval, at least HEALTH_STALE_SECONDS, reported per row");
+}
+
 /* ───────────── 3. Against Postgres and mock providers ───────────── */
 
 const env = {
@@ -203,6 +302,7 @@ const NVIDIA_20B = key('nvidia/openai/gpt-oss-20b');
 const NORTH = key('cohere/north-mini-code:free');
 const MINIMAX = key('minimax/minimax-m3.1-flash:free');
 const GLM_47 = key('zai/glm-4.7-flash');
+const GLM_45 = key('zai/glm-4.5-flash');
 const today = () => new Date(clock()).toISOString().slice(0, 10);
 const dayBucket = async model => (await sql(`SELECT requests FROM public.zerox_pool_usage WHERE model = $1 AND tier = 'free'
   AND bucket = 'day' ORDER BY bucket_start DESC LIMIT 1`, [model]))[0]?.requests ?? 0;
@@ -267,8 +367,14 @@ try {
     return { body, by: Object.fromEntries(body.data.map(row => [row.id, row])) };
   };
   let status = await statusRows();
-  assert.equal(status.body.stale_after_seconds, 1200);
-  assert.equal(status.by['minimax/minimax-m3.1-flash:free'].status, 'unavailable');
+  assert.equal(status.body.stale_after_seconds, 1200, 'the top-level horizon is the floor, HEALTH_STALE_SECONDS');
+  // section 15.1: availability in section 15's words, status in the v1.3 words alpha.4 greys out.
+  assert.deepEqual([status.by['minimax/minimax-m3.1-flash:free'].availability, status.by['minimax/minimax-m3.1-flash:free'].status],
+    ['unavailable', 'blurred']);
+  // section 15.2: each verdict stays current for 1.5 times its route's test interval, at least 20 min.
+  assert.deepEqual([status.by['groq/openai/gpt-oss-120b'].stale_after_seconds, status.by['nvidia/openai/gpt-oss-20b'].stale_after_seconds,
+    status.by['cohere/north-mini-code:free'].stale_after_seconds, status.by['zai/glm-4.7-flash'].stale_after_seconds],
+  [5400, 1350, 43200, 1350], 'Groq free 90 min, NVIDIA and Z.ai 22.5 min, OpenRouter 12 h');
   assert.equal(status.by['minimax/minimax-m3.1-flash:free'].last_failure_class, 'delisted');
   assert.equal(status.by['groq/openai/gpt-oss-120b'].status, 'available');
   assert.ok(Number.isFinite(status.by['groq/openai/gpt-oss-120b'].latency_ms));
@@ -322,6 +428,83 @@ try {
     pool_minute, pool_day) VALUES ('req_x', 'm', 'free', 'free', 1, current_date, now(), now())`), undefined, 'only probe slots may lack a user');
   ok('a test request on a one-at-a-time pool holds its slot and frees it at once');
 
+  // ── Z.ai's slot is treated as one per account (src/health-probes.js slotSiblings) ──
+  await clockHeadroom(20);
+  const zaiUser = await newUser();
+  const reserveZai = model => rpc(env, 'zerox_reserve_v2', { p_user_id: zaiUser, p_request_id: `req_${randomUUID()}`,
+    p_model: model, p_tier: 'free', p_tokens: 100, p_cost_microusd: 0,
+    p_pool: { rpm: null, rpd: null, tpm: null, tpd: null, concurrency: 1 } });
+  const settle = id => sql(`UPDATE public.zerox_reservations SET status = 'settled', outcome = 'ok', settled_at = now() WHERE id = $1`, [id]);
+  const glmCalls47 = () => chats().filter(call => call.model === 'glm-4.7-flash').length;
+  // (a) A user's request on GLM-4.5 holds the account: no test request on GLM-4.7, whose verdict stays.
+  const onSibling = await reserveZai('zai/glm-4.5-flash');
+  assert.equal(onSibling.status, 'ok');
+  const before47 = glmCalls47();
+  const verdict47 = prober.rows.get(GLM_47).status;
+  makeDue(GLM_47);
+  // Its own verdict is newer than any user's success here, so only the account check can stop it.
+  Object.assign(prober.rows.get(GLM_47), { probe_count: 0, verdict_at: clock() });
+  const realStore = prober.store;
+  const takes = [];
+  prober.store = { ...realStore, take: async args => { takes.push({ model: args.model, take: args.take }); return realStore.take(args); } };
+  await tickA();
+  prober.store = realStore;
+  assert.equal(glmCalls47(), before47, 'no GLM-4.7 test request while a user runs GLM-4.5 on the same account');
+  assert.ok(takes.some(item => item.model === 'zai/glm-4.5-flash' && !item.take), 'the sibling was checked');
+  assert.ok(!takes.some(item => item.model === 'zai/glm-4.7-flash' && item.take), 'and nothing was taken or counted for GLM-4.7');
+  assert.equal(prober.rows.get(GLM_47).status, verdict47, 'and no verdict from it: the GLM-4.7 slot itself is free');
+  await settle(onSibling.reservation_id);
+  // (b) A test request on GLM-4.7 holds GLM-4.5's slot too: a user arriving there waits, as for
+  // another user, instead of reaching Z.ai beside the test request.
+  let siblingDuringProbe = null;
+  let ownDuringProbe = null;
+  behaviour['glm-4.7-flash'] = async body => {
+    siblingDuringProbe = await reserveZai('zai/glm-4.5-flash');
+    ownDuringProbe = await reserveZai('zai/glm-4.7-flash');
+    return completion(body);
+  };
+  makeDue(GLM_47);
+  await tickA();
+  delete behaviour['glm-4.7-flash'];
+  assert.equal(glmCalls47(), before47 + 1, 'the test request was sent once the account was free');
+  assert.deepEqual([siblingDuringProbe?.status, ownDuringProbe?.status], ['pool_exhausted', 'pool_exhausted'],
+    'users on either Z.ai model wait for the slot (contract 8.6) while the test request runs');
+  assert.ok(Number(siblingDuringProbe.retry_after_seconds) <= Math.ceil(slotProbeTimeoutMs(env) / 1000) + 5,
+    'the held slot lapses within the test request timeout and its margin');
+  assert.equal((await sql(`SELECT count(*)::int AS n FROM public.zerox_reservations WHERE user_id IS NULL AND status = 'active'`))[0].n, 0,
+    'every slot the test request held was freed when it ended');
+  const afterProbe = await reserveZai('zai/glm-4.5-flash');
+  assert.equal(afterProbe.status, 'ok', 'and the waiting user gets GLM-4.5 next');
+  await settle(afterProbe.reservation_id);
+  // (c) A user takes the sibling between the check and the hold: everything is released, nothing sent.
+  const takeStore = prober.store;
+  let raced = null;
+  prober.store = { ...takeStore, take: async args => {
+    if (args.take && args.model === 'zai/glm-4.5-flash' && !raced) raced = await reserveZai('zai/glm-4.5-flash');
+    return takeStore.take(args);
+  } };
+  makeDue(GLM_47);
+  const beforeRace = glmCalls47();
+  await tickA();
+  prober.store = takeStore;
+  assert.equal(raced?.status, 'ok', 'the user won the sibling slot');
+  assert.equal(glmCalls47(), beforeRace, 'so no test request was sent');
+  assert.equal((await sql(`SELECT count(*)::int AS n FROM public.zerox_reservations WHERE user_id IS NULL AND status = 'active'`))[0].n, 0,
+    'and the GLM-4.7 slot the prober had taken was released at once');
+  await settle(raced.reservation_id);
+  // (d) Timeouts: a slot-holding test request ends inside the 20 s a user waits for a slot.
+  assert.equal(SLOT_PROBE_TIMEOUT_MS, 15_000);
+  assert.equal(slotProbeTimeoutMs({}), 15_000);
+  assert.equal(slotProbeTimeoutMs({ POOL_SLOT_WAIT_MS: '12000' }), 7_000, 'a shorter slot wait shortens the test request');
+  const glmItem = { entry: entry('zai/glm-4.7-flash'), pool: entry('zai/glm-4.7-flash').pools[0], key: GLM_47 };
+  assert.deepEqual([prober.probeTimeoutMs(glmItem, false), prober.probeTimeoutMs(glmItem, true)], [12_000, 15_000],
+    'chat 12 s, tool call capped at 15 s on a one-at-a-time pool');
+  const groqItem = { entry: entry('groq/openai/gpt-oss-120b'), pool: entry('groq/openai/gpt-oss-120b').pools[0], key: GROQ_120B };
+  assert.equal(prober.probeTimeoutMs(groqItem, true), 24_000, 'other pools keep the tool timeout');
+  assert.deepEqual(prober.slotSiblings(glmItem, prober.pools()).map(item => item.key), [GLM_45], 'the sibling is the other Z.ai free model');
+  assert.deepEqual(prober.slotSiblings(groqItem, prober.pools()).filter(item => item.entry.provider !== 'groq'), []);
+  ok('Z.ai slot per account: no test while any Z.ai model runs, every slot held during one, freed after, within the slot wait');
+
   // ── Recovery: two failures make a model unavailable, a passing request brings it back ──
   behaviour['openai/gpt-oss-120b'] = () => json({ error: { message: 'upstream down', type: 'server_error' } }, 503);
   makeDue(GROQ_120B);
@@ -335,7 +518,7 @@ try {
   await tickA();
   assert.equal(prober.rows.get(GROQ_120B).status, 'unavailable', 'two in a row: unavailable');
   status = await statusRows();
-  assert.equal(status.by['groq/openai/gpt-oss-120b'].status, 'unavailable');
+  assert.deepEqual([status.by['groq/openai/gpt-oss-120b'].availability, status.by['groq/openai/gpt-oss-120b'].status], ['unavailable', 'blurred']);
   delete behaviour['openai/gpt-oss-120b'];
   makeDue(GROQ_120B);
   await tickA();
@@ -450,7 +633,8 @@ try {
     await other.tick();
     assert.equal(probeView(other.cache.get(NEMO_POOL), clock()).status, 'blurred', 'the follower reads the failure too');
     status = await statusRows();
-    assert.equal(status.by['nvidia/nvidia/nemotron-3-ultra-550b-a55b'].status, 'unavailable');
+    assert.deepEqual([status.by['nvidia/nvidia/nemotron-3-ultra-550b-a55b'].availability,
+      status.by['nvidia/nvidia/nemotron-3-ultra-550b-a55b'].status], ['unavailable', 'blurred']);
     // With test requests left for the day, the failure brings the chat test forward, which decides.
     prober.rows.get(NEMO_POOL).probe_count = 0;
     await tickA();
@@ -513,7 +697,9 @@ try {
   const STEP = key('nvidia/stepfun-ai/step-5-preview');
   await sql('DELETE FROM public.zerox_pool_health WHERE pool = $1', [STEP]);
   behaviour['stepfun-ai/step-5-preview'] = () => json({ error: { message: 'max_tokens too small', type: 'invalid_request_error' } }, 400);
-  const fourth = new HealthProber(env, { store, holder: 'instance-d', now: clock, log: quiet });
+  const warned = [];
+  const warnRecorder = { info() {}, log() {}, warn: (...args) => warned.push(args) };
+  const fourth = new HealthProber(env, { store, holder: 'instance-d', now: clock, log: warnRecorder });
   offset += 15_000;
   for (let i = 0; i < 8 && !fourth.rows.get(STEP)?.probed_at; i++) {
     offset += 15_000;
@@ -522,19 +708,30 @@ try {
   assert.ok(fourth.rows.get(STEP).probed_at, 'the test request was sent');
   assert.equal(fourth.rows.get(STEP).status, 'unknown', 'a refused test request is no verdict');
   assert.equal(probeView(fourth.cache.get(STEP), clock()).status, 'unknown', 'stored (the list saw it) without a verdict');
+  assert.equal(fourth.rows.get(STEP).failure_class, 'probe_misconfigured', 'recorded as a misconfigured test request');
+  assert.equal(fourth.rows.get(STEP).consecutive_failures, 0, 'not counted as a failure of the model');
+  assert.equal(fourth.cache.get(STEP).failure_class, 'probe_misconfigured', 'and stored so');
+  // A second 400: still no verdict, and the warning is not repeated.
+  Object.assign(fourth.rows.get(STEP), { probed_at: null });
+  offset += 15_000;
+  await fourth.tick();
+  assert.equal(fourth.rows.get(STEP).status, 'unknown');
+  const misconfigured = warned.filter(args => /fix the test request/.test(args[0]) && args[1]?.pool === STEP);
+  assert.equal(misconfigured.length, 1, 'a 400 is logged once per pool');
+  assert.deepEqual(Object.keys(misconfigured[0][1]).sort(), ['kind', 'pool', 'status'], 'metadata only');
   await fourth.stop();
   delete behaviour['stepfun-ai/step-5-preview'];
-  ok('a test request refused as a request: no verdict, the other rows are still written');
+  ok('a test request refused as a request (400): probe_misconfigured, no verdict, logged once, the other rows are still written');
 
   // ── A database without the migration: the prober logs once and stays idle ──
   const missing = { lease: async () => { throw new AccountDatabaseError('Could not find the function', { code: 'PGRST202' }); },
     rows: async () => [], put: async () => {}, take: async () => ({}), release: async () => false };
-  const warned = [];
-  const orphan = new HealthProber(env, { store: missing, holder: 'x', log: { info() {}, warn: (...a) => warned.push(a) } });
+  const probeWarnings = [];
+  const orphan = new HealthProber(env, { store: missing, holder: 'x', log: { info() {}, warn: (...a) => probeWarnings.push(a) } });
   assert.equal((await orphan.tick()).leader, false);
   assert.equal(orphan.disabled, 'migration_missing');
   await orphan.tick();
-  assert.equal(warned.length, 1, 'logged once');
+  assert.equal(probeWarnings.length, 1, 'logged once');
   ok('missing migration: probes off, logged once');
 } finally {
   setActiveProber(null);

@@ -107,7 +107,7 @@ them in `zerox_plan_policy.razorpay_plan_id_inr/usd`.
 |---|---|---|---|
 | `GROQ_API_KEY`, `GEMINI_API_KEY` | **secret** | unset | Free pools (Groq free org; Gemini free tier, refused for EEA/GB/CH callers). Optional once the provider key vault holds keys: each vault key is its own pool and these serve last. |
 | `GROQ_PAID_API_KEY`, `GEMINI_PAID_API_KEY` | **secret** | unset | Paid pools for Pro/Max (Groq Developer plan, billing-linked Gemini project). Unset = no paid pool. |
-| `GLM_API_KEY` | **secret** | unset | Z.ai's free GLM-4.7-Flash and GLM-4.5-Flash (key slot `zai.free`; owner lineup 2026-10-29). Already a GitHub secret; deploy pushes it to the Worker. Free models answer one request at a time per account and model: apply `20261029001000_pool_concurrency.sql` so the gateway holds the second request back instead of getting 429s. Unset: both list as `not_configured`. |
+| `GLM_API_KEY` | **secret** | unset | Z.ai's free GLM-4.7-Flash and GLM-4.5-Flash (key slot `zai.free`; owner lineup 2026-10-29). Already a GitHub secret; deploy pushes it to the Worker. Free models answer one request at a time (concurrency 1 per model in the console; the health checker treats it as one slot for the whole account, since that is not established): apply `20261029001000_pool_concurrency.sql` so the gateway holds the second request back instead of getting 429s. Unset: both list as `not_configured`. |
 | `ANTHROPIC_API_KEY` | **secret** | unset | Claude Sonnet 5.5 and Claude Opus 5.5 paid pools (Pro and Max, billed from credits; key slot `anthropic.paid`) and the weekly discovery research agent. Set it with `gh secret set ANTHROPIC_API_KEY`; deploy pushes it to the Worker. Unset: both Claude models list as `not_configured`. Also set a monthly spend limit for the key's workspace in the Anthropic console (see "Model catalog and Claude"). |
 | `ANTHROPIC_THINKING_REPLAY` | var | on | `false` stops replaying Claude's signed thinking blocks into the next turn and stops sending the thinking-binding beta (contract §13.3). |
 | `PAID_DAILY_SPEND_CAP_USD` | var | unset | A number above 0 lowers every paid pool's daily spend cap (upstream USD per UTC day) to at most this value; it can never raise one (contract §13.4). |
@@ -179,17 +179,24 @@ missing model, a 5xx, a timeout, a rejected key) makes the model `degraded` (`un
 three with no success, `last_failure_class` `upstream_errors`) on both instances, and its next chat
 test is due at once, within the daily cap. A model list only records that a model is still
 offered (`listed_at`); it never renews a verdict, so a listed model whose last test request is
-older than `HEALTH_STALE_SECONDS` reports `unknown`. On a one-at-a-time pool (Z.ai's GLM Flash) a
+older than its stale horizon (below) reports `unknown`. On a one-at-a-time pool (Z.ai's GLM Flash) a
 test request holds the slot like a user's request (a reservation without a user, plan `probe`,
 freed by `zerox_probe_release` as soon as the request ends), so a user who arrives meanwhile waits
-for the slot instead of getting Z.ai's 429.
+for the slot instead of getting Z.ai's 429. The checker treats Z.ai's free slot as one per
+account (it is not established that Z.ai counts it per model): it tests a Z.ai model only while
+no request runs on any Z.ai free model of that key, holds all of their slots while the test runs,
+and ends the test within 15 s, inside the 20 s a user waits for a slot (`POOL_SLOT_WAIT_MS`).
+Claude tests use each model's lowest setting: Sonnet 5.5 with thinking off (`between_tools`,
+3 tokens); Opus 5.5, which cannot turn thinking off, at effort low with 64 tokens (512 for the tool
+call). A test request the provider refuses with a 400 is logged once per pool and recorded as
+`probe_misconfigured`, never as the model being down.
 
 | Pool | Published free budget | Chat test | Tool-call test | Requests a day | Share |
 |---|---|---|---|---|---|
 | Groq free (per model and key) | 1,000 a day, 30 a minute, 200K tokens a day | every 60 min | every 6 h | 28 | 2.8 % (about 1 % of the tokens) |
 | NVIDIA trial (per account) | 10,000 a day, 40 a minute | every 15 min | every 3 h | 104 per model, 312 for three | 3.1 % |
 | OpenRouter free (per account, every `:free` model together) | 50 a day | every 8 h | every 24 h | at most 4 for all of them | 8 % (the free list every 10 min finds delisting) |
-| Z.ai GLM Flash free (per model) | none published; one request at a time | every 15 min, only while the slot is free | every 6 h | 100 | n/a (the slot check spends nothing) |
+| Z.ai GLM Flash free (per model) | none published; one request at a time (treated as per account) | every 15 min, only while no Z.ai free request runs | every 6 h | 100 | n/a (the slot check spends nothing) |
 | Gemini free (per model) | 20 a day | once a day | none | 1 | 5 % (the keyed list every 10 min) |
 | Workers AI free | 200-300 a day | 8-12 a day | 2-3 a day | 10-15 | 5 % |
 | Paid pools (Groq, Gemini, Workers AI, Claude) | daily spend cap | every 30 min | every 6 h | 52 | under $0.03 a day for Claude Opus 5.5, counted in the cap |
@@ -205,7 +212,10 @@ Verdicts: `available`; `busy` (a slot or rate limit in use, with `available_agai
 working, or users' requests failing upstream); `unavailable` (two failures in a row, delisted,
 the key rejected, the quota spent, or three users' upstream failures and no success). A model
 whose newest observation (a test request, real traffic, a slot or rate limit in use) is older than
-`HEALTH_STALE_SECONDS` reports `unknown`, never `available`; a real failure on an instance still
+its route's stale horizon reports `unknown`, never `available`. The horizon is the larger of
+`HEALTH_STALE_SECONDS` and 1.5 times the route's chat test interval: Groq free 90 min, paid pools
+45 min, NVIDIA and Z.ai 22.5 min, OpenRouter 12 h. Each row of `/v1/models/status` says its own
+(`stale_after_seconds`), and the website expires each row by it; a real failure on an instance still
 flips its model at once, since the freshest observation wins. Routing on the Node gateway skips
 busy and unavailable pools from the same rows. Logs are metadata only (`Health probe` with the
 pool key, kind, outcome class, HTTP status and milliseconds; `Health list check failed` with the
@@ -216,12 +226,15 @@ check id); bodies, provider messages and keys are never logged or stored.
 | `HEALTH_PROBES` | var | `on` | `off` (also `false`, `0`) is the kill switch: no list checks, slot checks or test requests. Models without recent real traffic then report `unknown`. |
 | `HEALTH_PROBE_TICK_SECONDS` | var | `15` (5-300) | How often each instance renews or asks for the lease and reads the verdicts again. The lease lasts 90 s. |
 | `HEALTH_PROBE_TIMEOUT_SECONDS` | var | `12` (3-60) | Timeout of a chat test request; a tool-call test gets twice as long. |
-| `HEALTH_STALE_SECONDS` | var | `1200` (120-86400) | A verdict nobody confirmed for this long reads `unknown`. Keep it above the 10-minute list interval. Also read by the Worker's `/v1/models`. |
+| `HEALTH_STALE_SECONDS` | var | `1200` (120-86400) | The floor of every route's stale horizon (above): a verdict nobody confirmed for the longer of this and 1.5 times its route's test interval reads `unknown`. Keep it above the 10-minute list interval. The Worker's `/v1/models` uses it for every route. |
 
 It needs migration `20261104000000_health_probes.sql` (below) and the database (`SUPABASE_*`);
 without either, the gateway logs it once at start and runs no checks. The Worker keeps its
 HealthHub Durable Object (`HEALTH_CANARIES`) for the paths it still serves; the checker runs only
-on the Node gateway.
+on the Node gateway. One checker tests a pool: while `EC2_PROXY_PREFIXES` routes chat to the Node
+gateway, the HealthHub sends no test requests or canaries (its free list, key and status-page
+checks and the isolates' reports go on), and when the secret is deleted they resume.
+`HEALTH_HUB_PROBES` (Worker var: `on`, `off`, default `auto`) overrides that.
 
 ### Provider discovery
 

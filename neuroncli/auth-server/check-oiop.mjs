@@ -738,7 +738,9 @@ try {
     // The stream carries family rows (contract section 14); Groq is the only route of this one here.
     // Nobody observed Groq before the failure: unknown (never available), then unavailable.
     assert.equal(firstUpdate.data.find(model => model.id === 'openai/gpt-oss-120b').status, 'unknown');
-    assert.equal(secondUpdate.data.find(model => model.id === 'openai/gpt-oss-120b').status, 'unavailable');
+    // The stream rows carry both words (section 15.1): alpha.4 greys out `blurred` in status.
+    const down = secondUpdate.data.find(model => model.id === 'openai/gpt-oss-120b');
+    assert.deepEqual([down.availability, down.status], ['unavailable', 'blurred']);
     assert.notEqual(updates[0].id, updates[1].id, 'each event carries the status ETag as its id');
     const resumed = await readEvents(await app.request('https://zero-x.live/v1/models/stream',
       { headers: { 'Last-Event-ID': updates[0].id } }, env));

@@ -401,7 +401,8 @@ Sync the copy in `neuron-v2`; nothing here changes what the CLI sends or must ha
   clients), `reasoning_efforts[]`, `capabilities.vision`, `capabilities.reasoning`, and runtime
   health: `status` (`available` | `degraded` | `busy` | `blurred`), `available_again_at`
   (ISO time or `null`) and `checked_at` (ISO time of the newest observation, or `null`).
-  Section 15 (v1.10) renames `blurred` to `unavailable` and adds `unknown`.
+  Section 15 (v1.10) adds `unknown` and the field `availability`, in which `blurred` reads
+  `unavailable`; `status` keeps these words for the clients that read them (section 15.1).
   - `busy`: a short rate-limit cooldown (60 s or less); keep the model selectable and show the wait.
   - `blurred`: grey the model out until `available_again_at` (quota spent, model gone, provider down).
   - `available` stays the plan/region/configuration verdict; a client greys out a model when
@@ -544,8 +545,10 @@ nothing settled the attempt's reservation, so it held one of the user's concurre
 ### 8.6 Per-pool concurrency (2026-10-29)
 
 Some free tiers limit requests in flight instead of (or as well as) requests per minute: Z.ai's
-free GLM Flash models serve one request at a time per account and model, and answer a second one
-with HTTP 429 (code 1302). Migration `20261029001000_pool_concurrency.sql`:
+free GLM Flash models serve one request at a time, and answer a second one with HTTP 429 (code
+1302). Users' reservations count the limit per model (below). Whether Z.ai counts it per model or
+for the whole account is not established, so the health checker treats it as per account (section
+15.3). Migration `20261029001000_pool_concurrency.sql`:
 
 - **`p_pool.concurrency`** (`zerox_reserve_v2`): at most that many reservations of the pool key
   may be running at once, across every user. Running means active with a running lease (section
@@ -1022,7 +1025,8 @@ Every route has an identity derived from its `upstream_model` (database rows inc
   - `status`: the best route status (`available` > `degraded` > `busy` > `blurred`), with that
     route's `available_again_at` (the earliest among equals); `checked_at`: the newest observation.
     One busy route therefore does not grey out a model another route still serves. Section 15
-    (v1.10) adds `unknown`, renames `blurred` to `unavailable` and takes `checked_at` from the
+    (v1.10) adds `unknown` and `availability` (where `blurred` reads `unavailable`; `status` keeps
+    `blurred`, section 15.1) and takes `checked_at` from the
     best route.
   - `pricing`: the highest-priced usable route (credits are never under-held).
   - Nothing names a serving provider. `offers`: the data-policy fields of those routes' offers
@@ -1040,7 +1044,8 @@ Every route has an identity derived from its `upstream_model` (database rows inc
 Rows follow the same view as `/v1/models` (families, or routes with `?routes=1`) and add the fields
 a live list needs, so a page can draw it from this endpoint alone:
 `{id, family, maker, display_name, context_window, native_context_window, available,
-unavailable_reason, status, available_again_at, checked_at}`. `checked_at` is left out of the ETag
+unavailable_reason, status, availability, available_again_at, checked_at, stale_after_seconds}`
+(`availability` and the per-row `stale_after_seconds`: sections 15.1 and 15.2). `checked_at` is left out of the ETag
 (it moves with every observation), so `If-None-Match` still answers `304` while nothing else
 changed. The website's model list polls this endpoint every `poll_interval_seconds`.
 
@@ -1088,7 +1093,21 @@ nobody had used counted as available.
 
 ### 15.1 Statuses
 
-`status` on `/v1/models`, `/v1/models/status` and `/v1/models/stream` is one of:
+Every model on `/v1/models`, `/v1/models/status` and `/v1/models/stream` carries two fields with
+the same verdict:
+
+- **`availability`** (added 2026-11-05): the statuses below, in these words. The website and
+  clients written for this section read it.
+- **`status`**: the same verdict in the words of section 8.1 (v1.3), which Neuron
+  7.0.0-alpha.4 and every Neuron release so far read: it greys a model out (and warns on
+  `/model` and `--model`) only when `status` is `blurred`, and treats every other word as usable.
+  So `unavailable` is sent as `blurred` here, with the same `available_again_at`; `available`,
+  `degraded`, `busy` and `unknown` are sent as they are (a v1.3 client shows `unknown` like
+  `available`, which is what `unknown` means: selectable, tried by routing). A client reads
+  `availability` when present and falls back to `status`, reading `blurred` as `unavailable`.
+  `status` keeps the v1.3 words for as long as releases that read only it are supported.
+
+The statuses (`availability`):
 
 - `available`: the newest observation (a test request or real traffic) says it answers. A model
   list only shows the model is still offered; it never renews a verdict.
@@ -1097,12 +1116,10 @@ nobody had used counted as available.
   one succeeded.
 - `busy`: a one-at-a-time slot or a rate limit is in use; `available_again_at` says when it frees.
   Keep the model selectable and show the wait.
-- `unknown`: no observation within `stale_after_seconds` (`HEALTH_STALE_SECONDS`, 1,200 by default).
-  Never reported as `available`. Selectable; routing still tries it after the known-good routes.
-- `unavailable` (was `blurred`): failing (two failures in a row, or three users' upstream failures
+- `unknown`: no observation within the route's `stale_after_seconds` (section 15.2). Never
+  reported as `available`. Selectable; routing still tries it after the known-good routes.
+- `unavailable` (`status`: `blurred`): failing (two failures in a row, or three users' upstream failures
   in ten minutes with no success), delisted by its provider, its key rejected or its quota spent; grey it out until `available_again_at` when there is one.
-  Clients written for v1.3 should treat any status other than `available`, `degraded` and `busy`
-  as not available.
 
 A family (section 14.3) takes the best status of the routes the caller can use, in the order
 `available` > `degraded` > `unknown` > `busy` > `unavailable` (a busy route is skipped by routing,
@@ -1120,12 +1137,27 @@ Every model on `/v1/models` and every row of `/v1/models/status` (and its stream
 - `latency_ms`: the latency of the last test request (or real attempt on this instance), or null.
 - `last_success_at`: the last successful test request or user request, or null.
 - `last_failure_class`: the class of the last failure, or null: `rate_limited`, `quota`,
-  `delisted`, `model_unavailable`, `auth`, `server`, `timeout`, `slow`, `tool_call` or
-  `upstream_errors` (users' requests failed upstream). Never a provider name or message.
+  `delisted`, `model_unavailable`, `auth`, `server`, `timeout`, `slow`, `tool_call`,
+  `upstream_errors` (users' requests failed upstream) or `probe_misconfigured` (the provider
+  refused the checker's own test request with a 400: the request needs fixing, and no verdict was
+  recorded from it). Never a provider name or message.
+- `stale_after_seconds`: how long the verdict in `availability` stands without a new observation
+  before the model reads `unknown`. Per route on the Node gateway while its checker runs: the
+  larger of `HEALTH_STALE_SECONDS` (1,200 by default) and 1.5 times the route's own chat test
+  interval (section 15.3), rounded up to the second, so a verdict outlives the next scheduled test
+  with room for a late or skipped turn: Groq free (hourly) 5,400 s, paid pools and Claude (every
+  30 min) 2,700 s, NVIDIA and Z.ai free (every 15 min) 1,350 s, OpenRouter free (every 8 h)
+  43,200 s, Gemini free (daily) 129,600 s. Without the checker (the Worker, `HEALTH_PROBES=off`)
+  every route uses `HEALTH_STALE_SECONDS`. A family and `auto` take the horizon of the route whose
+  verdict they show.
 
-`/v1/models/status` adds `stale_after_seconds` at the top level. `checked_at`, `latency_ms` and
-`last_success_at` stay out of the ETag, so `If-None-Match` answers `304` while the verdicts are
-unchanged.
+`/v1/models/status` also sends `stale_after_seconds` at the top level: `HEALTH_STALE_SECONDS`, the
+floor of every row's horizon (pages written before the per-row field read it). A page applies each
+row's own horizon between polls (`checked_at` + `stale_after_seconds` in the past, and no timed
+state running until a later `available_again_at`: show it as not checked), and shows every row as
+not checked once the gateway has not answered for two poll intervals. `checked_at`, `latency_ms`
+and `last_success_at` stay out of the ETag, so `If-None-Match` answers `304` while the verdicts
+are unchanged.
 
 ### 15.3 The checker
 
@@ -1137,11 +1169,36 @@ checks"): 3 output tokens for a chat test, 160 for a tool-call test. `zerox_prob
 test request in the pool's shared budget (`zerox_pool_usage`), refuses it while users are busy on
 the pool, and reports users' outcomes of the last ten minutes, which count as observations (read
 for every pool once a minute; an upstream failure newer than any success brings the next test
-forward). On a one-at-a-time pool a test request holds the slot until it ends. Verdicts
+forward). On a one-at-a-time pool a test request holds the slot until it ends.
+
+- **Z.ai's free slot is one per account for the checker.** Users' reservations count the
+  one-request limit per model (section 8.6), but whether Z.ai's limit spans the account is not
+  established. A test request on a Z.ai free model is sent only while no request (a user's or a
+  test) runs on any Z.ai free model of the same key; while it runs it holds the slot of every one
+  of them (`zerox_probe_take` with `p_take` on each; each hold counts one request in that model's
+  buckets, which have no budget), and it ends within 15 s (`HEALTH_PROBE_TIMEOUT_SECONDS`, capped
+  at 15 s and at 5 s under `POOL_SLOT_WAIT_MS`), with a slot lease of that plus 5 s. A user
+  request that arrives meanwhile, on either model, waits for the slot as for another user's
+  (`POOL_SLOT_WAIT_MS`, 20 s) and never reaches Z.ai beside a test request.
+- **Claude.** Neither 5.5 model accepts `thinking: {type: 'disabled'}` or `budget_tokens`, and a
+  forced `tool_choice` is a 400. A test request uses the model's lowest setting: Sonnet 5.5
+  `{type: 'between_tools'}` at effort `low` (thinking off, 3 output tokens for the chat test, 160
+  for the tool call); Opus 5.5 adaptive thinking at effort `low` (thinking cannot be turned off and
+  counts toward `max_tokens`, so 64 tokens for the chat test and 512 for the tool call). Tool calls
+  use `tool_choice: 'auto'`.
+- **A 400 to a test request** says the request needs fixing, not that the model is down: it is
+  logged once per pool (until a test request passes again), recorded as `probe_misconfigured`, and
+  changes no verdict. Verdicts
 are stored in `zerox_pool_health` and read by every instance; the freshest of a verdict and this
 instance's own attempts wins, so a real failure flips a model at once. Routing on the Node gateway
-skips pools the verdicts mark busy or unavailable until their time ends. `HEALTH_PROBES=off` turns
-the checker off. The Worker keeps its HealthHub (section 8.1) with the same statuses and staleness.
+skips pools the verdicts mark busy or unavailable until their time ends, judging staleness per
+route as above. `HEALTH_PROBES=off` turns the checker off. The Worker keeps its HealthHub (section
+8.1) with the same statuses and the `HEALTH_STALE_SECONDS` horizon. One checker probes a pool in
+production: while the Worker forwards chat to the Node gateway (`EC2_PROXY_PREFIXES` covers
+`/v1/chat/completions`), the HealthHub sends no test requests or canaries and keeps its free list,
+key and status-page checks and the isolates' reports; when the forward is removed (the rollback),
+its test requests resume at the next alarm. `HEALTH_HUB_PROBES` (`on`, `off`, default `auto`)
+overrides that.
 
 ### 15.4 RPCs (migration 20261104000000_health_probes.sql, service_role only)
 

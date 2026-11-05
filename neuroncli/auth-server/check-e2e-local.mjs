@@ -355,10 +355,10 @@ try {
 
   // ── 3. /v1/models with plan-aware availability ──
   // One entry per model family (contract section 14), named by its maker: no route or provider.
-  const modelKeys = ['available', 'available_again_at', 'capabilities', 'checked_at', 'context_length', 'context_window',
+  const modelKeys = ['availability', 'available', 'available_again_at', 'capabilities', 'checked_at', 'context_length', 'context_window',
     'created', 'display_name', 'facts', 'family', 'id', 'last_failure_class', 'last_success_at', 'latency_ms', 'maker', 'maker_name',
     'max_output_tokens', 'model_name', 'models_dev_id', 'native_context_window', 'object', 'offers', 'owned_by', 'pricing',
-    'provider', 'reasoning_efforts', 'status', 'tiers', 'unavailable_reason'];
+    'provider', 'reasoning_efforts', 'stale_after_seconds', 'status', 'tiers', 'unavailable_reason'];
   const models = async token => {
     const listed = await call('/v1/models', { token });
     assert.equal(listed.status, 200);
@@ -393,6 +393,10 @@ try {
   // HEALTH_PROBES=off and no traffic yet: nothing observed them, so every model is unknown
   // (contract section 15), never available.
   assert.ok(Object.values(free).every(model => model.status === 'unknown'), 'nothing observed yet: every model is unknown');
+  assert.ok(Object.values(free).every(model => model.availability === 'unknown' && model.stale_after_seconds === 1200),
+    'availability says the same; no checker here, so every route keeps HEALTH_STALE_SECONDS');
+  // Neuron 7.0.0-alpha.4 knows the v1.3 words in `status` (contract section 15.1): never `unavailable`.
+  assert.ok(Object.values(free).every(model => ['available', 'degraded', 'busy', 'blurred', 'unknown'].includes(model.status)));
   const status = await call('/v1/models/status', { token: ses });
   assert.equal(status.status, 200);
   assert.equal(status.body.poll_interval_seconds, 30);

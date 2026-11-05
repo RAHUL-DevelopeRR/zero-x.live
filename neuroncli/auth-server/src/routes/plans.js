@@ -6,9 +6,9 @@ import {
 import { catalogStatus } from '../catalog-db.js';
 import { isOwnedSession, listModelsForSession } from '../providers.js';
 import { sessionTiers } from '../capacity.js';
-import { withHealth } from '../health-share.js';
+import { withHealth, withLegacyStatus } from '../health-share.js';
 import { hubHealthRows } from '../health-hub-client.js';
-import { healthStaleMs, probeHealthRows } from '../health-probes.js';
+import { healthStaleMs, probeHealthRows, probeStaleMsFor } from '../health-probes.js';
 import { globalHealthTracker } from '../provider-health.js';
 import { poolBudgetState } from '../pool-budget.js';
 import { loadOffers } from '../oiop/offers.js';
@@ -91,10 +91,15 @@ export async function v1ModelsPayload(c, session = {}, { routes = wantsRoutes(c)
     readRows: keys => hubHealthRows(env, keys),
     probeRows: probeHealthRows(),
     staleMs: healthStaleMs(env),
+    // Per route on the Node gateway (1.5 times the route's own test interval, at least
+    // HEALTH_STALE_SECONDS): a Groq free verdict tested hourly stays current for 90 minutes.
+    staleMsFor: probeStaleMsFor(),
     budgetState: poolBudgetState,
   });
   // Health is read per route (pool keys belong to routes), then rolled up per family.
   payload.data = routes ? payload.data.map(model => withIdentity(model, env)) : familyModels(payload.data, env);
+  // Last: `status` in the v1.3 words Neuron 7.0.0-alpha.4 reads, `availability` in section 15's.
+  for (const model of payload.data) withLegacyStatus(model);
   return payload;
 }
 
@@ -106,17 +111,22 @@ export async function v1ModelsPayload(c, session = {}, { routes = wantsRoutes(c)
 // Each row also names the model (family, maker, display_name) and its usable context window, so a
 // page can draw the live list from this endpoint alone. checked_at is when the verdict in status
 // was last confirmed (null: never), with the latency of the last test request, the last success
-// and the class of the last failure (docs/PLATFORM_CONTRACT.md section 15). stale_after_seconds
-// says how long a verdict stands without a new observation before the model reads unknown.
+// and the class of the last failure (docs/PLATFORM_CONTRACT.md section 15). Each row's
+// stale_after_seconds says how long its verdict stands without a new observation before the
+// model reads unknown (per route on the Node gateway); the top-level one is the floor,
+// HEALTH_STALE_SECONDS. `status` is in the v1.3 words alpha.4 reads, `availability` in section 15's.
 export async function v1ModelStatusPayload(c, session = {}, options = {}) {
   const models = await v1ModelsPayload(c, session, options);
+  const floorSeconds = Math.round(healthStaleMs(c.env || {}) / 1000);
   const data = models.data.map(model => ({
     id: model.id, family: model.family ?? null, maker: model.maker ?? null, display_name: model.display_name ?? model.id,
     context_window: model.context_window ?? null, native_context_window: model.native_context_window ?? null,
     available: model.available !== false, unavailable_reason: model.unavailable_reason ?? null,
-    status: model.status ?? 'unknown', available_again_at: model.available_again_at ?? null,
+    status: model.status ?? 'unknown', availability: model.availability ?? model.status ?? 'unknown',
+    available_again_at: model.available_again_at ?? null,
     checked_at: model.checked_at ?? null, latency_ms: model.latency_ms ?? null,
     last_success_at: model.last_success_at ?? null, last_failure_class: model.last_failure_class ?? null,
+    stale_after_seconds: model.stale_after_seconds ?? floorSeconds,
   }));
   const catalogVersion = catalogStatus(c.env || {}).version;
   // checked_at, latency_ms and last_success_at move with every observation, so they stay out of
@@ -126,5 +136,5 @@ export async function v1ModelStatusPayload(c, session = {}, options = {}) {
   const etag = `W/"${[...new Uint8Array(digest).slice(0, 12)].map(byte => byte.toString(16).padStart(2, '0')).join('')}"`;
   const checked = models.data.map(model => model.checked_at).filter(Boolean).sort().at(-1) ?? null;
   return { etag, body: { object: 'list', checked_at: checked, poll_interval_seconds: 30,
-    stale_after_seconds: Math.round(healthStaleMs(c.env || {}) / 1000), catalog_version: catalogVersion, data } };
+    stale_after_seconds: floorSeconds, catalog_version: catalogVersion, data } };
 }

@@ -235,9 +235,11 @@ const MODELS = [
   // 128K and 96K. Output is listed at what max_tokens validation accepts (chat-handler.js
   // MAX_OUTPUT_TOKENS). Both call tools, stream, and think by default (reasoning_content), which
   // reasoning_effort "none" turns off. Z.ai publishes no request or token budget for them, so the
-  // pools have none; they serve one request at a time per account and model
-  // (src/catalog-types.js PROVIDER_TYPES.zai.free_concurrency), so auto tries them only after
-  // every other free pool.
+  // pools have none. They serve one request at a time (src/catalog-types.js
+  // PROVIDER_TYPES.zai.free_concurrency): users' reservations are limited per model, and since it is
+  // not established whether Z.ai counts per model or per account, the health checker treats the
+  // slot as one per account (src/health-probes.js slotSiblings). auto tries them only after every
+  // other free pool.
   ...[
     ['glm-4.7-flash', 'GLM-4.7-Flash (Z.ai, free)', 14, 200000, 65536],
     ['glm-4.5-flash', 'GLM-4.5-Flash (Z.ai, free)', 15, 131072, 65536],
@@ -854,7 +856,8 @@ function describeFamily(identity, routes) {
       || time(a.available_again_at) - time(b.available_again_at) || time(b.checked_at) - time(a.checked_at))[0];
     Object.assign(family, { status: best.status, available_again_at: best.available_again_at ?? null,
       checked_at: best.checked_at ?? null, latency_ms: best.latency_ms ?? null, last_success_at: best.last_success_at ?? null,
-      last_failure_class: best.last_failure_class ?? null });
+      last_failure_class: best.last_failure_class ?? null,
+      ...(best.stale_after_seconds != null ? { stale_after_seconds: best.stale_after_seconds } : {}) });
   }
   return family;
 }

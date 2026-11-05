@@ -2,7 +2,7 @@
 // offline: fake Durable Object storage, fake upstreams, controlled clock.
 //   node check-health-hub.mjs
 import assert from 'node:assert/strict';
-import { ALARM_INTERVAL_MS, HealthHub, PROBE_DAILY_CAPS } from './src/health-hub.js';
+import { ALARM_INTERVAL_MS, HealthHub, hubSendsTestRequests, PROBE_DAILY_CAPS } from './src/health-hub.js';
 import { hubHealthRows, publishHealth, resetHubClientCache } from './src/health-hub-client.js';
 import { resetSharedHealthCache, withHealth } from './src/health-share.js';
 import { FailureKind, HealthState } from './src/provider-health.js';
@@ -231,6 +231,49 @@ try {
   await hub.alarm();
   assert.equal(groq120bProbes(), 0, 'the daily cap of 24 holds');
   console.log('ok - test requests: half-open + idle only, Groq yes / NVIDIA never, 200 without choices fails, daily cap holds');
+
+  // 3a. One checker per pool: once chat is routed to the Node gateway (EC2_PROXY_PREFIXES covers
+  // /v1/chat/completions), its checker probes the pools, so the hub sends no test request and no
+  // canary. Free checks and the passive reports go on. HEALTH_HUB_PROBES overrides.
+  {
+    assert.equal(hubSendsTestRequests({}), true, 'no forward switch: the Worker serves chat and its hub tests');
+    assert.equal(hubSendsTestRequests({ EC2_PROXY_PREFIXES: 'zero-x.live/v1/' }), false, '/v1 on EC2: the Node checker tests');
+    assert.equal(hubSendsTestRequests({ EC2_PROXY_PREFIXES: 'zero-x.live/' }), false, 'the whole API host on EC2');
+    assert.equal(hubSendsTestRequests({ EC2_PROXY_PREFIXES: 'dashboard.zero-x.live/' }), true, 'only the dashboard on EC2: chat stays here');
+    assert.equal(hubSendsTestRequests({ EC2_PROXY_PREFIXES: 'zero-x.live/v1/', HEALTH_HUB_PROBES: 'on' }), true, 'forced on');
+    assert.equal(hubSendsTestRequests({ HEALTH_HUB_PROBES: 'off' }), false, 'forced off');
+    const routedEnv = { ...ENV, HEALTH_CANARIES: 'true', EC2_PROXY_PREFIXES: 'zero-x.live/v1/' };
+    const routedCalls = [];
+    const routedFetch = async (url, options = {}) => {
+      routedCalls.push(String(url));
+      if (String(url).endsWith('/chat/completions')) return json({ choices: [{ message: { role: 'assistant', content: 'OK' } }] });
+      for (const [prefix, handler] of Object.entries(lists)) if (String(url).startsWith(prefix)) return handler(url, options);
+      return json({}, 404);
+    };
+    const before = offset;
+    const routedHub = new HealthHub(fakeState(), routedEnv, { now: clock, fetchImpl: routedFetch });
+    await routedHub.ready;
+    const fail = { key: GROQ_120B, success: false, kind: FailureKind.SERVER };
+    routedHub.report([fail, fail, fail]);
+    assert.equal(routedHub.snapshot().pools[GROQ_120B].status, 'blurred', 'reports are still shared');
+    const realCalls = calls.length;
+    for (let i = 0; i < 40; i++) { offset += 31 * 60_000; await routedHub.alarm(); }
+    const sent = [...routedCalls, ...calls.slice(realCalls).map(call => call.url)];
+    assert.ok(!sent.some(url => url.endsWith('/chat/completions')), 'no test request and no canary for 20 h');
+    assert.ok(sent.some(url => url.startsWith('https://api.groq.com/openai/v1/models')), 'the free model lists are still read');
+    assert.equal(Object.keys(routedHub.canaries).length, 0);
+    // The rollback to the Worker (secret delete EC2_PROXY_PREFIXES) brings the tests back.
+    delete routedEnv.EC2_PROXY_PREFIXES;
+    upstream = { ...lists, 'https://api.groq.com/openai/v1/chat/completions': () => json({ choices: [{ message: { role: 'assistant', content: 'OK' } }] }) };
+    routedHub.report([fail, fail, fail]);
+    offset += 200_000;
+    const resumed = calls.length;
+    await routedHub.alarm();
+    assert.ok([...routedCalls, ...calls.slice(resumed).map(call => call.url)].some(url => url.endsWith('/chat/completions')),
+      'back on the Worker: test requests resume');
+    offset = before;
+  }
+  console.log('ok - one checker per pool: chat routed to EC2 stops the hub test requests and canaries; lists and reports go on');
 
   // 3b. Gemini's free tier allows 20 requests per model per day, so it gets no test requests
   // (its model list is free). Each test request logs one line: pool, outcome, time; no bodies.
