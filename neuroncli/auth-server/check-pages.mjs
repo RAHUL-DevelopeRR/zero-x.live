@@ -299,8 +299,8 @@ assert.match(read('zerox-auth.js'), /SUPABASE_JS_INTEGRITY = 'sha384-[A-Za-z0-9+
 /* ───────────── Design system: fonts, icons, tokens, no AI-slop patterns ───────────── */
 
 // Pages that use the design system (the legacy product pages keep their own styles for now).
-const LEGACY_PAGES = ['neucockpit.html'];
-const GUIDE_PAGES = ['find-files-by-content.html', 'wheres-that-file.html'];
+const LEGACY_PAGES = [];
+const GUIDE_PAGES = ['find-files-by-content.html', 'wheres-that-file.html', 'neucockpit.html'];
 const DESIGN_PAGES = [...PUBLIC_PAGES, ...PRIVATE_PAGES, ...GUIDE_PAGES].filter(f => f !== 'neuroncli/index.html' && !LEGACY_PAGES.includes(f));
 const plainText = file => stripScripts(read(file)).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
 
