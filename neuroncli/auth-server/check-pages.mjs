@@ -86,6 +86,12 @@ for (const file of [...PUBLIC_PAGES, ...PRIVATE_PAGES]) {
     assert.deepEqual([toggle.type, toggle['aria-expanded'], toggle['aria-controls'], 'hidden' in toggle], ['button', 'false', 'site-nav', true],
       file + ': the menu button is a hidden disclosure button for #site-nav');
     assert.ok(tags(body, 'nav').some(a => a.id === 'site-nav' && a['aria-label'] === 'Main'), file + ': the main nav is #site-nav');
+    // The same links on every page: no page-only anchor (the home page once had a Models link the others lacked).
+    const navHtml = (/<nav class="zx-nav" id="site-nav"[^>]*>([\s\S]*?)<\/nav>/.exec(body) || [])[1] || '';
+    for (const link of tags(navHtml, 'a')) assert.doesNotMatch(link.href || '', /^#/, file + ': the header nav has no page-only anchor links');
+    if (/<main[^>]*class="[^"]*\bzx-legal\b/.test(body)) {
+      assert.ok(tags(html, 'link').some(a => a.rel === 'stylesheet' && a.href === '/content.css'), file + ': a reading page loads content.css');
+    }
     assert.match(body, /<button class="zx-nav-toggle"[^>]*>[\s\S]*?Menu<\/button>\s*<nav class="zx-nav" id="site-nav"/, file + ': the button has a visible name and sits before the nav');
     assert.ok(tags(html, 'script').some(a => a.type === 'module' && a.src === '/site-nav.js'), file + ': loads /site-nav.js');
     // Review 2026-11-05: menu mode before first paint (no wrapped header that then jumps 96 px):
