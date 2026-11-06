@@ -125,8 +125,8 @@
         <p class="zx-label"><span class="zx-dot zx-dot--ok" aria-hidden="true"></span> NeuCockpit v1.0 available</p>
         <h1>NeuCockpit local AI: desktop file search by meaning.</h1>
         <p class="zx-lead">NeuCockpit brings semantic file search and local AI to your desktop. Find, summarize, and navigate your files by meaning.</p>
-        <p class="zx-row"><a class="zx-btn zx-btn--primary" href="#downloads"><svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#download"/></svg>Choose your platform</a><a class="zx-btn" href="/wheres-that-file">Watch the 15-second film</a></p>
-        <p class="zx-help">Choose a folder to index, then search your own files.</p>
+        <p class="zx-row"><a class="zx-btn zx-btn--primary" href="#downloads"><svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#download"/></svg>Download NeuCockpit</a><a class="zx-btn" href="/wheres-that-file">Watch the 15-second film<svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#arrow-right"/></svg></a></p>
+        <p class="zx-help">Windows, macOS and Linux. Choose a folder to index, then search your own files.</p>
       </div>
       <figure class="zx-shot">
         <div class="zx-shot__bar"><span class="zx-label">NeuCockpit v1.0</span></div>
@@ -134,21 +134,41 @@
       </figure>
     </div>
 
-    <section class="zx-container zx-section" id="demo" aria-labelledby="demo-title">
-      <div class="zx-section-head">
-        <p class="zx-label">Product demo</p>
-        <h2 id="demo-title">Semantic search across your files</h2>
-        <p>Describe the document you remember. NeuCockpit searches indexed content across supported documents, code, and other files.</p>
+    <section class="zx-container zx-cp-facts" aria-label="NeuCockpit at a glance">
+      <div class="zx-tiles zx-tiles--4">
+        <div class="zx-tile"><span class="zx-tile__label">Platforms</span><p class="zx-stat zx-stat--sm">Windows, macOS, Linux</p><span class="zx-tile__note">Desktop installers for each</span></div>
+        <div class="zx-tile"><span class="zx-tile__label">Embeddings</span><p class="zx-stat zx-stat--sm">bge-small-en-v1.5</p><span class="zx-tile__note">BAAI neural embeddings</span></div>
+        <div class="zx-tile"><span class="zx-tile__label">Index</span><p class="zx-stat zx-stat--sm">FAISS / HNSW</p><span class="zx-tile__note">Vector index for local search</span></div>
+        <div class="zx-tile"><span class="zx-tile__label">Local model</span><p class="zx-stat zx-stat--sm">Qwen 2.5 Coder 1.5B</p><span class="zx-tile__note">GGUF via llama.cpp</span></div>
       </div>
-      <ul class="zx-checks">
-        <li><svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#check"/></svg><span>Neural embeddings powered by <strong>BAAI/bge-small-en-v1.5</strong></span></li>
-        <li><svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#check"/></svg><span>FAISS/HNSW vector index for <strong>local</strong> search</span></li>
-        <li><svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#check"/></svg><span>Filter by: Files, Folders, Code, Docs, Media</span></li>
-        <li><svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#check"/></svg><span>Indexed file views with activity tracking</span></li>
-      </ul>
+    </section>
 
-      <div class="zx-cp-split">
+    <section class="zx-container zx-section" id="how" aria-labelledby="how-title">
+      <div class="zx-section-head">
+        <p class="zx-label">How it works</p>
+        <h2 id="how-title">From a folder to the file you meant</h2>
+        <p>NeuCockpit searches folders you choose to index.</p>
+      </div>
+      <ol class="zx-cp-flow">
+        <li><span class="zx-cp-flow__n" aria-hidden="true">01</span><h3>Choose a folder</h3><p>Pick files you are allowed to process. Start with a small folder to check the results.</p></li>
+        <li><span class="zx-cp-flow__n" aria-hidden="true">02</span><h3>Let it index</h3><p>NeuCockpit extracts readable content, creates local embeddings and stores a searchable index.</p></li>
+        <li><span class="zx-cp-flow__n" aria-hidden="true">03</span><h3>Describe it</h3><p>Search by what a document says, not by its filename.</p></li>
+        <li><span class="zx-cp-flow__n" aria-hidden="true">04</span><h3>Open and verify</h3><p>Inspect the returned path and open the original file. AI summaries need the same source check.</p></li>
+      </ol>
+    </section>
+
+    <section class="zx-container zx-section" id="demo" aria-labelledby="demo-title">
+      <div class="zx-cp-split zx-cp-split--first">
         <div>
+          <p class="zx-label">Product demo</p>
+          <h2 id="demo-title">Semantic search across your files</h2>
+          <p>Describe the document you remember. NeuCockpit searches indexed content across supported documents, code, and other files.</p>
+          <ul class="zx-checks">
+            <li><svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#check"/></svg><span>Neural embeddings powered by <strong>BAAI/bge-small-en-v1.5</strong></span></li>
+            <li><svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#check"/></svg><span>FAISS/HNSW vector index for <strong>local</strong> search</span></li>
+            <li><svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#check"/></svg><span>Filter by: Files, Folders, Code, Docs, Media</span></li>
+            <li><svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#check"/></svg><span>Indexed file views with activity tracking</span></li>
+          </ul>
           <h3 class="zx-cp-h3">Intelligent file categorization</h3>
           <p>Browse search results by category: Files, Folders, Code, Docs, and Media. MemoryOS and Activity provide additional views.</p>
           <ul class="zx-checks">
@@ -180,32 +200,40 @@
         <h2 id="features-title">Search document contents. Use AI on your computer.</h2>
         <p>Index a folder, describe what you remember, and inspect the matching file.</p>
       </div>
-      <dl class="zx-spec">
-        <div class="zx-spec__row">
-          <dt><svg class="zx-icon" aria-hidden="true"><use href="/icons.svg#search"/></svg><h3>Semantic Search</h3></dt>
-          <dd>Powered by BAAI/bge-small-en-v1.5 neural embeddings. Search by meaning, not keywords.</dd>
+      <div class="zx-grid zx-grid--3">
+        <article class="zx-card zx-cp-feature"><svg class="zx-icon" aria-hidden="true"><use href="/icons.svg#search"/></svg><h3>Semantic Search</h3><p>Powered by BAAI/bge-small-en-v1.5 neural embeddings. Search by meaning, not keywords.</p></article>
+        <article class="zx-card zx-cp-feature"><svg class="zx-icon" aria-hidden="true"><use href="/icons.svg#cpu"/></svg><h3>Qwen AI Engine</h3><p>Local Qwen 2.5 Coder 1.5B GGUF model via llama.cpp. Summarize documents and ask questions using local mode.</p></article>
+        <article class="zx-card zx-cp-feature"><svg class="zx-icon" aria-hidden="true"><use href="/icons.svg#monitor"/></svg><h3>Cross-Platform Desktop</h3><p>Desktop builds for Windows, macOS, and Linux with a responsive native app interface.</p></article>
+        <article class="zx-card zx-cp-feature"><svg class="zx-icon" aria-hidden="true"><use href="/icons.svg#layers"/></svg><h3>Vector Retrieval</h3><p>FAISS vector index with HNSW graph search to find related files by meaning.</p></article>
+        <article class="zx-card zx-cp-feature"><svg class="zx-icon" aria-hidden="true"><use href="/icons.svg#shield"/></svg><h3>Local AI mode</h3><p>Local search and local AI run on your computer. Optional internet features and account sign-in connect to online services.</p></article>
+        <article class="zx-card zx-cp-feature"><svg class="zx-icon" aria-hidden="true"><use href="/icons.svg#file-text"/></svg><h3>Documents, Code, and Media</h3><p>Supported documents and source files include PDF, DOCX, PPTX, XLSX, Python, JavaScript, JSON, and YAML.</p></article>
+      </div>
+    </section>
+
+    <section class="zx-container zx-section" id="privacy" aria-labelledby="privacy-title">
+      <div class="zx-section-head">
+        <p class="zx-label">Local-first</p>
+        <h2 id="privacy-title">Your search runs on your computer</h2>
+        <p>Local search uses BGE embeddings with a FAISS index. Local AI uses Qwen through llama.cpp, and metadata is kept in SQLite on your computer. Choose the mode that fits your documents. <a href="https://zero-x.live/privacy">Read the privacy policy</a>.</p>
+      </div>
+      <div class="zx-grid zx-grid--2">
+        <div class="zx-card">
+          <p class="zx-card__label">On your computer</p>
+          <ul class="zx-checks">
+            <li><svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#check"/></svg><span>Semantic search over the folders you choose</span></li>
+            <li><svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#check"/></svg><span>Local AI summaries and questions with the bundled model</span></li>
+            <li><svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#check"/></svg><span>Metadata in SQLite and the FAISS vector index</span></li>
+          </ul>
         </div>
-        <div class="zx-spec__row">
-          <dt><svg class="zx-icon" aria-hidden="true"><use href="/icons.svg#cpu"/></svg><h3>Qwen AI Engine</h3></dt>
-          <dd>Local Qwen 2.5 Coder 1.5B GGUF model via llama.cpp. Summarize documents and ask questions using local mode.</dd>
+        <div class="zx-card zx-card--flat">
+          <p class="zx-card__label">Needs a connection</p>
+          <ul class="zx-checks zx-checks--plain">
+            <li><svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#globe"/></svg><span>Downloads and initial model setup</span></li>
+            <li><svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#globe"/></svg><span>Account sign-in</span></li>
+            <li><svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#globe"/></svg><span>Optional cloud or internet features, which have a separate data flow and may send submitted content to online providers</span></li>
+          </ul>
         </div>
-        <div class="zx-spec__row">
-          <dt><svg class="zx-icon" aria-hidden="true"><use href="/icons.svg#monitor"/></svg><h3>Cross-Platform Desktop</h3></dt>
-          <dd>Desktop builds for Windows, macOS, and Linux with a responsive native app interface.</dd>
-        </div>
-        <div class="zx-spec__row">
-          <dt><svg class="zx-icon" aria-hidden="true"><use href="/icons.svg#layers"/></svg><h3>Vector Retrieval</h3></dt>
-          <dd>FAISS vector index with HNSW graph search to find related files by meaning.</dd>
-        </div>
-        <div class="zx-spec__row">
-          <dt><svg class="zx-icon" aria-hidden="true"><use href="/icons.svg#shield"/></svg><h3>Local AI mode</h3></dt>
-          <dd>Local search and local AI run on your computer. Optional internet features and account sign-in connect to online services.</dd>
-        </div>
-        <div class="zx-spec__row">
-          <dt><svg class="zx-icon" aria-hidden="true"><use href="/icons.svg#file-text"/></svg><h3>Documents, Code, and Media</h3></dt>
-          <dd>Supported documents and source files include PDF, DOCX, PPTX, XLSX, Python, JavaScript, JSON, and YAML.</dd>
-        </div>
-      </dl>
+      </div>
     </section>
 
     <section class="zx-container zx-section" id="downloads" aria-labelledby="downloads-title">
@@ -215,15 +243,6 @@
         <p>Choose your platform and CPU architecture to download the installer.</p>
       </div>
       <div class="zx-grid zx-grid--3">
-        <section class="zx-card zx-dlcard" aria-labelledby="dl-macos">
-          <div class="zx-row zx-row--between"><h3 id="dl-macos">macOS</h3></div>
-          <p class="zx-label">Apple Silicon · Intel</p>
-          <div class="zx-stack">
-            <a class="zx-btn zx-btn--block" href="https://github.com/RAHUL-DevelopeRR/deepseekfs/releases/latest/download/NeuCockpit-v1.0-macos-arm64.dmg" id="download-macos-arm64-btn" target="_blank" rel="noopener"><svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#download"/></svg>Apple Silicon</a>
-            <a class="zx-btn zx-btn--block" href="https://github.com/RAHUL-DevelopeRR/deepseekfs/releases/latest/download/NeuCockpit-v1.0-macos-intel.dmg" id="download-macos-x64-btn" target="_blank" rel="noopener"><svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#download"/></svg>Intel</a>
-          </div>
-          <p class="zx-help">macOS 12 Monterey or later<br>.dmg installer</p>
-        </section>
         <section class="zx-card zx-dlcard" aria-labelledby="dl-windows">
           <div class="zx-row zx-row--between"><h3 id="dl-windows">Windows</h3><span class="zx-badge zx-badge--accent">Available now</span></div>
           <p class="zx-label">x64 · ARM64</p>
@@ -233,8 +252,17 @@
           </div>
           <p class="zx-help">Windows 10 (64-bit) or later<br>.exe installer</p>
         </section>
+        <section class="zx-card zx-dlcard" aria-labelledby="dl-macos">
+          <div class="zx-row zx-row--between"><h3 id="dl-macos">macOS</h3><span class="zx-badge zx-badge--accent">Available now</span></div>
+          <p class="zx-label">Apple Silicon · Intel</p>
+          <div class="zx-stack">
+            <a class="zx-btn zx-btn--block" href="https://github.com/RAHUL-DevelopeRR/deepseekfs/releases/latest/download/NeuCockpit-v1.0-macos-arm64.dmg" id="download-macos-arm64-btn" target="_blank" rel="noopener"><svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#download"/></svg>Apple Silicon</a>
+            <a class="zx-btn zx-btn--block" href="https://github.com/RAHUL-DevelopeRR/deepseekfs/releases/latest/download/NeuCockpit-v1.0-macos-intel.dmg" id="download-macos-x64-btn" target="_blank" rel="noopener"><svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#download"/></svg>Intel</a>
+          </div>
+          <p class="zx-help">macOS 12 Monterey or later<br>.dmg installer</p>
+        </section>
         <section class="zx-card zx-dlcard" aria-labelledby="dl-linux">
-          <div class="zx-row zx-row--between"><h3 id="dl-linux">Linux</h3></div>
+          <div class="zx-row zx-row--between"><h3 id="dl-linux">Linux</h3><span class="zx-badge zx-badge--accent">Available now</span></div>
           <p class="zx-label">x64 · ARM64</p>
           <div class="zx-stack">
             <a class="zx-btn zx-btn--block" href="https://github.com/RAHUL-DevelopeRR/deepseekfs/releases/latest/download/NeuCockpit-v1.0-linux-x64.run" id="download-linux-x64-btn" target="_blank" rel="noopener"><svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#download"/></svg>x64</a>
@@ -243,7 +271,7 @@
           <p class="zx-help">Ubuntu 20.04+ / Debian 11+<br>.run installer</p>
         </section>
       </div>
-      <p class="zx-help zx-mt">NeuCockpit includes bundled local AI components. Each button downloads the installer for that platform and CPU architecture.</p>
+      <p class="zx-help zx-mt">NeuCockpit includes bundled local AI components. Each button downloads the installer for that platform and CPU architecture. Every installer has a matching <code>.sha256</code> file on the <a href="https://github.com/RAHUL-DevelopeRR/deepseekfs/releases/latest">GitHub release</a>.</p>
     </section>
 
     <section class="zx-container zx-section" id="architecture" aria-labelledby="architecture-title">
@@ -268,32 +296,39 @@
     </section>
 
     <div class="zx-container zx-notes-wrap">
-  <section class="zx-notes" id="setup" aria-labelledby="setup-title">
-    <h2 id="setup-title">Set up local document search</h2>
-    <p>NeuCockpit is for people who need to revisit documents, specifications, project notes or source files and remember their contents better than their filenames. It searches folders you choose to index.</p>
-    <ol class="zx-steps">
-      <li><a href="#downloads">Download the installer for your operating system and CPU architecture</a>. Apple Silicon and ARM64 builds differ from Intel and x64 builds.</li>
-      <li>Install and launch NeuCockpit. Let model setup finish before using local AI; initial downloads and optional account features can require internet access.</li>
-      <li>Choose a folder containing files you are allowed to process and let indexing complete. Start with a small folder to check the results.</li>
-      <li>Describe a document's contents, inspect the returned path and open the original file to verify the match. AI summaries need the same source check.</li>
-    </ol>
-    <p><a href="https://zero-x.live/find-files-by-content">Read the guide to finding a file when you forgot its name</a>. For setup help, email <a href="mailto:support@zero-x.live?subject=NeuCockpit%20setup%20help">Zero-X support</a> with your operating system and the step where you got stuck. Do not send private documents.</p>
-    <h2>Indexing and document support</h2>
-    <p>The indexing pipeline extracts readable content from supported files, creates local embeddings and stores a searchable index. Supported parsers include PDF, DOCX, PPTX, XLSX and common text and source-code files. A scanned image-only PDF, encrypted document or unsupported format may not produce searchable text. Media file views do not mean every image, audio clip or video can be understood by content.</p>
-    <p>New or edited files need the index to refresh before their latest contents can appear. Search quality depends on the text extracted, the query and the contents of your selected folders. Semantic search can return a related document that is not the one you intended.</p>
-    <h2>Local search and optional online features</h2>
-    <p>Local search uses BGE embeddings with a FAISS index. Local AI uses Qwen through llama.cpp, and metadata is kept in SQLite on your computer. Optional cloud or internet features have a separate data flow and may send submitted content to online providers. Choose the mode that fits your documents. <a href="https://zero-x.live/privacy">Read the privacy policy</a>.</p>
-    <h2>Questions before installing</h2>
-    <div class="zx-faq">
-      <details><summary>Does this replace Windows Search, Spotlight or Linux file tools?</summary><p>NeuCockpit provides a separate semantic search interface for indexed folders. You can keep using your operating system's existing file tools.</p></details>
-    <details><summary>Can I search a PDF by a topic instead of its name?</summary><p>Yes, when the PDF contains readable text and its folder has finished indexing. Try a description of the passage or topic and check the original result. Scanned PDFs can need text extraction before their content is searchable.</p></details>
-    <details><summary>Are all my folders indexed automatically?</summary><p>Start by choosing the folders you want to search. A file outside the indexed scope will not be returned as though the app had read it. Check the indexing status when results are missing.</p></details>
-    <details><summary>Can I use it offline?</summary><p>Local search and local AI run on your computer once their required components are available. Downloads, sign-in and optional internet or cloud features require a connection.</p></details>
-    <details><summary>Are AI answers guaranteed to be correct?</summary><p>No. Retrieval and generated summaries can be incomplete or wrong. Open the source and verify important details before acting on them.</p></details>
+      <section class="zx-notes" id="setup" aria-labelledby="setup-title">
+        <p class="zx-label">Setup notes</p>
+        <h2 id="setup-title">Set up local document search</h2>
+        <p>NeuCockpit is for people who need to revisit documents, specifications, project notes or source files and remember their contents better than their filenames. It searches folders you choose to index.</p>
+        <ol class="zx-steps">
+          <li><a href="#downloads">Download the installer for your operating system and CPU architecture</a>. Apple Silicon and ARM64 builds differ from Intel and x64 builds.</li>
+          <li>Install and launch NeuCockpit. Let model setup finish before using local AI; initial downloads and optional account features can require internet access.</li>
+          <li>Choose a folder containing files you are allowed to process and let indexing complete. Start with a small folder to check the results.</li>
+          <li>Describe a document's contents, inspect the returned path and open the original file to verify the match. AI summaries need the same source check.</li>
+        </ol>
+        <p><a href="https://zero-x.live/find-files-by-content">Read the guide to finding a file when you forgot its name</a>. For setup help, email <a href="mailto:support@zero-x.live?subject=NeuCockpit%20setup%20help">Zero-X support</a> with your operating system and the step where you got stuck. Do not send private documents.</p>
+        <h2>Indexing and document support</h2>
+        <p>The indexing pipeline extracts readable content from supported files, creates local embeddings and stores a searchable index. Supported parsers include PDF, DOCX, PPTX, XLSX and common text and source-code files. A scanned image-only PDF, encrypted document or unsupported format may not produce searchable text. Media file views do not mean every image, audio clip or video can be understood by content.</p>
+        <p>New or edited files need the index to refresh before their latest contents can appear. Search quality depends on the text extracted, the query and the contents of your selected folders. Semantic search can return a related document that is not the one you intended.</p>
+        <h2>Local search and optional online features</h2>
+        <p>Local search uses BGE embeddings with a FAISS index. Local AI uses Qwen through llama.cpp, and metadata is kept in SQLite on your computer. Optional cloud or internet features have a separate data flow and may send submitted content to online providers. Choose the mode that fits your documents. <a href="https://zero-x.live/privacy">Read the privacy policy</a>.</p>
+      </section>
     </div>
-    <p><a href="https://github.com/RAHUL-DevelopeRR/deepseekfs">Inspect the NeuCockpit source and documentation on GitHub</a> or <a href="https://zero-x.live/about">read about Zero-X</a>.</p>
-  </section>
-    </div>
+
+    <section class="zx-container zx-section" id="faq" aria-labelledby="faq-title">
+      <div class="zx-section-head">
+        <p class="zx-label">FAQ</p>
+        <h2 id="faq-title">Questions before installing</h2>
+      </div>
+      <div class="zx-faq zx-cp-faq">
+        <details><summary>Does this replace Windows Search, Spotlight or Linux file tools?</summary><p>NeuCockpit provides a separate semantic search interface for indexed folders. You can keep using your operating system's existing file tools.</p></details>
+        <details><summary>Can I search a PDF by a topic instead of its name?</summary><p>Yes, when the PDF contains readable text and its folder has finished indexing. Try a description of the passage or topic and check the original result. Scanned PDFs can need text extraction before their content is searchable.</p></details>
+        <details><summary>Are all my folders indexed automatically?</summary><p>Start by choosing the folders you want to search. A file outside the indexed scope will not be returned as though the app had read it. Check the indexing status when results are missing.</p></details>
+        <details><summary>Can I use it offline?</summary><p>Local search and local AI run on your computer once their required components are available. Downloads, sign-in and optional internet or cloud features require a connection.</p></details>
+        <details><summary>Are AI answers guaranteed to be correct?</summary><p>No. Retrieval and generated summaries can be incomplete or wrong. Open the source and verify important details before acting on them.</p></details>
+      </div>
+      <p class="zx-mt"><a href="https://github.com/RAHUL-DevelopeRR/deepseekfs">Inspect the NeuCockpit source and documentation on GitHub</a> or <a href="https://zero-x.live/about">read about Zero-X</a>.</p>
+    </section>
 
     <section class="zx-container zx-section" aria-labelledby="cta-title">
       <div class="zx-cp-cta">
@@ -328,12 +363,12 @@
         <a href="/about">About</a>
         <a href="/contact">Contact</a>
         <a href="/docs/trust">Security and trust</a>
-        <a href="https://zero-x.live/neucockpit">NeuCockpit</a>
+        <a href="https://zero-x.live/neucockpit" aria-current="page">NeuCockpit</a>
       </nav>
       <nav aria-label="Legal">
         <h2>Legal</h2>
         <a href="/terms">Terms of Service</a>
-        <a href="/privacy" aria-current="page">Privacy Policy</a>
+        <a href="/privacy">Privacy Policy</a>
         <a href="/refund">Cancellation and refunds</a>
         <a href="/shipping">Shipping and delivery</a>
       </nav>
