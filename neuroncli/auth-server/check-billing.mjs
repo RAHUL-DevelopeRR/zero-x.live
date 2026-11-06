@@ -1,4 +1,4 @@
-// WP-B3: Razorpay billing (docs/PLATFORM_CONTRACT.md §3.5, §14) against a fake Razorpay HTTP server and a
+// WP-B3: Razorpay billing (docs/PLATFORM_CONTRACT.md §3.5, §16) against a fake Razorpay HTTP server and a
 // stubbed PostgREST: signatures, checkout, top-ups, verify, cancel, webhooks, plan bootstrap and the
 // billing details step (profile routes, the details and agreement gate, consent records).
 // Run: node check-billing.mjs

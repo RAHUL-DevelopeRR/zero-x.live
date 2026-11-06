@@ -349,7 +349,7 @@ and service_role-only grants). Existing profiles keep everything and get `NULL`.
 deploying the gateway that knows it**: until then a buyer who types a tax id gets 503
 `service_unavailable` on saving (the old upsert refuses the unknown key); a buyer who leaves it empty
 is not affected, because the gateway then leaves the key out. The privacy policy changes with it
-(version `2026-11-04`), so every buyer is asked to agree again at their next checkout. Contract §14.6.
+(version `2026-11-04`), so every buyer is asked to agree again at their next checkout. Contract §16.6.
 Verify: `SELECT column_name FROM information_schema.columns WHERE table_name = 'zerox_billing_profiles'
 AND column_name = 'tax_id';` returns one row. Roll back with
 `migrations/down/20261105000200_billing_tax_id.down.sql`; that deletes every saved tax id and keeps

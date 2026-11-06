@@ -9,7 +9,7 @@ import { PLAN_CATALOG, formatCount, formatMoney, formatTokens, normalizeCatalog 
 
 export const TABS = ['overview', 'usage', 'keys', 'billing', 'sessions', 'connectors', 'account'];
 // Tabs shown only when the gateway serves them (Connectors: GET /api/connectors answers 404 unless
-// hosted connectors are switched on, docs/PLATFORM_CONTRACT.md section 14.4).
+// hosted connectors are switched on, docs/PLATFORM_CONTRACT.md section 18.5).
 export const OPTIONAL_TABS = ['connectors'];
 export const DEV_TOKEN_KEY = 'zx-dev-token';
 export const EVENTS_PAGE_SIZE = 25;

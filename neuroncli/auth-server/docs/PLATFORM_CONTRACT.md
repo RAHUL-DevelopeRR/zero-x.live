@@ -174,7 +174,7 @@ credential (never an `nzx_` key). Session tokens are stored hashed (SHA-256) in 
   window_seconds, resets_at}, credits:{balance_usd, monthly_grant_usd},
   subscription:null|{status, current_period_end, cancel_at_period_end},
   flags:{suspended}, policy?:{connectors:{allowed, denied, required, hosted, allow_unvetted,
-  catalog_version}}}` (`display_name`, `initials` and `session_expires_at`: §9.1; `policy`: §14.1,
+  catalog_version}}}` (`display_name`, `initials` and `session_expires_at`: §9.1; `policy`: §18.1,
   left out when the plan has no gateway policy)
 - `GET /api/usage?from=YYYY-MM-DD&to=YYYY-MM-DD` (max 92 days, default last 30) →
   `{from, to, series:[{day, requests, prompt_tokens, completion_tokens, cost_usd}],
@@ -196,7 +196,7 @@ credential (never an `nzx_` key). Session tokens are stored hashed (SHA-256) in 
   'subscription'|'topup', amount_minor, currency, status, created_at, invoice_url}]}`
 - `POST /api/billing/checkout {plan:'pro'|'max', currency:'INR'|'USD'}` → `{provider:
   'razorpay', key_id, subscription_id, name, description, prefill:{email,name}, notes}`
-  (409 `already_subscribed`, 503 `billing_not_configured`; section 14 adds the billing details
+  (409 `already_subscribed`, 503 `billing_not_configured`; section 16 adds the billing details
   gate, `consent`, `billing_plan_missing` and the phone in `prefill`)
 - `POST /api/billing/topup {pack, currency}` → `{provider, key_id, order_id, amount_minor,
   currency, name, description, prefill}`
@@ -973,122 +973,6 @@ Tiers, limits, prices and credits are unchanged (section 1). The plan features
 (`zerox_plan_policy.features`, `/api/plans`, the site fallback) name Claude Sonnet 5.5 and Claude
 Opus 5.5 billed from credits on Pro and Max, and say every plan has the same Neuron features.
 
-## 14. v1.9 amendments (billing details, 2026-11-03)
-
-Migration `20261105000000_billing_details.sql`; code `src/billing/profile.js`,
-`src/billing/legal-versions.js`, `src/routes/billing-profile.js`; browser `billing-details.js`.
-
-### 14.1 Profile (`GET`/`PUT /api/billing/profile`, interactive credentials only)
-
-What a buyer gives Zero-X before Razorpay opens. Card, UPI and bank details are never collected
-here (they go into Razorpay's own window). The 2026-11-03 version had no tax id field because
-Zero-X is not registered for GST; 14.6 adds an optional one (`tax_id`), kept for the buyer's own
-records only.
-
-- `GET` → `{profile: null | {customer_type: 'individual'|'business', full_name, business_name,
-  country (ISO 3166-1 alpha-2), state, city, postal_code, address_line1, address_line2, phone
-  (E.164), tax_id (14.6)}, complete, missing: [field…], documents: {terms|privacy|refund|auto_renewal: {version:
-  'YYYY-MM-DD', path}}, accepted: {document: {version, accepted_at, current}}, tax:
-  {no_gst_notice}, options: {countries: [{code, name}] (India first), states: {IN: [{code,
-  name}]}, no_postal: [country…]}}`. `tax.no_gst_notice` is `BILLING_NO_GST_NOTICE=true`
-  (default off): the owner turns it on only once it is confirmed that no GST is charged; the
-  browser then shows "No GST charged" in the order summary, and the order summary says nothing
-  about GST before. (The tax id field's label and note, 14.6, are shown either way.)
-- `PUT {customer_type?, full_name, business_name?, country, state?, city, postal_code?,
-  address_line1?, address_line2?, tax_id?, phone?}` replaces the profile (absent optional fields are
-  cleared) → `{profile, complete: true, missing: []}`. Required: `full_name`, `country`, `city`,
-  `state` (a state or union territory of India, by code or name), `postal_code` (not in countries
-  without postal codes; per-country shape for common countries), and for `business`:
-  `business_name` and `address_line1`. The street address is optional for an individual. Unknown
-  fields are refused. A refusal is 400 `invalid_request` with `param` (the first field in form
-  order) and `fields` (`{field: message}`).
-
-### 14.2 Checkout gate
-
-`POST /api/billing/checkout` and `/topup` accept `consent: {document: version}` (the versions the
-buyer was shown) and refuse, before anything is created at Razorpay:
-
-- 409 `billing_profile_required` `{missing}`: no saved profile, or one that no longer meets the
-  rules;
-- 409 `consent_required` `{missing, documents}`: for each document the purchase needs (a
-  subscription: terms, privacy, auto_renewal, refund; a top-up: terms, privacy, refund) the current
-  version must be in `consent`, or, for terms, privacy and refund only, already agreed to at the
-  current version (`accepted`). `auto_renewal` is about this purchase and is always required in the
-  request. Versions are in `src/billing/legal-versions.js` and equal the "Effective date" of
-  `terms.html`, `privacy.html` and `refund.html` (a test fails otherwise).
-
-The agreements made in the request are appended to `zerox_billing_consents` (document, version,
-context, accepted_at; append-only) when a payable subscription or order is handed out. Razorpay
-Checkout is prefilled with `{email, name (at most 50 characters), contact?}` only; Razorpay `notes`
-stay `{user_id, plan}` / `{user_id, pack}` (they are copied back into `zerox_payments.raw`), and no
-address, state, business name or tax id is sent to Razorpay at all.
-
-### 14.3 Errors and health
-
-- 503 `billing_plan_missing`: the keys are set but the plan's Razorpay plan id for that currency is
-  not stored (`zerox_plan_policy.razorpay_plan_id_inr` / `_usd`); distinct from
-  `billing_not_configured` (keys missing). The gateway logs `Razorpay plan id missing` with the plan
-  and currency.
-- Operator `GET /health` adds `plans_configured: {inr, usd, missing: ['pro:USD', …]} | null`
-  (every paid plan has an id for the currency; `null` when the catalogue cannot be read).
-
-### 14.4 First month's credits
-
-`POST /api/billing/verify` grants the plan's monthly credits when the first payment of a
-subscription is `captured` (ledger `ref` = the Razorpay payment id, reason `subscription_<plan>`),
-instead of waiting for `subscription.charged`. The webhook for the same payment, and a second
-verify, grant nothing more (`zerox_credit_grant` is idempotent on `ref`); an `authorized` payment
-is granted by the webhook once captured.
-
-### 14.5 RPCs
-
-`zerox_billing_profile_get(user)`, `zerox_billing_profile_upsert(user, jsonb)` (both return
-`tax_id` since 20261105000200, 14.6), `zerox_billing_record_consents(user, context, jsonb)`,
-`zerox_billing_consents_latest(user)`.
-Profiles and consents are deleted with their account (`ON DELETE CASCADE`), like the payment
-records (which means deleting an account also deletes its payment records; see the open items in
-the release notes).
-
-### 14.6 Optional tax id (2026-11-04)
-
-Migration `20261105000200_billing_tax_id.sql` (down script in `migrations/down/`); owner decision
-of 2026-11-04. Zero-X is still not registered for GST: the tax id is kept with the buyer's billing
-details for Zero-X's billing records only (the purpose the privacy policy gives). No GST is charged
-and no GST invoice is issued, and the tax id is never sent to Razorpay (not in the prefill, not in
-`notes`, which hold only ids), so it is not on Razorpay's receipt either.
-
-- `profile.tax_id`: `null` or the stored value. `PUT` accepts an optional `tax_id` for individuals
-  and businesses alike; absent, `null` or blank clears it (the `PUT` replaces the profile). The
-  gateway leaves the key out of the RPC call when there is none, so a profile without one still
-  saves on a database without this migration.
-- Normalised: control and invisible characters dropped, spaces removed, upper case. What is typed
-  may be at most 40 characters ("GSTIN or tax ID must be at most 40 characters.").
-- `country` `IN`: a GSTIN. 15 characters ("A GSTIN has 15 letters and digits."), the shape
-  `^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$` ("Enter a valid GSTIN: a 2 digit state code,
-  the 10 character PAN, then 3 more characters."), the GSTN's mod-36 check character as the 15th
-  ("This GSTIN's last character does not match the rest. Check it for a typo."), and, when the
-  state is one from the list, its first two digits equal that state's GST state code
-  (`GST_STATE_CODES` in `src/billing/profile.js`; Dadra and Nagar Haveli and Daman and Diu accepts
-  26 and the pre-2020 25): "This GSTIN starts with 29, but the GST state code of Tamil Nadu is 33.
-  Check the GSTIN or the state."
-- Any other country: a VAT or tax id of 2 to 20 letters, digits or hyphens that starts and ends with
-  a letter or digit ("Enter a VAT or tax ID of 2 to 20 letters, digits or hyphens.").
-- A refusal is the usual 400 `invalid_request` with `param: 'tax_id'` and `fields.tax_id`. A stored
-  tax id that fails today's rule makes the profile incomplete (`missing: ['tax_id']`, 409
-  `billing_profile_required` at checkout).
-- The database CHECK `zerox_billing_profiles_tax_id_check` is the last line: 2 to 20 characters of
-  `[A-Z0-9-]` (no leading or trailing hyphen) and, for `IN`, the GSTIN shape; it does not repeat
-  the check character or the state match.
-- Browser (`billing-details.js`): an optional field labelled "GSTIN (optional)" in India and "VAT or
-  tax ID (optional)" elsewhere, full width after the address lines, with the note "Optional. Zero-X
-  keeps it with your billing details for its billing records; it is not sent to Razorpay and does
-  not appear on Razorpay's receipt. Zero-X is not registered for GST, so no GST is charged and no
-  GST invoice is issued." The input has `autocapitalize="characters"`, `autocorrect="off"` and
-  `spellcheck="false"`, and the error summary names it with the same country-specific label. The
-  browser checks the same rule with the same messages before saving (`check-billing-profile.mjs`
-  compares the two for every country, customer type and Indian state).
-- The privacy policy names the optional GSTIN or tax ID; its version (`legal-versions.js`) is
-  `2026-11-04`, so every buyer agrees to it again at their next checkout.
 ## 14. v1.9 amendments (model families, usable context, 2026-11-04)
 
 Code: `src/model-families.js` (identity), `src/catalog.js` (`familyModels`, `withIdentity`,
@@ -1339,6 +1223,122 @@ model's own error (no verdict, not a misconfigured test).
 | `zerox_pool_health_put` | `(p_rows jsonb)` → rows written (at most 500; rows not written for 7 days are deleted). A row carries `verdict_at` (the last request-level verdict), `checked_at` (when the state in `status` was observed) and `listed_at` (the last model list that showed it). |
 | `zerox_pool_health_get` | `(p_since_seconds int)` → the rows written within that time. |
 
+## 16. v1.11 amendments (billing details, 2026-11-03)
+
+Migration `20261105000000_billing_details.sql`; code `src/billing/profile.js`,
+`src/billing/legal-versions.js`, `src/routes/billing-profile.js`; browser `billing-details.js`.
+
+### 16.1 Profile (`GET`/`PUT /api/billing/profile`, interactive credentials only)
+
+What a buyer gives Zero-X before Razorpay opens. Card, UPI and bank details are never collected
+here (they go into Razorpay's own window). The 2026-11-03 version had no tax id field because
+Zero-X is not registered for GST; 16.6 adds an optional one (`tax_id`), kept for the buyer's own
+records only.
+
+- `GET` → `{profile: null | {customer_type: 'individual'|'business', full_name, business_name,
+  country (ISO 3166-1 alpha-2), state, city, postal_code, address_line1, address_line2, phone
+  (E.164), tax_id (16.6)}, complete, missing: [field…], documents: {terms|privacy|refund|auto_renewal: {version:
+  'YYYY-MM-DD', path}}, accepted: {document: {version, accepted_at, current}}, tax:
+  {no_gst_notice}, options: {countries: [{code, name}] (India first), states: {IN: [{code,
+  name}]}, no_postal: [country…]}}`. `tax.no_gst_notice` is `BILLING_NO_GST_NOTICE=true`
+  (default off): the owner turns it on only once it is confirmed that no GST is charged; the
+  browser then shows "No GST charged" in the order summary, and the order summary says nothing
+  about GST before. (The tax id field's label and note, 16.6, are shown either way.)
+- `PUT {customer_type?, full_name, business_name?, country, state?, city, postal_code?,
+  address_line1?, address_line2?, tax_id?, phone?}` replaces the profile (absent optional fields are
+  cleared) → `{profile, complete: true, missing: []}`. Required: `full_name`, `country`, `city`,
+  `state` (a state or union territory of India, by code or name), `postal_code` (not in countries
+  without postal codes; per-country shape for common countries), and for `business`:
+  `business_name` and `address_line1`. The street address is optional for an individual. Unknown
+  fields are refused. A refusal is 400 `invalid_request` with `param` (the first field in form
+  order) and `fields` (`{field: message}`).
+
+### 16.2 Checkout gate
+
+`POST /api/billing/checkout` and `/topup` accept `consent: {document: version}` (the versions the
+buyer was shown) and refuse, before anything is created at Razorpay:
+
+- 409 `billing_profile_required` `{missing}`: no saved profile, or one that no longer meets the
+  rules;
+- 409 `consent_required` `{missing, documents}`: for each document the purchase needs (a
+  subscription: terms, privacy, auto_renewal, refund; a top-up: terms, privacy, refund) the current
+  version must be in `consent`, or, for terms, privacy and refund only, already agreed to at the
+  current version (`accepted`). `auto_renewal` is about this purchase and is always required in the
+  request. Versions are in `src/billing/legal-versions.js` and equal the "Effective date" of
+  `terms.html`, `privacy.html` and `refund.html` (a test fails otherwise).
+
+The agreements made in the request are appended to `zerox_billing_consents` (document, version,
+context, accepted_at; append-only) when a payable subscription or order is handed out. Razorpay
+Checkout is prefilled with `{email, name (at most 50 characters), contact?}` only; Razorpay `notes`
+stay `{user_id, plan}` / `{user_id, pack}` (they are copied back into `zerox_payments.raw`), and no
+address, state, business name or tax id is sent to Razorpay at all.
+
+### 16.3 Errors and health
+
+- 503 `billing_plan_missing`: the keys are set but the plan's Razorpay plan id for that currency is
+  not stored (`zerox_plan_policy.razorpay_plan_id_inr` / `_usd`); distinct from
+  `billing_not_configured` (keys missing). The gateway logs `Razorpay plan id missing` with the plan
+  and currency.
+- Operator `GET /health` adds `plans_configured: {inr, usd, missing: ['pro:USD', …]} | null`
+  (every paid plan has an id for the currency; `null` when the catalogue cannot be read).
+
+### 16.4 First month's credits
+
+`POST /api/billing/verify` grants the plan's monthly credits when the first payment of a
+subscription is `captured` (ledger `ref` = the Razorpay payment id, reason `subscription_<plan>`),
+instead of waiting for `subscription.charged`. The webhook for the same payment, and a second
+verify, grant nothing more (`zerox_credit_grant` is idempotent on `ref`); an `authorized` payment
+is granted by the webhook once captured.
+
+### 16.5 RPCs
+
+`zerox_billing_profile_get(user)`, `zerox_billing_profile_upsert(user, jsonb)` (both return
+`tax_id` since 20261105000200, 16.6), `zerox_billing_record_consents(user, context, jsonb)`,
+`zerox_billing_consents_latest(user)`.
+Profiles and consents are deleted with their account (`ON DELETE CASCADE`), like the payment
+records (which means deleting an account also deletes its payment records; see the open items in
+the release notes).
+
+### 16.6 Optional tax id (2026-11-04)
+
+Migration `20261105000200_billing_tax_id.sql` (down script in `migrations/down/`); owner decision
+of 2026-11-04. Zero-X is still not registered for GST: the tax id is kept with the buyer's billing
+details for Zero-X's billing records only (the purpose the privacy policy gives). No GST is charged
+and no GST invoice is issued, and the tax id is never sent to Razorpay (not in the prefill, not in
+`notes`, which hold only ids), so it is not on Razorpay's receipt either.
+
+- `profile.tax_id`: `null` or the stored value. `PUT` accepts an optional `tax_id` for individuals
+  and businesses alike; absent, `null` or blank clears it (the `PUT` replaces the profile). The
+  gateway leaves the key out of the RPC call when there is none, so a profile without one still
+  saves on a database without this migration.
+- Normalised: control and invisible characters dropped, spaces removed, upper case. What is typed
+  may be at most 40 characters ("GSTIN or tax ID must be at most 40 characters.").
+- `country` `IN`: a GSTIN. 15 characters ("A GSTIN has 15 letters and digits."), the shape
+  `^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$` ("Enter a valid GSTIN: a 2 digit state code,
+  the 10 character PAN, then 3 more characters."), the GSTN's mod-36 check character as the 15th
+  ("This GSTIN's last character does not match the rest. Check it for a typo."), and, when the
+  state is one from the list, its first two digits equal that state's GST state code
+  (`GST_STATE_CODES` in `src/billing/profile.js`; Dadra and Nagar Haveli and Daman and Diu accepts
+  26 and the pre-2020 25): "This GSTIN starts with 29, but the GST state code of Tamil Nadu is 33.
+  Check the GSTIN or the state."
+- Any other country: a VAT or tax id of 2 to 20 letters, digits or hyphens that starts and ends with
+  a letter or digit ("Enter a VAT or tax ID of 2 to 20 letters, digits or hyphens.").
+- A refusal is the usual 400 `invalid_request` with `param: 'tax_id'` and `fields.tax_id`. A stored
+  tax id that fails today's rule makes the profile incomplete (`missing: ['tax_id']`, 409
+  `billing_profile_required` at checkout).
+- The database CHECK `zerox_billing_profiles_tax_id_check` is the last line: 2 to 20 characters of
+  `[A-Z0-9-]` (no leading or trailing hyphen) and, for `IN`, the GSTIN shape; it does not repeat
+  the check character or the state match.
+- Browser (`billing-details.js`): an optional field labelled "GSTIN (optional)" in India and "VAT or
+  tax ID (optional)" elsewhere, full width after the address lines, with the note "Optional. Zero-X
+  keeps it with your billing details for its billing records; it is not sent to Razorpay and does
+  not appear on Razorpay's receipt. Zero-X is not registered for GST, so no GST is charged and no
+  GST invoice is issued." The input has `autocapitalize="characters"`, `autocorrect="off"` and
+  `spellcheck="false"`, and the error summary names it with the same country-specific label. The
+  browser checks the same rule with the same messages before saving (`check-billing-profile.mjs`
+  compares the two for every country, customer type and Indian state).
+- The privacy policy names the optional GSTIN or tax ID; its version (`legal-versions.js`) is
+  `2026-11-04`, so every buyer agrees to it again at their next checkout.
 ## 17. v1.11 amendments (web search and colony budgets, 2026-11-05)
 
 ### 17.1 `POST /v1/search`

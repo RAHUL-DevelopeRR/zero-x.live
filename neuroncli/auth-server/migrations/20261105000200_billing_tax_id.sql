@@ -4,7 +4,7 @@ BEGIN;
 SET LOCAL lock_timeout = '5s';
 
 -- An optional tax id on the billing details a buyer gives before Razorpay opens (owner decision of
--- 2026-11-04; docs/PLATFORM_CONTRACT.md section 14.6). 20261105000000_billing_details.sql left it out
+-- 2026-11-04; docs/PLATFORM_CONTRACT.md section 16.6). 20261105000000_billing_details.sql left it out
 -- because Zero-X is not registered for GST; that is still true: the number is kept with the buyer's
 -- billing details for Zero-X's billing records only. Zero-X charges no GST and issues no GST
 -- invoice, and the number is never sent to Razorpay.
