@@ -113,7 +113,7 @@ export async function accountPayload(env, caller, { token = '' } = {}) {
       window_tokens: windowTokens && windowSeconds ? windowTokens : null,
       window_seconds: windowTokens && windowSeconds ? windowSeconds : null,
       // Web searches and research runs per UTC day (POST /v1/search) and the CLI-enforced
-      // colony budget (docs/PLATFORM_CONTRACT.md section 14).
+      // colony budget (docs/PLATFORM_CONTRACT.md section 17).
       search: searchLimits(planId),
       colony: colonyLimits(planId),
     },

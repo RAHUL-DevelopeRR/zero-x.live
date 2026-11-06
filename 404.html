@@ -10,13 +10,15 @@
   <link rel="icon" type="image/png" sizes="32x32" href="/Assets/zerox-favicon-32.png">
   <link rel="stylesheet" href="/site-fonts.css">
   <link rel="stylesheet" href="/zx-tokens.css">
+  <script type="module" src="/site-nav.js"></script>
 </head>
 <body>
   <a class="zx-skip" href="#main">Skip to content</a>
   <header class="zx-header">
     <div class="zx-container zx-header__inner">
-      <a class="zx-brand" href="https://zero-x.live/"><img src="/Assets/zerox-favicon-32.png" width="28" height="28" alt="">Zero-X</a>
-      <nav class="zx-nav" aria-label="Main">
+      <a class="zx-brand" href="https://zero-x.live/"><img src="/Assets/zerox-mark.svg" width="28" height="28" alt="">Zero-X</a>
+      <button class="zx-nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" hidden><span class="zx-nav-toggle__bars" aria-hidden="true"></span>Menu</button>
+      <nav class="zx-nav" id="site-nav" aria-label="Main">
         <a href="/neuron-cli">Neuron CLI</a>
         <a href="/pricing">Pricing</a>
         <a href="/docs">Docs</a>
@@ -24,6 +26,7 @@
       </nav>
     </div>
   </header>
+  <script>(function(h){var b=h&&h.querySelector('.zx-nav-toggle');if(b&&'noModule'in HTMLScriptElement.prototype){h.dataset.nav='closed';b.hidden=false}})(document.querySelector('.zx-header'))</script>
   <main id="main" class="zx-container zx-narrow zx-hero">
     <p class="zx-eyebrow">Error 404</p>
     <h1>We could not find that page</h1>

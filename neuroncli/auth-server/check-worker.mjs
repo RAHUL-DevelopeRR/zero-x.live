@@ -56,6 +56,8 @@ for (const [url, target] of [
   ['https://neuron.zero-x.live/find-files-by-content', 'https://zero-x.live/find-files-by-content'],
   ['https://zero-x.live/about/', 'https://zero-x.live/about'], ['https://zero-x.live/about.html', 'https://zero-x.live/about'],
   ['https://zero-x.live/ai-coding-agent.html', 'https://zero-x.live/ai-coding-agent'], ['https://www.zero-x.live/ai-coding-agent', 'https://zero-x.live/ai-coding-agent'],
+  ['https://zero-x.live/free-ai-coding-agent.html', 'https://zero-x.live/free-ai-coding-agent'], ['https://neuron.zero-x.live/free-ai-coding-agent', 'https://zero-x.live/free-ai-coding-agent'],
+  ['https://zero-x.live/claude-code-alternative/', 'https://zero-x.live/claude-code-alternative'], ['https://www.zero-x.live/claude-code-alternative', 'https://zero-x.live/claude-code-alternative'],
   ['https://zero-x.live/index2.html', 'https://zero-x.live/'],
 ]) {
   for (const method of ['GET', 'HEAD']) {
@@ -69,6 +71,24 @@ for (const [path, file] of [['/download', '/download.html'], ['/docs/trust', '/d
   const response = await app.request('https://zero-x.live' + path, {}, env);
   assert.equal(response.status, 200, path);
   assert.equal(await response.text(), file);
+}
+// The search landing pages are served on their clean URLs.
+for (const [path, file] of [['/free-ai-coding-agent', '/free-ai-coding-agent.html'], ['/claude-code-alternative', '/claude-code-alternative.html']]) {
+  const response = await app.request('https://zero-x.live' + path, {}, env);
+  assert.equal(response.status, 200, path);
+  assert.equal(await response.text(), file);
+  assert.equal(response.headers.get('x-robots-tag'), null, path + ' is indexable');
+}
+// Only the canonical hosts may be indexed: the Worker's workers.dev address (or a staging Worker)
+// serves the homepage too, so its pages say noindex. Its static files answer as on every host, and
+// the Node server (where a forwarded request carries the proxy origin's host) never adds it.
+{
+  const stray = 'https://zero-x-callback-api.example.workers.dev';
+  assert.equal((await app.request(stray + '/', {}, env)).headers.get('x-robots-tag'), 'noindex, nofollow', 'workers.dev homepage');
+  assert.equal((await app.request(stray + '/Assets/zerox-mark.svg', {}, env)).headers.get('x-robots-tag'), null, 'static file');
+  for (const url of ['https://zero-x.live/', 'https://zero-x.live/pricing', 'https://zero-x.live./', 'https://neuron.zero-x.live/device', 'http://127.0.0.1:8787/'])
+    assert.equal((await app.request(url, {}, env)).headers.get('x-robots-tag'), null, url + ' stays indexable');
+  assert.equal((await app.request(stray + '/', {}, { ...env, NEURON_RUNTIME: 'node' })).headers.get('x-robots-tag'), null, 'Node server');
 }
 const neucockpit = await app.request('https://zero-x.live/neucockpit', {}, env);
 assert.equal(neucockpit.status, 200);

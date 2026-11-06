@@ -3,14 +3,18 @@
 > Zero-X (also written Zero X or ZeroX) builds Neuron, an open-source AI coding agent for the terminal, and NeuCockpit, local AI file search for desktop. Zero-X is based in Tamil Nadu, India. Website: https://zero-x.live/
 
 - Neuron reads a repository, plans a change, edits files and runs commands such as tests or builds, asking before anything its permission mode does not allow.
-- Neuron is written in Rust and MIT-licensed. The current release is 7.0.0-alpha.2, a GitHub pre-release for macOS, Linux and Windows.
+- Neuron is written in Rust and MIT-licensed. The current release is 7.0.0-alpha.4, a GitHub pre-release for macOS, Linux and Windows. Install it with `npm install -g @zero-x.live/neuron` (Node.js 22.14 or later) or `python -m pip install --pre neuroncli` (pip needs --pre while Neuron 7 is a pre-release); install scripts for each system are at https://zero-x.live/download.
 - Neuron uses hosted models through the Zero-X gateway after `neuron login`, or any OpenAI-compatible endpoint with your own API key. A Free plan is available (100 requests a day and 1M tokens every 5 hours); Pro and Max plans raise the limits.
-- Zero-X is not affiliated with Anthropic, OpenAI, Google, Groq, Cloudflare or any other model provider, and is not connected with the Infinix ZERO X phones or the Zero X electric motorcycle.
+- Hosted models are listed by the company that makes them: GPT-OSS (OpenAI), Qwen (Alibaba), Nemotron (NVIDIA), Step (StepFun), North (Cohere) and GLM (Z.ai) on the Free plan, and Claude Sonnet 5.5 and Claude Opus 5.5 (Anthropic) on Pro and Max. The homepage shows each model's usable context and live status from the gateway's health checker.
+- Neuron is an alpha: expect rough edges, and the release binaries are not code-signed (Windows) or notarized (macOS). Free hosted models are shared, with best-effort availability and, for some models, a smaller usable context window than the model's full one.
+- Zero-X is not affiliated with Anthropic, OpenAI, Google or any other model maker or provider, and is not connected with the Infinix ZERO X phones or the Zero X electric motorcycle.
 
 ## Neuron, the AI coding agent
 
 - [Neuron CLI](https://zero-x.live/neuron-cli): features, permission modes, install commands, first run and the model list
 - [What is an AI coding agent?](https://zero-x.live/ai-coding-agent): how the agent loop, permissions and models work, with Neuron as the example
+- [Free AI coding agent](https://zero-x.live/free-ai-coding-agent): what is free in Neuron (the MIT-licensed CLI, the Free plan on hosted LLMs, your own API key), what the Free plan does not include, and how to install it
+- [Neuron compared](https://zero-x.live/claude-code-alternative): Neuron next to Claude Code, OpenAI Codex CLI and Aider on licence, models and cost, and when another tool is the better choice
 - [Docs](https://zero-x.live/docs): quickstart, CLI commands, configuration, the OpenAI-compatible Zero-X API, error codes and limits
 - [Pricing](https://zero-x.live/pricing): Free, Pro and Max plans and credit top-ups
 - [Source code and releases](https://github.com/RAHUL-DevelopeRR/neuron-v2): Rust source, changelog and release binaries

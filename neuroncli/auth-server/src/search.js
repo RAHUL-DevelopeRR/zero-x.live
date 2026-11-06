@@ -1,4 +1,4 @@
-// Web search for Neuron (POST /v1/search, docs/PLATFORM_CONTRACT.md section 14): plan budgets,
+// Web search for Neuron (POST /v1/search, docs/PLATFORM_CONTRACT.md section 17): plan budgets,
 // request validation, the 10-minute result cache and the two backends. A self-hosted SearXNG
 // (SEARXNG_URL) answers first; the Brave Search API (BRAVE_API_KEY) is the fallback. With neither
 // configured the route answers 503 search_unavailable. Query text never leaves this module except

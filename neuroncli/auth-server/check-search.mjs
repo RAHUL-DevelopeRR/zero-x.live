@@ -349,7 +349,7 @@ try {
 
   // ── Down script, missing migration, re-apply ──
   const read = path => readFile(new URL(path, import.meta.url), 'utf8');
-  await handle.db.exec(await read('./migrations/down/20261104200000_search_quota.down.sql'));
+  await handle.db.exec(await read('./migrations/down/20261105200000_search_quota.down.sql'));
   handle.functions.clear();
   assert.deepEqual(await sql("SELECT to_regclass('public.zerox_search_usage') AS a, to_regclass('public.zerox_search_research_runs') AS b"), [{ a: null, b: null }]);
   assert.equal((await sql("SELECT count(*)::int AS n FROM supabase_migrations.schema_migrations WHERE version = '20261104200000'"))[0].n, 0);
@@ -358,7 +358,7 @@ try {
   assert.deepEqual([answer.status, answer.body.error], [503, 'search_unavailable'], 'no quota functions: unavailable, never unmetered');
   account = await call(pgEnv, '/api/account', { token: alice.ses });
   assert.equal(account.status, 200, '/api/account does not need the migration');
-  await handle.db.exec(await read('./migrations/20261104200000_search_quota.sql'));
+  await handle.db.exec(await read('./migrations/20261105200000_search_quota.sql'));
   handle.functions.clear();
   answer = await search(both, alice.ses, { query: 'migration back' });
   assert.equal(answer.status, 200);

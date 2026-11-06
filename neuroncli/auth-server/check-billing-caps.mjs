@@ -25,6 +25,8 @@ function ok(name) { passed.push(name); console.log(`ok - ${name}`); }
 
 const CAPS = '20261029000800_paid_billing_caps.sql';
 const PLANS = '20261029000900_plan_features_claude.sql';
+// Rewrites the Free plan's first feature line after PLANS (no provider names, no switched-off models).
+const LINEUP = '20261104300000_free_plan_features_lineup.sql';
 const migrationSql = file => readFile(join(root, 'migrations', file), 'utf8');
 const downSql = file => readFile(join(root, 'migrations', 'down', file.replace(/\.sql$/, '.down.sql')), 'utf8');
 
@@ -73,7 +75,7 @@ const columnsOf = async table => (await sql(`SELECT column_name FROM information
   WHERE table_schema = 'public' AND table_name = $1 ORDER BY column_name`, [table])).map(row => row.column_name);
 
 const PLAN_FEATURES = {
-  free: ['Free models from Groq, Google Gemini, Cloudflare Workers AI, NVIDIA and OpenRouter',
+  free: ['Free models chosen for coding, with tool use',
     '100 requests per day and 1M tokens every 5 hours', '10 requests per minute, 2 at once', 'Every Neuron feature, the same on all plans'],
   pro: ['Claude Sonnet 5.5 and Claude Opus 5.5, billed from credits', '$8 of credits included every month',
     'Free models with higher limits: 2,000 requests and 10M tokens per day', '30 requests per minute, 4 at once',
@@ -361,6 +363,12 @@ try {
       has_function_privilege('anon', p.oid, 'EXECUTE') AS anon, has_function_privilege('authenticated', p.oid, 'EXECUTE') AS auth,
       has_function_privilege('service_role', p.oid, 'EXECUTE') AS service
     FROM pg_proc AS p JOIN pg_namespace AS n ON n.oid = p.pronamespace WHERE n.nspname = 'public' AND p.proname = ANY($1) ORDER BY 1, 2`, [names])).rows;
+  // 20261104300000 only rewrites a Free feature line; its down script brings the line PLANS wrote back.
+  await db.exec(await readFile(join(root, 'migrations', 'down', LINEUP), 'utf8'));
+  assert.equal((await features(db)).find(row => row.plan === 'free').features[0],
+    'Free models from Groq, Google Gemini, Cloudflare Workers AI, NVIDIA and OpenRouter', 'the lineup down script restores the line PLANS wrote');
+  // 20261104000000 lets probe slots leave zerox_reservations.user_id null; its down script requires it again.
+  await db.exec(await readFile(join(root, 'migrations', 'down', '20261104000000_health_probes.sql'), 'utf8'));
   await db.exec(await readFile(join(root, 'migrations', 'down', '20261102000000_free_token_window.sql'), 'utf8'));
   await db.exec(await readFile(join(root, 'migrations', 'down', '20261029001000_pool_concurrency.sql'), 'utf8'));
   await db.exec(await downSql(PLANS));
@@ -379,9 +387,21 @@ try {
   for (let run = 0; run < 2; run += 1) {
     await db.exec(await migrationSql(CAPS));
     await db.exec(await migrationSql(PLANS));
+    await db.exec(await migrationSql(LINEUP));
   }
   handle.functions.clear();
   assert.equal((await functionRows('zerox_settle_v2')).length, 1);
+  // The lineup migration replaces only lines it knows (here 20261103000100's, from the billing branch)
+  // and leaves an operator's own wording alone.
+  const freeFeatures = async () => (await sql("SELECT features FROM public.zerox_plan_policy WHERE plan = 'free'"))[0].features;
+  await sql(`UPDATE public.zerox_plan_policy SET features = jsonb_set(features, '{0}', to_jsonb('Free models from Groq, NVIDIA, OpenRouter and Z.ai'::text)) WHERE plan = 'free'`);
+  await db.exec(await migrationSql(LINEUP));
+  assert.deepEqual(await freeFeatures(), PLAN_FEATURES.free, 'the billing branch line is replaced too');
+  await sql(`UPDATE public.zerox_plan_policy SET features = jsonb_set(features, '{0}', to_jsonb('Our own words'::text)) WHERE plan = 'free'`);
+  await db.exec(await migrationSql(LINEUP));
+  assert.equal((await freeFeatures())[0], 'Our own words', 'an operator-edited line is left alone');
+  await db.exec(await migrationSql(PLANS));
+  await db.exec(await migrationSql(LINEUP));
   assert.deepEqual(Object.fromEntries((await rpcRows(env, 'zerox_plan_policies_v2', {})).map(plan => [plan.plan, plan.features])), PLAN_FEATURES);
   for (const row of await privileges(db, touched)) {
     assert.deepEqual([row.anon, row.auth, row.service], [false, false, true], `${row.proname}(${row.args}) is service_role only`);

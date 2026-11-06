@@ -1,4 +1,4 @@
-// POST /v1/search (docs/PLATFORM_CONTRACT.md section 14): web search for Neuron with per-plan
+// POST /v1/search (docs/PLATFORM_CONTRACT.md section 17): web search for Neuron with per-plan
 // daily quotas. Errors are flat JSON ({"error": code, "message", "request_id", ...}) as the
 // search contract defines them: 400 invalid_request, 401 invalid_session (sign in again), 403
 // account_suspended, 429 search_quota_exhausted, 503 search_unavailable.
@@ -41,7 +41,7 @@ async function readBody(c) {
 async function quotaRpc(env, name, args) {
   try { return await rpc(env, name, args); }
   catch (error) {
-    if (missingFunction(error)) console.error('Search quota functions are missing; apply migration 20261104200000_search_quota.sql');
+    if (missingFunction(error)) console.error('Search quota functions are missing; apply migration 20261105200000_search_quota.sql');
     else console.error('Search quota database request failed', { code: error?.code ?? null });
     throw unavailable();
   }

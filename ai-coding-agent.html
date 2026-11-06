@@ -25,13 +25,15 @@
   <link rel="stylesheet" href="/site-fonts.css">
   <link rel="stylesheet" href="/zx-tokens.css">
   <script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"TechArticle","@id":"https://zero-x.live/ai-coding-agent#article","headline":"What is an AI coding agent?","description":"How an AI coding agent reads, edits and tests code, what it should be allowed to do, which models it uses and how to try Neuron in your terminal.","datePublished":"2026-10-24","dateModified":"2026-10-24","author":{"@id":"https://zero-x.live/#organization"},"publisher":{"@id":"https://zero-x.live/#organization"},"mainEntityOfPage":"https://zero-x.live/ai-coding-agent","isPartOf":{"@id":"https://zero-x.live/#website"},"about":[{"@type":"Thing","name":"AI coding agent"},{"@id":"https://zero-x.live/#neuron"}],"image":"https://zero-x.live/Assets/zerox-share.png"},{"@type":"FAQPage","@id":"https://zero-x.live/ai-coding-agent#faq","mainEntity":[{"@type":"Question","name":"Is a coding agent the same as an AI agent?","acceptedAnswer":{"@type":"Answer","text":"A coding agent is one kind of AI agent. An AI agent is any program where a model chooses actions and uses tools toward a goal. A coding agent's tools are for software work: reading and editing files, searching code and running commands."}},{"@type":"Question","name":"Is Neuron free?","acceptedAnswer":{"@type":"Answer","text":"Neuron is open source under the MIT licence. The Zero-X Free plan gives you hosted models with daily limits at no cost, or you can use your own API key. Pro and Max raise the limits."}},{"@type":"Question","name":"Does Neuron work on Windows?","acceptedAnswer":{"@type":"Answer","text":"Yes. A Windows x64 build installs with PowerShell, and Neuron can run PowerShell commands as well as shell commands. Windows on Arm runs the x64 build under emulation."}},{"@type":"Question","name":"Can I run a coding agent in CI?","acceptedAnswer":{"@type":"Answer","text":"Yes. Create an API key in the Zero-X dashboard, store it as a CI secret in NEURON_TOKEN and run neuron -p with your task. Never commit the key."}}]},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Zero-X","item":"https://zero-x.live/"},{"@type":"ListItem","position":2,"name":"AI coding agent guide","item":"https://zero-x.live/ai-coding-agent"}]}]}</script>
+  <script type="module" src="/site-nav.js"></script>
 </head>
 <body>
   <a class="zx-skip" href="#main">Skip to content</a>
   <header class="zx-header">
     <div class="zx-container zx-header__inner">
-      <a class="zx-brand" href="/"><img src="/Assets/zerox-favicon-32.png" width="28" height="28" alt="">Zero-X</a>
-      <nav class="zx-nav" aria-label="Main">
+      <a class="zx-brand" href="/"><img src="/Assets/zerox-mark.svg" width="28" height="28" alt="">Zero-X</a>
+      <button class="zx-nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" hidden><span class="zx-nav-toggle__bars" aria-hidden="true"></span>Menu</button>
+      <nav class="zx-nav" id="site-nav" aria-label="Main">
         <a href="/neuron-cli">Neuron CLI</a>
         <a href="/pricing">Pricing</a>
         <a href="/docs">Docs</a>
@@ -39,6 +41,7 @@
       </nav>
     </div>
   </header>
+  <script>(function(h){var b=h&&h.querySelector('.zx-nav-toggle');if(b&&'noModule'in HTMLScriptElement.prototype){h.dataset.nav='closed';b.hidden=false}})(document.querySelector('.zx-header'))</script>
 
   <main id="main" class="zx-container zx-legal zx-section--tight">
     <nav class="zx-breadcrumb" aria-label="Breadcrumb"><a href="/">Zero-X</a> / AI coding agent guide</nav>
@@ -80,10 +83,10 @@
     <h2 id="models">Which model runs it, and who sees your code</h2>
     <p>The agent is the loop and its tools; the model decides each step. Neuron can use:</p>
     <ul>
-      <li>Hosted models through Zero-X after <code>neuron login</code>, from providers including Google Gemini, Groq, NVIDIA, OpenRouter and Cloudflare Workers AI. Choose <code>auto</code> and Neuron picks a tool-capable model whose context window fits the request. See the <a href="/neuron-cli#models">current model list</a>.</li>
+      <li>Hosted models through Zero-X after <code>neuron login</code>, such as GPT-OSS, Qwen, Nemotron and GLM on the Free plan, and Claude Sonnet 5.5 and Claude Opus 5.5 on Pro and Max. Choose <code>auto</code> and Neuron picks a tool-capable model whose context window fits the request. See the <a href="/neuron-cli#models">current model list</a>.</li>
       <li>Your own provider. Set <code>OPENAI_API_KEY</code> and <code>OPENAI_BASE_URL</code> for any OpenAI-compatible endpoint, or connect your own OpenRouter account.</li>
     </ul>
-    <p>The files and messages an agent includes in a request go to the provider serving the model. Free tiers of some providers may use prompts to improve their models. The Zero-X gateway records usage metadata (model, tokens, cost, latency) and is not designed to store prompt or response text. Read the <a href="/privacy">privacy policy</a> before you point an agent at code you cannot share.</p>
+    <p>The files and messages an agent includes in a request go to the company serving the model. Free tiers of some of these services may use prompts to improve their models. The Zero-X gateway records usage metadata (model, tokens, cost, latency) and is not designed to store prompt or response text. Read the <a href="/privacy">privacy policy</a> before you point an agent at code you cannot share.</p>
 
     <h2 id="tasks">Good first tasks</h2>
     <p>Agents do best with a concrete request and a way to check the result. A few to try:</p>
@@ -101,13 +104,18 @@
       <li>Models can be wrong and sound certain. Review the diff and run the checks yourself before you merge.</li>
       <li>A model sees only what fits in its context window, and long sessions fill it. In Neuron's line REPL, <code>/compact</code> shrinks a long session.</li>
       <li>Free hosted models come from shared pools with best-effort availability. Neuron's Free plan allows <span data-plan-limit="free:daily_requests">100</span> requests a day and <span data-plan-limit="free:token_phrase">1M tokens every 5 hours</span>; <a href="/pricing">Pro and Max</a> raise the limits.</li>
-      <li>Neuron 7.0.0-alpha.2 is an alpha, so expect rough edges and read the <a href="https://github.com/RAHUL-DevelopeRR/neuron-v2/blob/HEAD/CHANGELOG.md">known limitations</a>. The binaries are not code-signed (Windows) or notarized (macOS).</li>
+      <li>Neuron 7.0.0-alpha.4 is an alpha, so expect rough edges and read the <a href="https://github.com/RAHUL-DevelopeRR/neuron-v2/blob/HEAD/CHANGELOG.md">known limitations</a>. The binaries are not code-signed (Windows) or notarized (macOS).</li>
     </ul>
 
     <h2 id="try">Try a coding agent in your terminal</h2>
-    <p>Neuron installs with one command on macOS, Linux and Windows.</p>
-    <div class="zx-code"><span class="zx-code__label">macOS and Linux</span><pre><code>curl -fsSL https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.2/install.sh | sh -s -- --version 7.0.0-alpha.2</code></pre></div>
-    <div class="zx-code"><span class="zx-code__label">Windows (PowerShell)</span><pre><code>&amp; ([scriptblock]::Create((irm https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.2/install.ps1))) -Version 7.0.0-alpha.2</code></pre></div>
+    <p>Neuron installs with one command on macOS, Linux and Windows. With Node.js 22.14 or later, npm is the quickest:</p>
+    <div class="zx-code"><span class="zx-code__label">npm, any terminal</span><pre><code>npm install -g @zero-x.live/neuron</code></pre></div>
+    <p>With Python instead, keep <code>--pre</code> while Neuron 7 is a pre-release:</p>
+    <div class="zx-code"><span class="zx-code__label">pip, any terminal</span><pre><code>python -m pip install --pre neuroncli</code></pre></div>
+    <p>Without either, use the install script for your system. On Windows, open a new terminal afterwards so that <code>neuron</code> is on your PATH.</p>
+    <div class="zx-code"><span class="zx-code__label">macOS and Linux terminal</span><pre><code>curl -fsSL https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.4/install.sh | sh -s -- --version 7.0.0-alpha.4</code></pre></div>
+    <div class="zx-code zx-code--wrap"><span class="zx-code__label">Windows PowerShell</span><pre><code>&amp; ([scriptblock]::Create((irm https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.4/install.ps1))) -Version 7.0.0-alpha.4 -AddToPath</code></pre></div>
+    <div class="zx-code zx-code--wrap"><span class="zx-code__label">Windows Command Prompt (cmd.exe)</span><pre><code>powershell -NoProfile -ExecutionPolicy Bypass -Command "&amp; ([scriptblock]::Create((irm https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.4/install.ps1))) -Version 7.0.0-alpha.4 -AddToPath"</code></pre></div>
     <p>Then sign in once and start Neuron in a project:</p>
     <div class="zx-code"><span class="zx-code__label">First run</span><pre><code>neuron login
 cd path/to/your-project
@@ -153,6 +161,8 @@ neuron</code></pre></div>
         <a href="/pricing">Pricing</a>
         <a href="/docs">Docs</a>
         <a href="/ai-coding-agent" aria-current="page">AI coding agent guide</a>
+        <a href="/free-ai-coding-agent">Free AI coding agent</a>
+        <a href="/claude-code-alternative">Neuron compared</a>
         <a href="https://dashboard.zero-x.live/">Dashboard</a>
       </nav>
       <nav aria-label="Company">

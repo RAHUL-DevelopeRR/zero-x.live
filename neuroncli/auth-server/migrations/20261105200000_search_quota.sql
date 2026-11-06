@@ -3,7 +3,7 @@ BEGIN;
 -- rather than queue behind a long transaction.
 SET LOCAL lock_timeout = '5s';
 
--- Web search quotas (docs/PLATFORM_CONTRACT.md section 14, POST /v1/search). Each plan has a
+-- Web search quotas (docs/PLATFORM_CONTRACT.md section 17, POST /v1/search). Each plan has a
 -- daily number of searches and of research runs per UTC day (Free 40/3, Pro 400/30, Max
 -- 2000/150; the numbers live in src/search.js and are passed in, like p_pool for
 -- zerox_reserve_v2). A research run is a search with purpose "research" carrying the run id header
@@ -20,7 +20,7 @@ SET LOCAL lock_timeout = '5s';
 -- gateway calls a backend, holding the counter row FOR UPDATE, so concurrent searches of one user
 -- cannot both take the last one. zerox_search_settle records how it was answered, or gives the
 -- search (and the run it opened) back when no backend answered. Roll back with
--- migrations/down/20261104200000_search_quota.down.sql (psql -X -v ON_ERROR_STOP=1 -f).
+-- migrations/down/20261105200000_search_quota.down.sql (psql -X -v ON_ERROR_STOP=1 -f).
 
 CREATE TABLE public.zerox_search_usage (
   user_id uuid NOT NULL REFERENCES public.zerox_accounts(clerk_id) ON DELETE CASCADE,

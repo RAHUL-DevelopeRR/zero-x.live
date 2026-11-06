@@ -97,7 +97,7 @@ NVIDIA_HOSTED=true
 NVIDIA_API_KEY=                     # SECRET
 OPENROUTER_HOSTED=true
 OPENROUTER_API_KEY=                 # SECRET
-OPENROUTER_MODELS=cohere/north-mini-code:free,minimax/minimax-m3.1-flash:free
+OPENROUTER_MODELS=cohere/north-mini-code:free
 OPENROUTER_FREE_ONLY=
 OPENROUTER_CALLBACK_URL=https://zero-x.live/neuroncli/callback/
 
@@ -116,7 +116,7 @@ AZURE_API_VERSION=2024-05-01-preview
 AZURE_OPENAI_API_KEY=               # SECRET
 AZURE_MODELS=
 
-# ── Web search (POST /v1/search, docs/PLATFORM_CONTRACT.md section 14) ──
+# ── Web search (POST /v1/search, docs/PLATFORM_CONTRACT.md section 17) ──
 # Neither set: /v1/search answers 503 search_unavailable. SearXNG is asked first, Brave second.
 # Base URL of a self-hosted SearXNG with the JSON format enabled (settings.yml search.formats).
 SEARXNG_URL=

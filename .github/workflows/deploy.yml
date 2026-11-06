@@ -48,6 +48,18 @@ jobs:
           node check-aws-deploy.mjs
           npm audit --omit=dev
 
+      # The Worker bundle, before either deploy job starts: jobs deploy and ec2 run in parallel, so a
+      # Worker that does not bundle would leave the VM on the new commit and the Worker on the old
+      # one. --dry-run bundles with the wrangler version job deploy uses and stops before any upload:
+      # no token, no account and no secret. Without install scripts, like every npm ci here (esbuild
+      # finds its binary through its optional platform package).
+      - name: Bundle the Worker (dry run)
+        working-directory: neuroncli/auth-server
+        env:
+          WRANGLER_SEND_METRICS: 'false'
+          npm_config_ignore_scripts: 'true'
+        run: npx --yes wrangler@4.147.0 deploy --dry-run --outdir "$RUNNER_TEMP/worker-bundle"
+
   # The Worker. In the environment "production" like job ec2, so the same approval starts both
   # (and, once the runtime secrets live in that environment, it can read them).
   deploy:

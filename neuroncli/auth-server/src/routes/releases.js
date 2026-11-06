@@ -2,6 +2,8 @@
 // notice and the desktop "new version" notice, plus the /download page. The release workflows
 // upload them to the RELEASES R2 bucket when it is bound; otherwise, or when the uploaded file
 // is missing or invalid, the copy committed at releases/<product>/latest.json is served.
+import { NEURON_INSTALL } from '../neuron-release.js';
+
 export const RELEASE_PRODUCTS = Object.freeze(['cli', 'desktop']);
 export const RELEASE_MANIFEST_PATH = /^\/releases\/(cli|desktop)\/latest\.json$/;
 export const MANIFEST_SCHEMA_VERSION = 1;
@@ -89,12 +91,14 @@ export function validateReleaseManifest(manifest, product) {
   return errors;
 }
 
-// Built in as the last resort, so the route always answers with a valid manifest.
+// Built in as the last resort, so the route always answers with a valid manifest. The install
+// commands are the website's (src/neuron-release.js): pip needs --pre while Neuron 7 is a
+// pre-release, or it installs the unsupported 6.2.4.
 export function unreleasedManifest(product) {
   return {
     schema_version: MANIFEST_SCHEMA_VERSION, product, channel: 'stable', version: null, released_at: null,
     notes_url: null, minimum_version: null, downloads: [], checksums_url: null,
-    ...(product === 'cli' ? { install: { npm: 'npm install -g @zero-x.live/neuron', pip: 'python -m pip install neuroncli' } } : {}),
+    ...(product === 'cli' ? { install: { npm: NEURON_INSTALL.npm, pip: NEURON_INSTALL.pip } } : {}),
   };
 }
 

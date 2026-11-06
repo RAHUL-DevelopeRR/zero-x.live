@@ -131,6 +131,21 @@ const checks = stepRun(verifyJob, 'Verify production code').split('\n');
 for (const command of ['npm ci --ignore-scripts', 'npm run check:production', 'npm run check:database', 'node check-aws-deploy.mjs', 'npm audit --omit=dev']) {
   assert.ok(checks.includes(command), `job verify runs ${command}`);
 }
+// The Worker bundle is built in job verify, before the parallel deploy jobs: a Worker that does
+// not bundle stops both runtimes on the commit they have instead of leaving the VM ahead. Same
+// wrangler as job deploy, --dry-run (no upload, no token), no install scripts.
+{
+  const marker = '- name: Bundle the Worker (dry run)\n';
+  assert.ok(verifyJob.includes(marker), 'job verify bundles the Worker');
+  const step = verifyJob.slice(verifyJob.indexOf(marker));
+  const deployVersion = /wranglerVersion: '([\d.]+)'/.exec(workerJob)?.[1];
+  assert.ok(deployVersion, 'job deploy pins its wrangler version');
+  assert.ok(step.includes(`run: npx --yes wrangler@${deployVersion} deploy --dry-run --outdir "$RUNNER_TEMP/worker-bundle"`),
+    'the dry run uses the wrangler version job deploy uses');
+  assert.match(step, /npm_config_ignore_scripts: 'true'/, 'and installs it without scripts');
+  assert.ok(!/secrets\./.test(step), 'and needs no secret');
+  assert.ok(verifyJob.indexOf(marker) > verifyJob.indexOf('- name: Verify production code'), 'after the checks');
+}
 // No install script runs anywhere in the workflow (job deploy holds the Cloudflare token and every
 // runtime secret in a later step; a script could reach them through $GITHUB_ENV), and no checkout
 // leaves the job's token in .git/config.
@@ -271,7 +286,7 @@ const read_ = new Set([
 const NOT_CONFIGURATION = new Set([
   'AI', 'ASSETS', 'SESSIONS_KV', 'HEALTH_HUB', 'RELAY', 'RELEASES', // Worker bindings
   'NEURON_RUNTIME', // set by server.js itself
-  'HEALTH_CANARIES', // read by the HealthHub Durable Object, which only runs on the Worker
+  'HEALTH_CANARIES', 'HEALTH_HUB_PROBES', // read by the HealthHub Durable Object, which only runs on the Worker
   'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_CUSTOM_HEADERS', // Anthropic SDK variables the gateway pins
   'CATALOG_DB_MODELS', 'MAX_REQUESTS_PER_SESSION', 'OPENROUTER_CLIENT_ID', 'BEDROCK_TOOL_MODELS', // no longer read (warned or ignored)
 ]);

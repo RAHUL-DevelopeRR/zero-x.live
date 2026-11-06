@@ -146,9 +146,10 @@ export const PROVIDER_TYPES = deepFreeze({
     models_var: 'ANTHROPIC_MODELS', requires_cache_prices: true, max_daily_spend_usd: 50,
     models_dev: 'anthropic', info: { name: 'Anthropic', homepage: 'https://www.anthropic.com' },
   }),
-  // Z.ai's free GLM Flash models (docs.z.ai). One request at a time per account and model (the
-  // owner's console, 2026-10-29), so each free pool runs at most one request; no per-minute or
-  // daily limit is published. tool_choice accepts "auto" only. No paid pools: GLM-5.3-Flash
+  // Z.ai's free GLM Flash models (docs.z.ai). Concurrency 1 per model in the owner's console
+  // (2026-10-29), so each free pool runs at most one request; whether a request on one model also
+  // blocks the other is not established, so the health checker treats the slot as one per account
+  // (src/health-probes.js slotSiblings). No per-minute or daily limit is published. tool_choice accepts "auto" only. No paid pools: GLM-5.3-Flash
   // ($0.15 / $0.50) is not offered.
   zai: type({
     adapter: 'openai-compatible', base_url: 'https://api.z.ai/api/paas/v4', id_prefix: 'zai/',
