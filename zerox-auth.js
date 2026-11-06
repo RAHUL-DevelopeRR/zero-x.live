@@ -6,7 +6,8 @@
   const SHARED_STORAGE_KEY = 'zerox-supabase-auth';
   const COOKIE_PART_SUFFIX = '.parts';
   const COOKIE_CHUNK_SIZE = 3500;
-  const COOKIE_TTL_SECONDS = 60 * 60 * 24 * 30;
+  // 14 days, renewed each time the session is saved (security audit 2026-11-05, D2: was 30).
+  const COOKIE_TTL_SECONDS = 60 * 60 * 24 * 14;
   // Pinned Supabase browser SDK (loaded on demand when the page has not included it).
   // The integrity hash is the SHA-384 of dist/umd/supabase.js in the npm tarball.
   const SUPABASE_JS_VERSION = '2.117.2';
@@ -124,15 +125,12 @@
     return state.sdkPromise;
   }
 
+  // The session is shared only between the canonical hosts that sign people in. Any other host
+  // (a test host such as aws.zero-x.live, a preview or staging address) keeps a host-only cookie, so
+  // a session never travels to a host that is not meant to hold one (audit D2, F12).
+  const SHARED_COOKIE_HOSTS = ['zero-x.live', 'www.zero-x.live', 'dashboard.zero-x.live', 'neuron.zero-x.live'];
   function sharedCookieDomain(hostname) {
-    if (
-      hostname === 'zero-x.live' ||
-      hostname === 'www.zero-x.live' ||
-      hostname.endsWith('.zero-x.live')
-    ) {
-      return '.zero-x.live';
-    }
-    return '';
+    return SHARED_COOKIE_HOSTS.indexOf(hostname) !== -1 ? '.zero-x.live' : '';
   }
 
   function cookieAttributes(maxAgeSeconds) {
