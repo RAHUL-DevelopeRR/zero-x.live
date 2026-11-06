@@ -7,7 +7,8 @@
   <meta name="description" content="Contact Zero-X for Neuron CLI support, billing, refunds and privacy requests: support@zero-x.live, 6/2, N. Pugalur, Karur 639113, Tamil Nadu, India.">
   <meta name="robots" content="index,follow,max-image-preview:large">
   <link rel="canonical" href="https://zero-x.live/contact">
-  <meta name="theme-color" content="#0A0A0C">
+  <meta name="theme-color" content="#FFFFFF" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#141413" media="(prefers-color-scheme: dark)">
   <link rel="icon" type="image/png" sizes="32x32" href="/Assets/zerox-favicon-32.png">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="Zero-X">
@@ -21,8 +22,10 @@
   <meta name="twitter:description" content="Support, billing, refund and privacy contact for Zero-X and Neuron CLI.">
   <meta name="twitter:image" content="https://zero-x.live/Assets/zerox-share.png">
   <meta name="twitter:image:alt" content="Zero-X logo">
-  <link rel="stylesheet" href="/site-fonts.css">
+  <link rel="preload" href="/fonts/aspekta-400.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/fonts/aspekta-500.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/zx-tokens.css">
+  <link rel="stylesheet" href="/content.css">
   <script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"ContactPage","@id":"https://zero-x.live/contact#page","url":"https://zero-x.live/contact","name":"Contact Zero-X","isPartOf":{"@id":"https://zero-x.live/#website"},"mainEntity":{"@id":"https://zero-x.live/#organization"}},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Zero-X","item":"https://zero-x.live/"},{"@type":"ListItem","position":2,"name":"Contact","item":"https://zero-x.live/contact"}]}]}</script>
   <script type="module" src="/site-nav.js"></script>
 </head>
@@ -31,18 +34,18 @@
   <header class="zx-header">
     <div class="zx-container zx-header__inner">
       <a class="zx-brand" href="/"><img src="/Assets/zerox-mark.svg" width="28" height="28" alt="">Zero-X</a>
-      <button class="zx-nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" hidden><span class="zx-nav-toggle__bars" aria-hidden="true"></span>Menu</button>
+      <button class="zx-nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" hidden><svg class="zx-icon zx-icon--menu" aria-hidden="true"><use href="/icons.svg#menu"/></svg><svg class="zx-icon zx-icon--close" aria-hidden="true"><use href="/icons.svg#x"/></svg>Menu</button>
       <nav class="zx-nav" id="site-nav" aria-label="Main">
         <a href="/neuron-cli">Neuron CLI</a>
         <a href="/pricing">Pricing</a>
         <a href="/docs">Docs</a>
-        <a class="zx-btn zx-btn--sm" href="https://dashboard.zero-x.live/">Dashboard</a>
+        <a class="zx-btn zx-btn--sm" href="https://dashboard.zero-x.live/"><svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#user"/></svg>Dashboard</a>
       </nav>
     </div>
   </header>
   <script>(function(h){var b=h&&h.querySelector('.zx-nav-toggle');if(b&&'noModule'in HTMLScriptElement.prototype){h.dataset.nav='closed';b.hidden=false}})(document.querySelector('.zx-header'))</script>
 
-  <main id="main" class="zx-container zx-legal zx-section--tight">
+  <main id="main" class="zx-container zx-legal zx-contact zx-section--tight">
     <nav class="zx-breadcrumb" aria-label="Breadcrumb"><a href="/">Zero-X</a> / Contact</nav>
     <h1>Contact Zero-X</h1>
     <p class="zx-lead">Questions about Neuron CLI, your plan, a payment or your data? Email us and include your account email so we can find your account.</p>
@@ -80,29 +83,40 @@
     <p>You can also report Neuron bugs on <a href="https://github.com/RAHUL-DevelopeRR/neuron-v2/issues">GitHub issues</a>. Report security problems privately to <a href="mailto:support@zero-x.live">support@zero-x.live</a>, not in a public issue.</p>
 
     <h2 id="related">Related pages</h2>
-    <p><a href="/docs">Documentation</a> · <a href="/pricing">Pricing</a> · <a href="/refund">Cancellation and refunds</a> · <a href="/privacy">Privacy Policy</a> · <a href="/terms">Terms of Service</a> · <a href="/about">About Zero-X</a></p>
+    <ul class="zx-related">
+      <li><a href="/docs">Documentation</a></li>
+      <li><a href="/pricing">Pricing</a></li>
+      <li><a href="/refund">Cancellation and refunds</a></li>
+      <li><a href="/privacy">Privacy Policy</a></li>
+      <li><a href="/terms">Terms of Service</a></li>
+      <li><a href="/about">About Zero-X</a></li>
+    </ul>
   </main>
 
   <footer class="zx-footer">
     <div class="zx-container zx-footer__grid">
       <div>
-        <a class="zx-brand" href="/">Zero-X</a>
+        <a class="zx-brand" href="/"><img src="/Assets/zerox-mark.svg" width="28" height="28" alt="">Zero-X</a>
         <p>Neuron CLI and NeuCockpit. Built in Tamil Nadu, India.</p>
       </div>
       <nav aria-label="Product">
         <h2>Product</h2>
         <a href="/neuron-cli">Neuron CLI</a>
+        <a href="/download">Download</a>
+        <a href="/changelog">Changelog</a>
         <a href="/pricing">Pricing</a>
         <a href="/docs">Docs</a>
         <a href="/ai-coding-agent">AI coding agent guide</a>
         <a href="/free-ai-coding-agent">Free AI coding agent</a>
         <a href="/claude-code-alternative">Neuron compared</a>
         <a href="https://dashboard.zero-x.live/">Dashboard</a>
+        <a href="https://github.com/RAHUL-DevelopeRR/neuron-v2">GitHub <svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#arrow-up-right"/></svg></a>
       </nav>
       <nav aria-label="Company">
         <h2>Company</h2>
         <a href="/about">About</a>
         <a href="/contact" aria-current="page">Contact</a>
+        <a href="/docs/trust">Security and trust</a>
         <a href="https://zero-x.live/neucockpit">NeuCockpit</a>
       </nav>
       <nav aria-label="Legal">

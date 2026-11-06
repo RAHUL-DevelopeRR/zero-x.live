@@ -6,7 +6,7 @@ export const RAZORPAY_CHECKOUT_SRC = 'https://checkout.razorpay.com/v1/checkout.
 export const SUPPORT_EMAIL = 'support@zero-x.live';
 export const PRICING_URL = 'https://zero-x.live/pricing';
 export const DASHBOARD_URL = 'https://dashboard.zero-x.live/';
-export const CHECKOUT_THEME_COLOR = '#00E5FF';
+export const CHECKOUT_THEME_COLOR = '#3B82F6';
 
 const API_PATH = /^\/(?:api|v1|auth|releases)\/[A-Za-z0-9/_.?=&%-]*$/;
 const RAZORPAY_KEY = /^rzp_(?:live|test)_[A-Za-z0-9]{6,64}$/;

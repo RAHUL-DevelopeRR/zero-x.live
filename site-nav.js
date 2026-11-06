@@ -49,4 +49,40 @@ export function installNav(doc) {
   return { open: () => set(true), close, isOpen };
 }
 
-if (typeof document !== 'undefined') installNav(document);
+/**
+ * A table wider than its box scrolls sideways (zx-table-wrap), and a keyboard user can only scroll
+ * it when it takes focus: such a wrap gets tabindex 0 and a region name taken from the heading
+ * above it. Runs again on resize, because phones and desktops differ in which tables overflow.
+ */
+export function focusScrollableTables(doc) {
+  const label = wrap => {
+    for (let node = wrap; node; node = node.parentElement) {
+      for (let sib = node.previousElementSibling; sib; sib = sib.previousElementSibling) {
+        const heading = /^H[1-6]$/.test(sib.tagName) ? sib : sib.querySelector && sib.querySelector("h1,h2,h3,h4");
+        if (heading && heading.textContent.trim()) return heading.textContent.trim().slice(0, 80);
+      }
+    }
+    return "Table";
+  };
+  const apply = () => {
+    for (const wrap of doc.querySelectorAll(".zx-table-wrap")) {
+      const scrolls = wrap.scrollWidth > wrap.clientWidth + 1;
+      if (scrolls && !wrap.hasAttribute("tabindex")) {
+        wrap.setAttribute("tabindex", "0");
+        wrap.setAttribute("role", "region");
+        wrap.setAttribute("aria-label", label(wrap));
+        wrap.dataset.zxFocusable = "";
+      } else if (!scrolls && wrap.dataset.zxFocusable !== undefined) {
+        for (const name of ["tabindex", "role", "aria-label"]) wrap.removeAttribute(name);
+        delete wrap.dataset.zxFocusable;
+      }
+    }
+  };
+  apply();
+  if (doc.defaultView) doc.defaultView.addEventListener("resize", apply);
+}
+
+if (typeof document !== "undefined") {
+  installNav(document);
+  focusScrollableTables(document);
+}

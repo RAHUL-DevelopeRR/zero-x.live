@@ -6,7 +6,8 @@
   <title>Where’s That File? | NeuCockpit film by Zero-X</title>
   <meta name="description" content="Watch the 15-second NeuCockpit film: find a file by meaning, review a local AI summary, and keep your files on your machine.">
   <meta name="robots" content="index,follow,max-image-preview:large,max-video-preview:-1">
-  <meta name="theme-color" content="#0A0A0C">
+  <meta name="theme-color" content="#FFFFFF" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#141413" media="(prefers-color-scheme: dark)">
   <link rel="canonical" href="https://zero-x.live/wheres-that-file">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Where’s That File? | NeuCockpit film by Zero-X">
@@ -14,7 +15,7 @@
   <meta name="twitter:image" content="https://zero-x.live/Assets/neucockpit-wheres-that-file.jpg">
   <meta name="twitter:image:alt" content="NeuCockpit by Zero-X">
   <script type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Zero-X","item":"https://zero-x.live/"},{"@type":"ListItem","position":2,"name":"Where’s That File?","item":"https://zero-x.live/wheres-that-file"}]}</script>
-  <link rel="icon" type="image/png" sizes="256x256" href="./Assets/zerox-favicon-centered.png">
+  <link rel="icon" type="image/png" sizes="256x256" href="/Assets/zerox-favicon-centered.png">
   <meta property="og:type" content="video.other">
   <meta property="og:site_name" content="Zero-X">
   <meta property="og:title" content="Where’s That File? | NeuCockpit film">
@@ -39,63 +40,85 @@
     "inLanguage": "en"
   }
   </script>
-  <style>
-    :root{color-scheme:dark;--bg:#0a0a0c;--text:#ededf0;--muted:#b8b8c2;--cyan:#00e5ff;--line:#25252b}
-    *{box-sizing:border-box}
-    body{margin:0;background:var(--bg);color:var(--text);font:16px/1.6 system-ui,-apple-system,"Segoe UI",sans-serif}
-    a{color:var(--cyan);text-underline-offset:3px}
-    a:focus-visible,video:focus-visible{outline:3px solid var(--cyan);outline-offset:4px}
-    .skip{position:absolute;left:-9999px;top:0}.skip:focus{left:1rem;top:1rem;z-index:2;background:var(--bg);padding:.5rem}
-    header{height:64px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 max(1.25rem,calc((100% - 1040px)/2))}
-    header img{display:block;width:auto;height:32px}
-    header nav{display:flex;gap:1.25rem}
-    main{max-width:1040px;margin:0 auto;padding:32px 20px 72px}
-    .intro{max-width:720px;margin:0 auto 20px;text-align:center}
-    .eyebrow{font-size:.76rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--cyan)}
-    h1{font-size:clamp(2rem,5vw,3.5rem);line-height:1.08;letter-spacing:-.04em;margin:.4rem 0 .8rem}
-    .lede{color:var(--muted);font-size:1.06rem;margin:0 auto;max-width:640px}
-    .player{display:block;width:auto;height:auto;max-width:100%;max-height:min(68svh,640px);aspect-ratio:9/16;margin:0 auto;background:#050509;border:1px solid #303039;border-radius:16px;box-shadow:0 18px 70px #0009}
-    .watch-cta{text-align:center;margin:20px auto 48px}
-    .button{display:inline-flex;align-items:center;justify-content:center;min-height:48px;padding:0 22px;border-radius:999px;background:var(--cyan);color:#071013;font-weight:750;text-decoration:none}
-    .note{font-size:.9rem;color:var(--muted);margin:.75rem auto 0}
-    .transcript{max-width:720px;margin:0 auto;border-top:1px solid var(--line);padding-top:28px}
-    h2{font-size:1.35rem;margin:0 0 .75rem}
-    .transcript p{margin:.65rem 0;color:var(--muted)}
-    footer{border-top:1px solid var(--line);padding:24px 20px;text-align:center;color:var(--muted);font-size:.9rem}
-    @media(min-width:720px){main{padding-top:38px}.watch-cta{margin-bottom:56px}}
-    @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}}
-  </style>
+  <link rel="preload" href="/fonts/aspekta-400.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/fonts/aspekta-500.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/zx-tokens.css">
+  <link rel="stylesheet" href="/content.css">
+  <script type="module" src="/site-nav.js"></script>
 </head>
 <body>
-  <a class="skip" href="#main">Skip to film</a>
-  <header>
-    <a href="https://zero-x.live/" aria-label="Zero-X home"><img src="./Assets/zerox-wordmark.webp" width="255" height="112" alt="Zero-X"></a>
-    <nav aria-label="Site navigation"><a href="https://zero-x.live/neucockpit">NeuCockpit</a><a href="#transcript">Transcript</a></nav>
+  <a class="zx-skip" href="#main">Skip to content</a>
+  <header class="zx-header">
+    <div class="zx-container zx-header__inner">
+      <a class="zx-brand" href="/"><img src="/Assets/zerox-mark.svg" width="28" height="28" alt="">Zero-X</a>
+      <button class="zx-nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" hidden><svg class="zx-icon zx-icon--menu" aria-hidden="true"><use href="/icons.svg#menu"/></svg><svg class="zx-icon zx-icon--close" aria-hidden="true"><use href="/icons.svg#x"/></svg>Menu</button>
+      <nav class="zx-nav" id="site-nav" aria-label="Main">
+        <a href="/neuron-cli">Neuron CLI</a>
+        <a href="/pricing">Pricing</a>
+        <a href="/docs">Docs</a>
+        <a class="zx-btn zx-btn--sm" href="https://dashboard.zero-x.live/"><svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#user"/></svg>Dashboard</a>
+      </nav>
+    </div>
   </header>
-  <main id="main">
-    <nav aria-label="Breadcrumb"><a href="https://zero-x.live/">Zero-X</a> / NeuCockpit film</nav>
-    <section aria-labelledby="title">
-      <div class="intro">
-        <p class="eyebrow">NeuCockpit by Zero-X · 15-second film</p>
+  <script>(function(h){var b=h&&h.querySelector('.zx-nav-toggle');if(b&&'noModule'in HTMLScriptElement.prototype){h.dataset.nav='closed';b.hidden=false}})(document.querySelector('.zx-header'))</script>
+
+  <main id="main" class="zx-container zx-guide zx-film zx-section--tight">
+    <nav class="zx-breadcrumb" aria-label="Breadcrumb"><a href="https://zero-x.live/">Zero-X</a> / NeuCockpit film</nav>
+    <section class="zx-film__grid" aria-labelledby="title">
+      <div class="zx-film__text">
+        <p class="zx-eyebrow">NeuCockpit by Zero-X · 15-second film</p>
         <h1 id="title">Where’s that file?</h1>
-        <p class="lede">Remember what a document said, but not what it was called? NeuCockpit searches indexed files by meaning and can summarize a match with local AI.</p>
+        <p class="zx-lead">Remember what a document said, but not what it was called? NeuCockpit searches indexed files by meaning and can summarize a match with local AI.</p>
+        <p><a class="zx-btn zx-btn--primary" href="https://zero-x.live/neucockpit#downloads">Download NeuCockpit</a></p>
+        <p class="zx-help" id="demo-note">The search results and summary shown in this film are illustrative examples, not a live customer session.</p>
       </div>
-      <video class="player" controls playsinline preload="none" poster="./Assets/neucockpit-film-poster.webp" width="360" height="640" aria-describedby="demo-note">
+      <video class="zx-film__player" controls playsinline preload="none" poster="./Assets/neucockpit-film-poster.webp" width="360" height="640" aria-describedby="demo-note">
         <source src="./videos/neucockpit-wheres-that-file.mp4" type="video/mp4">
         Sorry, your browser doesn’t support embedded video. <a href="./videos/neucockpit-wheres-that-file.mp4">Open the MP4 film</a>.
       </video>
-      <div class="watch-cta">
-        <a class="button" href="https://zero-x.live/neucockpit#downloads">Download NeuCockpit</a>
-        <p class="note" id="demo-note">The search results and summary shown in this film are illustrative examples, not a live customer session.</p>
-      </div>
     </section>
-    <section class="transcript" id="transcript" aria-labelledby="transcript-title">
+    <section class="zx-film__transcript" id="transcript" aria-labelledby="transcript-title">
       <h2 id="transcript-title">What the film shows</h2>
       <p><strong>Where’s that file?</strong> The answer may already be on your computer. Stop digging. Ask your files. Find the signal.</p>
       <p>In an illustrative local search, a person describes a quarterly proposal. NeuCockpit returns a matching proposal and project notes from an indexed folder. Search by meaning, not only by filename.</p>
       <p>An illustrative local summary highlights launch scope, clear owners, and review milestones. The film closes with: “Your files. Your machine. Local by design.” NeuCockpit is available for Windows, macOS, and Linux.</p>
     </section>
   </main>
-  <footer><a href="https://zero-x.live/">Zero-X</a> · <a href="https://zero-x.live/neucockpit#downloads">NeuCockpit downloads</a></footer>
+  <footer class="zx-footer">
+    <div class="zx-container zx-footer__grid">
+      <div>
+        <a class="zx-brand" href="/"><img src="/Assets/zerox-mark.svg" width="28" height="28" alt="">Zero-X</a>
+        <p>Neuron CLI and NeuCockpit. Built in Tamil Nadu, India.</p>
+      </div>
+      <nav aria-label="Product">
+        <h2>Product</h2>
+        <a href="/neuron-cli">Neuron CLI</a>
+        <a href="/download">Download</a>
+        <a href="/changelog">Changelog</a>
+        <a href="/pricing">Pricing</a>
+        <a href="/docs">Docs</a>
+        <a href="/ai-coding-agent">AI coding agent guide</a>
+        <a href="/free-ai-coding-agent">Free AI coding agent</a>
+        <a href="/claude-code-alternative">Neuron compared</a>
+        <a href="https://dashboard.zero-x.live/">Dashboard</a>
+        <a href="https://github.com/RAHUL-DevelopeRR/neuron-v2">GitHub <svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#arrow-up-right"/></svg></a>
+      </nav>
+      <nav aria-label="Company">
+        <h2>Company</h2>
+        <a href="/about">About</a>
+        <a href="/contact">Contact</a>
+        <a href="/docs/trust">Security and trust</a>
+        <a href="https://zero-x.live/neucockpit">NeuCockpit</a>
+      </nav>
+      <nav aria-label="Legal">
+        <h2>Legal</h2>
+        <a href="/terms">Terms of Service</a>
+        <a href="/privacy">Privacy Policy</a>
+        <a href="/refund">Cancellation and refunds</a>
+        <a href="/shipping">Shipping and delivery</a>
+      </nav>
+    </div>
+    <p class="zx-container zx-footer__legal">© 2026 Zero-X · <a href="mailto:support@zero-x.live">support@zero-x.live</a></p>
+  </footer>
 </body>
 </html>

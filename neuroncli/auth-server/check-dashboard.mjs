@@ -295,7 +295,7 @@ function dashboardRoutes(state) {
 
 const {createDashboard, TABS} = await import(new URL('dashboard.js', root));
 const {createPricingPage, PENDING_CHECKOUT_KEY} = await import(new URL('pricing.js', root));
-const {PAYMENT_LOCK_KEY, PAYMENT_LOCK_TTL_MS} = await import(new URL('billing-checkout.js', root));
+const {CHECKOUT_THEME_COLOR, PAYMENT_LOCK_KEY, PAYMENT_LOCK_TTL_MS} = await import(new URL('billing-checkout.js', root));
 // The billing details step (billing-details.js) is replaced by a stub in every test but its own: it
 // answers like a buyer who filled in the details and ticked every box.
 const CONSENT_VERSIONS = {terms: '2026-10-25', privacy: '2026-10-25', auto_renewal: '2026-11-03', refund: '2026-10-24'};
@@ -530,7 +530,7 @@ async function mountDashboard({profile = PROFILE, hash = '', search = '', state 
   assert.equal(checkout.options.order_id, 'order_TEST123456');
   assert.equal(checkout.options.amount, 44900);
   assert.equal(checkout.options.currency, 'INR');
-  assert.deepEqual(checkout.options.theme, {color: '#00E5FF'});
+  assert.deepEqual(checkout.options.theme, {color: '#3B82F6'});
   assert.equal(topup5.disabled, true, 'Top-up buttons are disabled while checkout is open');
   checkout.events['payment.failed']({error: {description: 'Card declined'}});
   assert.match($('billing-status').textContent, /Payment failed: Card declined/);
@@ -1086,6 +1086,42 @@ for (const scenario of ['live', 'offline']) {
   }
   assert.equal(installNav(parseDocument('<!doctype html><html><head></head><body><main id="main"></main></body></html>')), null, 'no header: nothing to wire');
   console.log('ok - site header menu: a disclosure button (aria-expanded, aria-controls), Escape returns focus, link, outside click and focus loss close it, hidden without the script');
+}
+
+/* ───────────── Announcement bar (announce.js) ───────────── */
+
+{
+  const {installAnnounce, DISMISSED_KEY} = await import(new URL('announce.js', root));
+  const html = read('index.html');
+  const fresh = () => parseDocument(html);
+  const memory = () => { const m = new Map(); return {getItem: k => m.get(k) ?? null, setItem: (k, v) => m.set(k, v), map: m}; };
+  // Without the script the bar shows and its close button is hidden (nothing that does nothing).
+  const bare = fresh();
+  assert.equal(bare.querySelector('.zx-announce__close').hidden, true, 'announce: the close button is hidden until the script runs');
+  assert.equal(bare.querySelector('.zx-announce').hidden, false, 'announce: the bar shows without the script');
+  // First visit: the button appears; closing hides the bar and remembers the id.
+  const doc = fresh();
+  const storage = memory();
+  const bar = installAnnounce(doc, storage);
+  assert.ok(bar, 'announce: the homepage has a bar');
+  assert.deepEqual([doc.querySelector('.zx-announce__close').hidden, bar.isHidden()], [false, false], 'announce: first visit shows the bar and its close button');
+  doc.querySelector('.zx-announce__close').click();
+  assert.equal(bar.isHidden(), true, 'announce: the close button hides the bar');
+  assert.equal(storage.map.get(DISMISSED_KEY), doc.querySelector('.zx-announce').dataset.announce, 'announce: the dismissed id is remembered');
+  // Next visit: the same id stays hidden; another id shows again.
+  const again = fresh();
+  assert.equal(installAnnounce(again, storage).isHidden(), true, 'announce: a dismissed bar stays hidden');
+  const next = fresh();
+  next.querySelector('.zx-announce').dataset.announce = 'something-new';
+  assert.equal(installAnnounce(next, storage).isHidden(), false, 'announce: a new announcement shows again');
+  // Storage that throws (private window, blocked site data) never breaks the bar.
+  const broken = {getItem() { throw new Error('blocked'); }, setItem() { throw new Error('blocked'); }};
+  const blocked = fresh();
+  const barB = installAnnounce(blocked, broken);
+  blocked.querySelector('.zx-announce__close').click();
+  assert.equal(barB.isHidden(), true, 'announce: closing works without storage');
+  assert.equal(installAnnounce(parseDocument('<!doctype html><html><body><main id="main"></main></body></html>'), storage), null, 'announce: no bar, nothing to wire');
+  console.log('ok - announcement bar: close button hidden without the script, dismissal remembered per announcement id, storage failures ignored');
 }
 
 /* ───────────── zerox-auth.js development identity ───────────── */
@@ -1680,4 +1716,89 @@ async function loadAuth({hostname, config, session = makeStorage(), sdk = true})
 }
 
 console.log('PASS: dashboard gate, contract-driven overview, hash tabs and keyboard, usage chart/table/pagination, key create-once/copy/revoke-confirm, billing cancel/top-up/verify, sessions, sign-out dev-token cleanup, 401/500 recovery, pricing currency/hydration/checkout/409/503/forged payloads, Neuron CLI install tabs, zerox-auth dev identity and pinned SDK; untrusted data never reached innerHTML, the billing details dialog (labelled controls, validation, server messages, review for returning buyers, one-click top-up, cancel, retry once, no GST line unless enabled)');
+
+/* ───────────── Console restyle: drawer, trend card, account and sign-in pages ───────────── */
+
+{
+  // Markup: breadcrumb bar, a vertical tablist drawer with mono-caps section labels and sprite icons.
+  assert.match(DASHBOARD_HTML, /<link rel="stylesheet" href="\/dashboard\.css">/);
+  assert.match(DASHBOARD_HTML, /<ol class="zx-crumbs">/);
+  assert.match(DASHBOARD_HTML, /id="dash-tabs"/);
+  assert.match(DASHBOARD_HTML, /role="tablist"[^>]*aria-orientation="vertical"/);
+  const doc = parseDocument(DASHBOARD_HTML);
+  assert.deepEqual(doc.querySelectorAll('.zx-drawer__label').map(node => node.textContent), ['Workspace', 'Developer', 'Settings']);
+  assert.deepEqual(doc.querySelectorAll('.zx-drawer__item').map(node => node.getAttribute('id')), TABS.map(tab => 'tab-' + tab), 'drawer items follow TABS order');
+  assert.equal(doc.querySelectorAll('[data-metric]').map(node => node.getAttribute('data-metric')).join(), 'spend,requests,tokens,spend,requests,tokens', 'both trend controls offer Spend, Requests, Tokens');
+  assert.ok(!/Anthropic|OpenRouter|Groq|NVIDIA|Cerebras/.test(DASHBOARD_HTML.replace(/<code[^>]*>[\s\S]*?<\/code>/g, '')), 'no provider names on the dashboard');
+  assert.ok(!/ style="/.test(DASHBOARD_HTML) && !/<style/.test(DASHBOARD_HTML), 'dashboard uses classes, not inline styles');
+}
+
+{
+  const {$, doc, win, calls} = await mountDashboard();
+  assert.equal($('crumb-tab').textContent, 'Overview');
+  assert.equal($('crumb-account').textContent, 'owner@example.com');
+  assert.ok(calls.some(call => call.path === '/api/usage'), 'Overview loads the usage series for its trend card');
+  assert.ok(!calls.some(call => call.path === '/api/usage/events?limit=25'), 'recent requests wait for the Usage tab');
+  const trend = $('trend-chart').querySelector('svg');
+  assert.equal(trend.getAttribute('role'), 'img');
+  assert.equal(trend.querySelectorAll('rect').length, 2);
+  assert.equal(trend.querySelectorAll('.zx-grid-line').length, 3, 'a dotted grid of three lines');
+  assert.match($('trend-caption').textContent, /^Peak 40 \/ Oct 16 · Total 52 · Sep 17 to Oct 16, 2026$/);
+  assert.equal($('lim-daily-requests').textContent, '2,000');
+  assert.equal($('lim-daily-tokens').textContent, '10M');
+  assert.equal($('lim-rpm').textContent, '30');
+  assert.equal($('lim-concurrency').textContent, '4');
+  // Spend is drawn from the same series (cost_usd) and shared with the Usage chart.
+  doc.querySelector('[data-metric="spend"]').click();
+  assert.deepEqual(doc.querySelectorAll('[data-metric="spend"]').map(node => node.getAttribute('aria-pressed')), ['true', 'true']);
+  assert.deepEqual(doc.querySelectorAll('[data-metric="requests"]').map(node => node.getAttribute('aria-pressed')), ['false', 'false']);
+  assert.match($('usage-chart-caption').textContent, /^Spend per day/);
+  assert.match($('trend-caption').textContent, /^Peak \$/);
+  // Vertical and horizontal arrows both move through the drawer; the breadcrumb follows the tab.
+  $('tab-overview').focus();
+  $('dash-tabs').dispatchEvent(makeEvent('keydown', {key: 'ArrowDown', bubbles: true}));
+  await settle();
+  assert.equal(win.location.hash, '#usage');
+  assert.equal($('crumb-tab').textContent, 'Usage');
+  assert.ok(calls.some(call => call.path === '/api/usage/events?limit=25'));
+  assert.equal(calls.filter(call => call.path === '/api/usage').length, 1, 'Usage reuses the series Overview loaded');
+  $('dash-tabs').dispatchEvent(makeEvent('keydown', {key: 'ArrowUp', bubbles: true}));
+  await settle();
+  assert.equal($('crumb-tab').textContent, 'Overview');
+}
+
+{
+  // The look: tokens only, one accent, no gradients, glass, violet or glow, no inline colours.
+  const files = ['dashboard.css', 'auth.css', 'auth-pages.css', 'neuroncli/admin/keys/keys.css', 'neuroncli/admin/models/models.css'];
+  for (const file of files) {
+    const css = read(file).replace(/\/\*[\s\S]*?\*\//g, '');
+    assert.doesNotMatch(css, /gradient\(/i, file + ': no gradients');
+    assert.doesNotMatch(css, /backdrop-filter|filter:\s*blur/i, file + ': no glass or blur');
+    assert.doesNotMatch(css, /violet|purple|#(?:7C4DFF|A58AFF|5B3FD0)/i, file + ': no violet or purple');
+    assert.doesNotMatch(css, /#00e5ff|#0a0a0c|#111114/i, file + ': none of the old cyan-on-black palette');
+    assert.doesNotMatch(css, /box-shadow:[^;{}]*\),\s*[^;{}]*\)/i, file + ': no stacked drop shadows');
+  }
+  const authJs = read('zerox-auth.js');
+  assert.doesNotMatch(authJs, /style="|\.style\.|cssText|#00e5ff|#111114|#17171B/i, 'zerox-auth.js carries no inline colours or styles');
+  assert.equal(CHECKOUT_THEME_COLOR, '#3B82F6', 'Razorpay checkout uses the site accent');
+  for (const file of ['neuroncli/login/index.html', 'neuroncli/device/index.html', 'neuroncli/callback/index.html', 'neuroncli/admin/keys/index.html', 'neuroncli/admin/models/index.html']) {
+    const html = read(file);
+    assert.doesNotMatch(html, /<style\b| style="/, file + ': no inline style');
+    assert.match(html, /href="\/zx-tokens\.css"/, file + ': uses the design tokens');
+    assert.match(html, /<meta name="theme-color" content="#FFFFFF" media="\(prefers-color-scheme: light\)">/, file + ': theme-color for light');
+    assert.doesNotMatch(html, /fontshare|fonts\.googleapis/i, file + ': no hotlinked fonts');
+  }
+  for (const file of ['neuroncli/login/index.html', 'neuroncli/device/index.html', 'neuroncli/callback/index.html']) {
+    assert.match(read(file), /href="\/auth-pages\.css"/, file + ': shared sign-in card styles');
+  }
+  // The new stylesheets are deployed: present, and not hidden by .assetsignore.
+  const ignore = read('.assetsignore').split(String.fromCharCode(10)).map(line => line.trim()).filter(line => line && !line.startsWith('#'));
+  for (const file of ['dashboard.css', 'auth.css', 'auth-pages.css']) {
+    assert.ok(readFileSync(new URL(file, root)).length > 200, file + ' exists');
+    assert.ok(!ignore.some(pattern => pattern === file || pattern === '*.css'), file + ' is not excluded from the Worker assets');
+  }
+  assert.doesNotMatch(read('neuroncli/callback/index.html').replace(/openrouter(?=['/])/g, ''), /OpenRouter/, 'the callback page shows no provider name');
+}
+
+console.log('PASS: dashboard gate, contract-driven overview, hash tabs and keyboard, usage chart/table/pagination, key create-once/copy/revoke-confirm, billing cancel/top-up/verify, sessions, sign-out dev-token cleanup, 401/500 recovery, pricing currency/hydration/checkout/409/503/forged payloads, Neuron CLI install tabs, zerox-auth dev identity and pinned SDK; untrusted data never reached innerHTML');
 process.exit(0);

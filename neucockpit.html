@@ -1,207 +1,37 @@
 <!DOCTYPE html>
 <!-- Served at https://zero-x.live/neucockpit (the Worker maps /neucockpit to neucockpit.html) -->
-<html class="dark" lang="en">
+<html lang="en">
 <head>
-  <meta charset="utf-8"/>
-  <meta content="width=device-width,initial-scale=1" name="viewport"/>
-  <noscript><style>.reveal{opacity:1;transform:none}</style></noscript>
-
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>NeuCockpit | Local AI Desktop File Search by Zero-X</title>
-  <meta name="description" content="Download NeuCockpit for Windows, macOS, and Linux. Search files by meaning and summarize documents with local AI."/>
-  <meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large"/>
-  <meta name="author" content="Zero-X"/>
-  <meta name="theme-color" content="#0A0A0C"/>
-
-  <!-- Canonical -->
-  <link rel="canonical" href="https://zero-x.live/neucockpit"/>
-
-  <!-- Open Graph -->
-  <meta property="og:type" content="website"/>
-  <meta property="og:site_name" content="Zero-X"/>
-  <meta property="og:title" content="NeuCockpit | Local AI Desktop File Search by Zero-X"/>
-  <meta property="og:description" content="Download NeuCockpit for Windows, macOS, and Linux. Search files by meaning and work with local AI."/>
-  <meta property="og:url" content="https://zero-x.live/neucockpit"/>
-  <meta property="og:image" content="https://zero-x.live/Assets/neucockpit-semantic-search.webp"/>
-  <meta property="og:image:alt" content="NeuCockpit Screenshot"/>
-  <meta property="og:locale" content="en_US"/>
-
-  <!-- Twitter Card -->
-  <meta name="twitter:card" content="summary_large_image"/>
-  <meta name="twitter:title" content="NeuCockpit | Semantic file search"/>
-  <meta name="twitter:description" content="Semantic file search and local AI for Windows, macOS, and Linux."/>
-  <meta name="twitter:image" content="https://zero-x.live/Assets/neucockpit-semantic-search.webp"/>
-  <meta name="twitter:image:alt" content="NeuCockpit desktop semantic file search results"/>
-
-  <!-- Favicons -->
-  <link rel="icon" type="image/png" sizes="256x256" href="./Assets/zerox-favicon-centered.png"/>
-  <link rel="shortcut icon" type="image/x-icon" href="./Assets/zerox-favicon-centered.ico"/>
-  <link rel="apple-touch-icon" sizes="180x180" href="./Assets/zerox-apple-touch-icon.png"/>
-
-  <!-- Fonts -->
-  <link rel="preconnect" href="https://cdn.fontshare.com" crossorigin/>
-  <link rel="preload" as="font" type="font/woff2" crossorigin href="https://cdn.fontshare.com/wf/CKQBK2QBTCDREE7L3MXZ3PPW7LDNJCWU/OTOY7FQFSFOJVZKJWKO2EHUJLOGBDN4Q/4CO2ETY7NITKLUDKMYJ75RHJSPHOJ7XT.woff2"/>
-<style data-public-styles>
-/* Cabinet Grotesk */
-@font-face {
-  font-family: 'Cabinet Grotesk';
-  src: url('https://cdn.fontshare.com/wf/J6PPRPKWXDUIYA47IXLEQB4R4OPVYDQH/N2ZXAXWEHVMLISD2TIXJC7EF4GOY43L4/NXM4Z4TDCMYWBZ7AVI2N6DQ5VMWNENMU.woff2') format('woff2'),
-       url('https://cdn.fontshare.com/wf/J6PPRPKWXDUIYA47IXLEQB4R4OPVYDQH/N2ZXAXWEHVMLISD2TIXJC7EF4GOY43L4/NXM4Z4TDCMYWBZ7AVI2N6DQ5VMWNENMU.woff') format('woff'),
-       url('https://cdn.fontshare.com/wf/J6PPRPKWXDUIYA47IXLEQB4R4OPVYDQH/N2ZXAXWEHVMLISD2TIXJC7EF4GOY43L4/NXM4Z4TDCMYWBZ7AVI2N6DQ5VMWNENMU.ttf') format('truetype');
-  font-weight: 400;
-  font-display: swap;
-  font-style: normal;
-}
-@font-face {
-  font-family: 'Cabinet Grotesk';
-  src: url('https://cdn.fontshare.com/wf/CKQBK2QBTCDREE7L3MXZ3PPW7LDNJCWU/OTOY7FQFSFOJVZKJWKO2EHUJLOGBDN4Q/4CO2ETY7NITKLUDKMYJ75RHJSPHOJ7XT.woff2') format('woff2'),
-       url('https://cdn.fontshare.com/wf/CKQBK2QBTCDREE7L3MXZ3PPW7LDNJCWU/OTOY7FQFSFOJVZKJWKO2EHUJLOGBDN4Q/4CO2ETY7NITKLUDKMYJ75RHJSPHOJ7XT.woff') format('woff'),
-       url('https://cdn.fontshare.com/wf/CKQBK2QBTCDREE7L3MXZ3PPW7LDNJCWU/OTOY7FQFSFOJVZKJWKO2EHUJLOGBDN4Q/4CO2ETY7NITKLUDKMYJ75RHJSPHOJ7XT.ttf') format('truetype');
-  font-weight: 500;
-  font-display: swap;
-  font-style: normal;
-}
-@font-face {
-  font-family: 'Cabinet Grotesk';
-  src: url('https://cdn.fontshare.com/wf/XMXWOHABYLQDJ42L65EFRYNVRY37HQCB/B2O4O6V3JMFM2WDCYQI3A47L5U4THDUL/WN5274VQ3AUBDFP74GB4EC4XYJ3EKVNE.woff2') format('woff2'),
-       url('https://cdn.fontshare.com/wf/XMXWOHABYLQDJ42L65EFRYNVRY37HQCB/B2O4O6V3JMFM2WDCYQI3A47L5U4THDUL/WN5274VQ3AUBDFP74GB4EC4XYJ3EKVNE.woff') format('woff'),
-       url('https://cdn.fontshare.com/wf/XMXWOHABYLQDJ42L65EFRYNVRY37HQCB/B2O4O6V3JMFM2WDCYQI3A47L5U4THDUL/WN5274VQ3AUBDFP74GB4EC4XYJ3EKVNE.ttf') format('truetype');
-  font-weight: 700;
-  font-display: swap;
-  font-style: normal;
-}
-@font-face {
-  font-family: 'Cabinet Grotesk';
-  src: url('https://cdn.fontshare.com/wf/ZX6AQLSFYVDPN2URWO2MQFGTYYOHIS64/TPYPKOYWFQVNJHLLRXD4KFYX4LUOUW4Z/6QH2ALVTTK7IRVO5MYOQQ3OZNXW5SSS3.woff2') format('woff2'),
-       url('https://cdn.fontshare.com/wf/ZX6AQLSFYVDPN2URWO2MQFGTYYOHIS64/TPYPKOYWFQVNJHLLRXD4KFYX4LUOUW4Z/6QH2ALVTTK7IRVO5MYOQQ3OZNXW5SSS3.woff') format('woff'),
-       url('https://cdn.fontshare.com/wf/ZX6AQLSFYVDPN2URWO2MQFGTYYOHIS64/TPYPKOYWFQVNJHLLRXD4KFYX4LUOUW4Z/6QH2ALVTTK7IRVO5MYOQQ3OZNXW5SSS3.ttf') format('truetype');
-  font-weight: 800;
-  font-display: swap;
-  font-style: normal;
-}
-
-
-
-/* Satoshi */
-@font-face {
-  font-family: 'Satoshi';
-  src: url('https://cdn.fontshare.com/wf/TTX2Z3BF3P6Y5BQT3IV2VNOK6FL22KUT/7QYRJOI3JIMYHGY6CH7SOIFRQLZOLNJ6/KFIAZD4RUMEZIYV6FQ3T3GP5PDBDB6JY.woff2') format('woff2'),
-       url('https://cdn.fontshare.com/wf/TTX2Z3BF3P6Y5BQT3IV2VNOK6FL22KUT/7QYRJOI3JIMYHGY6CH7SOIFRQLZOLNJ6/KFIAZD4RUMEZIYV6FQ3T3GP5PDBDB6JY.woff') format('woff'),
-       url('https://cdn.fontshare.com/wf/TTX2Z3BF3P6Y5BQT3IV2VNOK6FL22KUT/7QYRJOI3JIMYHGY6CH7SOIFRQLZOLNJ6/KFIAZD4RUMEZIYV6FQ3T3GP5PDBDB6JY.ttf') format('truetype');
-  font-weight: 400;
-  font-display: swap;
-  font-style: normal;
-}
-@font-face {
-  font-family: 'Satoshi';
-  src: url('https://cdn.fontshare.com/wf/P2LQKHE6KA6ZP4AAGN72KDWMHH6ZH3TA/ZC32TK2P7FPS5GFTL46EU6KQJA24ZYDB/7AHDUZ4A7LFLVFUIFSARGIWCRQJHISQP.woff2') format('woff2'),
-       url('https://cdn.fontshare.com/wf/P2LQKHE6KA6ZP4AAGN72KDWMHH6ZH3TA/ZC32TK2P7FPS5GFTL46EU6KQJA24ZYDB/7AHDUZ4A7LFLVFUIFSARGIWCRQJHISQP.woff') format('woff'),
-       url('https://cdn.fontshare.com/wf/P2LQKHE6KA6ZP4AAGN72KDWMHH6ZH3TA/ZC32TK2P7FPS5GFTL46EU6KQJA24ZYDB/7AHDUZ4A7LFLVFUIFSARGIWCRQJHISQP.ttf') format('truetype');
-  font-weight: 500;
-  font-display: swap;
-  font-style: normal;
-}
-@font-face {
-  font-family: 'Satoshi';
-  src: url('https://cdn.fontshare.com/wf/LAFFD4SDUCDVQEXFPDC7C53EQ4ZELWQI/PXCT3G6LO6ICM5I3NTYENYPWJAECAWDD/GHM6WVH6MILNYOOCXHXB5GTSGNTMGXZR.woff2') format('woff2'),
-       url('https://cdn.fontshare.com/wf/LAFFD4SDUCDVQEXFPDC7C53EQ4ZELWQI/PXCT3G6LO6ICM5I3NTYENYPWJAECAWDD/GHM6WVH6MILNYOOCXHXB5GTSGNTMGXZR.woff') format('woff'),
-       url('https://cdn.fontshare.com/wf/LAFFD4SDUCDVQEXFPDC7C53EQ4ZELWQI/PXCT3G6LO6ICM5I3NTYENYPWJAECAWDD/GHM6WVH6MILNYOOCXHXB5GTSGNTMGXZR.ttf') format('truetype');
-  font-weight: 700;
-  font-display: swap;
-  font-style: normal;
-}
-
-
-
-@font-face {
-  font-family: 'JetBrains Mono';
-  font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-  src: url(https://fonts.gstatic.com/s/jetbrainsmono/v24/tDbY2o-flEEny0FZhsfKu5WU4zr3E_BX0PnT8RD8yKxjPQ.ttf) format('truetype');
-}
-@font-face {
-  font-family: 'JetBrains Mono';
-  font-style: normal;
-  font-weight: 500;
-  font-display: swap;
-  src: url(https://fonts.gstatic.com/s/jetbrainsmono/v24/tDbY2o-flEEny0FZhsfKu5WU4zr3E_BX0PnT8RD8-qxjPQ.ttf) format('truetype');
-}
-
-@font-face {
-  font-family: 'Material Symbols Outlined';
-  font-style: normal;
-  font-weight: 100;
-  font-display: block;
-  src: url(https://fonts.gstatic.com/l/font?kit=kJF1BvYX7BgnkSrUwT8OhrdQw4oELdPIeeII9v6oDMzByHX9rA6RzaxHMPdY43zj-jCxv3fzvRNU22ZXGJpEpjC_1v-p_4MrImHCIJIZrDCvHeemdcIkzUJPvbB--NyU9MK8DOMocyBFBdPsQC_3iO7Tu5PrFxOq-RR4lPcn-t-_NTQvlMHsWiSMJrveiEiXmXO59Vx1g0dN&skey=b8dc2088854b122f&v=v375) format('truetype');
-}
-@font-face {
-  font-family: 'Material Symbols Outlined';
-  font-style: normal;
-  font-weight: 200;
-  font-display: block;
-  src: url(https://fonts.gstatic.com/l/font?kit=kJF1BvYX7BgnkSrUwT8OhrdQw4oELdPIeeII9v6oDMzByHX9rA6RzaxHMPdY43zj-jCxv3fzvRNU22ZXGJpEpjC_1v-p_4MrImHCIJIZrDAvHOemdcIkzUJPvbB--NyU9MK8DOMocyBFBdPsQC_3iO7Tu5PrFxOq-RR4lPcn-t-_NTQvlMHsWiSMJrveiEiXmXO59Vx1g0dN&skey=b8dc2088854b122f&v=v375) format('truetype');
-}
-@font-face {
-  font-family: 'Material Symbols Outlined';
-  font-style: normal;
-  font-weight: 300;
-  font-display: block;
-  src: url(https://fonts.gstatic.com/l/font?kit=kJF1BvYX7BgnkSrUwT8OhrdQw4oELdPIeeII9v6oDMzByHX9rA6RzaxHMPdY43zj-jCxv3fzvRNU22ZXGJpEpjC_1v-p_4MrImHCIJIZrDDxHOemdcIkzUJPvbB--NyU9MK8DOMocyBFBdPsQC_3iO7Tu5PrFxOq-RR4lPcn-t-_NTQvlMHsWiSMJrveiEiXmXO59Vx1g0dN&skey=b8dc2088854b122f&v=v375) format('truetype');
-}
-@font-face {
-  font-family: 'Material Symbols Outlined';
-  font-style: normal;
-  font-weight: 400;
-  font-display: block;
-  src: url(https://fonts.gstatic.com/l/font?kit=kJF1BvYX7BgnkSrUwT8OhrdQw4oELdPIeeII9v6oDMzByHX9rA6RzaxHMPdY43zj-jCxv3fzvRNU22ZXGJpEpjC_1v-p_4MrImHCIJIZrDCvHOemdcIkzUJPvbB--NyU9MK8DOMocyBFBdPsQC_3iO7Tu5PrFxOq-RR4lPcn-t-_NTQvlMHsWiSMJrveiEiXmXO59Vx1g0dN&skey=b8dc2088854b122f&v=v375) format('truetype');
-}
-@font-face {
-  font-family: 'Material Symbols Outlined';
-  font-style: normal;
-  font-weight: 500;
-  font-display: block;
-  src: url(https://fonts.gstatic.com/l/font?kit=kJF1BvYX7BgnkSrUwT8OhrdQw4oELdPIeeII9v6oDMzByHX9rA6RzaxHMPdY43zj-jCxv3fzvRNU22ZXGJpEpjC_1v-p_4MrImHCIJIZrDCdHOemdcIkzUJPvbB--NyU9MK8DOMocyBFBdPsQC_3iO7Tu5PrFxOq-RR4lPcn-t-_NTQvlMHsWiSMJrveiEiXmXO59Vx1g0dN&skey=b8dc2088854b122f&v=v375) format('truetype');
-}
-@font-face {
-  font-family: 'Material Symbols Outlined';
-  font-style: normal;
-  font-weight: 600;
-  font-display: block;
-  src: url(https://fonts.gstatic.com/l/font?kit=kJF1BvYX7BgnkSrUwT8OhrdQw4oELdPIeeII9v6oDMzByHX9rA6RzaxHMPdY43zj-jCxv3fzvRNU22ZXGJpEpjC_1v-p_4MrImHCIJIZrDBxG-emdcIkzUJPvbB--NyU9MK8DOMocyBFBdPsQC_3iO7Tu5PrFxOq-RR4lPcn-t-_NTQvlMHsWiSMJrveiEiXmXO59Vx1g0dN&skey=b8dc2088854b122f&v=v375) format('truetype');
-}
-@font-face {
-  font-family: 'Material Symbols Outlined';
-  font-style: normal;
-  font-weight: 700;
-  font-display: block;
-  src: url(https://fonts.gstatic.com/l/font?kit=kJF1BvYX7BgnkSrUwT8OhrdQw4oELdPIeeII9v6oDMzByHX9rA6RzaxHMPdY43zj-jCxv3fzvRNU22ZXGJpEpjC_1v-p_4MrImHCIJIZrDBIG-emdcIkzUJPvbB--NyU9MK8DOMocyBFBdPsQC_3iO7Tu5PrFxOq-RR4lPcn-t-_NTQvlMHsWiSMJrveiEiXmXO59Vx1g0dN&skey=b8dc2088854b122f&v=v375) format('truetype');
-}
-
-.material-symbols-outlined {
-  font-family: 'Material Symbols Outlined';
-  font-weight: normal;
-  font-style: normal;
-  font-size: 24px;
-  line-height: 1;
-  letter-spacing: normal;
-  text-transform: none;
-  display: inline-block;
-  white-space: nowrap;
-  word-wrap: normal;
-  direction: ltr;
-}
-
-*,:after,:before{--tw-border-spacing-x:0;--tw-border-spacing-y:0;--tw-translate-x:0;--tw-translate-y:0;--tw-rotate:0;--tw-skew-x:0;--tw-skew-y:0;--tw-scale-x:1;--tw-scale-y:1;--tw-pan-x: ;--tw-pan-y: ;--tw-pinch-zoom: ;--tw-scroll-snap-strictness:proximity;--tw-gradient-from-position: ;--tw-gradient-via-position: ;--tw-gradient-to-position: ;--tw-ordinal: ;--tw-slashed-zero: ;--tw-numeric-figure: ;--tw-numeric-spacing: ;--tw-numeric-fraction: ;--tw-ring-inset: ;--tw-ring-offset-width:0px;--tw-ring-offset-color:#fff;--tw-ring-color:rgba(59,130,246,.5);--tw-ring-offset-shadow:0 0 #0000;--tw-ring-shadow:0 0 #0000;--tw-shadow:0 0 #0000;--tw-shadow-colored:0 0 #0000;--tw-blur: ;--tw-brightness: ;--tw-contrast: ;--tw-grayscale: ;--tw-hue-rotate: ;--tw-invert: ;--tw-saturate: ;--tw-sepia: ;--tw-drop-shadow: ;--tw-backdrop-blur: ;--tw-backdrop-brightness: ;--tw-backdrop-contrast: ;--tw-backdrop-grayscale: ;--tw-backdrop-hue-rotate: ;--tw-backdrop-invert: ;--tw-backdrop-opacity: ;--tw-backdrop-saturate: ;--tw-backdrop-sepia: ;--tw-contain-size: ;--tw-contain-layout: ;--tw-contain-paint: ;--tw-contain-style: }::backdrop{--tw-border-spacing-x:0;--tw-border-spacing-y:0;--tw-translate-x:0;--tw-translate-y:0;--tw-rotate:0;--tw-skew-x:0;--tw-skew-y:0;--tw-scale-x:1;--tw-scale-y:1;--tw-pan-x: ;--tw-pan-y: ;--tw-pinch-zoom: ;--tw-scroll-snap-strictness:proximity;--tw-gradient-from-position: ;--tw-gradient-via-position: ;--tw-gradient-to-position: ;--tw-ordinal: ;--tw-slashed-zero: ;--tw-numeric-figure: ;--tw-numeric-spacing: ;--tw-numeric-fraction: ;--tw-ring-inset: ;--tw-ring-offset-width:0px;--tw-ring-offset-color:#fff;--tw-ring-color:rgba(59,130,246,.5);--tw-ring-offset-shadow:0 0 #0000;--tw-ring-shadow:0 0 #0000;--tw-shadow:0 0 #0000;--tw-shadow-colored:0 0 #0000;--tw-blur: ;--tw-brightness: ;--tw-contrast: ;--tw-grayscale: ;--tw-hue-rotate: ;--tw-invert: ;--tw-saturate: ;--tw-sepia: ;--tw-drop-shadow: ;--tw-backdrop-blur: ;--tw-backdrop-brightness: ;--tw-backdrop-contrast: ;--tw-backdrop-grayscale: ;--tw-backdrop-hue-rotate: ;--tw-backdrop-invert: ;--tw-backdrop-opacity: ;--tw-backdrop-saturate: ;--tw-backdrop-sepia: ;--tw-contain-size: ;--tw-contain-layout: ;--tw-contain-paint: ;--tw-contain-style: }/*! tailwindcss v3.4.17 | MIT License | https://tailwindcss.com*/*,:after,:before{box-sizing:border-box;border:0 solid #e5e7eb}:after,:before{--tw-content:""}:host,html{line-height:1.5;-webkit-text-size-adjust:100%;-moz-tab-size:4;-o-tab-size:4;tab-size:4;font-family:ui-sans-serif,system-ui,sans-serif,Apple Color Emoji,Segoe UI Emoji,Segoe UI Symbol,Noto Color Emoji;font-feature-settings:normal;font-variation-settings:normal;-webkit-tap-highlight-color:transparent}body{margin:0;line-height:inherit}hr{height:0;color:inherit;border-top-width:1px}abbr:where([title]){-webkit-text-decoration:underline dotted;text-decoration:underline dotted}h1,h2,h3,h4,h5,h6{font-size:inherit;font-weight:inherit}a{color:inherit;text-decoration:inherit}b,strong{font-weight:bolder}code,kbd,pre,samp{font-family:JetBrains Mono,monospace;font-feature-settings:normal;font-variation-settings:normal;font-size:1em}small{font-size:80%}sub,sup{font-size:75%;line-height:0;position:relative;vertical-align:baseline}sub{bottom:-.25em}sup{top:-.5em}table{text-indent:0;border-color:inherit;border-collapse:collapse}button,input,optgroup,select,textarea{font-family:inherit;font-feature-settings:inherit;font-variation-settings:inherit;font-size:100%;font-weight:inherit;line-height:inherit;letter-spacing:inherit;color:inherit;margin:0;padding:0}button,select{text-transform:none}button,input:where([type=button]),input:where([type=reset]),input:where([type=submit]){-webkit-appearance:button;background-color:transparent;background-image:none}:-moz-focusring{outline:auto}:-moz-ui-invalid{box-shadow:none}progress{vertical-align:baseline}::-webkit-inner-spin-button,::-webkit-outer-spin-button{height:auto}[type=search]{-webkit-appearance:textfield;outline-offset:-2px}::-webkit-search-decoration{-webkit-appearance:none}::-webkit-file-upload-button{-webkit-appearance:button;font:inherit}summary{display:list-item}blockquote,dd,dl,figure,h1,h2,h3,h4,h5,h6,hr,p,pre{margin:0}fieldset{margin:0}fieldset,legend{padding:0}menu,ol,ul{list-style:none;margin:0;padding:0}dialog{padding:0}textarea{resize:vertical}input::-moz-placeholder,textarea::-moz-placeholder{opacity:1;color:#9ca3af}input::placeholder,textarea::placeholder{opacity:1;color:#9ca3af}[role=button],button{cursor:pointer}:disabled{cursor:default}audio,canvas,embed,iframe,img,object,svg,video{display:block;vertical-align:middle}img,video{max-width:100%;height:auto}[hidden]:where(:not([hidden=until-found])){display:none}.pointer-events-none{pointer-events:none}.visible{visibility:visible}.fixed{position:fixed}.absolute{position:absolute}.relative{position:relative}.inset-0{inset:0}.-bottom-10{bottom:-2.5rem}.-top-3{top:-.75rem}.bottom-8{bottom:2rem}.bottom-\[10\%\]{bottom:10%}.left-1\/2{left:50%}.left-4{left:1rem}.left-\[25\%\]{left:25%}.left-\[30\%\]{left:30%}.right-2{right:.5rem}.right-5{right:1.25rem}.right-\[20\%\]{right:20%}.top-0{top:0}.top-1\/2{top:50%}.top-4{top:1rem}.top-5{top:1.25rem}.top-\[15\%\]{top:15%}.top-\[30\%\]{top:30%}.top-\[35\%\]{top:35%}.top-\[50\%\]{top:50%}.z-10{z-index:10}.z-30{z-index:30}.z-50{z-index:50}.z-\[60\]{z-index:60}.order-1{order:1}.order-2{order:2}.col-span-2{grid-column:span 2/span 2}.mx-auto{margin-left:auto;margin-right:auto}.my-8{margin-top:2rem;margin-bottom:2rem}.mb-1{margin-bottom:.25rem}.mb-10{margin-bottom:2.5rem}.mb-12{margin-bottom:3rem}.mb-14{margin-bottom:3.5rem}.mb-16{margin-bottom:4rem}.mb-2{margin-bottom:.5rem}.mb-20{margin-bottom:5rem}.mb-3{margin-bottom:.75rem}.mb-32{margin-bottom:8rem}.mb-4{margin-bottom:1rem}.mb-5{margin-bottom:1.25rem}.mb-6{margin-bottom:1.5rem}.mb-8{margin-bottom:2rem}.ml-auto{margin-left:auto}.mr-1{margin-right:.25rem}.mr-2{margin-right:.5rem}.mt-0\.5{margin-top:.125rem}.mt-10{margin-top:2.5rem}.mt-14{margin-top:3.5rem}.mt-2\.5{margin-top:.625rem}.mt-3{margin-top:.75rem}.mt-4{margin-top:1rem}.mt-6{margin-top:1.5rem}.mt-auto{margin-top:auto}.line-clamp-2{overflow:hidden;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2}.block{display:block}.inline-block{display:inline-block}.flex{display:flex}.inline-flex{display:inline-flex}.grid{display:grid}.contents{display:contents}.hidden{display:none}.aspect-video{aspect-ratio:16/9}.h-10{height:2.5rem}.h-12{height:3rem}.h-14{height:3.5rem}.h-16{height:4rem}.h-20{height:5rem}.h-3\.5{height:.875rem}.h-4{height:1rem}.h-5{height:1.25rem}.h-8{height:2rem}.h-9{height:2.25rem}.h-\[10px\]{height:10px}.h-\[300px\]{height:300px}.h-\[400px\]{height:400px}.h-\[500px\]{height:500px}.h-\[5px\]{height:5px}.h-\[600px\]{height:600px}.h-\[6px\]{height:6px}.h-\[700px\]{height:700px}.h-\[72px\]{height:72px}.h-\[800px\]{height:800px}.h-full{height:100%}.max-h-\[380px\]{max-height:380px}.max-h-\[580px\]{max-height:580px}.min-h-12{min-height:3rem}.min-h-\[460px\]{min-height:460px}.min-h-screen{min-height:100vh}.w-10{width:2.5rem}.w-12{width:3rem}.w-14{width:3.5rem}.w-16{width:4rem}.w-2{width:.5rem}.w-3\.5{width:.875rem}.w-4{width:1rem}.w-8{width:2rem}.w-9{width:2.25rem}.w-\[10px\]{width:10px}.w-\[300px\]{width:300px}.w-\[400px\]{width:400px}.w-\[500px\]{width:500px}.w-\[5px\]{width:5px}.w-\[6px\]{width:6px}.w-\[700px\]{width:700px}.w-\[800px\]{width:800px}.w-\[85\%\]{width:85%}.w-full{width:100%}.min-w-0{min-width:0}.max-w-2xl{max-width:42rem}.max-w-\[1100px\]{max-width:1100px}.max-w-\[1120px\]{max-width:1120px}.max-w-\[1200px\]{max-width:1200px}.max-w-\[260px\]{max-width:260px}.max-w-\[280px\]{max-width:280px}.max-w-\[500px\]{max-width:500px}.max-w-\[580px\]{max-width:580px}.max-w-\[860px\]{max-width:860px}.max-w-\[880px\]{max-width:880px}.max-w-\[900px\]{max-width:900px}.max-w-lg{max-width:32rem}.max-w-md{max-width:28rem}.flex-1{flex:1 1 0%}.shrink-0{flex-shrink:0}.-translate-x-1\/2{--tw-translate-x:-50%}.-translate-x-1\/2,.-translate-y-1\/2{transform:translate(var(--tw-translate-x),var(--tw-translate-y)) rotate(var(--tw-rotate)) skewX(var(--tw-skew-x)) skewY(var(--tw-skew-y)) scaleX(var(--tw-scale-x)) scaleY(var(--tw-scale-y))}.-translate-y-1\/2{--tw-translate-y:-50%}.cursor-pointer{cursor:pointer}.grid-cols-1{grid-template-columns:repeat(1,minmax(0,1fr))}.grid-cols-2{grid-template-columns:repeat(2,minmax(0,1fr))}.flex-col{flex-direction:column}.flex-wrap{flex-wrap:wrap}.items-start{align-items:flex-start}.items-center{align-items:center}.justify-center{justify-content:center}.justify-between{justify-content:space-between}.gap-1\.5{gap:.375rem}.gap-10{gap:2.5rem}.gap-12{gap:3rem}.gap-16{gap:4rem}.gap-2{gap:.5rem}.gap-2\.5{gap:.625rem}.gap-3{gap:.75rem}.gap-3\.5{gap:.875rem}.gap-4{gap:1rem}.gap-5{gap:1.25rem}.gap-6{gap:1.5rem}.gap-7{gap:1.75rem}.overflow-hidden{overflow:hidden}.overflow-y-auto{overflow-y:auto}.overflow-x-hidden{overflow-x:hidden}.truncate{overflow:hidden;text-overflow:ellipsis}.truncate,.whitespace-nowrap{white-space:nowrap}.rounded{border-radius:.25rem}.rounded-2xl{border-radius:1rem}.rounded-full{border-radius:9999px}.rounded-lg{border-radius:.5rem}.rounded-md{border-radius:.375rem}.rounded-xl{border-radius:.75rem}.border{border-width:1px}.border-b{border-bottom-width:1px}.border-l-2{border-left-width:2px}.border-r{border-right-width:1px}.border-t{border-top-width:1px}.border-emerald-500\/20{border-color:rgba(16,185,129,.2)}.border-white\/10{border-color:hsla(0,0%,100%,.1)}.border-white\/\[0\.04\]{border-color:hsla(0,0%,100%,.04)}.border-white\/\[0\.06\]{border-color:hsla(0,0%,100%,.06)}.border-white\/\[0\.08\]{border-color:hsla(0,0%,100%,.08)}.border-zx-accent{--tw-border-opacity:1;border-color:rgb(0 229 255/var(--tw-border-opacity,1))}.border-zx-accent\/20{border-color:rgba(0,229,255,.2)}.border-zx-accent\/30{border-color:rgba(0,229,255,.3)}.border-zx-purple\/20{border-color:rgba(165,138,255,.2)}.bg-\[\#1a1a1e\]{--tw-bg-opacity:1;background-color:rgb(26 26 30/var(--tw-bg-opacity,1))}.bg-amber-500\/40{background-color:rgba(245,158,11,.4)}.bg-amber-500\/\[0\.08\]{background-color:rgba(245,158,11,.08)}.bg-black\/90{background-color:rgba(0,0,0,.9)}.bg-blue-500\/\[0\.08\]{background-color:rgba(59,130,246,.08)}.bg-cyan-500\/40{background-color:rgba(6,182,212,.4)}.bg-emerald-400{--tw-bg-opacity:1;background-color:rgb(52 211 153/var(--tw-bg-opacity,1))}.bg-emerald-500\/10{background-color:rgba(16,185,129,.1)}.bg-emerald-500\/40{background-color:rgba(16,185,129,.4)}.bg-emerald-500\/\[0\.08\]{background-color:rgba(16,185,129,.08)}.bg-green-500\/60{background-color:rgba(34,197,94,.6)}.bg-red-500\/60{background-color:rgba(239,68,68,.6)}.bg-rose-500\/40{background-color:rgba(244,63,94,.4)}.bg-rose-500\/\[0\.08\]{background-color:rgba(244,63,94,.08)}.bg-white{--tw-bg-opacity:1;background-color:rgb(255 255 255/var(--tw-bg-opacity,1))}.bg-white\/10{background-color:hsla(0,0%,100%,.1)}.bg-white\/\[0\.03\]{background-color:hsla(0,0%,100%,.03)}.bg-white\/\[0\.04\]{background-color:hsla(0,0%,100%,.04)}.bg-white\/\[0\.06\]{background-color:hsla(0,0%,100%,.06)}.bg-yellow-500\/60{background-color:rgba(234,179,8,.6)}.bg-zx-accent{--tw-bg-opacity:1;background-color:rgb(0 229 255/var(--tw-bg-opacity,1))}.bg-zx-accent\/20{background-color:rgba(0,229,255,.2)}.bg-zx-accent\/40{background-color:rgba(0,229,255,.4)}.bg-zx-accent\/\[0\.03\]{background-color:rgba(0,229,255,.03)}.bg-zx-accent\/\[0\.04\]{background-color:rgba(0,229,255,.04)}.bg-zx-accent\/\[0\.05\]{background-color:rgba(0,229,255,.05)}.bg-zx-accent\/\[0\.06\]{background-color:rgba(0,229,255,.06)}.bg-zx-accent\/\[0\.07\]{background-color:rgba(0,229,255,.07)}.bg-zx-accent\/\[0\.08\]{background-color:rgba(0,229,255,.08)}.bg-zx-bg{--tw-bg-opacity:1;background-color:rgb(10 10 12/var(--tw-bg-opacity,1))}.bg-zx-bg\/80{background-color:rgba(10,10,12,.8)}.bg-zx-bg\/90{background-color:rgba(10,10,12,.9)}.bg-zx-card{--tw-bg-opacity:1;background-color:rgb(24 24 28/var(--tw-bg-opacity,1))}.bg-zx-purple\/10{background-color:rgba(165,138,255,.1)}.bg-zx-purple\/40{background-color:rgba(165,138,255,.4)}.bg-zx-purple\/\[0\.04\]{background-color:rgba(165,138,255,.04)}.bg-zx-purple\/\[0\.05\]{background-color:rgba(165,138,255,.05)}.bg-zx-purple\/\[0\.06\]{background-color:rgba(165,138,255,.06)}.bg-zx-purple\/\[0\.08\]{background-color:rgba(165,138,255,.08)}.bg-zx-purple\/\[0\.1\]{background-color:rgba(165,138,255,.1)}.bg-zx-surface{--tw-bg-opacity:1;background-color:rgb(17 17 20/var(--tw-bg-opacity,1))}.bg-zx-surface\/30{background-color:rgba(17,17,20,.3)}.bg-zx-surface\/50{background-color:rgba(17,17,20,.5)}.bg-zx-surface\/70{background-color:rgba(17,17,20,.7)}.bg-gradient-to-b{background-image:linear-gradient(to bottom,var(--tw-gradient-stops))}.bg-gradient-to-br{background-image:linear-gradient(to bottom right,var(--tw-gradient-stops))}.bg-gradient-to-r{background-image:linear-gradient(to right,var(--tw-gradient-stops))}.from-\[\#0a1628\]\/80{--tw-gradient-from:rgba(10,22,40,.8) var(--tw-gradient-from-position);--tw-gradient-to:rgba(10,22,40,0) var(--tw-gradient-to-position);--tw-gradient-stops:var(--tw-gradient-from),var(--tw-gradient-to)}.from-\[\#0d1b2a\]\/80{--tw-gradient-from:rgba(13,27,42,.8) var(--tw-gradient-from-position);--tw-gradient-to:rgba(13,27,42,0) var(--tw-gradient-to-position);--tw-gradient-stops:var(--tw-gradient-from),var(--tw-gradient-to)}.from-zx-accent{--tw-gradient-from:#00e5ff var(--tw-gradient-from-position);--tw-gradient-to:rgba(0,229,255,0) var(--tw-gradient-to-position);--tw-gradient-stops:var(--tw-gradient-from),var(--tw-gradient-to)}.from-zx-accent\/10{--tw-gradient-from:rgba(0,229,255,.1) var(--tw-gradient-from-position);--tw-gradient-to:rgba(0,229,255,0) var(--tw-gradient-to-position);--tw-gradient-stops:var(--tw-gradient-from),var(--tw-gradient-to)}.from-zx-accent\/15{--tw-gradient-from:rgba(0,229,255,.15) var(--tw-gradient-from-position);--tw-gradient-to:rgba(0,229,255,0) var(--tw-gradient-to-position);--tw-gradient-stops:var(--tw-gradient-from),var(--tw-gradient-to)}.from-zx-purple\/20{--tw-gradient-from:rgba(165,138,255,.2) var(--tw-gradient-from-position);--tw-gradient-to:rgba(165,138,255,0) var(--tw-gradient-to-position);--tw-gradient-stops:var(--tw-gradient-from),var(--tw-gradient-to)}.from-zx-purple\/30{--tw-gradient-from:rgba(165,138,255,.3) var(--tw-gradient-from-position);--tw-gradient-to:rgba(165,138,255,0) var(--tw-gradient-to-position);--tw-gradient-stops:var(--tw-gradient-from),var(--tw-gradient-to)}.via-zx-purple\/20{--tw-gradient-to:rgba(165,138,255,0) var(--tw-gradient-to-position);--tw-gradient-stops:var(--tw-gradient-from),rgba(165,138,255,.2) var(--tw-gradient-via-position),var(--tw-gradient-to)}.to-zx-accent-h{--tw-gradient-to:#00b8d4 var(--tw-gradient-to-position)}.to-zx-accent\/10{--tw-gradient-to:rgba(0,229,255,.1) var(--tw-gradient-to-position)}.to-zx-accent\/30{--tw-gradient-to:rgba(0,229,255,.3) var(--tw-gradient-to-position)}.to-zx-card{--tw-gradient-to:#18181c var(--tw-gradient-to-position)}.to-zx-purple\/10{--tw-gradient-to:rgba(165,138,255,.1) var(--tw-gradient-to-position)}.object-contain{-o-object-fit:contain;object-fit:contain}.p-1{padding:.25rem}.p-2\.5{padding:.625rem}.p-3{padding:.75rem}.p-4{padding:1rem}.p-5{padding:1.25rem}.p-6{padding:1.5rem}.p-7{padding:1.75rem}.p-8{padding:2rem}.px-2{padding-left:.5rem;padding-right:.5rem}.px-2\.5{padding-left:.625rem;padding-right:.625rem}.px-3{padding-left:.75rem;padding-right:.75rem}.px-3\.5{padding-left:.875rem;padding-right:.875rem}.px-4{padding-left:1rem;padding-right:1rem}.px-5{padding-left:1.25rem;padding-right:1.25rem}.px-7{padding-left:1.75rem;padding-right:1.75rem}.px-8{padding-left:2rem;padding-right:2rem}.py-0\.5{padding-top:.125rem;padding-bottom:.125rem}.py-1{padding-top:.25rem;padding-bottom:.25rem}.py-1\.5{padding-top:.375rem;padding-bottom:.375rem}.py-2{padding-top:.5rem;padding-bottom:.5rem}.py-28{padding-top:7rem;padding-bottom:7rem}.py-3{padding-top:.75rem;padding-bottom:.75rem}.py-3\.5{padding-top:.875rem;padding-bottom:.875rem}.py-32{padding-top:8rem;padding-bottom:8rem}.py-36{padding-top:9rem;padding-bottom:9rem}.py-4{padding-top:1rem;padding-bottom:1rem}.py-40{padding-top:10rem;padding-bottom:10rem}.py-\[6px\]{padding-top:6px;padding-bottom:6px}.py-\[7px\]{padding-top:7px;padding-bottom:7px}.pb-10{padding-bottom:2.5rem}.pl-12{padding-left:3rem}.pl-6{padding-left:1.5rem}.pl-7{padding-left:1.75rem}.pr-28{padding-right:7rem}.pt-16{padding-top:4rem}.pt-2{padding-top:.5rem}.pt-20{padding-top:5rem}.pt-4{padding-top:1rem}.pt-6{padding-top:1.5rem}.text-left{text-align:left}.text-center{text-align:center}.font-body{font-family:Satoshi,sans-serif}.font-display{font-family:Cabinet Grotesk,sans-serif}.font-mono{font-family:JetBrains Mono,monospace}.text-3xl{font-size:1.875rem;line-height:2.25rem}.text-\[10px\]{font-size:10px}.text-\[11px\]{font-size:11px}.text-\[12px\]{font-size:12px}.text-\[13\.5px\]{font-size:13.5px}.text-\[13px\]{font-size:13px}.text-\[14px\]{font-size:14px}.text-\[15px\]{font-size:15px}.text-\[16px\]{font-size:16px}.text-\[17px\]{font-size:17px}.text-\[18px\]{font-size:18px}.text-\[20px\]{font-size:20px}.text-\[24px\]{font-size:24px}.text-\[26px\]{font-size:26px}.text-\[28px\]{font-size:28px}.text-\[clamp\(16px\2c 2vw\2c 20px\)\]{font-size:clamp(16px,2vw,20px)}.text-\[clamp\(24px\2c 3\.5vw\2c 36px\)\]{font-size:clamp(24px,3.5vw,36px)}.text-\[clamp\(28px\2c 4\.5vw\2c 44px\)\]{font-size:clamp(28px,4.5vw,44px)}.text-\[clamp\(28px\2c 4vw\2c 40px\)\]{font-size:clamp(28px,4vw,40px)}.text-\[clamp\(28px\2c 5vw\2c 52px\)\]{font-size:clamp(28px,5vw,52px)}.text-\[clamp\(30px\2c 5\.5vw\2c 52px\)\]{font-size:clamp(30px,5.5vw,52px)}.text-\[clamp\(36px\2c 6vw\2c 68px\)\]{font-size:clamp(36px,6vw,68px)}.text-\[clamp\(38px\2c 6\.5vw\2c 72px\)\]{font-size:clamp(38px,6.5vw,72px)}.text-lg{font-size:1.125rem;line-height:1.75rem}.text-sm{font-size:.875rem;line-height:1.25rem}.text-xl{font-size:1.25rem;line-height:1.75rem}.font-bold{font-weight:700}.font-medium{font-weight:500}.font-semibold{font-weight:600}.uppercase{text-transform:uppercase}.italic{font-style:italic}.not-italic{font-style:normal}.leading-\[1\.05\]{line-height:1.05}.leading-\[1\.06\]{line-height:1.06}.leading-\[1\.15\]{line-height:1.15}.leading-\[1\.1\]{line-height:1.1}.leading-relaxed{line-height:1.625}.tracking-\[-0\.025em\]{letter-spacing:-.025em}.tracking-\[-0\.02em\]{letter-spacing:-.02em}.tracking-\[-0\.03em\]{letter-spacing:-.03em}.tracking-tight{letter-spacing:-.025em}.tracking-wide{letter-spacing:.025em}.tracking-wider{letter-spacing:.05em}.tracking-widest{letter-spacing:.1em}.text-\[\#0A0A0C\]{--tw-text-opacity:1;color:rgb(10 10 12/var(--tw-text-opacity,1))}.text-amber-400{--tw-text-opacity:1;color:rgb(251 191 36/var(--tw-text-opacity,1))}.text-black{--tw-text-opacity:1;color:rgb(0 0 0/var(--tw-text-opacity,1))}.text-blue-400{--tw-text-opacity:1;color:rgb(96 165 250/var(--tw-text-opacity,1))}.text-emerald-400{--tw-text-opacity:1;color:rgb(52 211 153/var(--tw-text-opacity,1))}.text-rose-400{--tw-text-opacity:1;color:rgb(251 113 133/var(--tw-text-opacity,1))}.text-white{--tw-text-opacity:1;color:rgb(255 255 255/var(--tw-text-opacity,1))}.text-zx-accent{--tw-text-opacity:1;color:rgb(0 229 255/var(--tw-text-opacity,1))}.text-zx-accent-h{--tw-text-opacity:1;color:rgb(0 184 212/var(--tw-text-opacity,1))}.text-zx-accent\/60{color:rgba(0,229,255,.6)}.text-zx-faint{--tw-text-opacity:1;color:rgb(153 153 165/var(--tw-text-opacity,1))}.text-zx-faint\/60{color:hsla(240,6%,62%,.6)}.text-zx-muted{--tw-text-opacity:1;color:rgb(166 166 178/var(--tw-text-opacity,1))}.text-zx-purple{--tw-text-opacity:1;color:rgb(165 138 255/var(--tw-text-opacity,1))}.text-zx-purple\/70{color:rgba(165,138,255,.7)}.antialiased{-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}.opacity-40{opacity:.4}.shadow-2xl{--tw-shadow:0 25px 50px -12px rgba(0,0,0,.25);--tw-shadow-colored:0 25px 50px -12px var(--tw-shadow-color)}.shadow-2xl,.shadow-inner{box-shadow:var(--tw-ring-offset-shadow,0 0 #0000),var(--tw-ring-shadow,0 0 #0000),var(--tw-shadow)}.shadow-inner{--tw-shadow:inset 0 2px 4px 0 rgba(0,0,0,.05);--tw-shadow-colored:inset 0 2px 4px 0 var(--tw-shadow-color)}.shadow-black\/80{--tw-shadow-color:rgba(0,0,0,.8);--tw-shadow:var(--tw-shadow-colored)}.blur{--tw-blur:blur(8px)}.blur,.blur-\[100px\]{filter:var(--tw-blur) var(--tw-brightness) var(--tw-contrast) var(--tw-grayscale) var(--tw-hue-rotate) var(--tw-invert) var(--tw-saturate) var(--tw-sepia) var(--tw-drop-shadow)}.blur-\[100px\]{--tw-blur:blur(100px)}.blur-\[120px\]{--tw-blur:blur(120px)}.blur-\[120px\],.blur-\[140px\]{filter:var(--tw-blur) var(--tw-brightness) var(--tw-contrast) var(--tw-grayscale) var(--tw-hue-rotate) var(--tw-invert) var(--tw-saturate) var(--tw-sepia) var(--tw-drop-shadow)}.blur-\[140px\]{--tw-blur:blur(140px)}.blur-\[150px\]{--tw-blur:blur(150px)}.blur-\[150px\],.blur-\[160px\]{filter:var(--tw-blur) var(--tw-brightness) var(--tw-contrast) var(--tw-grayscale) var(--tw-hue-rotate) var(--tw-invert) var(--tw-saturate) var(--tw-sepia) var(--tw-drop-shadow)}.blur-\[160px\]{--tw-blur:blur(160px)}.blur-\[50px\]{--tw-blur:blur(50px)}.blur-\[50px\],.filter{filter:var(--tw-blur) var(--tw-brightness) var(--tw-contrast) var(--tw-grayscale) var(--tw-hue-rotate) var(--tw-invert) var(--tw-saturate) var(--tw-sepia) var(--tw-drop-shadow)}.backdrop-blur-md{--tw-backdrop-blur:blur(12px)}.backdrop-blur-md,.backdrop-blur-xl{-webkit-backdrop-filter:var(--tw-backdrop-blur) var(--tw-backdrop-brightness) var(--tw-backdrop-contrast) var(--tw-backdrop-grayscale) var(--tw-backdrop-hue-rotate) var(--tw-backdrop-invert) var(--tw-backdrop-opacity) var(--tw-backdrop-saturate) var(--tw-backdrop-sepia);backdrop-filter:var(--tw-backdrop-blur) var(--tw-backdrop-brightness) var(--tw-backdrop-contrast) var(--tw-backdrop-grayscale) var(--tw-backdrop-hue-rotate) var(--tw-backdrop-invert) var(--tw-backdrop-opacity) var(--tw-backdrop-saturate) var(--tw-backdrop-sepia)}.backdrop-blur-xl{--tw-backdrop-blur:blur(24px)}.transition{transition-property:color,background-color,border-color,text-decoration-color,fill,stroke,opacity,box-shadow,transform,filter,-webkit-backdrop-filter;transition-property:color,background-color,border-color,text-decoration-color,fill,stroke,opacity,box-shadow,transform,filter,backdrop-filter;transition-property:color,background-color,border-color,text-decoration-color,fill,stroke,opacity,box-shadow,transform,filter,backdrop-filter,-webkit-backdrop-filter;transition-timing-function:cubic-bezier(.4,0,.2,1);transition-duration:.15s}.transition-all{transition-property:all;transition-timing-function:cubic-bezier(.4,0,.2,1);transition-duration:.15s}.transition-colors{transition-property:color,background-color,border-color,text-decoration-color,fill,stroke;transition-timing-function:cubic-bezier(.4,0,.2,1);transition-duration:.15s}.transition-opacity{transition-property:opacity;transition-timing-function:cubic-bezier(.4,0,.2,1);transition-duration:.15s}.transition-transform{transition-property:transform;transition-timing-function:cubic-bezier(.4,0,.2,1);transition-duration:.15s}.duration-200{transition-duration:.2s}.duration-300{transition-duration:.3s}.duration-500{transition-duration:.5s}.ease-in-out{transition-timing-function:cubic-bezier(.4,0,.2,1)}:focus-visible{outline:3px solid #00e5ff!important;outline-offset:4px}#mobileNav a,button,header a{min-height:44px}button{min-width:44px}#mobileNav a,header nav a{display:inline-flex;align-items:center}header img{-o-object-fit:contain;object-fit:contain}#signin-btn{display:inline-flex;align-items:center}div[id=hero-showcase-viewport],section[id]{scroll-margin-top:88px}body .reveal,body .reveal.visible{opacity:1;transform:none;transition:none}body .anim-float,body .anim-orb,body .anim-orb2{animation:none}body .cat-tab{cursor:default}body .gradient-text{background:none;-webkit-text-fill-color:#00e5ff;color:#00e5ff;animation:none}body .live-dot,body .noise-overlay:after{animation:none}body .text-zx-accent\/60{color:#00e5ff}body .pointer-events-none[class*=blur-]{opacity:.35}body .nav-blur{-webkit-backdrop-filter:none;backdrop-filter:none;background:#0a0a0c}#mobileNav{margin:0;border:0;width:100%;height:100%;max-width:none;max-height:none;background:#0a0a0c}#mobileNav:not([open]){display:none}#mobileNav[open]{display:flex}dialog::backdrop{background:rgba(10,10,12,.85)}.sample-result{border:1px solid #555563}@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}*,:after,:before{animation:none!important;transition:none!important}}.hover\:border-white\/20:hover{border-color:hsla(0,0%,100%,.2)}.hover\:border-white\/\[0\.12\]:hover{border-color:hsla(0,0%,100%,.12)}.hover\:border-zx-accent\/20:hover{border-color:rgba(0,229,255,.2)}.hover\:border-zx-accent\/50:hover{border-color:rgba(0,229,255,.5)}.hover\:border-zx-purple\/20:hover{border-color:rgba(165,138,255,.2)}.hover\:bg-cyan-300:hover{--tw-bg-opacity:1;background-color:rgb(103 232 249/var(--tw-bg-opacity,1))}.hover\:bg-gray-100:hover{--tw-bg-opacity:1;background-color:rgb(243 244 246/var(--tw-bg-opacity,1))}.hover\:bg-gray-200:hover{--tw-bg-opacity:1;background-color:rgb(229 231 235/var(--tw-bg-opacity,1))}.hover\:bg-white\/\[0\.04\]:hover{background-color:hsla(0,0%,100%,.04)}.hover\:bg-white\/\[0\.08\]:hover{background-color:hsla(0,0%,100%,.08)}.hover\:bg-zx-accent-h:hover{--tw-bg-opacity:1;background-color:rgb(0 184 212/var(--tw-bg-opacity,1))}.hover\:text-white:hover{--tw-text-opacity:1;color:rgb(255 255 255/var(--tw-text-opacity,1))}.hover\:underline:hover{text-decoration-line:underline}.hover\:shadow-lg:hover{--tw-shadow:0 10px 15px -3px rgba(0,0,0,.1),0 4px 6px -4px rgba(0,0,0,.1);--tw-shadow-colored:0 10px 15px -3px var(--tw-shadow-color),0 4px 6px -4px var(--tw-shadow-color);box-shadow:var(--tw-ring-offset-shadow,0 0 #0000),var(--tw-ring-shadow,0 0 #0000),var(--tw-shadow)}.hover\:shadow-white\/10:hover{--tw-shadow-color:hsla(0,0%,100%,.1);--tw-shadow:var(--tw-shadow-colored)}.hover\:shadow-zx-accent\/20:hover{--tw-shadow-color:rgba(0,229,255,.2);--tw-shadow:var(--tw-shadow-colored)}.hover\:shadow-zx-accent\/\[0\.08\]:hover{--tw-shadow-color:rgba(0,229,255,.08);--tw-shadow:var(--tw-shadow-colored)}.focus\:border-zx-accent:focus{--tw-border-opacity:1;border-color:rgb(0 229 255/var(--tw-border-opacity,1))}.focus\:outline-none:focus{outline:2px solid transparent;outline-offset:2px}.group:hover .group-hover\:translate-x-0\.5{--tw-translate-x:0.125rem}.group:hover .group-hover\:translate-x-0\.5,.group:hover .group-hover\:translate-x-1{transform:translate(var(--tw-translate-x),var(--tw-translate-y)) rotate(var(--tw-rotate)) skewX(var(--tw-skew-x)) skewY(var(--tw-skew-y)) scaleX(var(--tw-scale-x)) scaleY(var(--tw-scale-y))}.group:hover .group-hover\:translate-x-1{--tw-translate-x:0.25rem}.group:hover .group-hover\:gap-2\.5{gap:.625rem}.group:hover .group-hover\:gap-3{gap:.75rem}.group:hover .group-hover\:bg-amber-500{--tw-bg-opacity:1;background-color:rgb(245 158 11/var(--tw-bg-opacity,1))}.group:hover .group-hover\:bg-amber-500\/\[0\.14\]{background-color:rgba(245,158,11,.14)}.group:hover .group-hover\:bg-blue-500\/\[0\.14\]{background-color:rgba(59,130,246,.14)}.group:hover .group-hover\:bg-cyan-500{--tw-bg-opacity:1;background-color:rgb(6 182 212/var(--tw-bg-opacity,1))}.group:hover .group-hover\:bg-emerald-500{--tw-bg-opacity:1;background-color:rgb(16 185 129/var(--tw-bg-opacity,1))}.group:hover .group-hover\:bg-emerald-500\/\[0\.14\]{background-color:rgba(16,185,129,.14)}.group:hover .group-hover\:bg-rose-500{--tw-bg-opacity:1;background-color:rgb(244 63 94/var(--tw-bg-opacity,1))}.group:hover .group-hover\:bg-rose-500\/\[0\.14\]{background-color:rgba(244,63,94,.14)}.group:hover .group-hover\:bg-zx-accent{--tw-bg-opacity:1;background-color:rgb(0 229 255/var(--tw-bg-opacity,1))}.group:hover .group-hover\:bg-zx-accent\/\[0\.14\]{background-color:rgba(0,229,255,.14)}.group:hover .group-hover\:bg-zx-purple{--tw-bg-opacity:1;background-color:rgb(165 138 255/var(--tw-bg-opacity,1))}.group:hover .group-hover\:bg-zx-purple\/\[0\.14\]{background-color:rgba(165,138,255,.14)}.group:hover .group-hover\:bg-zx-purple\/\[0\.18\]{background-color:rgba(165,138,255,.18)}.group:hover .group-hover\:text-zx-accent{--tw-text-opacity:1;color:rgb(0 229 255/var(--tw-text-opacity,1))}@media (min-width:640px){.sm\:flex{display:flex}.sm\:flex-row{flex-direction:row}.sm\:px-3{padding-left:.75rem;padding-right:.75rem}.sm\:px-4{padding-left:1rem;padding-right:1rem}}@media (min-width:768px){.md\:block{display:block}.md\:flex{display:flex}.md\:inline-flex{display:inline-flex}.md\:hidden{display:none}.md\:min-h-\[520px\]{min-height:520px}.md\:w-56{width:14rem}.md\:grid-cols-2{grid-template-columns:repeat(2,minmax(0,1fr))}.md\:grid-cols-3{grid-template-columns:repeat(3,minmax(0,1fr))}.md\:grid-cols-5{grid-template-columns:repeat(5,minmax(0,1fr))}.md\:flex-row{flex-direction:row}.md\:p-8{padding:2rem}.md\:py-36{padding-top:9rem;padding-bottom:9rem}.md\:py-40{padding-top:10rem;padding-bottom:10rem}.md\:py-44{padding-top:11rem;padding-bottom:11rem}.md\:py-48{padding-top:12rem;padding-bottom:12rem}.md\:text-\[20px\]{font-size:20px}}@media (min-width:1024px){.lg\:order-1{order:1}.lg\:order-2{order:2}.lg\:grid-cols-2{grid-template-columns:repeat(2,minmax(0,1fr))}.lg\:grid-cols-3{grid-template-columns:repeat(3,minmax(0,1fr))}.lg\:gap-20{gap:5rem}.lg\:gap-24{gap:6rem}}
-</style>
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
-
-  <!-- Supabase Authentication -->
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js" integrity="sha384-Rj26LVGvoeRVR6+mwQmFfcR3QOBEwT+ZmuCWpuiqeTzJpCs0ER4ITAWGb4Hiy3Ok" crossorigin="anonymous" defer></script>
-  <script src="./zerox-auth.js" defer></script>
-
-  <!-- Tailwind CDN -->
-
-  <!-- JSON-LD Structured Data -->
+  <meta name="description" content="Download NeuCockpit for Windows, macOS, and Linux. Search files by meaning and summarize documents with local AI.">
+  <meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large">
+  <meta name="author" content="Zero-X">
+  <meta name="theme-color" content="#FFFFFF" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#141413" media="(prefers-color-scheme: dark)">
+  <link rel="canonical" href="https://zero-x.live/neucockpit">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Zero-X">
+  <meta property="og:title" content="NeuCockpit | Local AI Desktop File Search by Zero-X">
+  <meta property="og:description" content="Download NeuCockpit for Windows, macOS, and Linux. Search files by meaning and work with local AI.">
+  <meta property="og:url" content="https://zero-x.live/neucockpit">
+  <meta property="og:image" content="https://zero-x.live/Assets/neucockpit-semantic-search.webp">
+  <meta property="og:image:alt" content="NeuCockpit Screenshot">
+  <meta property="og:locale" content="en_US">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="NeuCockpit | Semantic file search">
+  <meta name="twitter:description" content="Semantic file search and local AI for Windows, macOS, and Linux.">
+  <meta name="twitter:image" content="https://zero-x.live/Assets/neucockpit-semantic-search.webp">
+  <meta name="twitter:image:alt" content="NeuCockpit desktop semantic file search results">
+  <link rel="icon" type="image/png" sizes="256x256" href="/Assets/zerox-favicon-centered.png">
+  <link rel="shortcut icon" type="image/x-icon" href="/Assets/zerox-favicon-centered.ico">
+  <link rel="apple-touch-icon" sizes="180x180" href="/Assets/zerox-apple-touch-icon.png">
+  <link rel="preload" href="/fonts/aspekta-400.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/fonts/aspekta-500.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/zx-tokens.css">
+  <link rel="stylesheet" href="/home.css">
+  <link rel="stylesheet" href="/content.css">
   <script type="application/ld+json">
 {
   "@context": "https://schema.org",
@@ -270,811 +100,280 @@
 }
   </script>
   <script type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Zero-X","item":"https://zero-x.live/"},{"@type":"ListItem","position":2,"name":"NeuCockpit","item":"https://zero-x.live/neucockpit"}]}</script>
-  <style>
-    .product-notes{max-width:900px;margin:auto;padding:56px 20px;color:#b8b8c2;font:16px/1.7 system-ui,sans-serif}
-    .product-notes h2{font-size:clamp(24px,4vw,36px);color:#fff;margin:28px 0 16px}.product-notes p,.product-notes li{margin-bottom:14px}
-    .product-notes ol,.product-notes ul{padding-left:24px;list-style:revert}.product-notes a{color:#00e5ff;text-decoration:underline;text-underline-offset:3px}
-    .product-notes details{border-bottom:1px solid #38383e;padding:12px 0}.product-notes summary{cursor:pointer;color:#fff;min-height:44px;padding:10px 0}.product-notes details p{padding:8px 0}
-  </style>
-
-  <style>
-    *{box-sizing:border-box;margin:0;padding:0}
-    body{background:#0A0A0C;color:#E8E8EC;font-family:'Satoshi',sans-serif;-webkit-font-smoothing:antialiased}
-    h1,h2,h3,h4,h5,h6{font-family:'Cabinet Grotesk',sans-serif;font-weight:700}
-    ::selection{background:rgba(0,229,255,.15);color:#00E5FF}
-
-    /* Animations */
-    @keyframes orb-drift{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(30px,-20px) scale(1.05)}}
-    @keyframes orb-drift-2{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(-25px,15px) scale(1.08)}}
-    @keyframes fade-in-up{from{opacity:0;transform:translateY(24px)}to{opacity:1;transform:translateY(0)}}
-    @keyframes shimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}
-    @keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}
-
-    .anim-orb{animation:orb-drift 20s ease-in-out infinite}
-    .anim-orb2{animation:orb-drift-2 28s ease-in-out infinite}
-    .anim-float{animation:float 6s ease-in-out infinite}
-    @media(max-width:767px){.anim-orb,.anim-orb2{animation:none;filter:blur(60px)}}
-    @media(prefers-reduced-motion:reduce){.anim-orb,.anim-orb2,.anim-float{animation:none}}
-
-    .reveal{opacity:0;transform:translateY(20px);transition:opacity .7s cubic-bezier(.16,1,.3,1),transform .7s cubic-bezier(.16,1,.3,1)}
-    .reveal.visible{opacity:1;transform:translateY(0)}
-
-    .nav-blur{background:rgba(10,10,12,.82);backdrop-filter:blur(20px) saturate(1.8);-webkit-backdrop-filter:blur(20px) saturate(1.8)}
-
-    /* Glassmorphism card */
-    .glass-card{background:rgba(24,24,28,.6);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,0.06)}
-
-    /* Featured card glow */
-    .featured-glow{box-shadow:0 0 0 1px rgba(0,229,255,0.2), 0 0 40px -12px rgba(0,229,255,0.15)}
-
-    /* Screenshot frame */
-    .screenshot-frame{
-      border-radius:12px;
-      border:1px solid rgba(255,255,255,0.08);
-      box-shadow: 0 25px 50px -12px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.04);
-      overflow:hidden;
-      position:relative;
-    }
-    .screenshot-frame::before{
-      content:'';
-      position:absolute;
-      inset:0;
-      background:linear-gradient(180deg,rgba(255,255,255,0.02) 0%,transparent 20%);
-      pointer-events:none;
-      z-index:1;
-    }
-
-    /* Tag badge */
-    .tech-tag{
-      padding:3px 10px;
-      background:rgba(255,255,255,0.04);
-      border:1px solid rgba(255,255,255,0.06);
-      border-radius:6px;
-      font-family:'JetBrains Mono',monospace;
-      font-size:11px;
-      color:#8A8A96;
-    }
-
-    /* Category tab mock */
-    .cat-tab{
-      padding:6px 14px;
-      border-radius:8px;
-      font-size:13px;
-      font-family:'Satoshi',sans-serif;
-      color:#8A8A96;
-      background:rgba(255,255,255,0.03);
-      border:1px solid rgba(255,255,255,0.06);
-      transition:all .2s;
-    }
-    .cat-tab.active{
-      color:#0A0A0C;
-      background:#00E5FF;
-      border-color:#00E5FF;
-      font-weight:600;
-    }
-
-    /* Download button styles */
-    .dl-btn{
-      display:flex;align-items:center;justify-content:center;gap:8px;
-      width:100%;padding:12px 20px;border-radius:10px;
-      font-size:14px;font-weight:600;
-      transition:all .2s cubic-bezier(.16,1,.3,1);
-    }
-    .dl-btn-active{background:#fff;color:#0A0A0C}
-    .dl-btn-active:hover{background:#e0e0e0;transform:translateY(-1px);box-shadow:0 4px 12px rgba(255,255,255,0.1)}
-    .dl-btn-disabled{background:rgba(255,255,255,0.04);color:#4E4E5A;cursor:not-allowed;border:1px solid rgba(255,255,255,0.06)}
-
-    /* Auth Overrides */
-    .cl-branding, .cl-footerAction__branding { display: none !important; }
-    .cl-headerTitle, .cl-headerSubtitle { text-align: center !important; width: 100% !important; }
-    .cl-header { align-items: center !important; text-align: center !important; }
-  </style>
-  <script src="./site-ui.js" defer></script>
+  <script type="module" src="/site-nav.js"></script>
 </head>
-<body class="font-body antialiased overflow-x-hidden">
-
-  <!-- ═══════════════════════════════ NAV ═══════════════════════════════ -->
-  <header class="fixed top-0 w-full h-20 z-50 nav-blur border-b border-white/[0.06]">
-    <div class="max-w-[1200px] mx-auto h-full flex items-center justify-between px-5">
-      <a href="https://zero-x.live/" id="nav-logo-link" class="shrink-0">
-        <img width="255" height="112" src="./Assets/zerox-wordmark.webp" alt="Zero-X" class="block h-14" style="mix-blend-mode:lighten;width:auto"/>
-      </a>
-
-      <nav class="hidden md:flex items-center gap-7" aria-label="Main navigation">
-        <a href="https://zero-x.live/" id="nav-company-link" class="text-[14px] text-zx-muted hover:text-white transition-colors">Company</a>
-        <a href="https://zero-x.live/neuron-cli" class="text-[14px] text-zx-muted hover:text-white transition-colors">Neuron CLI</a>
-        <a href="#main-content" aria-current="page" class="text-[14px] text-white font-medium">NeuCockpit</a>
-        <a href="#features" class="text-[14px] text-zx-muted hover:text-white transition-colors">Features</a>
-        <a href="#downloads" class="text-[14px] text-zx-muted hover:text-white transition-colors">Downloads</a>
+<body>
+  <a class="zx-skip" href="#main">Skip to content</a>
+  <header class="zx-header">
+    <div class="zx-container zx-header__inner">
+      <a class="zx-brand" href="/"><img src="/Assets/zerox-mark.svg" width="28" height="28" alt="">Zero-X</a>
+      <button class="zx-nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" hidden><svg class="zx-icon zx-icon--menu" aria-hidden="true"><use href="/icons.svg#menu"/></svg><svg class="zx-icon zx-icon--close" aria-hidden="true"><use href="/icons.svg#x"/></svg>Menu</button>
+      <nav class="zx-nav" id="site-nav" aria-label="Main">
+        <a href="/neuron-cli">Neuron CLI</a>
+        <a href="/pricing">Pricing</a>
+        <a href="/docs">Docs</a>
+        <a class="zx-btn zx-btn--sm" href="https://dashboard.zero-x.live/"><svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#user"/></svg>Dashboard</a>
       </nav>
-
-      <div class="flex items-center gap-3">
-        <a href="https://dashboard.zero-x.live/" id="signin-btn" class="hidden md:block text-[14px] text-zx-muted hover:text-white transition-colors mr-2">Sign In</a>
-        <div id="user-button"></div>
-        <a href="#downloads" class="hidden md:block bg-zx-accent text-black font-semibold text-[13px] px-4 py-[6px] rounded-full hover:bg-zx-accent-h transition-colors">Download</a>
-        <button id="mobBtn" aria-label="Open menu" aria-controls="mobileNav" aria-expanded="false" class="md:hidden text-white"><span class="material-symbols-outlined" aria-hidden="true">menu</span></button>
-      </div>
     </div>
   </header>
+  <script>(function(h){var b=h&&h.querySelector('.zx-nav-toggle');if(b&&'noModule'in HTMLScriptElement.prototype){h.dataset.nav='closed';b.hidden=false}})(document.querySelector('.zx-header'))</script>
 
-  <!-- ═══════════════════════════ MOBILE NAV ═══════════════════════════ -->
-  <dialog id="mobileNav" aria-label="Navigation" class="fixed inset-0 z-[60] flex-col items-center justify-center gap-6">
-    <button id="mobClose" aria-label="Close menu" class="absolute top-4 right-5 text-white"><span class="material-symbols-outlined text-3xl" aria-hidden="true">close</span></button>
-    <a href="https://zero-x.live/" class="text-xl text-white">Company</a>
-    <a href="https://zero-x.live/neuron-cli" class="text-xl text-white">Neuron CLI</a>
-    <a href="#demo" class="text-xl text-white">Demo</a>
-    <a href="#features" class="text-xl text-white">Features</a>
-    <a href="#downloads" class="text-xl text-white">Downloads</a>
-    <a href="#downloads" class="mt-4 bg-zx-accent text-black px-8 py-3 rounded-full font-medium">Download</a>
-  </dialog>
-<main id="main-content">
-  <nav aria-label="Breadcrumb" class="product-notes" style="position:absolute;top:92px;left:20px;right:20px;padding:0;z-index:10"><a href="https://zero-x.live/">Zero-X</a> / NeuCockpit</nav>
-
-
-  <!-- ═══════════════════════════════ HERO ═══════════════════════════════ -->
-  <section class="relative min-h-screen flex flex-col items-center justify-center text-center px-5 pt-20 overflow-hidden">
-    <!-- Animated gradient orbs -->
-    <div class="absolute top-[15%] left-1/2 -translate-x-1/2 w-[700px] h-[700px] bg-zx-accent/[0.07] rounded-full blur-[140px] pointer-events-none anim-orb"></div>
-    <div class="absolute top-[35%] left-[25%] w-[500px] h-[500px] bg-zx-purple/[0.06] rounded-full blur-[120px] pointer-events-none anim-orb2"></div>
-    <div class="absolute bottom-[10%] right-[20%] w-[300px] h-[300px] bg-zx-accent/[0.04] rounded-full blur-[100px] pointer-events-none anim-orb"></div>
-
-    <div class="relative z-10 max-w-[860px] mx-auto">
-      <!-- Badge -->
-      <div class="inline-flex items-center gap-2 px-4 py-1.5 border border-zx-accent/20 bg-zx-accent/[0.06] rounded-full text-[12px] text-zx-accent font-medium tracking-wide mb-10">
-        <span class="w-[6px] h-[6px] bg-emerald-400 rounded-full"></span>NeuCockpit v1.0 available
+  <main id="main" class="zx-cockpit">
+    <div class="zx-container zx-cp-hero">
+      <div>
+        <nav class="zx-breadcrumb" aria-label="Breadcrumb"><a href="https://zero-x.live/">Zero-X</a> / NeuCockpit</nav>
+        <p class="zx-label"><span class="zx-dot zx-dot--ok" aria-hidden="true"></span> NeuCockpit v1.0 available</p>
+        <h1>NeuCockpit local AI: desktop file search by meaning.</h1>
+        <p class="zx-lead">NeuCockpit brings semantic file search and local AI to your desktop. Find, summarize, and navigate your files by meaning.</p>
+        <p class="zx-row"><a class="zx-btn zx-btn--primary" href="#downloads"><svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#download"/></svg>Download NeuCockpit</a><a class="zx-btn" href="/wheres-that-file">Watch the 15-second film<svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#arrow-right"/></svg></a></p>
+        <p class="zx-help">Windows, macOS and Linux. Choose a folder to index, then search your own files.</p>
       </div>
-
-      <!-- Heading -->
-      <h1 class="text-[clamp(36px,6vw,68px)] font-medium leading-[1.06] tracking-[-0.03em] text-white mb-6 font-display">
-        NeuCockpit local AI<br> <span class="text-zx-muted">Desktop file search by meaning.</span>
-      </h1>
-
-      <!-- Description -->
-      <p class="text-[17px] text-zx-muted leading-relaxed max-w-[580px] mx-auto mb-10">
-        NeuCockpit brings semantic file search and local AI to your desktop. Find, summarize, and navigate your files by meaning.
-      </p>
-
-      <!-- CTA -->
-      <div class="flex flex-wrap justify-center gap-4 mb-6">
-        <a href="#downloads" class="bg-zx-accent text-black px-7 py-3.5 rounded-full text-[15px] font-semibold hover:bg-zx-accent-h transition-all hover:shadow-lg hover:shadow-zx-accent/20 flex items-center gap-2">
-          <span class="material-symbols-outlined text-[18px]">download</span>Choose Your Platform
-        </a>
-      </div>
-
-      <!-- Free trial notice -->
-      <p class="text-[13px] text-zx-faint">Choose a folder to index, then search your own files.</p>
+      <figure class="zx-shot">
+        <div class="zx-shot__bar"><span class="zx-label">NeuCockpit v1.0</span></div>
+        <img width="907" height="926" src="/Assets/neucockpit-semantic-search.webp" srcset="/Assets/neucockpit-semantic-search-480.webp 480w, /Assets/neucockpit-semantic-search.webp 907w" sizes="(min-width: 1000px) 480px, calc(100vw - 32px)" alt="NeuCockpit search interface showing semantic file search results" decoding="async">
+      </figure>
     </div>
 
-    <!-- Subtle scroll indicator -->
-    <div class="absolute bottom-8 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2 anim-float opacity-40">
-      <span class="material-symbols-outlined text-white text-[20px]">expand_more</span>
-    </div>
-  </section>
+    <section class="zx-container zx-cp-facts" aria-label="NeuCockpit at a glance">
+      <div class="zx-tiles zx-tiles--4">
+        <div class="zx-tile"><span class="zx-tile__label">Platforms</span><p class="zx-stat zx-stat--sm">Windows, macOS, Linux</p><span class="zx-tile__note">Desktop installers for each</span></div>
+        <div class="zx-tile"><span class="zx-tile__label">Embeddings</span><p class="zx-stat zx-stat--sm">bge-small-en-v1.5</p><span class="zx-tile__note">BAAI neural embeddings</span></div>
+        <div class="zx-tile"><span class="zx-tile__label">Index</span><p class="zx-stat zx-stat--sm">FAISS / HNSW</p><span class="zx-tile__note">Vector index for local search</span></div>
+        <div class="zx-tile"><span class="zx-tile__label">Local model</span><p class="zx-stat zx-stat--sm">Qwen 2.5 Coder 1.5B</p><span class="zx-tile__note">GGUF via llama.cpp</span></div>
+      </div>
+    </section>
 
+    <section class="zx-container zx-section" id="how" aria-labelledby="how-title">
+      <div class="zx-section-head">
+        <p class="zx-label">How it works</p>
+        <h2 id="how-title">From a folder to the file you meant</h2>
+        <p>NeuCockpit searches folders you choose to index.</p>
+      </div>
+      <ol class="zx-cp-flow">
+        <li><span class="zx-cp-flow__n" aria-hidden="true">01</span><h3>Choose a folder</h3><p>Pick files you are allowed to process. Start with a small folder to check the results.</p></li>
+        <li><span class="zx-cp-flow__n" aria-hidden="true">02</span><h3>Let it index</h3><p>NeuCockpit extracts readable content, creates local embeddings and stores a searchable index.</p></li>
+        <li><span class="zx-cp-flow__n" aria-hidden="true">03</span><h3>Describe it</h3><p>Search by what a document says, not by its filename.</p></li>
+        <li><span class="zx-cp-flow__n" aria-hidden="true">04</span><h3>Open and verify</h3><p>Inspect the returned path and open the original file. AI summaries need the same source check.</p></li>
+      </ol>
+    </section>
 
-  <!-- ═══════════════════════════ PRODUCT DEMO ═══════════════════════════ -->
-  <section class="py-32 md:py-40 px-5 border-t border-white/[0.04]" id="demo">
-    <div class="max-w-[1200px] mx-auto">
-
-      <!-- Demo 1 — Search Interface (Image Left, Description Right) -->
-      <div class="grid grid-cols-1 lg:grid-cols-2 gap-12 lg:gap-20 items-center mb-32 reveal">
-        <!-- Screenshot -->
-        <div class="screenshot-frame">
-          <!-- Window chrome -->
-          <div class="h-9 bg-[#1a1a1e] border-b border-white/[0.06] flex items-center px-3.5 gap-2">
-            <div class="flex gap-1.5">
-              <span class="w-[10px] h-[10px] rounded-full bg-white/10"></span>
-              <span class="w-[10px] h-[10px] rounded-full bg-white/10"></span>
-              <span class="w-[10px] h-[10px] rounded-full bg-white/10"></span>
-            </div>
-            <div class="ml-auto flex items-center gap-2">
-              <img width="64" height="64" src="./Assets/neucockpit-circle.webp" class="w-3.5 h-3.5 rounded-full" alt=""/>
-              <span class="text-[10px] text-zx-faint font-mono">NeuCockpit v1.0</span>
-            </div>
-          </div>
-          <img width="907" height="926"
-            src="./Assets/neucockpit-semantic-search.webp"
-            srcset="./Assets/neucockpit-semantic-search-480.webp 480w, ./Assets/neucockpit-semantic-search.webp 907w"
-            sizes="(min-width: 1024px) 500px, calc(100vw - 40px)"
-            alt="NeuCockpit search interface showing semantic file search results"
-            class="w-full block"
-            loading="lazy"
-            decoding="async"
-          />
-        </div>
-
-        <!-- Description -->
+    <section class="zx-container zx-section" id="demo" aria-labelledby="demo-title">
+      <div class="zx-cp-split zx-cp-split--first">
         <div>
-          <p class="inline-flex items-center gap-2 text-zx-accent-h text-[13px] font-medium tracking-wide mb-6">Product Demo</p>
-          <h2 class="text-[clamp(24px,3.5vw,36px)] font-medium tracking-[-0.02em] leading-[1.15] text-white mb-5 font-display">
-            Semantic Search Across<br>Your Files
-          </h2>
-          <p class="text-[16px] text-zx-muted leading-relaxed mb-8 max-w-md">
-            Describe the document you remember. NeuCockpit searches indexed content across supported documents, code, and other files.
-          </p>
-          <div class="flex flex-col gap-3.5">
-            <div class="flex items-start gap-3 text-[14px] text-zx-muted">
-              <span class="text-emerald-400 text-[16px] mt-0.5 font-semibold">✓</span>
-              <span>Neural embeddings powered by <span class="text-white font-medium">BAAI/bge-small-en-v1.5</span></span>
-            </div>
-            <div class="flex items-center gap-2.5 text-[14px] text-zx-muted">
-              <span class="material-symbols-outlined text-emerald-400 text-[18px]">check_circle</span>
-              <span>FAISS/HNSW vector index for <span class="text-white font-medium">local</span> search</span>
-            </div>
-            <div class="flex items-start gap-3 text-[14px] text-zx-muted">
-              <span class="text-emerald-400 text-[16px] mt-0.5 font-semibold">✓</span>
-              <span>Filter by: Files, Folders, Code, Docs, Media</span>
-            </div>
-            <div class="flex items-start gap-3 text-[14px] text-zx-muted">
-              <span class="text-emerald-400 text-[16px] mt-0.5 font-semibold">✓</span>
-              <span>Indexed file views with activity tracking</span>
-            </div>
+          <p class="zx-label">Product demo</p>
+          <h2 id="demo-title">Semantic search across your files</h2>
+          <p>Describe the document you remember. NeuCockpit searches indexed content across supported documents, code, and other files.</p>
+          <ul class="zx-checks">
+            <li><svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#check"/></svg><span>Neural embeddings powered by <strong>BAAI/bge-small-en-v1.5</strong></span></li>
+            <li><svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#check"/></svg><span>FAISS/HNSW vector index for <strong>local</strong> search</span></li>
+            <li><svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#check"/></svg><span>Filter by: Files, Folders, Code, Docs, Media</span></li>
+            <li><svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#check"/></svg><span>Indexed file views with activity tracking</span></li>
+          </ul>
+          <h3 class="zx-cp-h3">Intelligent file categorization</h3>
+          <p>Browse search results by category: Files, Folders, Code, Docs, and Media. MemoryOS and Activity provide additional views.</p>
+          <ul class="zx-checks">
+            <li><svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#check"/></svg><span>File type filters for documents, code, and media</span></li>
+            <li><svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#check"/></svg><span>Category tabs: All, Files, Folders, Code, Docs, Media</span></li>
+            <li><svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#check"/></svg><span>Date-modified sorting and file size display</span></li>
+            <li><svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#check"/></svg><span>One-click file open and navigation</span></li>
+          </ul>
+        </div>
+        <div class="zx-card zx-card--flush">
+          <div class="zx-card__head"><p class="zx-card__title">Sample results</p><span class="zx-help">Illustrative only</span></div>
+          <div class="zx-card__body">
+            <p class="zx-help">Illustrative sample results. Install NeuCockpit to search your own files.</p>
+            <div class="zx-cats" aria-hidden="true"><span class="is-on">All</span><span>Files</span><span>Folders</span><span>Code</span><span>Docs</span><span>Media</span><span>MemoryOS</span><span>Activity</span></div>
+            <ul class="zx-results">
+              <li><svg class="zx-icon" aria-hidden="true"><use href="/icons.svg#file-text"/></svg><div><strong>Project_Proposal_Q2.pdf</strong><span>/docs/proposals · 2.4 MB · Modified 3d ago</span></div></li>
+              <li><svg class="zx-icon" aria-hidden="true"><use href="/icons.svg#code"/></svg><div><strong>search_engine.py</strong><span>/src/core · 18 KB · Modified 1d ago</span></div></li>
+              <li><svg class="zx-icon" aria-hidden="true"><use href="/icons.svg#folder"/></svg><div><strong>assets/brand-kit/</strong><span>/projects/zerox · 142 items · Modified 5d ago</span></div></li>
+              <li><svg class="zx-icon" aria-hidden="true"><use href="/icons.svg#monitor"/></svg><div><strong>dashboard_mockup.png</strong><span>/design/screens · 4.1 MB · Modified 2d ago</span></div></li>
+            </ul>
           </div>
         </div>
       </div>
+    </section>
 
-      <!-- Demo 2 — File Categories (Description Left, Mock Right) -->
-      <div class="grid grid-cols-1 lg:grid-cols-2 gap-12 lg:gap-20 items-center reveal">
-        <!-- Description -->
-        <div class="order-2 lg:order-1">
-          <h2 class="text-[clamp(24px,3.5vw,36px)] font-medium tracking-[-0.02em] leading-[1.15] text-white mb-5 font-display">
-            Intelligent File<br>Categorization
-          </h2>
-          <p class="text-[16px] text-zx-muted leading-relaxed mb-8 max-w-md">
-            Browse search results by category: Files, Folders, Code, Docs, and Media. MemoryOS and Activity provide additional views.
-          </p>
-          <div class="flex flex-col gap-3.5">
-            <div class="flex items-start gap-3 text-[14px] text-zx-muted">
-              <span class="text-emerald-400 text-[16px] mt-0.5 font-semibold">✓</span>
-              <span>File type filters for documents, code, and media</span>
-            </div>
-            <div class="flex items-start gap-3 text-[14px] text-zx-muted">
-              <span class="text-emerald-400 text-[16px] mt-0.5 font-semibold">✓</span>
-              <span>Category tabs: All, Files, Folders, Code, Docs, Media</span>
-            </div>
-            <div class="flex items-start gap-3 text-[14px] text-zx-muted">
-              <span class="text-emerald-400 text-[16px] mt-0.5 font-semibold">✓</span>
-              <span>Date-modified sorting and file size display</span>
-            </div>
-            <div class="flex items-start gap-3 text-[14px] text-zx-muted">
-              <span class="text-emerald-400 text-[16px] mt-0.5 font-semibold">✓</span>
-              <span>One-click file open and navigation</span>
-            </div>
-          </div>
+    <section class="zx-container zx-section" id="features" aria-labelledby="features-title">
+      <div class="zx-section-head">
+        <p class="zx-label">Capabilities</p>
+        <h2 id="features-title">Search document contents. Use AI on your computer.</h2>
+        <p>Index a folder, describe what you remember, and inspect the matching file.</p>
+      </div>
+      <div class="zx-grid zx-grid--3">
+        <article class="zx-card zx-cp-feature"><svg class="zx-icon" aria-hidden="true"><use href="/icons.svg#search"/></svg><h3>Semantic Search</h3><p>Powered by BAAI/bge-small-en-v1.5 neural embeddings. Search by meaning, not keywords.</p></article>
+        <article class="zx-card zx-cp-feature"><svg class="zx-icon" aria-hidden="true"><use href="/icons.svg#cpu"/></svg><h3>Qwen AI Engine</h3><p>Local Qwen 2.5 Coder 1.5B GGUF model via llama.cpp. Summarize documents and ask questions using local mode.</p></article>
+        <article class="zx-card zx-cp-feature"><svg class="zx-icon" aria-hidden="true"><use href="/icons.svg#monitor"/></svg><h3>Cross-Platform Desktop</h3><p>Desktop builds for Windows, macOS, and Linux with a responsive native app interface.</p></article>
+        <article class="zx-card zx-cp-feature"><svg class="zx-icon" aria-hidden="true"><use href="/icons.svg#layers"/></svg><h3>Vector Retrieval</h3><p>FAISS vector index with HNSW graph search to find related files by meaning.</p></article>
+        <article class="zx-card zx-cp-feature"><svg class="zx-icon" aria-hidden="true"><use href="/icons.svg#shield"/></svg><h3>Local AI mode</h3><p>Local search and local AI run on your computer. Optional internet features and account sign-in connect to online services.</p></article>
+        <article class="zx-card zx-cp-feature"><svg class="zx-icon" aria-hidden="true"><use href="/icons.svg#file-text"/></svg><h3>Documents, Code, and Media</h3><p>Supported documents and source files include PDF, DOCX, PPTX, XLSX, Python, JavaScript, JSON, and YAML.</p></article>
+      </div>
+    </section>
+
+    <section class="zx-container zx-section" id="privacy" aria-labelledby="privacy-title">
+      <div class="zx-section-head">
+        <p class="zx-label">Local-first</p>
+        <h2 id="privacy-title">Your search runs on your computer</h2>
+        <p>Local search uses BGE embeddings with a FAISS index. Local AI uses Qwen through llama.cpp, and metadata is kept in SQLite on your computer. Choose the mode that fits your documents. <a href="https://zero-x.live/privacy">Read the privacy policy</a>.</p>
+      </div>
+      <div class="zx-grid zx-grid--2">
+        <div class="zx-card">
+          <p class="zx-card__label">On your computer</p>
+          <ul class="zx-checks">
+            <li><svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#check"/></svg><span>Semantic search over the folders you choose</span></li>
+            <li><svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#check"/></svg><span>Local AI summaries and questions with the bundled model</span></li>
+            <li><svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#check"/></svg><span>Metadata in SQLite and the FAISS vector index</span></li>
+          </ul>
         </div>
-
-        <!-- Category Tab Mock -->
-        <div class="order-1 lg:order-2">
-          <div class="glass-card rounded-2xl p-6 md:p-8">
-            <p class="text-sm text-zx-muted mb-4">Illustrative sample results. Install NeuCockpit to search your own files.</p>
-            <!-- Tabs row -->
-            <div class="flex flex-wrap gap-2 mb-6">
-              <span class="cat-tab active">All</span>
-              <span class="cat-tab">Files</span>
-              <span class="cat-tab">Folders</span>
-              <span class="cat-tab">Code</span>
-              <span class="cat-tab">Docs</span>
-              <span class="cat-tab">Media</span>
-              <span class="cat-tab">MemoryOS</span>
-              <span class="cat-tab">Activity</span>
-            </div>
-
-            <!-- Mock results -->
-            <div class="flex flex-col gap-2.5">
-              <div class="flex items-center gap-3 p-3 rounded-lg bg-white/[0.03] border border-white/[0.04]">
-                <span class="material-symbols-outlined text-zx-accent text-[18px]">description</span>
-                <div class="flex-1 min-w-0">
-                  <div class="text-[13px] text-white font-medium truncate">Project_Proposal_Q2.pdf</div>
-                  <div class="text-[11px] text-zx-faint font-mono truncate">/docs/proposals · 2.4 MB · Modified 3d ago</div>
-                </div>
-              </div>
-              <div class="flex items-center gap-3 p-3 rounded-lg bg-white/[0.03] border border-white/[0.04]">
-                <span class="material-symbols-outlined text-zx-purple text-[18px]">code</span>
-                <div class="flex-1 min-w-0">
-                  <div class="text-[13px] text-white font-medium truncate">search_engine.py</div>
-                  <div class="text-[11px] text-zx-faint font-mono truncate">/src/core · 18 KB · Modified 1d ago</div>
-                </div>
-              </div>
-              <div class="flex items-center gap-3 p-3 rounded-lg bg-white/[0.03] border border-white/[0.04]">
-                <span class="material-symbols-outlined text-amber-400 text-[18px]">folder</span>
-                <div class="flex-1 min-w-0">
-                  <div class="text-[13px] text-white font-medium truncate">assets/brand-kit/</div>
-                  <div class="text-[11px] text-zx-faint font-mono truncate">/projects/zerox · 142 items · Modified 5d ago</div>
-                </div>
-              </div>
-              <div class="flex items-center gap-3 p-3 rounded-lg bg-white/[0.03] border border-white/[0.04]">
-                <span class="material-symbols-outlined text-emerald-400 text-[18px]">image</span>
-                <div class="flex-1 min-w-0">
-                  <div class="text-[13px] text-white font-medium truncate">dashboard_mockup.png</div>
-                  <div class="text-[11px] text-zx-faint font-mono truncate">/design/screens · 4.1 MB · Modified 2d ago</div>
-                </div>
-              </div>
-            </div>
-          </div>
+        <div class="zx-card zx-card--flat">
+          <p class="zx-card__label">Needs a connection</p>
+          <ul class="zx-checks zx-checks--plain">
+            <li><svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#globe"/></svg><span>Downloads and initial model setup</span></li>
+            <li><svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#globe"/></svg><span>Account sign-in</span></li>
+            <li><svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#globe"/></svg><span>Optional cloud or internet features, which have a separate data flow and may send submitted content to online providers</span></li>
+          </ul>
         </div>
       </div>
+    </section>
 
+    <section class="zx-container zx-section" id="downloads" aria-labelledby="downloads-title">
+      <div class="zx-section-head">
+        <p class="zx-label">Downloads</p>
+        <h2 id="downloads-title">Download NeuCockpit v1.0</h2>
+        <p>Choose your platform and CPU architecture to download the installer.</p>
+      </div>
+      <div class="zx-grid zx-grid--3">
+        <section class="zx-card zx-dlcard" aria-labelledby="dl-windows">
+          <div class="zx-row zx-row--between"><h3 id="dl-windows">Windows</h3><span class="zx-badge zx-badge--accent">Available now</span></div>
+          <p class="zx-label">x64 · ARM64</p>
+          <div class="zx-stack">
+            <a class="zx-btn zx-btn--block" href="https://github.com/RAHUL-DevelopeRR/deepseekfs/releases/latest/download/NeuCockpitSetup_v1.0_windows_x64.exe" id="download-windows-x64-btn" target="_blank" rel="noopener"><svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#download"/></svg>x64</a>
+            <a class="zx-btn zx-btn--block" href="https://github.com/RAHUL-DevelopeRR/deepseekfs/releases/latest/download/NeuCockpitSetup_v1.0_windows_arm64.exe" id="download-windows-arm64-btn" target="_blank" rel="noopener"><svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#download"/></svg>ARM64</a>
+          </div>
+          <p class="zx-help">Windows 10 (64-bit) or later<br>.exe installer</p>
+        </section>
+        <section class="zx-card zx-dlcard" aria-labelledby="dl-macos">
+          <div class="zx-row zx-row--between"><h3 id="dl-macos">macOS</h3><span class="zx-badge zx-badge--accent">Available now</span></div>
+          <p class="zx-label">Apple Silicon · Intel</p>
+          <div class="zx-stack">
+            <a class="zx-btn zx-btn--block" href="https://github.com/RAHUL-DevelopeRR/deepseekfs/releases/latest/download/NeuCockpit-v1.0-macos-arm64.dmg" id="download-macos-arm64-btn" target="_blank" rel="noopener"><svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#download"/></svg>Apple Silicon</a>
+            <a class="zx-btn zx-btn--block" href="https://github.com/RAHUL-DevelopeRR/deepseekfs/releases/latest/download/NeuCockpit-v1.0-macos-intel.dmg" id="download-macos-x64-btn" target="_blank" rel="noopener"><svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#download"/></svg>Intel</a>
+          </div>
+          <p class="zx-help">macOS 12 Monterey or later<br>.dmg installer</p>
+        </section>
+        <section class="zx-card zx-dlcard" aria-labelledby="dl-linux">
+          <div class="zx-row zx-row--between"><h3 id="dl-linux">Linux</h3><span class="zx-badge zx-badge--accent">Available now</span></div>
+          <p class="zx-label">x64 · ARM64</p>
+          <div class="zx-stack">
+            <a class="zx-btn zx-btn--block" href="https://github.com/RAHUL-DevelopeRR/deepseekfs/releases/latest/download/NeuCockpit-v1.0-linux-x64.run" id="download-linux-x64-btn" target="_blank" rel="noopener"><svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#download"/></svg>x64</a>
+            <a class="zx-btn zx-btn--block" href="https://github.com/RAHUL-DevelopeRR/deepseekfs/releases/latest/download/NeuCockpit-v1.0-linux-arm64.run" id="download-linux-arm64-btn" target="_blank" rel="noopener"><svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#download"/></svg>ARM64</a>
+          </div>
+          <p class="zx-help">Ubuntu 20.04+ / Debian 11+<br>.run installer</p>
+        </section>
+      </div>
+      <p class="zx-help zx-mt">NeuCockpit includes bundled local AI components. Each button downloads the installer for that platform and CPU architecture. Every installer has a matching <code>.sha256</code> file on the <a href="https://github.com/RAHUL-DevelopeRR/deepseekfs/releases/latest">GitHub release</a>.</p>
+    </section>
+
+    <section class="zx-container zx-section" id="architecture" aria-labelledby="architecture-title">
+      <div class="zx-section-head">
+        <p class="zx-label">Under the hood</p>
+        <h2 id="architecture-title">Layered architecture</h2>
+        <p>The desktop interface connects to local indexing, retrieval, and model services.</p>
+      </div>
+      <div class="zx-table-wrap">
+        <table class="zx-table">
+          <thead><tr><th scope="col">Layer</th><th scope="col">What it does</th><th scope="col">Built with</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">UI Layer</th><td>PyQt6 Spotlight panel, MemoryOS chat, and desktop shortcuts</td><td class="zx-mono">PyQt6 · DWM · Spotlight</td></tr>
+            <tr><th scope="row">CLI Surface</th><td>neufs headless commands: search, chat, index, summarize, status</td><td class="zx-mono">neufs · Typer</td></tr>
+            <tr><th scope="row">Desktop Services</th><td>Intent routing, MemoryOS, model management, startup indexer, internet mode</td><td class="zx-mono">MemoryOS · Intent · Watchdog</td></tr>
+            <tr><th scope="row">Local Engines</th><td>BGE Small ONNX embeddings, FAISS/HNSW index, llama.cpp Qwen 2.5 Coder 1.5B GGUF</td><td class="zx-mono">BGE · FAISS · Qwen</td></tr>
+            <tr><th scope="row">Storage</th><td>SQLite metadata DB, FAISS vector index, and platform-specific model cache</td><td class="zx-mono">SQLite · NumPy</td></tr>
+            <tr><th scope="row">Ingestion</th><td>Document parsers: PyMuPDF, python-docx, python-pptx, openpyxl, pdfminer, lxml</td><td class="zx-mono">PyMuPDF · pptx · docx</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <div class="zx-container zx-notes-wrap">
+      <section class="zx-notes" id="setup" aria-labelledby="setup-title">
+        <p class="zx-label">Setup notes</p>
+        <h2 id="setup-title">Set up local document search</h2>
+        <p>NeuCockpit is for people who need to revisit documents, specifications, project notes or source files and remember their contents better than their filenames. It searches folders you choose to index.</p>
+        <ol class="zx-steps">
+          <li><a href="#downloads">Download the installer for your operating system and CPU architecture</a>. Apple Silicon and ARM64 builds differ from Intel and x64 builds.</li>
+          <li>Install and launch NeuCockpit. Let model setup finish before using local AI; initial downloads and optional account features can require internet access.</li>
+          <li>Choose a folder containing files you are allowed to process and let indexing complete. Start with a small folder to check the results.</li>
+          <li>Describe a document's contents, inspect the returned path and open the original file to verify the match. AI summaries need the same source check.</li>
+        </ol>
+        <p><a href="https://zero-x.live/find-files-by-content">Read the guide to finding a file when you forgot its name</a>. For setup help, email <a href="mailto:support@zero-x.live?subject=NeuCockpit%20setup%20help">Zero-X support</a> with your operating system and the step where you got stuck. Do not send private documents.</p>
+        <h2>Indexing and document support</h2>
+        <p>The indexing pipeline extracts readable content from supported files, creates local embeddings and stores a searchable index. Supported parsers include PDF, DOCX, PPTX, XLSX and common text and source-code files. A scanned image-only PDF, encrypted document or unsupported format may not produce searchable text. Media file views do not mean every image, audio clip or video can be understood by content.</p>
+        <p>New or edited files need the index to refresh before their latest contents can appear. Search quality depends on the text extracted, the query and the contents of your selected folders. Semantic search can return a related document that is not the one you intended.</p>
+        <h2>Local search and optional online features</h2>
+        <p>Local search uses BGE embeddings with a FAISS index. Local AI uses Qwen through llama.cpp, and metadata is kept in SQLite on your computer. Optional cloud or internet features have a separate data flow and may send submitted content to online providers. Choose the mode that fits your documents. <a href="https://zero-x.live/privacy">Read the privacy policy</a>.</p>
+      </section>
     </div>
-  </section>
 
-
-  <!-- ═══════════════════════════ FEATURES ═══════════════════════════ -->
-  <section class="py-32 md:py-40 px-5 border-t border-white/[0.04]" id="features">
-    <div class="max-w-[1100px] mx-auto">
-      <div class="text-center mb-20 reveal">
-        <p class="inline-flex items-center gap-2 text-zx-accent-h text-[13px] font-medium tracking-wide mb-6">1.0&ensp;Capabilities</p>
-        <h2 class="text-[clamp(28px,4vw,40px)] font-medium tracking-[-0.02em] leading-[1.15] text-white mb-5 font-display">Search document contents.<br><span class="text-zx-muted">Use AI on your computer.</span></h2>
-        <p class="text-[16px] text-zx-muted max-w-lg mx-auto leading-relaxed">Index a folder, describe what you remember, and inspect the matching file.</p>
+    <section class="zx-container zx-section" id="faq" aria-labelledby="faq-title">
+      <div class="zx-section-head">
+        <p class="zx-label">FAQ</p>
+        <h2 id="faq-title">Questions before installing</h2>
       </div>
-      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 reveal">
-        <!-- Card 1 -->
-        <div class="bg-zx-card border border-white/[0.06] rounded-xl p-7 hover:border-white/[0.12] transition-all duration-300 group">
-          <div class="w-10 h-10 rounded-lg bg-zx-accent/[0.08] flex items-center justify-center mb-5 group-hover:bg-zx-accent/[0.14] transition-colors">
-            <span class="material-symbols-outlined text-zx-accent text-[20px]">neurology</span>
-          </div>
-          <h3 class="text-[15px] font-medium text-white mb-2">Semantic Search</h3>
-          <p class="text-[14px] text-zx-muted leading-relaxed">Powered by BAAI/bge-small-en-v1.5 neural embeddings. Search by meaning, not keywords.</p>
-        </div>
-        <!-- Card 2 -->
-        <div class="bg-zx-card border border-white/[0.06] rounded-xl p-7 hover:border-white/[0.12] transition-all duration-300 group">
-          <div class="w-10 h-10 rounded-lg bg-zx-purple/[0.1] flex items-center justify-center mb-5 group-hover:bg-zx-purple/[0.18] transition-colors">
-            <span class="material-symbols-outlined text-zx-purple text-[20px]">auto_awesome</span>
-          </div>
-          <h3 class="text-[15px] font-medium text-white mb-2">Qwen AI Engine</h3>
-          <p class="text-[14px] text-zx-muted leading-relaxed">Local Qwen 2.5 Coder 1.5B GGUF model via llama.cpp. Summarize documents and ask questions using local mode.</p>
-        </div>
-        <!-- Card 3 -->
-        <div class="bg-zx-card border border-white/[0.06] rounded-xl p-7 hover:border-white/[0.12] transition-all duration-300 group">
-          <div class="w-10 h-10 rounded-lg bg-blue-500/[0.08] flex items-center justify-center mb-5 group-hover:bg-blue-500/[0.14] transition-colors">
-            <span class="material-symbols-outlined text-blue-400 text-[20px]">desktop_windows</span>
-          </div>
-          <h3 class="text-[15px] font-medium text-white mb-2">Cross-Platform Desktop</h3>
-          <p class="text-[14px] text-zx-muted leading-relaxed">Desktop builds for Windows, macOS, and Linux with a responsive native app interface.</p>
-        </div>
-        <!-- Card 4 -->
-        <div class="bg-zx-card border border-white/[0.06] rounded-xl p-7 hover:border-white/[0.12] transition-all duration-300 group">
-          <div class="w-10 h-10 rounded-lg bg-amber-500/[0.08] flex items-center justify-center mb-5 group-hover:bg-amber-500/[0.14] transition-colors">
-            <span class="material-symbols-outlined text-amber-400 text-[20px]">bolt</span>
-          </div>
-          <h3 class="text-[15px] font-medium text-white mb-2">Vector Retrieval</h3>
-          <p class="text-[14px] text-zx-muted leading-relaxed">FAISS vector index with HNSW graph search to find related files by meaning.</p>
-        </div>
-        <!-- Card 5 -->
-        <div class="bg-zx-card border border-white/[0.06] rounded-xl p-7 hover:border-white/[0.12] transition-all duration-300 group">
-          <div class="w-10 h-10 rounded-lg bg-emerald-500/[0.08] flex items-center justify-center mb-5 group-hover:bg-emerald-500/[0.14] transition-colors">
-            <span class="material-symbols-outlined text-emerald-400 text-[20px]">shield</span>
-          </div>
-          <h3 class="text-[15px] font-medium text-white mb-2">Local AI mode</h3>
-          <p class="text-[14px] text-zx-muted leading-relaxed">Local search and local AI run on your computer. Optional internet features and account sign-in connect to online services.</p>
-        </div>
-        <!-- Card 6 -->
-        <div class="bg-zx-card border border-white/[0.06] rounded-xl p-7 hover:border-white/[0.12] transition-all duration-300 group">
-          <div class="w-10 h-10 rounded-lg bg-rose-500/[0.08] flex items-center justify-center mb-5 group-hover:bg-rose-500/[0.14] transition-colors">
-            <span class="material-symbols-outlined text-rose-400 text-[20px]">file_copy</span>
-          </div>
-          <h3 class="text-[15px] font-medium text-white mb-2">Documents, Code, and Media</h3>
-          <p class="text-[14px] text-zx-muted leading-relaxed">Supported documents and source files include PDF, DOCX, PPTX, XLSX, Python, JavaScript, JSON, and YAML.</p>
-        </div>
+      <div class="zx-faq zx-cp-faq">
+        <details><summary>Does this replace Windows Search, Spotlight or Linux file tools?</summary><p>NeuCockpit provides a separate semantic search interface for indexed folders. You can keep using your operating system's existing file tools.</p></details>
+        <details><summary>Can I search a PDF by a topic instead of its name?</summary><p>Yes, when the PDF contains readable text and its folder has finished indexing. Try a description of the passage or topic and check the original result. Scanned PDFs can need text extraction before their content is searchable.</p></details>
+        <details><summary>Are all my folders indexed automatically?</summary><p>Start by choosing the folders you want to search. A file outside the indexed scope will not be returned as though the app had read it. Check the indexing status when results are missing.</p></details>
+        <details><summary>Can I use it offline?</summary><p>Local search and local AI run on your computer once their required components are available. Downloads, sign-in and optional internet or cloud features require a connection.</p></details>
+        <details><summary>Are AI answers guaranteed to be correct?</summary><p>No. Retrieval and generated summaries can be incomplete or wrong. Open the source and verify important details before acting on them.</p></details>
       </div>
-    </div>
-  </section>
+      <p class="zx-mt"><a href="https://github.com/RAHUL-DevelopeRR/deepseekfs">Inspect the NeuCockpit source and documentation on GitHub</a> or <a href="https://zero-x.live/about">read about Zero-X</a>.</p>
+    </section>
 
-
-  <!-- ═══════════════════════════ DOWNLOADS ═══════════════════════════ -->
-  <section class="py-32 md:py-40 px-5 border-t border-white/[0.04] relative overflow-hidden" id="downloads">
-    <!-- Background glow -->
-    <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[600px] bg-zx-accent/[0.03] rounded-full blur-[150px] pointer-events-none"></div>
-
-    <div class="max-w-[1100px] mx-auto relative z-10">
-      <div class="text-center mb-16 reveal">
-        <p class="inline-flex items-center gap-2 text-zx-accent-h text-[13px] font-medium tracking-wide mb-6">2.0&ensp;Downloads</p>
-        <h2 class="text-[clamp(28px,4vw,40px)] font-medium tracking-[-0.02em] leading-[1.15] text-white mb-5 font-display">Download NeuCockpit v1.0</h2>
-        <p class="text-[16px] text-zx-muted max-w-lg mx-auto leading-relaxed">Choose your platform and CPU architecture to download the installer.</p>
+    <section class="zx-container zx-section" aria-labelledby="cta-title">
+      <div class="zx-cp-cta">
+        <h2 id="cta-title">Download NeuCockpit</h2>
+        <p>Installers for Windows, macOS, and Linux.</p>
+        <p class="zx-row"><a class="zx-btn zx-btn--primary" href="#downloads"><svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#download"/></svg>Get NeuCockpit</a><a class="zx-btn" href="https://zero-x.live/find-files-by-content">Guide: find a file when you forgot its name</a></p>
+        <p class="zx-help"><a href="https://zero-x.live/wheres-that-file">NeuCockpit short film</a> · <a href="https://github.com/RAHUL-DevelopeRR/deepseekfs">NeuCockpit source code</a> · <a href="https://www.instagram.com/zerox.corporation/">Zero-X on Instagram</a> · <a href="mailto:support@zero-x.live">support@zero-x.live</a></p>
       </div>
-
-      <!-- 3-column OS grid -->
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-6 reveal">
-
-        <!-- macOS -->
-        <div class="glass-card rounded-2xl p-8 flex flex-col items-center text-center">
-          <!-- Platform Logo: Modern Command Symbol -->
-          <div class="w-16 h-16 rounded-2xl bg-white/[0.04] flex items-center justify-center mb-6">
-            <svg class="w-9 h-9 text-zx-muted" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M6 4a2 2 0 0 0-2 2v1h5V6a2 2 0 0 0-2-2H6z"/>
-              <path d="M18 4a2 2 0 0 1 2 2v1h-5V6a2 2 0 0 1 2-2h1z"/>
-              <path d="M4 7v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7H4z"/>
-              <path d="M9 20v-6a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v6"/>
-              <line x1="4" y1="12" x2="20" y2="12" opacity="0.3"/>
-            </svg>
-          </div>
-          <h3 class="text-[18px] font-semibold text-white mb-1 font-display">macOS</h3>
-          <p class="text-[12px] text-zx-faint mb-6">Apple Silicon · Intel</p>
-
-          <div class="flex flex-col gap-3 w-full mb-6">
-            <a
-              href="https://github.com/RAHUL-DevelopeRR/deepseekfs/releases/latest/download/NeuCockpit-v1.0-macos-arm64.dmg"
-              id="download-macos-arm64-btn"
-              class="dl-btn dl-btn-active"
-              target="_blank"
-              rel="noopener"
-            >
-              <span class="material-symbols-outlined text-[16px]">download</span>Apple Silicon
-            </a>
-            <a
-              href="https://github.com/RAHUL-DevelopeRR/deepseekfs/releases/latest/download/NeuCockpit-v1.0-macos-intel.dmg"
-              id="download-macos-x64-btn"
-              class="dl-btn dl-btn-active"
-              target="_blank"
-              rel="noopener"
-            >
-              <span class="material-symbols-outlined text-[16px]">download</span>Intel
-            </a>
-          </div>
-
-          <div class="flex flex-col gap-1.5">
-            <p class="text-[12px] text-zx-muted">macOS 12 Monterey or later</p>
-            <p class="text-[12px] text-zx-faint">.dmg installer</p>
-          </div>
-        </div>
-
-        <!-- Windows (FEATURED) -->
-        <div class="glass-card rounded-2xl p-8 flex flex-col items-center text-center featured-glow relative">
-          <!-- Recommended badge -->
-          <div class="absolute -top-3 left-1/2 -translate-x-1/2 bg-zx-accent text-black text-[10px] font-bold px-3 py-1 rounded-full uppercase tracking-wider whitespace-nowrap">Available Now</div>
-
-          <!-- Platform Logo -->
-          <div class="w-16 h-16 rounded-2xl bg-zx-accent/[0.08] flex items-center justify-center mb-6">
-            <svg class="w-8 h-8 text-zx-accent" viewBox="0 0 24 24" fill="currentColor"><path d="M3 12V6.75l6-1.32v6.48L3 12zm17-9v8.75l-10 .15V5.21L20 3zM3 13l6 .09v6.81l-6-1.15V13zm17 .25V22l-10-1.91V13.1l10 .15z"/></svg>
-          </div>
-          <h3 class="text-[18px] font-semibold text-white mb-1 font-display">Windows</h3>
-          <p class="text-[12px] text-zx-accent/60 mb-5">x64 · ARM64</p>
-
-          <div class="flex flex-col gap-3 w-full mb-6">
-            <a
-              href="https://github.com/RAHUL-DevelopeRR/deepseekfs/releases/latest/download/NeuCockpitSetup_v1.0_windows_x64.exe"
-              id="download-windows-x64-btn"
-              class="dl-btn dl-btn-active"
-              target="_blank"
-              rel="noopener"
-            >
-              <span class="material-symbols-outlined text-[16px]">download</span>x64
-            </a>
-            <a
-              href="https://github.com/RAHUL-DevelopeRR/deepseekfs/releases/latest/download/NeuCockpitSetup_v1.0_windows_arm64.exe"
-              id="download-windows-arm64-btn"
-              class="dl-btn dl-btn-active"
-              target="_blank"
-              rel="noopener"
-            >
-              <span class="material-symbols-outlined text-[16px]">download</span>ARM64
-            </a>
-          </div>
-
-          <div class="flex flex-col gap-1.5">
-            <p class="text-[12px] text-zx-muted">Windows 10 (64-bit) or later</p>
-            <p class="text-[12px] text-zx-faint">.exe installer</p>
-          </div>
-        </div>
-
-        <!-- Linux -->
-        <div class="glass-card rounded-2xl p-8 flex flex-col items-center text-center">
-          <!-- Platform Logo: Modern Terminal/Console -->
-          <div class="w-16 h-16 rounded-2xl bg-white/[0.04] flex items-center justify-center mb-6">
-            <svg class="w-9 h-9 text-zx-muted" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="3" y="4" width="18" height="16" rx="2"/>
-              <polyline points="7 9 10 12 7 15" opacity="0.9"/>
-              <line x1="13" y1="15" x2="17" y2="15" opacity="0.5"/>
-            </svg>
-          </div>
-          <h3 class="text-[18px] font-semibold text-white mb-1 font-display">Linux</h3>
-          <p class="text-[12px] text-zx-faint mb-6">x64 · ARM64</p>
-
-          <div class="flex flex-col gap-3 w-full mb-6">
-            <a
-              href="https://github.com/RAHUL-DevelopeRR/deepseekfs/releases/latest/download/NeuCockpit-v1.0-linux-x64.run"
-              id="download-linux-x64-btn"
-              class="dl-btn dl-btn-active"
-              target="_blank"
-              rel="noopener"
-            >
-              <span class="material-symbols-outlined text-[16px]">download</span>x64
-            </a>
-            <a
-              href="https://github.com/RAHUL-DevelopeRR/deepseekfs/releases/latest/download/NeuCockpit-v1.0-linux-arm64.run"
-              id="download-linux-arm64-btn"
-              class="dl-btn dl-btn-active"
-              target="_blank"
-              rel="noopener"
-            >
-              <span class="material-symbols-outlined text-[16px]">download</span>ARM64
-            </a>
-          </div>
-
-          <div class="flex flex-col gap-1.5">
-            <p class="text-[12px] text-zx-muted">Ubuntu 20.04+ / Debian 11+</p>
-            <p class="text-[12px] text-zx-faint">.run installer</p>
-          </div>
-        </div>
-
-      </div>
-
-      <!-- Below-cards note -->
-      <p class="text-center text-[13px] text-zx-faint mt-10 reveal">
-        NeuCockpit includes bundled local AI components. Each button downloads the installer for that platform and CPU architecture.
-      </p>
-    </div>
-  </section>
-
-
-  <!-- ═══════════════════════════ ARCHITECTURE ═══════════════════════════ -->
-  <section class="py-32 md:py-40 px-5 border-t border-white/[0.04]" id="architecture">
-    <div class="max-w-[900px] mx-auto reveal">
-      <p class="inline-flex items-center gap-2 text-zx-accent-h text-[13px] font-medium tracking-wide mb-6">3.0&ensp;Under the Hood</p>
-      <h2 class="text-[clamp(28px,4vw,40px)] font-medium tracking-[-0.02em] leading-[1.15] text-white mb-5 font-display">Layered architecture</h2>
-      <p class="text-[16px] text-zx-muted max-w-lg leading-relaxed mb-12">The desktop interface connects to local indexing, retrieval, and model services.</p>
-
-      <div class="flex flex-col gap-3">
-        <!-- UI Layer -->
-        <div class="flex items-center gap-4 bg-zx-card border border-white/[0.06] rounded-xl p-5 hover:border-white/[0.12] transition-colors group">
-          <div class="w-2 h-10 rounded-full bg-zx-accent/40 group-hover:bg-zx-accent transition-colors"></div>
-          <div class="flex-1">
-            <div class="text-[14px] font-medium text-white">UI Layer</div>
-            <div class="text-[13px] text-zx-muted">PyQt6 Spotlight panel, MemoryOS chat, and desktop shortcuts</div>
-          </div>
-          <div class="hidden sm:flex gap-1.5">
-            <span class="tech-tag">PyQt6</span>
-            <span class="tech-tag">DWM</span>
-            <span class="tech-tag">Spotlight</span>
-          </div>
-        </div>
-        <!-- CLI Layer -->
-        <div class="flex items-center gap-4 bg-zx-card border border-white/[0.06] rounded-xl p-5 hover:border-white/[0.12] transition-colors group">
-          <div class="w-2 h-10 rounded-full bg-zx-purple/40 group-hover:bg-zx-purple transition-colors"></div>
-          <div class="flex-1">
-            <div class="text-[14px] font-medium text-white">CLI Surface</div>
-            <div class="text-[13px] text-zx-muted">neufs headless commands: search, chat, index, summarize, status</div>
-          </div>
-          <div class="hidden sm:flex gap-1.5">
-            <span class="tech-tag">neufs</span>
-            <span class="tech-tag">Typer</span>
-          </div>
-        </div>
-        <!-- Service Layer -->
-        <div class="flex items-center gap-4 bg-zx-card border border-white/[0.06] rounded-xl p-5 hover:border-white/[0.12] transition-colors group">
-          <div class="w-2 h-10 rounded-full bg-cyan-500/40 group-hover:bg-cyan-500 transition-colors"></div>
-          <div class="flex-1">
-            <div class="text-[14px] font-medium text-white">Desktop Services</div>
-            <div class="text-[13px] text-zx-muted">Intent routing, MemoryOS, model management, startup indexer, internet mode</div>
-          </div>
-          <div class="hidden sm:flex gap-1.5">
-            <span class="tech-tag">MemoryOS</span>
-            <span class="tech-tag">Intent</span>
-            <span class="tech-tag">Watchdog</span>
-          </div>
-        </div>
-        <!-- Core Engine -->
-        <div class="flex items-center gap-4 bg-zx-card border border-white/[0.06] rounded-xl p-5 hover:border-white/[0.12] transition-colors group">
-          <div class="w-2 h-10 rounded-full bg-emerald-500/40 group-hover:bg-emerald-500 transition-colors"></div>
-          <div class="flex-1">
-            <div class="text-[14px] font-medium text-white">Local Engines</div>
-            <div class="text-[13px] text-zx-muted">BGE Small ONNX embeddings, FAISS/HNSW index, llama.cpp Qwen 2.5 Coder 1.5B GGUF</div>
-          </div>
-          <div class="hidden sm:flex gap-1.5">
-            <span class="tech-tag">BGE</span>
-            <span class="tech-tag">FAISS</span>
-            <span class="tech-tag">Qwen</span>
-          </div>
-        </div>
-        <!-- Storage -->
-        <div class="flex items-center gap-4 bg-zx-card border border-white/[0.06] rounded-xl p-5 hover:border-white/[0.12] transition-colors group">
-          <div class="w-2 h-10 rounded-full bg-amber-500/40 group-hover:bg-amber-500 transition-colors"></div>
-          <div class="flex-1">
-            <div class="text-[14px] font-medium text-white">Storage</div>
-            <div class="text-[13px] text-zx-muted">SQLite metadata DB, FAISS vector index, and platform-specific model cache</div>
-          </div>
-          <div class="hidden sm:flex gap-1.5">
-            <span class="tech-tag">SQLite</span>
-            <span class="tech-tag">NumPy</span>
-          </div>
-        </div>
-        <!-- Ingestion -->
-        <div class="flex items-center gap-4 bg-zx-card border border-white/[0.06] rounded-xl p-5 hover:border-white/[0.12] transition-colors group">
-          <div class="w-2 h-10 rounded-full bg-rose-500/40 group-hover:bg-rose-500 transition-colors"></div>
-          <div class="flex-1">
-            <div class="text-[14px] font-medium text-white">Ingestion</div>
-            <div class="text-[13px] text-zx-muted">Document parsers: PyMuPDF, python-docx, python-pptx, openpyxl, pdfminer, lxml</div>
-          </div>
-          <div class="hidden sm:flex gap-1.5">
-            <span class="tech-tag">PyMuPDF</span>
-            <span class="tech-tag">pptx</span>
-            <span class="tech-tag">docx</span>
-          </div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-
-  <section class="product-notes" id="setup" aria-labelledby="setup-title">
-    <h2 id="setup-title">Set up local document search</h2>
-    <p>NeuCockpit is for people who need to revisit documents, specifications, project notes or source files and remember their contents better than their filenames. It searches folders you choose to index.</p>
-    <ol>
-      <li><a href="#downloads">Download the installer for your operating system and CPU architecture</a>. Apple Silicon and ARM64 builds differ from Intel and x64 builds.</li>
-      <li>Install and launch NeuCockpit. Let model setup finish before using local AI; initial downloads and optional account features can require internet access.</li>
-      <li>Choose a folder containing files you are allowed to process and let indexing complete. Start with a small folder to check the results.</li>
-      <li>Describe a document's contents, inspect the returned path and open the original file to verify the match. AI summaries need the same source check.</li>
-    </ol>
-    <p><a href="https://zero-x.live/find-files-by-content">Read the guide to finding a file when you forgot its name</a>. For setup help, email <a href="mailto:support@zero-x.live?subject=NeuCockpit%20setup%20help">Zero-X support</a> with your operating system and the step where you got stuck. Do not send private documents.</p>
-    <h2>Indexing and document support</h2>
-    <p>The indexing pipeline extracts readable content from supported files, creates local embeddings and stores a searchable index. Supported parsers include PDF, DOCX, PPTX, XLSX and common text and source-code files. A scanned image-only PDF, encrypted document or unsupported format may not produce searchable text. Media file views do not mean every image, audio clip or video can be understood by content.</p>
-    <p>New or edited files need the index to refresh before their latest contents can appear. Search quality depends on the text extracted, the query and the contents of your selected folders. Semantic search can return a related document that is not the one you intended.</p>
-    <h2>Local search and optional online features</h2>
-    <p>Local search uses BGE embeddings with a FAISS index. Local AI uses Qwen through llama.cpp, and metadata is kept in SQLite on your computer. Optional cloud or internet features have a separate data flow and may send submitted content to online providers. Choose the mode that fits your documents. <a href="https://zero-x.live/privacy">Read the privacy policy</a>.</p>
-    <h2>Questions before installing</h2>
-    <details><summary>Does this replace Windows Search, Spotlight or Linux file tools?</summary><p>NeuCockpit provides a separate semantic search interface for indexed folders. You can keep using your operating system's existing file tools.</p></details>
-    <details><summary>Can I search a PDF by a topic instead of its name?</summary><p>Yes, when the PDF contains readable text and its folder has finished indexing. Try a description of the passage or topic and check the original result. Scanned PDFs can need text extraction before their content is searchable.</p></details>
-    <details><summary>Are all my folders indexed automatically?</summary><p>Start by choosing the folders you want to search. A file outside the indexed scope will not be returned as though the app had read it. Check the indexing status when results are missing.</p></details>
-    <details><summary>Can I use it offline?</summary><p>Local search and local AI run on your computer once their required components are available. Downloads, sign-in and optional internet or cloud features require a connection.</p></details>
-    <details><summary>Are AI answers guaranteed to be correct?</summary><p>No. Retrieval and generated summaries can be incomplete or wrong. Open the source and verify important details before acting on them.</p></details>
-    <p><a href="https://github.com/RAHUL-DevelopeRR/deepseekfs">Inspect the NeuCockpit source and documentation on GitHub</a> or <a href="https://zero-x.live/about">read about Zero-X</a>.</p>
-  </section>
-
-  <!-- ═══════════════════════════ CTA ═══════════════════════════ -->
-  <section class="relative py-40 md:py-48 px-5 border-t border-white/[0.04] text-center overflow-hidden">
-    <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[700px] h-[700px] bg-zx-accent/[0.05] rounded-full blur-[140px] pointer-events-none"></div>
-    <div class="absolute top-[30%] right-[20%] w-[400px] h-[400px] bg-zx-purple/[0.04] rounded-full blur-[120px] pointer-events-none"></div>
-
-    <div class="relative z-10 reveal">
-      <h2 class="text-[clamp(28px,5vw,52px)] font-medium tracking-[-0.03em] leading-[1.1] text-white mb-3 font-display">Intelligence at your fingertips.</h2>
-      <h2 class="text-[clamp(28px,5vw,52px)] font-medium tracking-[-0.03em] leading-[1.1] text-zx-muted mb-10 font-display">Download today.</h2>
-
-      <a href="#downloads" class="inline-flex items-center gap-2 bg-zx-accent text-black px-8 py-4 rounded-full text-[16px] font-semibold hover:bg-zx-accent-h transition-all hover:shadow-lg hover:shadow-zx-accent/20">
-        <span class="material-symbols-outlined text-[20px]">download</span>Get NeuCockpit
-      </a>
-
-      <p class="text-[13px] text-zx-faint mt-6">Installers for Windows, macOS, and Linux.</p>
-    </div>
-  </section>
-
-
-  <!-- ═══════════════════════════ FOOTER ═══════════════════════════ -->
+    </section>
   </main>
-<footer class="border-t border-white/[0.04] bg-zx-bg pt-16 pb-10 px-5">
-    <div class="max-w-[1100px] mx-auto grid grid-cols-2 md:grid-cols-5 gap-10">
-      <div class="col-span-2">
-        <a href="https://zero-x.live/" class="block mb-4"><img width="255" height="112" src="./Assets/zerox-wordmark.webp" alt="Zero-X" class="h-5" style="mix-blend-mode:lighten;width:auto"/></a>
-        <p class="text-[13px] text-zx-faint leading-relaxed max-w-[260px]">Engineering products from zero to extraordinary.</p>
+  <footer class="zx-footer">
+    <div class="zx-container zx-footer__grid">
+      <div>
+        <a class="zx-brand" href="/"><img src="/Assets/zerox-mark.svg" width="28" height="28" alt="">Zero-X</a>
+        <p>Neuron CLI and NeuCockpit. Built in Tamil Nadu, India.</p>
       </div>
-      <div class="flex flex-col gap-2.5">
-        <span class="text-[13px] font-medium text-white mb-1">Product</span>
-        <a href="https://zero-x.live/wheres-that-file" class="text-[13px] text-zx-muted hover:text-white transition-colors">NeuCockpit short film</a>
-        <a href="#demo" class="text-[13px] text-zx-muted hover:text-white transition-colors">Demo</a>
-        <a href="#features" class="text-[13px] text-zx-muted hover:text-white transition-colors">Features</a>
-        <a href="#downloads" class="text-[13px] text-zx-muted hover:text-white transition-colors">Downloads</a>
-        <a href="#architecture" class="text-[13px] text-zx-muted hover:text-white transition-colors">Architecture</a>
-      </div>
-      <div class="flex flex-col gap-2.5">
-        <span class="text-[13px] font-medium text-white mb-1">Company</span>
-        <a href="https://zero-x.live/" class="text-[13px] text-zx-muted hover:text-white transition-colors">Homepage</a>
-        <a href="https://zero-x.live/about" class="text-[13px] text-zx-muted hover:text-white transition-colors">About</a>
-        <a href="https://zero-x.live/contact" class="text-[13px] text-zx-muted hover:text-white transition-colors">Contact</a>
-        <a href="https://zero-x.live/privacy" class="text-[13px] text-zx-muted hover:text-white transition-colors">Privacy Policy</a>
-        <a href="https://zero-x.live/terms" class="text-[13px] text-zx-muted hover:text-white transition-colors">Terms of Service</a>
-      </div>
-      <div class="flex flex-col gap-2.5">
-        <span class="text-[13px] font-medium text-white mb-1">Connect</span>
-        <a href="mailto:support@zero-x.live" class="text-[13px] text-zx-muted hover:text-white transition-colors">Email</a>
-        <a href="https://github.com/RAHUL-DevelopeRR/deepseekfs" class="text-[13px] text-zx-muted hover:text-white transition-colors">NeuCockpit source code</a>
-        <a href="https://www.instagram.com/zerox.corporation/" class="text-[13px] text-zx-muted hover:text-white transition-colors">Zero-X on Instagram</a>
-      </div>
+      <nav aria-label="Product">
+        <h2>Product</h2>
+        <a href="/neuron-cli">Neuron CLI</a>
+        <a href="/download">Download</a>
+        <a href="/changelog">Changelog</a>
+        <a href="/pricing">Pricing</a>
+        <a href="/docs">Docs</a>
+        <a href="/ai-coding-agent">AI coding agent guide</a>
+        <a href="/free-ai-coding-agent">Free AI coding agent</a>
+        <a href="/claude-code-alternative">Neuron compared</a>
+        <a href="https://dashboard.zero-x.live/">Dashboard</a>
+        <a href="https://github.com/RAHUL-DevelopeRR/neuron-v2">GitHub <svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#arrow-up-right"/></svg></a>
+      </nav>
+      <nav aria-label="Company">
+        <h2>Company</h2>
+        <a href="/about">About</a>
+        <a href="/contact">Contact</a>
+        <a href="/docs/trust">Security and trust</a>
+        <a href="/neucockpit" aria-current="page">NeuCockpit</a>
+      </nav>
+      <nav aria-label="Legal">
+        <h2>Legal</h2>
+        <a href="/terms">Terms of Service</a>
+        <a href="/privacy">Privacy Policy</a>
+        <a href="/refund">Cancellation and refunds</a>
+        <a href="/shipping">Shipping and delivery</a>
+      </nav>
     </div>
-    <div class="max-w-[1100px] mx-auto mt-14 pt-6 border-t border-white/[0.04]">
-      <p class="text-[12px] text-zx-faint">© 2026 Zero-X · <a href="mailto:support@zero-x.live" class="text-zx-muted hover:text-white transition-colors">support@zero-x.live</a></p>
-    </div>
-  <p class="max-w-[1100px] mx-auto mt-6 text-[14px] text-zx-muted"><a href="https://zero-x.live/find-files-by-content" class="text-zx-accent hover:text-white underline">Guide: find a file when you forgot its name</a></p>
-</footer>
-
-
-  <!-- ═══════════════════════════ JAVASCRIPT ═══════════════════════════ -->
-  <script>
-
-    /* ═══ Reveal Animations (IntersectionObserver) ═══ */
-    const obs=new IntersectionObserver(entries=>{
-      entries.forEach(el=>{
-        if(el.isIntersecting){
-          el.target.classList.add('visible');
-          obs.unobserve(el.target);
-        }
-      });
-    },{threshold:.08,rootMargin:'0px 0px -60px 0px'});
-    document.querySelectorAll('.reveal').forEach(el=>obs.observe(el));
-
-    /* ═══ Smooth Scroll for Anchor Links ═══ */
-    document.querySelectorAll('a[href^="#"]').forEach(a=>{
-      a.addEventListener('click',e=>{
-        const id=a.getAttribute('href');
-        if(id==='#')return;
-        const t=document.querySelector(id);
-        if(t){
-          e.preventDefault();
-          t.scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'});
-        }
-      });
-    });
-
-    /* ═══ Nav background opacity on scroll ═══ */
-    const header=document.querySelector('header');
-    window.addEventListener('scroll',()=>{
-      if(window.scrollY>80){
-        header.style.borderBottomColor='rgba(255,255,255,0.08)';
-      }else{
-        header.style.borderBottomColor='rgba(255,255,255,0.06)';
-      }
-    },{passive:true});
-
-    /* ═══ Supabase Authentication ═══ */
-    window.addEventListener('load', async () => {
-      const signinBtn = document.getElementById('signin-btn');
-      const userButtonDiv = document.getElementById('user-button');
-      const navLinks = document.querySelector('header nav');
-
-      const isLocal = ['localhost', '127.0.0.1'].includes(window.location.hostname);
-      const companyUrl = isLocal ? './index.html' : 'https://zero-x.live';
-      const dashboardUrl = isLocal ? './dashboard.html' : 'https://dashboard.zero-x.live';
-
-      const navCompanyLink = document.getElementById('nav-company-link');
-      if (navCompanyLink) navCompanyLink.href = companyUrl;
-      const navLogoLink = document.getElementById('nav-logo-link');
-      if (navLogoLink) navLogoLink.href = companyUrl;
-
-      if (signinBtn) {
-        signinBtn.addEventListener('click', async (e) => {
-          e.preventDefault();
-          signinBtn.textContent = 'Loading...';
-          signinBtn.style.pointerEvents = 'none';
-          try {
-            await window.ZeroXAuth.openAuthModal({
-              title: 'Sign in',
-              subtitle: 'to continue to NeuCockpit',
-            });
-          } catch (err) {
-            console.error('Supabase sign-in error:', err);
-            alert(err.message || 'Authentication service could not load. Please refresh and try again.');
-          } finally {
-            signinBtn.textContent = 'Sign In';
-            signinBtn.style.pointerEvents = '';
-          }
-        });
-      }
-
-      try {
-        await window.ZeroXAuth.init();
-        const user = await window.ZeroXAuth.getUser();
-        const profile = await window.ZeroXAuth.getProfile(user);
-
-        if (profile) {
-          if (signinBtn) signinBtn.style.display = 'none';
-
-          if (navLinks && !document.getElementById('nav-dashboard')) {
-            const dashboardLink = document.createElement('a');
-            dashboardLink.id = 'nav-dashboard';
-            dashboardLink.href = dashboardUrl;
-            dashboardLink.className = 'text-[14px] text-zx-muted hover:text-white transition-colors';
-            dashboardLink.innerText = 'Dashboard';
-            navLinks.appendChild(dashboardLink);
-          }
-
-          if (userButtonDiv) {
-            window.ZeroXAuth.mountUserButton(userButtonDiv, {
-              afterSignOutUrl: window.location.origin,
-            });
-          }
-        }
-      } catch (err) {
-        console.error('Supabase auth load error:', err);
-      }
-    });
-  </script>
-
+    <p class="zx-container zx-footer__legal">© 2026 Zero-X · <a href="mailto:support@zero-x.live">support@zero-x.live</a></p>
+  </footer>
 </body>
 </html>

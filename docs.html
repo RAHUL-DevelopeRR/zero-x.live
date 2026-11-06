@@ -7,7 +7,8 @@
   <meta name="description" content="Neuron CLI documentation: quickstart, commands, configuration, the OpenAI-compatible Zero-X API (/v1/models, /v1/chat/completions), error codes, limits, API keys and billing.">
   <meta name="robots" content="index,follow,max-image-preview:large">
   <link rel="canonical" href="https://zero-x.live/docs">
-  <meta name="theme-color" content="#0A0A0C">
+  <meta name="theme-color" content="#FFFFFF" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#141413" media="(prefers-color-scheme: dark)">
   <link rel="icon" type="image/png" sizes="32x32" href="/Assets/zerox-favicon-32.png">
   <link rel="apple-touch-icon" sizes="180x180" href="/Assets/zerox-apple-touch-icon.png">
   <meta property="og:type" content="article">
@@ -22,8 +23,10 @@
   <meta name="twitter:description" content="Quickstart, commands, configuration, API reference, error codes, limits and billing.">
   <meta name="twitter:image" content="https://zero-x.live/Assets/zerox-share.png">
   <meta name="twitter:image:alt" content="Zero-X logo">
-  <link rel="stylesheet" href="/site-fonts.css">
+  <link rel="preload" href="/fonts/aspekta-400.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/fonts/aspekta-500.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/zx-tokens.css">
+  <link rel="stylesheet" href="/content.css">
   <script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"TechArticle","@id":"https://zero-x.live/docs#article","headline":"Neuron CLI and Zero-X API documentation","url":"https://zero-x.live/docs","about":{"@id":"https://zero-x.live/neuron-cli#software"},"publisher":{"@id":"https://zero-x.live/#organization"},"inLanguage":"en"},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Zero-X","item":"https://zero-x.live/"},{"@type":"ListItem","position":2,"name":"Docs","item":"https://zero-x.live/docs"}]}]}</script>
   <script type="module" src="/site-nav.js"></script>
 </head>
@@ -32,12 +35,12 @@
   <header class="zx-header">
     <div class="zx-container zx-header__inner">
       <a class="zx-brand" href="/"><img src="/Assets/zerox-mark.svg" width="28" height="28" alt="">Zero-X</a>
-      <button class="zx-nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" hidden><span class="zx-nav-toggle__bars" aria-hidden="true"></span>Menu</button>
+      <button class="zx-nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" hidden><svg class="zx-icon zx-icon--menu" aria-hidden="true"><use href="/icons.svg#menu"/></svg><svg class="zx-icon zx-icon--close" aria-hidden="true"><use href="/icons.svg#x"/></svg>Menu</button>
       <nav class="zx-nav" id="site-nav" aria-label="Main">
         <a href="/neuron-cli">Neuron CLI</a>
         <a href="/pricing">Pricing</a>
         <a href="/docs" aria-current="page">Docs</a>
-        <a class="zx-btn zx-btn--sm" href="https://dashboard.zero-x.live/">Dashboard</a>
+        <a class="zx-btn zx-btn--sm" href="https://dashboard.zero-x.live/"><svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#user"/></svg>Dashboard</a>
       </nav>
     </div>
   </header>
@@ -52,6 +55,7 @@
     </div>
     <div class="zx-docs">
       <nav class="zx-toc" aria-label="On this page">
+        <p class="zx-label">On this page</p>
         <ol>
           <li><a href="#quickstart">Quickstart</a></li>
           <li><a href="#cli">CLI commands</a></li>
@@ -69,7 +73,17 @@
         <section id="quickstart" aria-labelledby="quickstart-title">
           <h2 id="quickstart-title">Quickstart</h2>
           <ol>
-            <li>Install with npm in any terminal (needs Node.js 22.14 or later): <code>npm install -g @zero-x.live/neuron</code>. Or with pip (Python 3.8 or later): <code>python -m pip install --pre neuroncli</code>; keep <code>--pre</code> while Neuron 7 is a pre-release, or pip installs the old, unsupported 6.2.4. Without Node.js or Python, use an install script: in a macOS or Linux terminal, <code>curl -fsSL https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.4/install.sh | sh -s -- --version 7.0.0-alpha.4</code>; in Windows PowerShell, <code>&amp; ([scriptblock]::Create((irm https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.4/install.ps1))) -Version 7.0.0-alpha.4 -AddToPath</code>; in Command Prompt (cmd.exe), <code>powershell -NoProfile -ExecutionPolicy Bypass -Command "&amp; ([scriptblock]::Create((irm https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.4/install.ps1))) -Version 7.0.0-alpha.4 -AddToPath"</code>. On Windows, <code>-AddToPath</code> puts Neuron on your user PATH: open a new terminal before you run it. Every install option is on <a href="/download">the download page</a>.</li>
+            <li>Install Neuron. Choose one option; every option is on <a href="/download">the download page</a>.
+              <ul class="zx-opts">
+                <li><strong>npm</strong>, in any terminal (needs Node.js 22.14 or later): <code>npm install -g @zero-x.live/neuron</code></li>
+                <li><strong>pip</strong> (Python 3.8 or later): <code>python -m pip install --pre neuroncli</code>. Keep <code>--pre</code> while Neuron 7 is a pre-release, or pip installs the old, unsupported 6.2.4.</li>
+                <li><strong>Install script</strong>, without Node.js or Python:
+                  <div class="zx-code zx-code--wrap"><span class="zx-code__label">macOS or Linux terminal</span><pre><code>curl -fsSL https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.4/install.sh | sh -s -- --version 7.0.0-alpha.4</code></pre></div>
+                  <div class="zx-code zx-code--wrap"><span class="zx-code__label">Windows PowerShell</span><pre><code>&amp; ([scriptblock]::Create((irm https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.4/install.ps1))) -Version 7.0.0-alpha.4 -AddToPath</code></pre></div>
+                  <div class="zx-code zx-code--wrap"><span class="zx-code__label">Command Prompt (cmd.exe)</span><pre><code>powershell -NoProfile -ExecutionPolicy Bypass -Command "&amp; ([scriptblock]::Create((irm https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.4/install.ps1))) -Version 7.0.0-alpha.4 -AddToPath"</code></pre></div>
+                  On Windows, <code>-AddToPath</code> puts Neuron on your user PATH: open a new terminal before you run it.</li>
+              </ul>
+            </li>
             <li>Sign in: <code>neuron login</code> prints <code>https://neuron.zero-x.live/device</code> and a short code. Open it in any browser, sign in, check the code and choose <strong>Approve</strong>. The code expires after 10 minutes.</li>
             <li>Run <code>neuron</code> inside a project; on a terminal it opens the full-screen UI. The UI cannot trust a folder yet: run <code>neuron --no-tui</code> there once and press 1, or add the folder to <code>trustedRoots</code> in <code>~/.neuron/settings.json</code>. Until then the folder's own settings, hooks and MCP servers are ignored. <a href="/docs/trust">Security and trust</a> explains what trusting a folder allows.</li>
           </ol>
@@ -332,23 +346,27 @@ neuron</code></pre></div>
   <footer class="zx-footer">
     <div class="zx-container zx-footer__grid">
       <div>
-        <a class="zx-brand" href="/">Zero-X</a>
+        <a class="zx-brand" href="/"><img src="/Assets/zerox-mark.svg" width="28" height="28" alt="">Zero-X</a>
         <p>Neuron CLI and NeuCockpit. Built in Tamil Nadu, India.</p>
       </div>
       <nav aria-label="Product">
         <h2>Product</h2>
         <a href="/neuron-cli">Neuron CLI</a>
+        <a href="/download">Download</a>
+        <a href="/changelog">Changelog</a>
         <a href="/pricing">Pricing</a>
         <a href="/docs">Docs</a>
         <a href="/ai-coding-agent">AI coding agent guide</a>
         <a href="/free-ai-coding-agent">Free AI coding agent</a>
         <a href="/claude-code-alternative">Neuron compared</a>
         <a href="https://dashboard.zero-x.live/">Dashboard</a>
+        <a href="https://github.com/RAHUL-DevelopeRR/neuron-v2">GitHub <svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#arrow-up-right"/></svg></a>
       </nav>
       <nav aria-label="Company">
         <h2>Company</h2>
         <a href="/about">About</a>
         <a href="/contact">Contact</a>
+        <a href="/docs/trust">Security and trust</a>
         <a href="https://zero-x.live/neucockpit">NeuCockpit</a>
       </nav>
       <nav aria-label="Legal">

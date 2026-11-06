@@ -7,7 +7,8 @@
   <meta name="description" content="An AI coding agent reads your repo, plans a change, edits files and runs your tests. How the loop, permissions and models work, and how to try Neuron free.">
   <meta name="robots" content="index,follow,max-image-preview:large">
   <link rel="canonical" href="https://zero-x.live/ai-coding-agent">
-  <meta name="theme-color" content="#0A0A0C">
+  <meta name="theme-color" content="#FFFFFF" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#141413" media="(prefers-color-scheme: dark)">
   <link rel="icon" type="image/png" sizes="32x32" href="/Assets/zerox-favicon-32.png">
   <link rel="apple-touch-icon" sizes="180x180" href="/Assets/zerox-apple-touch-icon.png">
   <meta property="og:type" content="article">
@@ -22,8 +23,10 @@
   <meta name="twitter:description" content="How a coding agent reads, edits and tests your code, and how to try one in your terminal with Neuron by Zero-X.">
   <meta name="twitter:image" content="https://zero-x.live/Assets/zerox-share.png">
   <meta name="twitter:image:alt" content="Zero-X logo">
-  <link rel="stylesheet" href="/site-fonts.css">
+  <link rel="preload" href="/fonts/aspekta-400.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/fonts/aspekta-500.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/zx-tokens.css">
+  <link rel="stylesheet" href="/content.css">
   <script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"TechArticle","@id":"https://zero-x.live/ai-coding-agent#article","headline":"What is an AI coding agent?","description":"How an AI coding agent reads, edits and tests code, what it should be allowed to do, which models it uses and how to try Neuron in your terminal.","datePublished":"2026-10-24","dateModified":"2026-10-24","author":{"@id":"https://zero-x.live/#organization"},"publisher":{"@id":"https://zero-x.live/#organization"},"mainEntityOfPage":"https://zero-x.live/ai-coding-agent","isPartOf":{"@id":"https://zero-x.live/#website"},"about":[{"@type":"Thing","name":"AI coding agent"},{"@id":"https://zero-x.live/#neuron"}],"image":"https://zero-x.live/Assets/zerox-share.png"},{"@type":"FAQPage","@id":"https://zero-x.live/ai-coding-agent#faq","mainEntity":[{"@type":"Question","name":"Is a coding agent the same as an AI agent?","acceptedAnswer":{"@type":"Answer","text":"A coding agent is one kind of AI agent. An AI agent is any program where a model chooses actions and uses tools toward a goal. A coding agent's tools are for software work: reading and editing files, searching code and running commands."}},{"@type":"Question","name":"Is Neuron free?","acceptedAnswer":{"@type":"Answer","text":"Neuron is open source under the MIT licence. The Zero-X Free plan gives you hosted models with daily limits at no cost, or you can use your own API key. Pro and Max raise the limits."}},{"@type":"Question","name":"Does Neuron work on Windows?","acceptedAnswer":{"@type":"Answer","text":"Yes. A Windows x64 build installs with PowerShell, and Neuron can run PowerShell commands as well as shell commands. Windows on Arm runs the x64 build under emulation."}},{"@type":"Question","name":"Can I run a coding agent in CI?","acceptedAnswer":{"@type":"Answer","text":"Yes. Create an API key in the Zero-X dashboard, store it as a CI secret in NEURON_TOKEN and run neuron -p with your task. Never commit the key."}}]},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Zero-X","item":"https://zero-x.live/"},{"@type":"ListItem","position":2,"name":"AI coding agent guide","item":"https://zero-x.live/ai-coding-agent"}]}]}</script>
   <script type="module" src="/site-nav.js"></script>
 </head>
@@ -32,12 +35,12 @@
   <header class="zx-header">
     <div class="zx-container zx-header__inner">
       <a class="zx-brand" href="/"><img src="/Assets/zerox-mark.svg" width="28" height="28" alt="">Zero-X</a>
-      <button class="zx-nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" hidden><span class="zx-nav-toggle__bars" aria-hidden="true"></span>Menu</button>
+      <button class="zx-nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" hidden><svg class="zx-icon zx-icon--menu" aria-hidden="true"><use href="/icons.svg#menu"/></svg><svg class="zx-icon zx-icon--close" aria-hidden="true"><use href="/icons.svg#x"/></svg>Menu</button>
       <nav class="zx-nav" id="site-nav" aria-label="Main">
         <a href="/neuron-cli">Neuron CLI</a>
         <a href="/pricing">Pricing</a>
         <a href="/docs">Docs</a>
-        <a class="zx-btn zx-btn--sm" href="https://dashboard.zero-x.live/">Dashboard</a>
+        <a class="zx-btn zx-btn--sm" href="https://dashboard.zero-x.live/"><svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#user"/></svg>Dashboard</a>
       </nav>
     </div>
   </header>
@@ -84,7 +87,7 @@
     <p>The agent is the loop and its tools; the model decides each step. Neuron can use:</p>
     <ul>
       <li>Hosted models through Zero-X after <code>neuron login</code>, such as GPT-OSS, Qwen, Nemotron and GLM on the Free plan, and Claude Sonnet 5.5 and Claude Opus 5.5 on Pro and Max. Choose <code>auto</code> and Neuron picks a tool-capable model whose context window fits the request. See the <a href="/neuron-cli#models">current model list</a>.</li>
-      <li>Your own provider. Set <code>OPENAI_API_KEY</code> and <code>OPENAI_BASE_URL</code> for any OpenAI-compatible endpoint, or connect your own OpenRouter account.</li>
+      <li>Your own provider. Set <code>OPENAI_API_KEY</code> and <code>OPENAI_BASE_URL</code> for any OpenAI-compatible endpoint.</li>
     </ul>
     <p>The files and messages an agent includes in a request go to the company serving the model. Free tiers of some of these services may use prompts to improve their models. The Zero-X gateway records usage metadata (model, tokens, cost, latency) and is not designed to store prompt or response text. Read the <a href="/privacy">privacy policy</a> before you point an agent at code you cannot share.</p>
 
@@ -152,23 +155,27 @@ neuron</code></pre></div>
   <footer class="zx-footer">
     <div class="zx-container zx-footer__grid">
       <div>
-        <a class="zx-brand" href="/">Zero-X</a>
+        <a class="zx-brand" href="/"><img src="/Assets/zerox-mark.svg" width="28" height="28" alt="">Zero-X</a>
         <p>Neuron CLI and NeuCockpit. Built in Tamil Nadu, India.</p>
       </div>
       <nav aria-label="Product">
         <h2>Product</h2>
         <a href="/neuron-cli">Neuron CLI</a>
+        <a href="/download">Download</a>
+        <a href="/changelog">Changelog</a>
         <a href="/pricing">Pricing</a>
         <a href="/docs">Docs</a>
         <a href="/ai-coding-agent" aria-current="page">AI coding agent guide</a>
         <a href="/free-ai-coding-agent">Free AI coding agent</a>
         <a href="/claude-code-alternative">Neuron compared</a>
         <a href="https://dashboard.zero-x.live/">Dashboard</a>
+        <a href="https://github.com/RAHUL-DevelopeRR/neuron-v2">GitHub <svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#arrow-up-right"/></svg></a>
       </nav>
       <nav aria-label="Company">
         <h2>Company</h2>
         <a href="/about">About</a>
         <a href="/contact">Contact</a>
+        <a href="/docs/trust">Security and trust</a>
         <a href="https://zero-x.live/neucockpit">NeuCockpit</a>
       </nav>
       <nav aria-label="Legal">

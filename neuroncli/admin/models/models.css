@@ -1,25 +1,34 @@
 /* Model catalog page (dashboard.zero-x.live/admin/models). Everything else comes from
    /zx-tokens.css; this file exists because the page's CSP allows no inline style. */
-.models-intro { max-width: 760px; }
-.models-section-head { margin-top: 32px; margin-bottom: 12px; }
-.models-section-head h2, #detail h2, #editor h2 { font-size: 1.35rem; margin-bottom: 0; }
-#detail h3 { font-size: 1.05rem; margin: 20px 0 8px; }
-#editor h2 { margin-bottom: 16px; }
+.models-intro { max-width: 68ch; font-size: var(--zx-fs-small); }
+.models-section-head { margin-top: var(--zx-s6); margin-bottom: var(--zx-s3); }
+.models-section-head h2, #detail h2, #editor h2 { font-size: 1.125rem; letter-spacing: -.01em; margin-bottom: 0; }
+#detail h3 { font-size: .9375rem; margin: var(--zx-s5) 0 var(--zx-s2); }
+#editor h2 { margin-bottom: var(--zx-s4); }
 .models-actions { gap: 8px; flex-wrap: wrap; }
 .models-checks { gap: 20px; flex-wrap: wrap; margin: 12px 0; }
-.models-list { color: var(--zx-muted); margin: 8px 0; padding-left: 20px; }
+.models-checks label { display: inline-flex; align-items: center; gap: 8px; font-size: var(--zx-fs-small); }
+.models-checks input, .models-pool legend input { width: 16px; height: 16px; accent-color: var(--zx-ink-fill); }
+.models-list { color: var(--zx-muted); font-size: var(--zx-fs-small); margin: 8px 0; padding-left: 1.25em; }
 .models-list li { overflow-wrap: anywhere; }
-.models-danger, .models-list li.models-danger { color: var(--zx-danger, #f87171); }
-.models-spec { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 8px 0; }
-.models-spec dt { color: var(--zx-muted); }
-.models-spec dd { margin: 0; overflow-wrap: anywhere; }
-.models-pool { border: 1px solid var(--zx-border, rgba(255, 255, 255, 0.12)); border-radius: 12px; padding: 12px 16px; margin: 16px 0 0; }
-.models-pool legend { padding: 0 6px; }
+.models-danger, .models-list li.models-danger { color: var(--zx-danger); }
+/* Spec rows: mono caps keys on the left, values on the right, a hairline between. */
+.models-spec { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 0; margin: 8px 0; border-top: 1px solid var(--zx-border); font-size: var(--zx-fs-small); }
+.models-spec:empty { display: none; }
+.models-spec dt, .models-spec dd { padding: 8px 0; border-bottom: 1px solid var(--zx-border); }
+.models-spec dt { padding-right: var(--zx-s5); font-family: var(--zx-font-mono); font-size: var(--zx-fs-label); letter-spacing: var(--zx-tracking-label); text-transform: uppercase; color: var(--zx-faint); }
+.models-spec dd { margin: 0; overflow-wrap: anywhere; text-align: right; color: var(--zx-ink); }
+.models-pool { border: 1px solid var(--zx-border); border-radius: var(--zx-radius); padding: 12px var(--zx-s4); margin: var(--zx-s4) 0 0; }
+.models-pool legend { padding: 0 6px; font-size: var(--zx-fs-small); font-weight: 500; }
 .zx-table td { white-space: nowrap; }
 .zx-table td.models-id { white-space: normal; overflow-wrap: anywhere; min-width: 180px; }
-.zx-table tr.models-risky td { color: var(--zx-danger, #f87171); }
+.zx-table tr.models-risky td { color: var(--zx-danger); }
 #unlock .zx-form-row { align-items: flex-start; }
 #unlock .zx-btn { margin-top: 30px; }
 @media (max-width: 640px) {
   .models-spec { grid-template-columns: 1fr; }
+  .models-spec dt { padding-bottom: 0; border-bottom: 0; }
+  .models-spec dd { text-align: left; padding-top: 2px; }
 }
+
+.zx-table-wrap { position: relative; } /* contains the absolutely positioned visually-hidden table labels */

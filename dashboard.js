@@ -11,6 +11,7 @@ export const TABS = ['overview', 'usage', 'keys', 'billing', 'sessions', 'connec
 // Tabs shown only when the gateway serves them (Connectors: GET /api/connectors answers 404 unless
 // hosted connectors are switched on, docs/PLATFORM_CONTRACT.md section 18.5).
 export const OPTIONAL_TABS = ['connectors'];
+export const TAB_LABELS = { overview: 'Overview', usage: 'Usage', keys: 'API keys', billing: 'Billing', sessions: 'Sessions', connectors: 'Connectors', account: 'Account' };
 export const DEV_TOKEN_KEY = 'zx-dev-token';
 export const EVENTS_PAGE_SIZE = 25;
 export const MAX_ACTIVE_KEYS = 10;
@@ -42,8 +43,9 @@ export function parseTab(hash, tabs = TABS) {
 /** Keyboard navigation for the tablist (WAI-ARIA tabs pattern). */
 export function nextTab(current, key, tabs = TABS) {
   const index = Math.max(0, tabs.indexOf(current));
-  if (key === 'ArrowRight') return tabs[(index + 1) % tabs.length];
-  if (key === 'ArrowLeft') return tabs[(index - 1 + tabs.length) % tabs.length];
+  // The drawer lists the tabs top to bottom (a strip on phones), so the vertical arrows work too.
+  if (key === 'ArrowRight' || key === 'ArrowDown') return tabs[(index + 1) % tabs.length];
+  if (key === 'ArrowLeft' || key === 'ArrowUp') return tabs[(index - 1 + tabs.length) % tabs.length];
   if (key === 'Home') return tabs[0];
   if (key === 'End') return tabs[tabs.length - 1];
   return null;
@@ -562,6 +564,11 @@ export function createDashboard({ doc = globalThis.document, win = globalThis.wi
     setProgress('ov-requests-bar', usage.requests, requestLimit, formatCount(usage.requests) + ' of ' + (requestLimit !== null ? formatCount(requestLimit) : 'unknown') + ' requests used today');
     setText('ov-requests-detail', requestLimit !== null ? formatCount(Math.max(0, requestLimit - usage.requests)) + ' requests left today' : 'Daily request limit unavailable');
 
+    setText('lim-daily-requests', requestLimit !== null ? formatCount(requestLimit) : '—');
+    setText('lim-daily-tokens', limits.daily_tokens !== null ? formatTokens(limits.daily_tokens) : '—');
+    setText('lim-rpm', limits.rpm !== null ? formatCount(limits.rpm) : '—');
+    setText('lim-concurrency', limits.concurrency !== null ? formatCount(limits.concurrency) : '—');
+
     const win = account.window;
     if (win) {
       // A rolling window (Free): its tokens, not today's, are what a request is checked against.
@@ -607,6 +614,7 @@ export function createDashboard({ doc = globalThis.document, win = globalThis.wi
     setText('acct-email', text(profile.email, 254) || 'Signed in');
     setText('acct-provider', text(profile.providersDisplay, 80) || 'Email');
     setText('dash-subtitle', 'Signed in as ' + (text(profile.email, 254) || name) + '.');
+    setText('crumb-account', text(profile.email, 254) || name);
     const avatar = safeHttpsUrl(profile.imageUrl);
     if (avatar) $('acct-avatar').setAttribute('src', avatar);
   }
@@ -626,40 +634,57 @@ export function createDashboard({ doc = globalThis.document, win = globalThis.wi
 
   /* Usage */
 
-  function metricValue(row) {
-    return state.metric === 'tokens' ? row.prompt_tokens + row.completion_tokens : row.requests;
-  }
+  const METRICS = {
+    requests: { label: 'Requests', unit: 'requests', value: row => row.requests, format: formatCount },
+    tokens: { label: 'Tokens', unit: 'tokens', value: row => row.prompt_tokens + row.completion_tokens, format: formatTokens },
+    spend: { label: 'Spend', unit: 'USD', value: row => row.cost_usd, format: formatUsd },
+  };
 
-  function renderChart() {
-    const usage = state.usage;
-    const container = $('usage-chart');
-    if (!usage || !container) return;
-    const values = usage.days.map(metricValue);
-    const unit = state.metric === 'tokens' ? 'tokens' : 'requests';
-    const format = state.metric === 'tokens' ? formatTokens : formatCount;
+  // One chart per target: the Overview "Daily trend" card and the Usage panel share the series and the metric.
+  function drawChart(container, prefix, usage, metric) {
+    if (!container) return;
+    const values = usage.days.map(metric.value);
     const scale = chartScale(values);
     const total = values.reduce((sum, value) => sum + value, 0);
     let peak = -1;
     values.forEach((value, index) => { if (peak < 0 || value > values[peak]) peak = index; });
     const range = formatShortDay(usage.from) + ' to ' + formatDate(usage.to + 'T00:00:00Z');
-    const summary = usage.days.length + ' days, ' + range + '. Total ' + format(total) + ' ' + unit +
-      (total > 0 ? '. Highest: ' + format(values[peak]) + ' on ' + formatShortDay(usage.days[peak].day) + '.' : '. No usage in this period.');
-    setText('usage-chart-caption', (state.metric === 'tokens' ? 'Tokens' : 'Requests') + ' per day, ' + range);
+    const summary = usage.days.length + ' days, ' + range + '. Total ' + metric.format(total) + ' ' + metric.unit +
+      (total > 0 ? '. Highest: ' + metric.format(values[peak]) + ' on ' + formatShortDay(usage.days[peak].day) + '.' : '. No usage in this period.');
     const chart = svg('svg', {
       viewBox: '0 0 ' + scale.width + ' ' + scale.height, preserveAspectRatio: 'none', role: 'img',
-      'aria-labelledby': 'usage-svg-title usage-svg-desc', focusable: 'false',
+      'aria-labelledby': prefix + '-svg-title ' + prefix + '-svg-desc', focusable: 'false',
     },
-    svg('title', { id: 'usage-svg-title', text: (state.metric === 'tokens' ? 'Tokens' : 'Requests') + ' per day' }),
-    svg('desc', { id: 'usage-svg-desc', text: summary }),
+    svg('title', { id: prefix + '-svg-title', text: metric.label + ' per day' }),
+    svg('desc', { id: prefix + '-svg-desc', text: summary }),
+    ...[0.25, 0.5, 0.75].map(fraction => svg('line', { class: 'zx-grid-line', x1: 0, y1: (scale.height * fraction).toFixed(1), x2: scale.width, y2: (scale.height * fraction).toFixed(1) })),
     svg('line', { class: 'zx-axis', x1: 0, y1: scale.height - 0.5, x2: scale.width, y2: scale.height - 0.5 }),
     ...scale.bars.map((bar, index) => ({ bar, day: usage.days[index].day })).filter(({ bar }) => bar.height > 0).map(({ bar, day }) => svg('rect', {
-      class: 'zx-bar', x: bar.x.toFixed(2), y: bar.y.toFixed(2), width: bar.width.toFixed(2), height: bar.height.toFixed(2), rx: 2,
-    }, svg('title', { text: formatShortDay(day) + ': ' + format(bar.value) + ' ' + unit }))));
-    const axis = el('div', { class: 'zx-row zx-row--between zx-help' },
+      class: 'zx-bar', x: bar.x.toFixed(2), y: bar.y.toFixed(2), width: bar.width.toFixed(2), height: bar.height.toFixed(2), rx: 1,
+    }, svg('title', { text: formatShortDay(day) + ': ' + metric.format(bar.value) + ' ' + metric.unit }))));
+    const axis = el('div', { class: 'zx-chart__axis' },
       el('span', { text: formatShortDay(usage.from) }),
-      el('span', { text: 'Scale max ' + format(scale.max) + ' ' + unit }),
+      el('span', { text: 'Scale max ' + metric.format(scale.max) }),
       el('span', { text: formatShortDay(usage.to) }));
     container.replaceChildren(chart, axis);
+    return {
+      range,
+      peak: total > 0 ? 'Peak ' + metric.format(values[peak]) + ' / ' + formatShortDay(usage.days[peak].day) + ' · Total ' + metric.format(total) : 'No usage in this period',
+    };
+  }
+
+  function renderChart() {
+    const usage = state.usage;
+    if (!usage) return;
+    const metric = METRICS[state.metric] || METRICS.requests;
+    const usageChart = drawChart($('usage-chart'), 'usage', usage, metric);
+    const trendChart = drawChart($('trend-chart'), 'trend', usage, metric);
+    const info = usageChart || trendChart;
+    if (info) {
+      setText('usage-chart-caption', metric.label + ' per day, ' + info.range);
+      setText('usage-chart-peak', info.peak);
+      setText('trend-caption', info.peak + ' · ' + info.range);
+    }
     for (const button of doc.querySelectorAll('[data-metric]')) button.setAttribute('aria-pressed', String(button.dataset.metric === state.metric));
   }
 
@@ -706,7 +731,7 @@ export function createDashboard({ doc = globalThis.document, win = globalThis.wi
     body.replaceChildren(...(events.length ? events.map(event => el('tr', {},
       cell(formatDateTime(event.created_at)),
       el('td', {}, el('code', { text: event.model || '—' })),
-      cell(event.tier ? badge(event.tier, event.tier === 'paid' ? 'purple' : '') : '—'),
+      cell(event.tier ? badge(event.tier, event.tier === 'paid' ? 'tan' : '') : '—'),
       cell(event.status ? badge(event.status, eventStatusTone(event.status)) : '—'),
       tokensCell(event),
       cell(formatUsd(event.cost_usd), 'zx-num'),
@@ -1157,8 +1182,9 @@ export function createDashboard({ doc = globalThis.document, win = globalThis.wi
   /* Tabs */
 
   const loaders = {
-    overview: () => (state.account ? Promise.resolve() : loadAccount()),
-    usage: () => Promise.all([loadUsage(), loadEvents(0)]),
+    // The Overview trend card draws from the same 30-day series as Usage, so Usage then only needs the events.
+    overview: () => loadUsage(), // the account itself loads at boot
+    usage: () => Promise.all([state.usage ? null : loadUsage(), loadEvents(0)]),
     keys: loadKeys,
     billing: () => loadBilling(),
     sessions: loadSessions,
@@ -1168,6 +1194,7 @@ export function createDashboard({ doc = globalThis.document, win = globalThis.wi
 
   async function showTab(tab, { focus = false } = {}) {
     state.tab = tab;
+    setText('crumb-tab', TAB_LABELS[tab]);
     for (const id of TABS) {
       const active = id === tab;
       const button = $('tab-' + id);
@@ -1211,12 +1238,12 @@ export function createDashboard({ doc = globalThis.document, win = globalThis.wi
         setAlert('gate-error', (error && error.message) || 'Sign-in could not open. Refresh and try again.');
       }
     });
-    $('ov-refresh').addEventListener('click', loadAccount);
+    $('ov-refresh').addEventListener('click', () => Promise.all([loadAccount(), loadUsage()]));
     $('usage-refresh').addEventListener('click', () => Promise.all([loadUsage(), loadEvents(0)]));
     $('events-older').addEventListener('click', () => loadEvents(state.page + 1));
     $('events-newer').addEventListener('click', () => loadEvents(Math.max(0, state.page - 1)));
     for (const button of doc.querySelectorAll('[data-metric]')) {
-      button.addEventListener('click', () => { state.metric = button.dataset.metric === 'tokens' ? 'tokens' : 'requests'; renderChart(); });
+      button.addEventListener('click', () => { state.metric = METRICS[button.dataset.metric] ? button.dataset.metric : 'requests'; renderChart(); });
     }
     $('key-form').addEventListener('submit', createKey);
     $('key-secret-copy').addEventListener('click', () => copyText($('key-secret-value').textContent, 'API key'));
@@ -1265,8 +1292,7 @@ export function createDashboard({ doc = globalThis.document, win = globalThis.wi
     renderProfile();
     renderTopups();
     await loadAccount();
-    state.loaded.add('overview');
-    state.loaded.add('account');
+    state.loaded.add('account'); // Overview still loads the usage series for its trend card
     await probeConnectors();
     await showTab(parseTab(win.location.hash, visibleTabs()));
   }

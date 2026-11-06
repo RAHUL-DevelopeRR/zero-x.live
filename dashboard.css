@@ -1,0 +1,80 @@
+/* Account dashboard (dashboard.zero-x.live). The design system lives in /zx-tokens.css; this file
+   only lays out the console: breadcrumb bar, navigation drawer and panels. */
+
+/* Breadcrumb bar: square avatar, organisation / account / page. */
+.dash-bar { border-bottom: 1px solid var(--zx-border); background: var(--zx-bg); }
+.dash-bar .zx-crumbs { min-height: 44px; padding-block: 10px; }
+.dash-bar .zx-crumbs li:first-child { gap: 10px; color: var(--zx-ink); font-weight: 500; }
+#crumb-account { min-width: 0; overflow-wrap: anywhere; }
+
+.zx-dash-head { padding-block: var(--zx-s5) var(--zx-s4); }
+.zx-dash-head h1 { font-size: clamp(1.5rem, 1.15rem + 1.2vw, 2rem); letter-spacing: -.025em; }
+.zx-dash-head p { margin: 6px 0 0; overflow-wrap: anywhere; }
+
+/* Shell: drawer on the left from 960px, a scrolling strip above the panel before that. */
+.dash-shell { display: grid; gap: var(--zx-s4); grid-template-columns: minmax(0, 1fr); padding-bottom: var(--zx-s8); }
+.dash-main { min-width: 0; }
+.dash-side .zx-drawer { display: flex; gap: 2px; overflow-x: auto; scrollbar-width: thin; }
+.dash-side .zx-drawer__label { display: none; }
+.dash-side .zx-drawer__item { width: auto; flex: none; white-space: nowrap; min-height: 40px; }
+@media (min-width: 960px) {
+  .dash-shell { grid-template-columns: 232px minmax(0, 1fr); gap: var(--zx-s6); align-items: start; }
+  .dash-side { position: sticky; top: calc(var(--zx-header-h, 56px) + 16px); }
+  .dash-side .zx-drawer { display: block; overflow: visible; }
+  .dash-side .zx-drawer__label { display: block; }
+  .dash-side .zx-drawer__item { width: 100%; min-height: 36px; }
+}
+
+/* Panels */
+.dash-panel-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--zx-s3); margin-bottom: var(--zx-s4); }
+.dash-panel-head h2 { margin: 0; font-size: 1.375rem; letter-spacing: -.02em; }
+.dash-intro { max-width: 68ch; }
+.dash-sub { margin: var(--zx-s6) 0 var(--zx-s3); font-size: 1rem; }
+.dash-reset { margin: var(--zx-s3) 0 0; }
+.dash-gate { max-width: 560px; }
+.dash-gate h2 { font-size: 1.375rem; }
+.dash-check { display: flex; gap: 10px; align-items: flex-start; margin: 0 0 var(--zx-s4); }
+.dash-check input { flex: none; width: 18px; height: 18px; margin: 2px 0 0; accent-color: var(--zx-ink-fill); }
+.dash-person { display: flex; align-items: center; gap: var(--zx-s3); min-width: 0; }
+.dash-person p { margin: 0; overflow-wrap: anywhere; }
+.dash-email { font-size: var(--zx-fs-small); font-weight: 400; }
+.zx-tile .zx-btn { margin-top: var(--zx-s3); }
+.zx-tile .zx-progress { margin-block: 10px 0; }
+.zx-tile__note:empty { display: none; }
+.zx-card__body > .zx-code:last-of-type { margin-bottom: 0; }
+.zx-card__head .zx-card__title { min-width: 0; }
+.zx-card__head figcaption { overflow-wrap: anywhere; }
+.zx-tabpanel { min-width: 0; }
+.zx-tabpanel > .zx-card { margin-bottom: 0; }
+.zx-tabpanel .zx-secret { margin: var(--zx-s3) 0 0; }
+details summary { cursor: pointer; font-size: var(--zx-fs-small); color: var(--zx-muted); }
+details summary:hover { color: var(--zx-ink); }
+.zx-table td code { white-space: nowrap; }
+
+/* Chart: thin, one series, dotted grid; strokes keep their width under the stretched viewBox. */
+.zx-chart svg { height: 180px; }
+.zx-chart svg line { vector-effect: non-scaling-stroke; }
+.zx-chart__axis { display: flex; justify-content: space-between; gap: var(--zx-s3); margin-top: 8px; font-family: var(--zx-font-mono); font-size: var(--zx-fs-label); letter-spacing: .02em; color: var(--zx-faint); }
+.zx-chart__axis span { min-width: 0; }
+.zx-chart__axis span:nth-child(2) { text-align: center; }
+.zx-chart__axis span:last-child { text-align: right; }
+@media (max-width: 480px) { .zx-chart__axis span:nth-child(2) { display: none; } }
+
+/* Narrow screens: tiles and chart headers wrap, the segmented control never forces a scroll. */
+@media (max-width: 480px) {
+  .zx-card__head { padding-inline: var(--zx-s3); }
+  .zx-card__body { padding: var(--zx-s3); }
+  .zx-segmented { width: 100%; }
+  .zx-segmented button { flex: 1 1 0; }
+}
+
+/* Tiles sit four across inside the panel, so their numerals run a step smaller than on the home page. */
+.dash-main .zx-tile__value { font-size: clamp(1.5rem, 1.2rem + .9vw, 1.875rem); }
+.zx-card__body > .zx-dl { border-top: 0; }
+.zx-card__body > .zx-dl > div:last-child { border-bottom: 0; }
+.zx-card__body > p { font-size: var(--zx-fs-small); }
+.zx-table td { white-space: nowrap; }
+.zx-table td.zx-empty { white-space: normal; }
+.zx-code.zx-mt { margin-top: var(--zx-s4); }
+/* The visually-hidden labels inside a wide table are absolutely positioned: the wrapper must contain them or the page scrolls sideways. */
+.zx-table-wrap { position: relative; }

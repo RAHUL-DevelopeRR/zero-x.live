@@ -405,7 +405,7 @@ function renderModels(doc, body, rows, now) {
       main.append(sub);
     } else if (row.paidOnly && state.tone !== 'locked') {
       const tag = doc.createElement('span');
-      tag.className = 'zx-badge zx-badge--purple';
+      tag.className = 'zx-badge zx-badge--tan';
       tag.textContent = 'Pro and Max';
       main.append(tag);
     }
