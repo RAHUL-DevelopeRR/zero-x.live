@@ -14,7 +14,7 @@ DROP FUNCTION IF EXISTS public.zerox_search_reserve(uuid, integer, integer, text
 DROP TABLE IF EXISTS public.zerox_search_research_runs;
 DROP TABLE IF EXISTS public.zerox_search_usage;
 
-DELETE FROM supabase_migrations.schema_migrations WHERE version = '20261104200000';
+DELETE FROM supabase_migrations.schema_migrations WHERE version = '20261105200000';
 
 NOTIFY pgrst, 'reload schema';
 

@@ -352,7 +352,7 @@ try {
   await handle.db.exec(await read('./migrations/down/20261105200000_search_quota.down.sql'));
   handle.functions.clear();
   assert.deepEqual(await sql("SELECT to_regclass('public.zerox_search_usage') AS a, to_regclass('public.zerox_search_research_runs') AS b"), [{ a: null, b: null }]);
-  assert.equal((await sql("SELECT count(*)::int AS n FROM supabase_migrations.schema_migrations WHERE version = '20261104200000'"))[0].n, 0);
+  assert.equal((await sql("SELECT count(*)::int AS n FROM supabase_migrations.schema_migrations WHERE version = '20261105200000'"))[0].n, 0);
   searchCache.clear();
   answer = await search(both, alice.ses, { query: 'no migration' });
   assert.deepEqual([answer.status, answer.body.error], [503, 'search_unavailable'], 'no quota functions: unavailable, never unmetered');
