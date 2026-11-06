@@ -312,13 +312,13 @@ and apply the missing ones, in order (the ten catalog and app migrations were re
 13. `20261104000000_health_probes.sql` (the active health checker's lease, verdict rows and `zerox_probe_take`; see below)
 14. `20261104300000_free_plan_features_lineup.sql` (the Free plan's feature line on the pricing page; no restart needed if applied late)
 15. `20261106000000_pool_fair_share.sql` (per-user fair share of the free pools, security audit F6; see below)
-16. `20261105000000_billing_details.sql` (billing profiles and consent records; see below)
-17. `20261105000200_billing_tax_id.sql` (an optional `tax_id` on `zerox_billing_profiles` with its CHECK, and the two profile functions returning it; applies after `20261105000000`; see below)
-18. `20261105000000_connector_policy.sql` (connector policy per plan, `/api/account` `policy.connectors`; see below)
-19. `20261105000100_connector_accounts.sql` (hosted connector links and their audit log; unused while `HOSTED_CONNECTORS` is off; see below)
-20. `20261105200000_search_quota.sql` (daily web search and research-run counters for `POST /v1/search`; see below)
+16. `20261106000100_billing_details.sql` (billing profiles and consent records; see below)
+17. `20261106000200_billing_tax_id.sql` (an optional `tax_id` on `zerox_billing_profiles` with its CHECK, and the two profile functions returning it; applies after `20261106000100`; see below)
+18. `20261106000300_connector_policy.sql` (connector policy per plan, `/api/account` `policy.connectors`; see below)
+19. `20261106000400_connector_accounts.sql` (hosted connector links and their audit log; unused while `HOSTED_CONNECTORS` is off; see below)
+20. `20261106000500_search_quota.sql` (daily web search and research-run counters for `POST /v1/search`; see below)
 
-**Billing details (`20261105000000_billing_details.sql`).** Two new tables (`zerox_billing_profiles`,
+**Billing details (`20261106000100_billing_details.sql`).** Two new tables (`zerox_billing_profiles`,
 `zerox_billing_consents`) and four functions; nothing existing changes, and it does not depend on
 `20261029000900_plan_features_claude.sql`. **Apply this migration before deploying the gateway
 that knows it**: that gateway answers checkout and top-up with 503 `service_unavailable` until the
@@ -337,11 +337,11 @@ reloaded.) After the deploy:
 Verify: `SELECT count(*) FROM pg_proc WHERE proname LIKE 'zerox_billing_%' AND proname IN
 ('zerox_billing_profile_get', 'zerox_billing_profile_upsert', 'zerox_billing_record_consents',
 'zerox_billing_consents_latest');` returns 4. Roll back with
-`migrations/down/20261105000000_billing_details.down.sql` (psql -X -v ON_ERROR_STOP=1 -f, or paste
-it); that deletes every saved profile and consent record. If `20261105000200_billing_tax_id.sql` is
+`migrations/down/20261106000100_billing_details.down.sql` (psql -X -v ON_ERROR_STOP=1 -f, or paste
+it); that deletes every saved profile and consent record. If `20261106000200_billing_tax_id.sql` is
 applied, run its down script first.
 
-**Optional tax id (`20261105000200_billing_tax_id.sql`).** Adds the nullable column
+**Optional tax id (`20261106000200_billing_tax_id.sql`).** Adds the nullable column
 `zerox_billing_profiles.tax_id` with the CHECK `zerox_billing_profiles_tax_id_check` (a GSTIN shape
 for India, 2 to 20 of `[A-Z0-9-]` elsewhere) and replaces `zerox_billing_profile_get` /
 `zerox_billing_profile_upsert` so they return and save it (same SECURITY INVOKER, pinned search_path
@@ -352,7 +352,7 @@ is not affected, because the gateway then leaves the key out. The privacy policy
 (version `2026-11-04`), so every buyer is asked to agree again at their next checkout. Contract §16.6.
 Verify: `SELECT column_name FROM information_schema.columns WHERE table_name = 'zerox_billing_profiles'
 AND column_name = 'tax_id';` returns one row. Roll back with
-`migrations/down/20261105000200_billing_tax_id.down.sql`; that deletes every saved tax id and keeps
+`migrations/down/20261106000200_billing_tax_id.down.sql`; that deletes every saved tax id and keeps
 every other billing detail and consent record.
 
 **Fair share of the free pools (`20261106000000_pool_fair_share.sql`).** One user may take at most a
@@ -398,7 +398,7 @@ Roll back with `migrations/down/20261102000000_free_token_window.sql` (psql -X -
 or paste it): Free gets 500,000 tokens a day back. It must run before
 `down/20261029001000_pool_concurrency.sql` if both are rolled back.
 
-**Web search (`20261105200000_search_quota.sql`, contract section 17).** New tables
+**Web search (`20261106000500_search_quota.sql`, contract section 17).** New tables
 `zerox_search_usage` and `zerox_search_research_runs` and the functions `zerox_search_reserve` and
 `zerox_search_settle` (service_role only); nothing existing changes, so it can be applied before
 or after the deploy. Until it is applied, and while neither `SEARXNG_URL` nor `BRAVE_API_KEY` is
@@ -429,8 +429,8 @@ never to `wrangler.toml` `[vars]` (`gateway-env.mjs` refuses a name that is both
    check `POST /v1/search` answers 200 with `provider` `searxng` through the forward and
    `brave` otherwise.
 
-Roll back with `migrations/down/20261105200000_search_quota.down.sql` (drops the counters).
-**Connector policy (`20261105000000_connector_policy.sql`).** Adds
+Roll back with `migrations/down/20261106000500_search_quota.down.sql` (drops the counters).
+**Connector policy (`20261106000300_connector_policy.sql`).** Adds
 `zerox_plan_policy.connector_policy jsonb` (contract section 18.1) and recreates
 `zerox_plan_policies_v2` with that column (same arguments and grants). Free gets local connectors
 only; Pro, Max and ultrawork get the hosted connector ids, which `/api/account` reports only while
@@ -443,10 +443,10 @@ re-run. The gateway works on either side of it (without the column, `/api/accoun
 
 Edit a plan's policy with `UPDATE public.zerox_plan_policy SET connector_policy = '{...}'::jsonb
 WHERE plan = 'pro';` (ids are connector catalog ids; `"catalog:*"` in `allowed` allows the whole
-catalog). Roll back with `migrations/down/20261105000000_connector_policy.sql`; it must run before
+catalog). Roll back with `migrations/down/20261106000300_connector_policy.sql`; it must run before
 `down/20261102000000_free_token_window.sql` if both are rolled back.
 
-**Connector accounts (`20261105000100_connector_accounts.sql`).** New tables only:
+**Connector accounts (`20261106000400_connector_accounts.sql`).** New tables only:
 `zerox_connector_accounts` (one row per linked vendor account; `enc_refresh_token` is the sealed
 token envelope, never readable without `CONNECTOR_TOKENS_KEK`; disconnecting, or the vendor
 refusing the link, deletes the row, so no token is kept after its link ends),
@@ -454,7 +454,7 @@ refusing the link, deletes the row, so no token is kept after its link ends),
 maintenance while hosted connectors are on) and `zerox_connector_rate` (one per-user request
 counter for `/mcp/`, shared by every runtime). Nothing uses them while `HOSTED_CONNECTORS` is off,
 so it can be pasted before or after any deploy. Verify:
-`SELECT count(*) FROM pg_proc WHERE proname LIKE 'zerox_connector_%';` returns 8. Roll back with `migrations/down/20261105000100_connector_accounts.sql` (switch hosted
+`SELECT count(*) FROM pg_proc WHERE proname LIKE 'zerox_connector_%';` returns 8. Roll back with `migrations/down/20261106000400_connector_accounts.sql` (switch hosted
 connectors off first; it deletes every link and audit row).
 
 **Hosted connectors (contract section 18.4; off until every step below is done).** Users link a

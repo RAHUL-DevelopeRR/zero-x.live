@@ -36,12 +36,12 @@ async function readBody(c) {
   }
 }
 
-// Calls a search quota function; a database without migration 20261105200000 (or one that is
+// Calls a search quota function; a database without migration 20261106000500 (or one that is
 // down) makes search unavailable rather than unmetered.
 async function quotaRpc(env, name, args) {
   try { return await rpc(env, name, args); }
   catch (error) {
-    if (missingFunction(error)) console.error('Search quota functions are missing; apply migration 20261105200000_search_quota.sql');
+    if (missingFunction(error)) console.error('Search quota functions are missing; apply migration 20261106000500_search_quota.sql');
     else console.error('Search quota database request failed', { code: error?.code ?? null });
     throw unavailable();
   }

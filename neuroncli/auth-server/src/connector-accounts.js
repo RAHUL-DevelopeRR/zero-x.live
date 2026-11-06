@@ -1,4 +1,4 @@
-// Linked hosted connector accounts (migration 20261105000100_connector_accounts.sql): plan access,
+// Linked hosted connector accounts (migration 20261106000400_connector_accounts.sql): plan access,
 // the vendor token exchange and refresh, and the stored links. Shared by the account routes
 // (src/routes/connectors.js) and the MCP proxy (src/mcp-proxy.js). Tokens never leave this module
 // except as the bearer the proxy sends to the vendor; nothing here logs them.

@@ -94,7 +94,7 @@ export async function accountPayload(env, caller, { token = '' } = {}) {
   const windowSeconds = windowLimit('window_seconds');
   const windowUsage = object(row.usage_window);
   const name = displayName(account, caller);
-  // The plan's connector policy (migration 20261105000000, contract section 18.1); left out when
+  // The plan's connector policy (migration 20261106000300, contract section 18.1); left out when
   // the plan has none or the database predates the column ("no gateway policy").
   const connectors = connectorPolicyBlock(policy.connector_policy, env);
   // `hosted` lists only connectors this gateway can serve now (contract section 18.1): a client

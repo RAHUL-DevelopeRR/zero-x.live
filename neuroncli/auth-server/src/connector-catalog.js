@@ -2,7 +2,7 @@
 // whose official remote MCP server https://zero-x.live/mcp/<id> proxies to (src/mcp-proxy.js),
 // with the OAuth endpoints the gateway links accounts through (src/routes/connectors.js) and the
 // tool tiers the proxy enforces. The ids are the ones plans grant in
-// zerox_plan_policy.connector_policy.hosted (migration 20261105000000) and must equal the CLI
+// zerox_plan_policy.connector_policy.hosted (migration 20261106000300) and must equal the CLI
 // catalog's ids.
 //
 // Provider config comes from env vars named per connector, CONNECTOR_<ID>_<FIELD> (ID upper-case,

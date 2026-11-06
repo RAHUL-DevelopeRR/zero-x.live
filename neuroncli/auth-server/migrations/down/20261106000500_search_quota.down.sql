@@ -3,7 +3,7 @@ BEGIN;
 -- long transaction.
 SET LOCAL lock_timeout = '5s';
 
--- Rolls back 20261105200000_search_quota.sql by hand: psql -X -v ON_ERROR_STOP=1 -f <this file>.
+-- Rolls back 20261106000500_search_quota.sql by hand: psql -X -v ON_ERROR_STOP=1 -f <this file>.
 -- The migration runner (scripts/apply-migrations.mjs) never reads migrations/down/. Drops the
 -- search quota functions and tables (the daily search counters are lost; they hold no query
 -- text). A gateway that serves POST /v1/search then answers 503 search_unavailable until the
@@ -14,7 +14,7 @@ DROP FUNCTION IF EXISTS public.zerox_search_reserve(uuid, integer, integer, text
 DROP TABLE IF EXISTS public.zerox_search_research_runs;
 DROP TABLE IF EXISTS public.zerox_search_usage;
 
-DELETE FROM supabase_migrations.schema_migrations WHERE version = '20261105200000';
+DELETE FROM supabase_migrations.schema_migrations WHERE version = '20261106000500';
 
 NOTIFY pgrst, 'reload schema';
 

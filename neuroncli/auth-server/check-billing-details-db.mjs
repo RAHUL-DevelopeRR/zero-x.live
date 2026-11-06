@@ -1,9 +1,9 @@
-// Billing details database checks for 20261105000000_billing_details.sql on PGlite
+// Billing details database checks for 20261106000100_billing_details.sql on PGlite
 // (DATABASE_DRIVER=pglite): the profile and consent tables and their RPCs, access control,
 // append-only consents (including that deleting an account still removes its rows), and the down
 // script. The migration is also applied on top of production's state before it (every migration
 // up to 20261102000000, with and without 20261029000900_plan_features_claude.sql, which this
-// migration does not depend on). 20261105000200_billing_tax_id.sql (the optional tax id) is checked
+// migration does not depend on). 20261106000200_billing_tax_id.sql (the optional tax id) is checked
 // the same way: its column, CHECK and replaced functions, on a database with saved profiles, and
 // its down script.
 import assert from 'node:assert/strict';
@@ -20,8 +20,8 @@ import { migrationScript } from './scripts/apply-migrations.mjs';
 
 const root = dirname(fileURLToPath(import.meta.url));
 const env = { DATABASE_DRIVER: 'pglite' };
-const VERSION = '20261105000000';
-const TAX_VERSION = '20261105000200';
+const VERSION = '20261106000100';
+const TAX_VERSION = '20261106000200';
 const passed = [];
 function ok(name) { passed.push(name); console.log(`ok - ${name}`); }
 
@@ -67,7 +67,7 @@ try {
     AND table_name = 'zerox_billing_profiles' ORDER BY ordinal_position`)).map(row => row.column_name);
   assert.deepEqual(columns, ['user_id', 'customer_type', 'full_name', 'business_name', 'country', 'state', 'city', 'postal_code',
     'address_line1', 'address_line2', 'phone_e164', 'created_at', 'updated_at', 'tax_id']);
-  assert.deepEqual(columns.filter(name => /gst|tax|vat/i.test(name)), ['tax_id'], 'one tax id column (20261105000200)');
+  assert.deepEqual(columns.filter(name => /gst|tax|vat/i.test(name)), ['tax_id'], 'one tax id column (20261106000200)');
   assert.ok(!columns.some(name => /card|cvv|upi|vpa|bank|ifsc|account|iban/i.test(name)), 'no card, UPI or bank column');
   assert.deepEqual((await sql(`SELECT data_type, is_nullable FROM information_schema.columns WHERE table_schema = 'public'
     AND table_name = 'zerox_billing_profiles' AND column_name = 'tax_id'`))[0], { data_type: 'text', is_nullable: 'YES' });
@@ -138,7 +138,7 @@ try {
   await upsert(alice, profile({ customer_type: 'business', business_name: 'Zero X Labs', address_line1: '6/2 N. Pugalur' }));
   ok('profile RPCs: round trip, PUT replaces and keeps created_at, blanks become NULL, every CHECK and the unknown-field guard refuse bad data');
 
-  // ---------------------------------------------------------------- tax id (20261105000200)
+  // ---------------------------------------------------------------- tax id (20261106000200)
   const GSTIN_TN = '33ABCDE1234F1Z7';
   const withTax = await upsert(alice, profile({ tax_id: GSTIN_TN }));
   assert.equal(withTax.tax_id, GSTIN_TN, 'the upsert returns the tax id');
@@ -286,7 +286,7 @@ try {
   }
   ok('the migration applies on production\'s state (with and without 20261029000900), the down script restores the schema exactly (data and all), applies again and is safe to run twice');
 
-  // ---------------------------------------------------------------- 20261105000200 on a database with saved profiles, and its down script
+  // ---------------------------------------------------------------- 20261106000200 on a database with saved profiles, and its down script
   {
     const taxMigration = migrations.find(candidate => candidate.version === TAX_VERSION);
     assert.ok(taxMigration, 'the tax id migration file exists');
@@ -338,7 +338,7 @@ try {
       await rolled.exec(taxDown);
       await rolled.exec(taxDown);
       assert.deepEqual(await schemaOf(rolled), baselineSchema, 'running the down script twice changes nothing more');
-      // Both down scripts, newest first, take the database back to before 20261105000000.
+      // Both down scripts, newest first, take the database back to before 20261106000100.
       await apply(rolled, [taxMigration]);
       await rolled.exec(taxDown);
       await rolled.exec(down);
@@ -353,7 +353,7 @@ try {
       await rolled.close();
     }
   }
-  ok('20261105000200 applies on a database with saved profiles (kept, tax id NULL), keeps the grants, round-trips the tax id; its down script restores the schema exactly, keeps every other detail, applies again and is safe to run twice');
+  ok('20261106000200 applies on a database with saved profiles (kept, tax id NULL), keeps the grants, round-trips the tax id; its down script restores the schema exactly, keeps every other detail, applies again and is safe to run twice');
 
   console.log(`PASS: billing details database (${passed.length} groups)`);
 } finally {

@@ -25,7 +25,7 @@ SET LOCAL lock_timeout = '5s';
 -- zerox_connector_rate: one row per user, the per-user request counter of /mcp/<id> (a one-minute
 -- window shared by the Worker, the EC2 server and every isolate).
 --
--- Roll back with migrations/down/20261105000100_connector_accounts.sql (psql -X -v
+-- Roll back with migrations/down/20261106000400_connector_accounts.sql (psql -X -v
 -- ON_ERROR_STOP=1 -f), which drops both tables and every stored link.
 
 CREATE TABLE IF NOT EXISTS public.zerox_connector_accounts (

@@ -1225,7 +1225,7 @@ model's own error (no verdict, not a misconfigured test).
 
 ## 16. v1.11 amendments (billing details, 2026-11-03)
 
-Migration `20261105000000_billing_details.sql`; code `src/billing/profile.js`,
+Migration `20261106000100_billing_details.sql`; code `src/billing/profile.js`,
 `src/billing/legal-versions.js`, `src/routes/billing-profile.js`; browser `billing-details.js`.
 
 ### 16.1 Profile (`GET`/`PUT /api/billing/profile`, interactive credentials only)
@@ -1293,7 +1293,7 @@ is granted by the webhook once captured.
 ### 16.5 RPCs
 
 `zerox_billing_profile_get(user)`, `zerox_billing_profile_upsert(user, jsonb)` (both return
-`tax_id` since 20261105000200, 16.6), `zerox_billing_record_consents(user, context, jsonb)`,
+`tax_id` since 20261106000200, 16.6), `zerox_billing_record_consents(user, context, jsonb)`,
 `zerox_billing_consents_latest(user)`.
 Profiles and consents are deleted with their account (`ON DELETE CASCADE`), like the payment
 records (which means deleting an account also deletes its payment records; see the open items in
@@ -1301,7 +1301,7 @@ the release notes).
 
 ### 16.6 Optional tax id (2026-11-04)
 
-Migration `20261105000200_billing_tax_id.sql` (down script in `migrations/down/`); owner decision
+Migration `20261106000200_billing_tax_id.sql` (down script in `migrations/down/`); owner decision
 of 2026-11-04. Zero-X is still not registered for GST: the tax id is kept with the buyer's billing
 details for Zero-X's billing records only (the purpose the privacy policy gives). No GST is charged
 and no GST invoice is issued, and the tax id is never sent to Razorpay (not in the prefill, not in
@@ -1371,7 +1371,7 @@ Errors are flat JSON, `{"error": code, "message", "request_id", ...}`:
   and `Retry-After` (`quota` appears only in a `200`, always as the object above);
 - `503 search_unavailable`: no backend configured (the default until the operator sets
   `SEARXNG_URL` or `BRAVE_API_KEY`), every backend failed, or the quota database (migration
-  `20261105200000_search_quota.sql`) is missing or down. Search is never served unmetered.
+  `20261106000500_search_quota.sql`) is missing or down. Search is never served unmetered.
 
 **Backends.** A self-hosted SearXNG (`SEARXNG_URL`, its JSON API: `categories=general`,
 `safesearch=1`, `time_range` from `freshness`) is asked first; the Brave Search API
@@ -1431,7 +1431,7 @@ The neuron-v2 copy (`docs/GATEWAY_CONTRACT.md`) records the same changes as its 
 the CLI and the gateway implement exactly what follows. Code: `src/connector-policy.js`,
 `src/routes/account.js` (18.1), `src/router.js` and `src/catalog.js` `POOR_TOOL_CALLERS` (18.2),
 `src/chat-handler.js` and `src/providers.js` `PROVIDER_PARAMS` (18.2, 18.3); migration
-`20261105000000_connector_policy.sql` (down script in `migrations/down/`); checks
+`20261106000300_connector_policy.sql` (down script in `migrations/down/`); checks
 `check-account-api.mjs`, `check-business-db.mjs`, `check-routing-v2.mjs`.
 
 ### 18.1 Connector policy (`GET /api/account` `policy.connectors`)
@@ -1464,7 +1464,7 @@ Connectors are MCP servers. There are no organisations yet, so gateway policy is
   (client id, every URL, scopes), with the database and `CONNECTOR_TOKENS_KEK` in place. An id the
   plan grants but the operator has not configured is left out, so a client never sets up a
   connector that could only answer 503.
-- Seed (migration `20261105000000_connector_policy.sql`, kept if an operator already set a
+- Seed (migration `20261106000300_connector_policy.sql`, kept if an operator already set a
   policy): every plan `allowed: ["catalog:*"]`, `denied: []`, `required: []`,
   `allow_unvetted: true`, `catalog_version: "2026-11-03"`; Free `hosted: []` (local connectors
   only); Pro, Max and ultrawork `hosted: ["atlassian", "github", "linear", "notion", "slack"]`
@@ -1519,7 +1519,7 @@ Connectors are MCP servers. There are no organisations yet, so gateway policy is
 
 Code: `src/mcp-proxy.js`, `src/routes/connectors.js`, `src/connector-accounts.js`,
 `src/connector-catalog.js`, `src/connector-vault.js`; migration
-`20261105000100_connector_accounts.sql` (down script in `migrations/down/`); check
+`20261106000400_connector_accounts.sql` (down script in `migrations/down/`); check
 `check-connectors.mjs`. With `HOSTED_CONNECTORS` unset every route below answers 404.
 
 - `https://zero-x.live/mcp/<connector_id>`: Streamable HTTP (MCP 2025-06-18), `Authorization:

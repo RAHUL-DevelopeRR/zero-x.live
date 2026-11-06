@@ -1,5 +1,5 @@
 // Connector (MCP server) policy per plan (docs/PLATFORM_CONTRACT.md section 18.1). The policy is
-// stored in zerox_plan_policy.connector_policy (migration 20261105000000_connector_policy.sql) and
+// stored in zerox_plan_policy.connector_policy (migration 20261106000300_connector_policy.sql) and
 // served as GET /api/account `policy.connectors`; the Neuron CLI applies it after its managed
 // settings (managed-settings.json) and before user and project settings. There are no
 // organisations yet, so the plan is the only gateway scope.

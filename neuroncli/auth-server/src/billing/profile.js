@@ -2,7 +2,7 @@
 // section 3.5, GET/PUT /api/billing/profile). Pure functions, no I/O, shared by the routes and
 // the tests. Never card, UPI or bank details: those are typed into Razorpay's own window and
 // never reach Zero-X. An optional tax id (a GSTIN in India, a VAT or tax id elsewhere) has been
-// accepted since 20261105000200_billing_tax_id.sql (owner decision of 2026-11-04); Zero-X is still
+// accepted since 20261106000200_billing_tax_id.sql (owner decision of 2026-11-04); Zero-X is still
 // not registered for GST, so it is kept with the billing details for Zero-X's billing records only
 // and never sent to Razorpay.
 //

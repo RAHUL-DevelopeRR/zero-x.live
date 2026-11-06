@@ -1,13 +1,13 @@
 BEGIN;
--- Dropping the column and replacing the two functions of 20261105000200_billing_tax_id.sql takes
+-- Dropping the column and replacing the two functions of 20261106000200_billing_tax_id.sql takes
 -- short locks; give up (and re-run) rather than queue behind a long transaction.
 SET LOCAL lock_timeout = '5s';
 
--- Rolls back 20261105000200_billing_tax_id.sql by hand: psql -X -v ON_ERROR_STOP=1 -f <this file>.
+-- Rolls back 20261106000200_billing_tax_id.sql by hand: psql -X -v ON_ERROR_STOP=1 -f <this file>.
 -- The migration runner (scripts/apply-migrations.mjs) never reads migrations/down/.
 -- WARNING: this deletes every saved tax id (GSTIN or VAT number); every other billing detail and
 -- every consent record stays. zerox_billing_profile_get and zerox_billing_profile_upsert go back to
--- their 20261105000000_billing_details.sql definitions (no tax_id), with the same grants. Roll the
+-- their 20261106000100_billing_details.sql definitions (no tax_id), with the same grants. Roll the
 -- gateway back first or together: a gateway that sends tax_id is refused with
 -- "invalid_billing_profile: unknown field" once the old upsert is back. The history row is removed
 -- so the runner can apply the migration again. Safe to run twice.
@@ -67,7 +67,7 @@ GRANT EXECUTE ON FUNCTION
   public.zerox_billing_profile_upsert(uuid, jsonb)
   TO service_role;
 
-DELETE FROM supabase_migrations.schema_migrations WHERE version = '20261105000200';
+DELETE FROM supabase_migrations.schema_migrations WHERE version = '20261106000200';
 
 NOTIFY pgrst, 'reload schema';
 

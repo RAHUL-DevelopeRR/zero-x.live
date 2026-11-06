@@ -366,7 +366,7 @@ try {
       has_function_privilege('anon', p.oid, 'EXECUTE') AS anon, has_function_privilege('authenticated', p.oid, 'EXECUTE') AS auth,
       has_function_privilege('service_role', p.oid, 'EXECUTE') AS service
     FROM pg_proc AS p JOIN pg_namespace AS n ON n.oid = p.pronamespace WHERE n.nspname = 'public' AND p.proname = ANY($1) ORDER BY 1, 2`, [names])).rows;
-  await db.exec(await readFile(join(root, 'migrations', 'down', '20261105000000_connector_policy.sql'), 'utf8'));
+  await db.exec(await readFile(join(root, 'migrations', 'down', '20261106000300_connector_policy.sql'), 'utf8'));
   // 20261104300000 only rewrites a Free feature line; its down script brings the line PLANS wrote back.
   await db.exec(await readFile(join(root, 'migrations', 'down', LINEUP), 'utf8'));
   assert.equal((await features(db)).find(row => row.plan === 'free').features[0],

@@ -20,7 +20,7 @@ SET LOCAL lock_timeout = '5s';
 -- gateway calls a backend, holding the counter row FOR UPDATE, so concurrent searches of one user
 -- cannot both take the last one. zerox_search_settle records how it was answered, or gives the
 -- search (and the run it opened) back when no backend answered. Roll back with
--- migrations/down/20261105200000_search_quota.down.sql (psql -X -v ON_ERROR_STOP=1 -f).
+-- migrations/down/20261106000500_search_quota.down.sql (psql -X -v ON_ERROR_STOP=1 -f).
 
 CREATE TABLE public.zerox_search_usage (
   user_id uuid NOT NULL REFERENCES public.zerox_accounts(clerk_id) ON DELETE CASCADE,

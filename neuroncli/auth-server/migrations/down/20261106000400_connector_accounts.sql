@@ -3,7 +3,7 @@ BEGIN;
 -- transaction.
 SET LOCAL lock_timeout = '5s';
 
--- Rolls back 20261105000100_connector_accounts.sql by hand: psql -X -v ON_ERROR_STOP=1 -f <this
+-- Rolls back 20261106000400_connector_accounts.sql by hand: psql -X -v ON_ERROR_STOP=1 -f <this
 -- file>. The migration runner (scripts/apply-migrations.mjs) never reads migrations/down/.
 -- Every linked connector account (the sealed vendor tokens), every connector audit row and the
 -- rate counters are deleted with the tables; users link their connectors again after the migration is re-applied.
@@ -24,7 +24,7 @@ DROP TABLE IF EXISTS public.zerox_connector_rate;
 DROP TABLE IF EXISTS public.zerox_connector_audit;
 DROP TABLE IF EXISTS public.zerox_connector_accounts;
 
-DELETE FROM supabase_migrations.schema_migrations WHERE version = '20261105000100';
+DELETE FROM supabase_migrations.schema_migrations WHERE version = '20261106000400';
 
 NOTIFY pgrst, 'reload schema';
 

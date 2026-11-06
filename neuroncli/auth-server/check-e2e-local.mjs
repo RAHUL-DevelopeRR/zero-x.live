@@ -634,7 +634,7 @@ try {
     city: 'Karur', postal_code: '639113', phone: '9876543210', tax_id: '33abcde 1234f1z7' } });
   assert.equal(savedDetails.status, 200, redact(savedDetails.text));
   assert.deepEqual([savedDetails.body.profile.state, savedDetails.body.profile.phone, savedDetails.body.profile.tax_id, savedDetails.body.complete],
-    ['TN', '+919876543210', '33ABCDE1234F1Z7', true], 'the optional GSTIN is normalised and stored (20261105000200)');
+    ['TN', '+919876543210', '33ABCDE1234F1Z7', true], 'the optional GSTIN is normalised and stored (20261106000200)');
   assert.deepEqual((await call('/api/billing/profile', { token: ses })).body.profile, savedDetails.body.profile, 'the profile is stored and read back');
   const needsAgreement = expectError(await call('/api/billing/checkout', { method: 'POST', token: ses, body: { plan: 'pro', currency: 'INR' } }), 409, 'consent_required');
   assert.deepEqual(needsAgreement.missing, ['terms', 'privacy', 'auto_renewal', 'refund']);
