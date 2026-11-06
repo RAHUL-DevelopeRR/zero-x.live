@@ -108,3 +108,6 @@ a.zx-product:hover { color: inherit; }
 .zx-cmd > h3 { margin: 0 0 var(--zx-s2); }
 .zx-cmd > .zx-code { margin-bottom: var(--zx-s2); }
 .zx-cmd > .zx-help { margin-bottom: var(--zx-s2); }
+
+/* The "release data not published" row stays readable on a phone instead of scrolling out of view */
+#cli-binaries td[colspan] { white-space: normal; min-width: 0; max-width: calc(100vw - 2 * var(--zx-gutter) - 2px); position: sticky; left: 0; }

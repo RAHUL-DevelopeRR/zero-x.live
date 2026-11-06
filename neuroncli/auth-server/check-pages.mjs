@@ -1051,6 +1051,11 @@ assert.equal(checkout.normalizeCurrency('EUR'), 'USD');
     assert.ok(card.includes('data-status') && card.includes('data-links') && /data-your-os hidden/.test(card), 'download.html desktop card ' + os);
   }
   assert.match(text('download.html'), /Mobile app Coming soon/);
+  {
+    const at = id => html.indexOf(`<section id="${id}"`);
+    assert.ok(at('cli') > 0 && at('cli') < at('verify') && at('verify') < at('desktop') && at('desktop') < at('mobile') && at('mobile') < at('more'), 'download.html order: command line, verify, desktop and mobile (coming soon), more');
+    assert.ok(html.indexOf('id="cli-binaries"') < at('desktop'), 'available release binaries come before the coming-soon apps');
+  }
   assert.match(html, /<body data-download>/);
   for (const button of tags(html, 'button').filter(b => 'data-copy-target' in b)) assert.ok(ids(html).includes(button['data-copy-target']), 'copy target ' + button['data-copy-target']);
 

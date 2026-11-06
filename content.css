@@ -161,3 +161,29 @@ main:has(.zx-docs) > .zx-hero .zx-lead { font-size: 1.0625rem; }
 .zx-cp-cta { padding: var(--zx-s6) var(--zx-s5); border: 1px solid var(--zx-border); border-radius: var(--zx-radius); background: var(--zx-panel); }
 .zx-cp-cta h2 { margin-bottom: var(--zx-s2); }
 .zx-cp-cta .zx-row { margin: var(--zx-s4) 0; }
+
+/* NeuCockpit page: facts strip, how-it-works flow, feature cards, privacy columns, FAQ width. */
+.zx-cp-facts { padding-block: var(--zx-s4) var(--zx-s5); }
+.zx-cp-facts .zx-stat--sm { font-size: 1.0625rem; letter-spacing: -.01em; overflow-wrap: anywhere; }
+.zx-cp-flow { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 0; border-top: 1px solid var(--zx-border); }
+.zx-cp-flow li { margin: 0; padding: var(--zx-s5) 0; border-bottom: 1px solid var(--zx-border); min-width: 0; }
+.zx-cp-flow__n { display: block; margin-bottom: var(--zx-s3); font-family: var(--zx-font-mono); font-size: var(--zx-fs-label); letter-spacing: var(--zx-tracking-label); color: var(--zx-accent-text); }
+.zx-cp-flow h3 { margin: 0 0 var(--zx-s2); font-size: 1.0625rem; }
+.zx-cp-flow p { margin: 0; color: var(--zx-muted); font-size: var(--zx-fs-small); }
+@media (min-width: 760px) {
+  .zx-cp-flow { grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: var(--zx-s6); }
+}
+@media (min-width: 1000px) {
+  .zx-cp-flow { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .zx-cp-flow li { border-bottom: 0; padding-right: var(--zx-s4); }
+}
+.zx-cp-split--first { margin-top: 0; padding-top: 0; border-top: 0; align-items: start; }
+.zx-cp-split--first h2 { margin-bottom: var(--zx-s3); }
+.zx-cp-split--first .zx-cp-h3 { margin: var(--zx-s6) 0 var(--zx-s3); }
+.zx-cp-feature .zx-icon { margin-bottom: var(--zx-s3); color: var(--zx-accent-text); }
+.zx-cp-feature h3 { font-size: 1.0625rem; }
+.zx-cp-feature p { color: var(--zx-muted); font-size: var(--zx-fs-small); }
+.zx-checks--plain .zx-icon { color: var(--zx-faint); }
+.zx-card > .zx-checks { margin-bottom: 0; }
+.zx-cp-faq { max-width: 760px; }
+.zx-cp-cta { display: grid; gap: var(--zx-s2); }
