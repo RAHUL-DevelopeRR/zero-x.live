@@ -226,10 +226,10 @@ function makeAuth(profile, token = 'sb-access-token') {
   return auth;
 }
 
-function makeWindow({hostname = 'dashboard.zero-x.live', hash = '', auth, session = makeStorage(), local = makeStorage()} = {}) {
+function makeWindow({hostname = 'dashboard.zero-x.live', hash = '', search = '', auth, session = makeStorage(), local = makeStorage()} = {}) {
   const listeners = {};
   const fire = type => (listeners[type] || []).forEach(fn => fn({type}));
-  const location = {hostname, origin: 'https://' + hostname, pathname: '/', assigned: null, reloads: 0, _hash: hash,
+  const location = {hostname, origin: 'https://' + hostname, pathname: '/', search, assigned: null, reloads: 0, _hash: hash,
     get hash() { return this._hash; },
     set hash(value) { const next = value.startsWith('#') ? value : '#' + value; if (next !== this._hash) { this._hash = next; queueMicrotask(() => fire('hashchange')); } },
     assign(url) { this.assigned = url; }, reload() { this.reloads++; }};
@@ -309,7 +309,7 @@ const consentFor = kind => (kind === 'subscription' ? ['terms', 'privacy', 'auto
   .reduce((all, name) => ({...all, [name]: CONSENT_VERSIONS[name]}), {});
 const DASHBOARD_HTML = read('dashboard.html');
 
-async function mountDashboard({profile = PROFILE, hash = '', state = {}, routes = {}, session, local, details = stubDetails} = {}) {
+async function mountDashboard({profile = PROFILE, hash = '', search = '', state = {}, routes = {}, session, local, details = stubDetails} = {}) {
   const shared = {keys: [
     {id: 'k-1', name: 'Laptop', prefix: 'nzx_Qw12', created_at: '2026-10-01T00:00:00Z', last_used_at: '2026-10-15T00:00:00Z', revoked_at: null},
     {id: 'k-0', name: 'Old CI', prefix: 'nzx_Zz99', created_at: '2026-09-01T00:00:00Z', last_used_at: null, revoked_at: '2026-09-10T00:00:00Z'}],
@@ -324,7 +324,7 @@ async function mountDashboard({profile = PROFILE, hash = '', state = {}, routes 
   cancelled: false, account: () => accountPayload(), ...state};
   const doc = parseDocument(DASHBOARD_HTML);
   const auth = makeAuth(profile);
-  const win = makeWindow({hash, auth, session, ...(local ? {local} : {})});
+  const win = makeWindow({hash, search, auth, session, ...(local ? {local} : {})});
   win.Razorpay = FakeRazorpay;
   const {fetchImpl, calls} = makeFetch({...dashboardRoutes(shared), ...routes});
   const dashboard = createDashboard({doc, win, auth, fetchImpl, now: () => NOW, collectDetails: details});
@@ -597,7 +597,69 @@ async function mountDashboard({profile = PROFILE, hash = '', state = {}, routes 
   await settle();
   assert.equal(win.sessionStorage.getItem('zx-dev-token'), null, 'Sign out removes zx-dev-token');
   assert.equal(auth.calls.signOut[0].redirectUrl, 'https://zero-x.live/');
-  assert.deepEqual(TABS, ['overview', 'usage', 'keys', 'billing', 'sessions', 'account']);
+  assert.deepEqual(TABS, ['overview', 'usage', 'keys', 'billing', 'sessions', 'connectors', 'account']);
+  assert.equal($('tab-connectors').hidden, true, 'Connectors stays hidden while GET /api/connectors is 404');
+  assert.ok(calls.some(call => call.path === '/api/connectors'), 'the dashboard asks whether connectors are served');
+}
+
+// Hosted connectors: hidden while the gateway answers 404 (HOSTED_CONNECTORS off), even on a deep link.
+{
+  const {$} = await mountDashboard({hash: '#connectors'});
+  assert.equal($('tab-connectors').hidden, true);
+  assert.equal($('panel-connectors').hidden, true);
+  assert.equal($('panel-overview').hidden, false, '#connectors falls back to the overview when connectors are off');
+}
+
+// Hosted connectors on: the tab shows, rows render as text, connect redirects, disconnect confirms.
+{
+  const connectorRows = [
+    {id: 'github', name: 'GitHub', publisher: 'GitHub', status: 'connected', scopes: ['repo', 'read:org'], connected_at: '2026-11-04T10:00:00Z'},
+    {id: 'linear', name: 'Linear', publisher: 'Linear', status: 'not_connected', scopes: [], connected_at: null},
+    {id: 'slack', name: XSS, publisher: 'Slack', status: 'unavailable', scopes: [], connected_at: null},
+    {id: '../evil', name: 'Forged', status: 'connected'}];
+  let disconnected = null;
+  const routes = {
+    'GET /api/connectors': () => ({connectors: connectorRows.map(row => row.id === disconnected ? {...row, status: 'not_connected', scopes: [], connected_at: null} : row)}),
+    'POST /api/connectors/linear/connect': {authorize_url: 'https://linear.app/oauth/authorize?state=abc', expires_in: 600},
+    'POST /api/connectors/github/connect': {authorize_url: 'javascript:alert(1)'},
+    'DELETE /api/connectors/github': () => { disconnected = 'github'; return {status: 'disconnected', connector: 'github'}; },
+  };
+  const {$, win, calls, doc} = await mountDashboard({hash: '#connectors', search: '?connector=github&connect=ok', routes});
+  assert.equal($('tab-connectors').hidden, false);
+  assert.equal($('panel-connectors').hidden, false, 'a #connectors deep link opens the tab once it is served');
+  assert.equal($('connectors-status').textContent, 'GitHub is connected.');
+  const rows = $('connectors-list').querySelectorAll('tr');
+  assert.equal(rows.length, 3, 'rows with an invalid id are dropped');
+  assert.equal(rows[2].querySelector('th').textContent, XSS + ' · Slack');
+  assert.equal(rows[2].querySelectorAll('img').length, 0);
+  assert.deepEqual(rows[0].querySelectorAll('td').map(cell => cell.textContent).slice(0, 2), ['Connected', 'repo, read:org']);
+  assert.equal(rows[2].querySelectorAll('td')[0].textContent, 'Coming soon');
+  doc.querySelector('[data-connector="linear"]').click();
+  await settle();
+  assert.equal(win.location.assigned, 'https://linear.app/oauth/authorize?state=abc');
+  assert.ok(calls.some(call => call.method === 'POST' && call.path === '/api/connectors/linear/connect'));
+  // Disconnect asks first.
+  doc.querySelector('[data-connector="github"]').click();
+  await settle();
+  assert.match($('confirm-title').textContent, /Disconnect GitHub\?/);
+  $('confirm-ok').click();
+  await settle();
+  assert.ok(calls.some(call => call.method === 'DELETE' && call.path === '/api/connectors/github'));
+  assert.equal($('connectors-list').querySelector('tr').querySelectorAll('td')[0].textContent, 'Not connected');
+  // Keyboard navigation includes the tab once it is shown.
+  $('tab-sessions').focus();
+  win.location.hash = '#sessions';
+  await settle();
+  $('dash-tabs').dispatchEvent(makeEvent('keydown', {key: 'ArrowRight', bubbles: true}));
+  await settle();
+  assert.equal(win.location.hash, '#connectors');
+}
+
+// The provider sent the browser back with an error.
+{
+  const {$} = await mountDashboard({hash: '#connectors', search: '?connector=github&connect=error&reason=browser_mismatch',
+    routes: {'GET /api/connectors': {connectors: [{id: 'github', name: 'GitHub', publisher: 'GitHub', status: 'not_connected', scopes: []}]}}});
+  assert.equal($('connectors-error').textContent.includes('GitHub could not be connected: it was started in another browser, so start again here.'), true);
 }
 
 {

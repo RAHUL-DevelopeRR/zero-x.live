@@ -1,6 +1,6 @@
 # Neuron × Zero-X platform contract
 
-Status: v1.12 (2026-11-05; amendments v1.1 to v1.12 in sections 6 to 17; section 16 is the hosted connectors branch). This document is the source of truth shared by the Neuron CLI
+Status: v1.11 (2026-11-06; amendments v1.1 to v1.11 in sections 6 to 18). This document is the source of truth shared by the Neuron CLI
 (`RAHUL-DevelopeRR/neuron-v2`) and the Zero-X gateway + website
 (`RAHUL-DevelopeRR/zero-x.live`, `neuroncli/auth-server`). A copy lives in both repos;
 change both together.
@@ -95,7 +95,8 @@ price and a daily spend cap (section 13.4); Claude prices add `cache_read_microu
 A pool is usable only when its key/binding is configured and `hosted` is not disabled.
 Routing for plan tiers `T`: prefer a usable `free` pool with remaining budget; otherwise a
 usable `paid` pool if `paid ∈ T` and the user has credits. `model: "auto"` picks the best
-tool-capable model whose context window fits the estimated request.
+tool-capable model whose context window fits the estimated request; for an agentic request it
+leaves out models with a poor tool-call record (section 18.2).
 
 Verified free catalog (live probe 2026-10-16): `groq/openai/gpt-oss-120b`,
 `groq/openai/gpt-oss-20b`, `groq/qwen/qwen3.8-27b` (Groq free org: 30 rpm, 1K rpd,
@@ -172,7 +173,9 @@ credential (never an `nzx_` key). Session tokens are stored hashed (SHA-256) in 
   usage_today:{requests, tokens, resets_at}, usage_window:null|{tokens, limit_tokens, remaining_tokens,
   window_seconds, resets_at}, credits:{balance_usd, monthly_grant_usd},
   subscription:null|{status, current_period_end, cancel_at_period_end},
-  flags:{suspended}}` (`display_name`, `initials` and `session_expires_at`: §9.1)
+  flags:{suspended}, policy?:{connectors:{allowed, denied, required, hosted, allow_unvetted,
+  catalog_version}}}` (`display_name`, `initials` and `session_expires_at`: §9.1; `policy`: §14.1,
+  left out when the plan has no gateway policy)
 - `GET /api/usage?from=YYYY-MM-DD&to=YYYY-MM-DD` (max 92 days, default last 30) →
   `{from, to, series:[{day, requests, prompt_tokens, completion_tokens, cost_usd}],
   by_model:[{model, requests, prompt_tokens, completion_tokens, cost_usd}], totals:{requests,
@@ -246,7 +249,7 @@ All called through `rpc(env, name, args)` / `rpcRows(env, name, args)` in
 | `zerox_settle_v2` | `p_reservation_id uuid, p_prompt_tokens bigint, p_completion_tokens bigint, p_cost_microusd bigint, p_status text ('ok','error','refunded','failed_upstream'), p_latency_ms int, p_provider text, p_upstream_model text, p_error_code text, p_cache_read_tokens bigint = 0, p_cache_write_tokens bigint = 0` (cache tokens are part of `p_prompt_tokens`, section 13.4) | `{status:'settled'|'already_settled'|'not_found', credit_balance_microusd}`; reconciles the pool bucket stored on the reservation (model, tier, pool key) |
 | `zerox_renew_reservation` | `p_reservation_id uuid, p_lease_seconds int` (1-3600) | `boolean`: the lease now runs at least `p_lease_seconds` from now; `false` once the reservation is settled or released (section 8.5) |
 | `zerox_release_stale_reservations` | — | `{released}` |
-| `zerox_plan_policies_v2` | — | one row per plan: `plan, name, price_usd, price_usd_cents, price_inr_paise, daily_requests, daily_tokens, rpm_limit, concurrency_limit, allowed_tiers text[], monthly_credit_microusd, features, sort, public, highlighted, razorpay_plan_id_inr, razorpay_plan_id_usd, window_tokens, window_seconds` |
+| `zerox_plan_policies_v2` | — | one row per plan: `plan, name, price_usd, price_usd_cents, price_inr_paise, daily_requests, daily_tokens, rpm_limit, concurrency_limit, allowed_tiers text[], monthly_credit_microusd, features, sort, public, highlighted, razorpay_plan_id_inr, razorpay_plan_id_usd, window_tokens, window_seconds, connector_policy jsonb` (null = no connector policy, §14.1) |
 | `zerox_account_overview` | `p_user_id` | account + policy + credits + subscription + today usage + `usage_window` (`{window_seconds, limit_tokens, tokens, remaining_tokens, resets_at}` or null) (jsonb columns) |
 | `zerox_window_usage` | `p_user_id uuid, p_window_seconds int, p_now timestamptz = now()` | rows `{created_at, tokens}`: the user's reservations in the window and the tokens each counts |
 | `zerox_usage_series` | `p_user_id, p_from date, p_to date` | rows `{day, requests, prompt_tokens, completion_tokens, cost_microusd}` |
@@ -1238,7 +1241,7 @@ The statuses (`availability`):
 - `unavailable` (`status`: `blurred`): failing (two failures in a row, or three users' upstream failures
   in ten minutes with no success), delisted by its provider, its key rejected or its quota spent; grey it out until `available_again_at` when there is one.
 
-A family (section 14.3) takes the best status of the routes the caller can use, in the order
+A family (section 18.3) takes the best status of the routes the caller can use, in the order
 `available` > `degraded` > `unknown` > `busy` > `unavailable` (a busy route is skipped by routing,
 an unknown one is tried), and that route's `available_again_at`, `checked_at`, `latency_ms`,
 `last_success_at` and `last_failure_class`. `auto` takes its best candidate's.
@@ -1336,7 +1339,7 @@ model's own error (no verdict, not a misconfigured test).
 | `zerox_pool_health_put` | `(p_rows jsonb)` → rows written (at most 500; rows not written for 7 days are deleted). A row carries `verdict_at` (the last request-level verdict), `checked_at` (when the state in `status` was observed) and `listed_at` (the last model list that showed it). |
 | `zerox_pool_health_get` | `(p_since_seconds int)` → the rows written within that time. |
 
-## 17. v1.12 amendments (web search and colony budgets, 2026-11-05)
+## 17. v1.11 amendments (web search and colony budgets, 2026-11-05)
 
 ### 17.1 `POST /v1/search`
 
@@ -1421,3 +1424,165 @@ covering `/v1/`, the Worker forwards it to the VM like the other `/v1` routes.
 - `zerox_search_settle(p_user_id uuid, p_day date, p_outcome text, p_run_hash text DEFAULT NULL,
   p_run_added boolean DEFAULT false)` → `(searches, research_runs)`; `p_outcome` is `searxng`,
   `brave`, `cached` or `failed` (gives the search, and the run when `p_run_added`, back).
+
+## 18. v1.11 amendments (connectors, agentic routing, prompt cache key, 2026-11-03)
+
+The neuron-v2 copy (`docs/GATEWAY_CONTRACT.md`) records the same changes as its v1.3 amendment;
+the CLI and the gateway implement exactly what follows. Code: `src/connector-policy.js`,
+`src/routes/account.js` (18.1), `src/router.js` and `src/catalog.js` `POOR_TOOL_CALLERS` (18.2),
+`src/chat-handler.js` and `src/providers.js` `PROVIDER_PARAMS` (18.2, 18.3); migration
+`20261105000000_connector_policy.sql` (down script in `migrations/down/`); checks
+`check-account-api.mjs`, `check-business-db.mjs`, `check-routing-v2.mjs`.
+
+### 18.1 Connector policy (`GET /api/account` `policy.connectors`)
+
+Connectors are MCP servers. There are no organisations yet, so gateway policy is per plan
+(`zerox_plan_policy.connector_policy jsonb`); machine policy is the CLI's `managed-settings.json`.
+
+```json
+"policy": {"connectors": {"allowed": ["catalog:*"], "denied": [], "required": [],
+  "hosted": [], "allow_unvetted": true, "catalog_version": "2026-11-03"}}
+```
+
+- `allowed`: connector catalog ids, or `"catalog:*"` for every entry of the catalog. `denied`: ids
+  the CLI must not start; deny wins over `allowed`, `required` and `hosted`. `required`: ids the
+  CLI starts with managed scope (also in one-shot runs) and the user cannot disable. `hosted`: ids
+  the plan may use through the hosted endpoint (section 18.4). `allow_unvetted`: whether servers
+  that are not in the catalog may run. `catalog_version`: the catalog version the ids were written
+  against.
+- A missing `policy` block (or `policy` without `connectors`) means no gateway policy: the CLI
+  applies its managed and user settings only. The gateway leaves it out when the plan's column is
+  null or not a JSON object, and against a database without the migration.
+- The gateway validates the stored value: ids are `^[a-z0-9][a-z0-9._-]{0,63}$` (others are
+  dropped), lists are de-duplicated and capped at 100, a denied id is removed from `required` and
+  `hosted`, a missing `allowed` is `["catalog:*"]`, a missing `allow_unvetted` is `true`, and a
+  missing or malformed `catalog_version` is the gateway's (`2026-11-03`). A policy only restricts
+  what it says.
+- `hosted` is reported only while the gateway serves hosted connectors (`HOSTED_CONNECTORS=true`,
+  off by default); otherwise it is `[]` whatever the plan allows. Even then it lists only the
+  plan's ids the gateway can serve now: a catalog entry whose vendor OAuth app is configured
+  (client id, every URL, scopes), with the database and `CONNECTOR_TOKENS_KEK` in place. An id the
+  plan grants but the operator has not configured is left out, so a client never sets up a
+  connector that could only answer 503.
+- Seed (migration `20261105000000_connector_policy.sql`, kept if an operator already set a
+  policy): every plan `allowed: ["catalog:*"]`, `denied: []`, `required: []`,
+  `allow_unvetted: true`, `catalog_version: "2026-11-03"`; Free `hosted: []` (local connectors
+  only); Pro, Max and ultrawork `hosted: ["atlassian", "github", "linear", "notion", "slack"]`
+  (vendors with an official remote MCP server). The ids must equal the CLI catalog's ids. Not yet
+  checked: the CLI's compiled-in catalog (`assets/mcp-catalog.json`) is on no neuron-v2 branch as
+  of 2026-11-04, so these five ids are provisional. When it lands, compare them and fix either
+  side (a new migration, or an operator update of `connector_policy`). Nothing depends on them
+  yet: `hosted` is reported only with `HOSTED_CONNECTORS=true`.
+- CLI behaviour (neuron-v2): the block is cached with its expiry; offline or when the gateway
+  cannot be reached, the CLI uses the last cached policy and warns (fail open), unless managed
+  settings set `mcpPolicy.failClosed: true`.
+
+
+### 18.2 Agentic routing hint (`x-neuron-route: agentic`)
+
+- The Neuron CLI sends `x-neuron-route: agentic` on turns that attach tools when the model is
+  `auto`. The gateway treats a request as agentic when it carries that header (any case, trimmed)
+  or attaches at least one tool, whoever the client is.
+- For an agentic request `auto` considers only catalog models with `capabilities.tools = true`
+  and leaves out models with a poor tool-call record, including as fallbacks. The catalog keeps no
+  per-model tool-call rate, so the record is an explicit list in `src/catalog.js`
+  (`POOR_TOOL_CALLERS`, matched on the upstream model with any provider prefix and any
+  OpenRouter `:variant` suffix such as `:free`): today the gpt-oss family
+  (`groq/openai/gpt-oss-120b`, `groq/openai/gpt-oss-20b`, `nvidia/openai/gpt-oss-20b`,
+  `@cf/openai/gpt-oss-120b`, and catalog rows or BYOK OpenRouter models of the same models), after
+  `groq/openai/gpt-oss-120b` answered a build request in chat without calling a tool (2026-11-03).
+  The same rule applies to `auto` on a BYOK session's own OpenRouter models; when only listed
+  models could serve, it answers 400 `invalid_request` ("None of your OpenRouter models reliably
+  calls tools; choose a model by name.").
+- The header only narrows `auto`. A model asked for by id is served as before, agentic or not: the
+  header alone never makes it need tools (only attached tools do). A request without tools and
+  without the header routes as before.
+- When no other tool-capable model is configured, the request answers 503 `service_unavailable`
+  ("No model that reliably calls tools is configured on this gateway; choose a model by name.").
+
+### 18.3 `prompt_cache_key` (`POST /v1/chat/completions`)
+
+- The CLI may send `prompt_cache_key` in an OpenAI-compatible chat body: a hash of its session
+  id, never the raw id. The gateway accepts 1 to 128 characters of `[A-Za-z0-9._:-]` (otherwise
+  400 `invalid_request`).
+- The gateway never forwards the key as sent. It forwards `SHA-256("zx-cache:" + caller + NUL +
+  key)` (the first 32 hex digits; caller = the account id, or the session for sessions without
+  an account), which is stable for the conversation and cannot collide with or reveal another
+  caller's key on the shared upstream account.
+- It goes only to upstreams that accept the field: OpenRouter (its sticky routing key, which
+  keeps the conversation on the provider that holds its prompt cache). It is stripped for Groq,
+  Gemini (its OpenAI-compatible endpoint answers 400 to unknown fields), NVIDIA, Workers AI, Z.ai
+  and Claude (whose adapter caches with its own `cache_control` blocks).
+- Quota accounting is unchanged: cached input tokens count like other prompt tokens.
+
+### 18.4 Hosted connector endpoint (implemented; off unless `HOSTED_CONNECTORS=true`)
+
+Code: `src/mcp-proxy.js`, `src/routes/connectors.js`, `src/connector-accounts.js`,
+`src/connector-catalog.js`, `src/connector-vault.js`; migration
+`20261105000100_connector_accounts.sql` (down script in `migrations/down/`); check
+`check-connectors.mjs`. With `HOSTED_CONNECTORS` unset every route below answers 404.
+
+- `https://zero-x.live/mcp/<connector_id>`: Streamable HTTP (MCP 2025-06-18), `Authorization:
+  Bearer <ses_ session token or nzx_ key>`. Served only for ids in the caller's
+  `policy.connectors.hosted` (and allowed, not denied). Methods: `POST` (one JSON-RPC message;
+  batches answer 400), `GET` (the server-to-client stream; needs a session) and `DELETE` (ends the
+  session). The answer is `application/json` or `text/event-stream`, as the vendor sends it.
+- `401` (`{"error":"invalid_session"}`, `WWW-Authenticate: Bearer`) = sign in again. `403` with
+  `{"error":"needs_connect","connect_url":"https://zero-x.live/dashboard#connectors"}` = the user
+  has not linked that connector, or the vendor no longer accepts the link: it refused the refresh
+  grant (`invalid_grant` and the like), the token expired without a refresh token, or a freshly
+  refreshed token was refused too (the gateway then deletes the link). A token endpoint that
+  cannot be reached or answers 5xx (or an operator error such as `invalid_client`) is
+  `502 upstream_unreachable` and keeps the link. Other answers, all
+  `{"error": <code>, "message": ...}`: `403 not_in_plan` (the plan does not include the
+  connector; `upgrade_url`), `403 account_suspended`, `404 not_found` (unknown connector),
+  `404 session_not_found` (initialize again), `413 request_too_large` (over 1 MiB),
+  `429 rate_limited` (`Retry-After`; 120 requests per user per minute, counted in the database
+  so the Worker, the EC2 server and every isolate share one budget), `502 upstream_error` /
+  `upstream_unreachable`, `503 connector_not_configured` or `connectors_unavailable`.
+- Sessions: the client sees `Mcp-Session-Id: zxs_<43 characters>`, which the gateway maps to the
+  vendor's session id, the user and the connector (24 hours). Another user's id answers 404.
+- A call to a destructive-tier tool must carry `x-neuron-confirmed: 1`, which the CLI sends only
+  after the user approved that call in its permission prompt; without it the proxy answers HTTP
+  200 with JSON-RPC error `-32010` (`data.reason: "confirmation_required"`, `data.tool`,
+  `data.tier`). The header is not passed to the vendor. Tools the catalog marks `blocked` answer
+  `-32011` and are left out of `tools/list`. An answer over the size cap (4 MiB) ends with
+  `-32012` for the pending request. The gateway forwards the JSON-RPC message it checked
+  (re-serialized), never the raw request body.
+- A tool's tier is the gateway catalog's (an explicit per-vendor map from the vendor's published
+  tool list where there is one, else name rules on the name split into words without the vendor
+  prefix, so `deleteConfluencePage` and `notion-delete-page` are destructive), made stricter, never
+  looser, by the vendor's own annotations: an explicit `destructiveHint: true` makes it
+  destructive, an explicit `readOnlyHint: false` takes it out of `read`. `tools/list` answers
+  carry that tier: `annotations.readOnlyHint` (read), `annotations.destructiveHint`
+  (destructive), `annotations.openWorldHint: true`, and `_meta["live.zero-x/tier"]` = `read`,
+  `write`, `external` or `destructive`. Tiers the vendor made stricter are remembered per user
+  and connector (seven days) and applied to `tools/call`, so a call is checked against the tier
+  the client was shown; a tool whose stricter tier cannot be stored is left out of the list.
+- Every message the proxy handles writes one audit row with metadata only (method, tool, tier,
+  decision, status, duration, byte counts, sha256 of the tool arguments), kept 30 days; no
+  argument or result text is stored. Vendor tokens never reach a client or a log.
+- Neuron settings name a hosted connector with server `type: "zerox"`. The managed-proxy type
+  string the CLI inherited stays only as a silent parse alias and appears in no docs or UI.
+
+### 18.5 Connector accounts (`/api/connectors`, website and CLI sessions; not API keys)
+
+- `GET /api/connectors` → `{catalog_version, connect_url, connectors: [{id, name, publisher,
+  source, endpoint, status, in_plan, configured, scopes, connected_at}]}`; `status` is
+  `connected`, `not_connected`, `not_in_plan` or `unavailable` (the operator has not configured
+  the vendor's OAuth app). No token is ever returned.
+- `POST /api/connectors/<id>/connect` → `{authorize_url, expires_in: 600}` and an HttpOnly
+  `zx_connect` cookie; the browser goes to `authorize_url` (OAuth 2.0 code flow with PKCE S256
+  and a single-use `state`). For a vendor whose MCP server is an MCP 2025-06-18 authorization
+  server (Notion, Atlassian) the authorize URL, the code exchange and every refresh grant carry
+  `resource=<the MCP server URL>` (RFC 8707). Linking again replaces the previous link.
+  `403 not_in_plan`, `503 connector_not_configured`.
+- `GET /api/connectors/callback` (the vendor's redirect) → `303` to the dashboard with
+  `?connector=<id>&connect=ok#connectors`, or `connect=error&reason=` `invalid_state`, `expired`,
+  `browser_mismatch` (no matching cookie: the flow was started in another browser), `denied`,
+  `vendor_error`, `invalid_code`, `not_in_plan`, `token_exchange` or `unavailable`.
+- `DELETE /api/connectors/<id>` → `{status: "disconnected", connector}`; `404` when not connected.
+  Where the operator set `CONNECTOR_<ID>_REVOKE_URL` the stored refresh token
+  (`token_type_hint=refresh_token`), then the access token, are revoked at the vendor (RFC 7009,
+  best effort); the link's row and its sealed tokens are then deleted, not kept. The CLI sees
+  `needs_connect` on its next call.

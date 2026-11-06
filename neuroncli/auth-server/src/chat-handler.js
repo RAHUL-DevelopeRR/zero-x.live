@@ -80,17 +80,37 @@ export function validateCompletionBody(body) {
   if (isSet(body.stream_options) && (typeof body.stream_options !== 'object' || Array.isArray(body.stream_options))) {
     return 'stream_options must be an object.';
   }
+  if (isSet(body.prompt_cache_key) && (typeof body.prompt_cache_key !== 'string' || !PROMPT_CACHE_KEY.test(body.prompt_cache_key))) {
+    return 'prompt_cache_key must be 1 to 128 letters, digits, dots, underscores, colons or hyphens.';
+  }
   return null;
+}
+
+// prompt_cache_key (contract section 14.3): the client's key for a conversation's prompt cache.
+// The Neuron CLI sends a hash of its session id, never the id itself. Upstreams share one
+// operator account across every caller, so the gateway never forwards the key as sent: it
+// forwards SHA-256('zx-cache:' + caller + NUL + key), 32 hex digits, which stays stable for the
+// conversation, cannot collide with another caller's key and reveals nothing the client sent.
+// providers.js PROVIDER_PARAMS passes it to the upstreams that accept it and drops it for the
+// others. Quota and billing do not change.
+const PROMPT_CACHE_KEY = /^[A-Za-z0-9._:-]{1,128}$/;
+export async function scopedPromptCacheKey(caller, key) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`zx-cache:${caller}\u0000${key}`));
+  return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('').slice(0, 32);
 }
 
 // What the request needs from a model (router.js lacks()). forcedTool: tool_choice "required" or
 // a named function (anything but "auto" and "none") forces a tool call, which auto gives only to
-// models that can be told so (router.js).
+// models that can be told so (router.js). agentic: the client marked the turn as agent work
+// (`x-neuron-route: agentic`, sent by the Neuron CLI on turns that attach tools when the model is
+// "auto"); auto then picks only tool-capable models with a good tool-call record, as it does for
+// any request that attaches tools (router.js, catalog.js POOR_TOOL_CALLERS).
 const IMAGE_PARTS = new Set(['image_url', 'input_image', 'image']);
-export function requestNeeds(body) {
+export function requestNeeds(body, routeHint = null) {
   const tools = Array.isArray(body.tools) && body.tools.length > 0;
   return {
     tools,
+    agentic: tools || (typeof routeHint === 'string' && routeHint.trim().toLowerCase() === 'agentic'),
     vision: body.messages.some(message => Array.isArray(message.content) &&
       message.content.some(part => IMAGE_PARTS.has(part?.type))),
     stream: body.stream === true,
@@ -302,13 +322,14 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
     // caller lets the tracker require timeouts from several callers before parking a shared pool,
     // and keeps one caller on the same vault key of a model (router.js rotateKeyPools).
     const caller = session.user_id || String(token).slice(0, 16);
+    if (isSet(body.prompt_cache_key)) body = { ...body, prompt_cache_key: await scopedPromptCacheKey(caller, body.prompt_cache_key) };
 
     let route;
     try {
       route = router.route({
         env,
         requestedModel: body.model,
-        needs: requestNeeds(body),
+        needs: requestNeeds(body, c.req.header('x-neuron-route')),
         promptTokens,
         maxTokens: requestedMax,
         maxTokensExplicit: isSet(explicitMax),

@@ -95,7 +95,9 @@ const request = overrides => router.route({ env, requestedModel: 'auto', needsTo
 
 const autoWithTools = request();
 assert.equal(autoWithTools.candidates[0].entry.id, 'gemini/gemini-2.5-flash', 'best tool-capable model first');
-assert.equal(autoWithTools.candidates.at(-1).entry.id, 'groq/openai/gpt-oss-20b', 'lowest-ranked configured candidate last');
+assert.equal(autoWithTools.candidates.at(-1).entry.id, 'groq/qwen/qwen3.8-27b', 'lowest-ranked configured candidate last');
+assert.ok(!autoWithTools.candidates.some(candidate => /gpt-oss/.test(candidate.entry.id)),
+  'agentic auto leaves out models that answer build requests in chat (catalog.js POOR_TOOL_CALLERS)');
 assert.ok(!autoWithTools.candidates.some(candidate => candidate.entry.provider === 'cloudflare'),
   'Workers AI llama-3.3 is explicit-only (400 on tool history)');
 assert.ok(autoWithTools.candidates.every(candidate => candidate.entry.supports_tools), 'auto only picks tool-capable models');

@@ -269,12 +269,18 @@ export async function listModelsForSession(env, { plan, country, session } = {})
 
 // Safe OpenAI parameters each upstream accepts. Anything else is dropped rather than
 // risking a provider-specific 400 (e.g. Gemini rejects penalties, Workers AI tool_choice).
+// prompt_cache_key (already scoped to the caller, chat-handler.js scopedPromptCacheKey) goes only
+// to OpenRouter, whose docs name it as the sticky routing key that keeps a conversation on the
+// provider holding its prompt cache. Groq, NVIDIA and Z.ai do not document it, and Gemini's
+// OpenAI-compatible endpoint answers 400 "Unknown name" to fields it does not know, so it is
+// dropped for them (Claude's adapter builds its body from its own whitelist; Workers AI is a binding).
 const SHARED_PARAMS = ['tools', 'tool_choice', 'stop', 'temperature', 'top_p', 'seed', 'response_format'];
 export const PROVIDER_PARAMS = Object.freeze({
   groq: [...SHARED_PARAMS, 'parallel_tool_calls', 'presence_penalty', 'frequency_penalty', 'user', 'reasoning_effort'],
   gemini: [...SHARED_PARAMS, 'reasoning_effort'],
   nvidia: [...SHARED_PARAMS, 'presence_penalty', 'frequency_penalty'],
-  openrouter: [...SHARED_PARAMS, 'parallel_tool_calls', 'presence_penalty', 'frequency_penalty', 'user', 'reasoning_effort'],
+  openrouter: [...SHARED_PARAMS, 'parallel_tool_calls', 'presence_penalty', 'frequency_penalty', 'user', 'reasoning_effort',
+    'prompt_cache_key'],
   cloudflare: ['tools', 'temperature', 'top_p', 'seed', 'presence_penalty', 'frequency_penalty'],
   // Claude 5.5 rejects sampling parameters (temperature, top_p, top_k) and the adapter builds its
   // body from a whitelist anyway (src/anthropic-request.js); this list is the first filter.

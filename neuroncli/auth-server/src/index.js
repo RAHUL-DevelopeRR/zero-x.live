@@ -40,6 +40,8 @@ import { registerOfferRoutes } from './routes/offers.js';
 import { registerCatalogAdminRoutes } from './routes/catalog-admin.js';
 import { registerCreditRoutes } from './routes/credits.js';
 import { registerSearchRoutes } from './routes/search.js';
+import { registerConnectorRoutes } from './routes/connectors.js';
+import { registerMcpProxyRoutes } from './mcp-proxy.js';
 import { loadVaultKeys, vaultConfigured } from './provider-keys.js';
 import { accessConfigured, passedAccess } from './access-auth.js';
 import { WORKER_HOSTS, chatRefusal, chatRoutedToEc2, forwardToEc2, proxyStatus, servingRuntime } from './ec2-proxy.js';
@@ -64,7 +66,7 @@ app.onError((error, c) => {
 
 // Paths are served both at the root and under the legacy /neuroncli/auth-server mount.
 const routePath = pathname => pathname.startsWith(API_MOUNT + '/') ? pathname.slice(API_MOUNT.length) : pathname;
-const isApiRoute = path => ['/auth/', '/api/', '/v1/', '/admin/', '/webhooks/', '/relay/', '/oiop/'].some(prefix => path.startsWith(prefix)) ||
+const isApiRoute = path => ['/auth/', '/api/', '/v1/', '/admin/', '/webhooks/', '/relay/', '/oiop/', '/mcp/'].some(prefix => path.startsWith(prefix)) ||
   path === '/health' || path === '/ready';
 
 // ── Security headers: the policies are in src/csp.js ──
@@ -132,7 +134,7 @@ app.use('*', async (c, next) => {
     c.header('Cache-Control', 'no-store');
     c.header('Referrer-Policy', url.pathname.startsWith('/neuroncli/login/') ? 'origin' : 'no-referrer');
   }
-  if (['/api/', '/admin/', '/webhooks/', '/relay/'].some(prefix => path.startsWith(prefix)) && !PUBLIC_API_PATHS.includes(path)) {
+  if (['/api/', '/admin/', '/webhooks/', '/relay/', '/mcp/'].some(prefix => path.startsWith(prefix)) && !PUBLIC_API_PATHS.includes(path)) {
     c.header('Cache-Control', 'no-store');
   }
   // The dashboard host (and a test host) are never indexed: their pages and APIs say so. Their
@@ -146,7 +148,7 @@ app.use('*', async (c, next) => {
   const strayHost = servingRuntime(c.env) === 'worker' && !WORKER_HOSTS.includes(host) && !isLoopbackHost(url.host) && !testHost;
   if (((url.hostname === 'dashboard.zero-x.live' || testHost || strayHost) && !isStaticFile(url.pathname)) ||
       url.pathname.startsWith('/neuroncli/') || path === '/health' ||
-      ['/auth/', '/api/', '/v1/', '/admin/', '/webhooks/', '/relay/', '/oiop/'].some(prefix => path.startsWith(prefix))) {
+      ['/auth/', '/api/', '/v1/', '/admin/', '/webhooks/', '/relay/', '/oiop/', '/mcp/'].some(prefix => path.startsWith(prefix))) {
     c.header('X-Robots-Tag', 'noindex, nofollow');
   }
 });
@@ -1149,6 +1151,9 @@ registerOfferRoutes(api);
 registerCatalogAdminRoutes(api);
 registerCreditRoutes(api);
 registerSearchRoutes(api);
+// Hosted connectors (contract section 18.4): 404 unless HOSTED_CONNECTORS=true.
+registerConnectorRoutes(api);
+registerMcpProxyRoutes(api);
 
 app.route(API_MOUNT, api);
 app.route('/', api);

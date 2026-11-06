@@ -113,6 +113,9 @@ them in `zerox_plan_policy.razorpay_plan_id_inr/usd`.
 | `PAID_DAILY_SPEND_CAP_USD` | var | unset | A number above 0 lowers every paid pool's daily spend cap (upstream USD per UTC day) to at most this value; it can never raise one (contract §13.4). |
 | `CATALOG_SOURCE` | var | unset | Unset: the approved catalog rows when the database is configured, over the code catalog. `code`: kill switch, `src/catalog.js` only (contract §13.1). |
 | `CLOUDFLARE_PAID` | var | unset | `true` adds paid Workers AI pools (Workers Paid accounts only). |
+| `HOSTED_CONNECTORS` | var | unset = `false` | `true`: serves `/api/connectors/*`, the dashboard Connectors tab and `/mcp/<id>` (contract section 18.4), and `/api/account` reports each plan's hosted connector ids (`policy.connectors.hosted`, section 18.1). Unset: every one of those routes answers 404, every plan reports `hosted: []` and clients offer local connectors only. See "Hosted connectors" below before switching it on. |
+| `CONNECTOR_TOKENS_KEK` | **secret** | unset | 32 random bytes, base64 (`openssl rand -base64 32`). Seals the vendor OAuth tokens of linked connector accounts (`src/connector-vault.js`). Never reuse `PROVIDER_KEYS_KEK`. Losing it loses every link (users connect again). Without it hosted connectors answer 503. |
+| `CONNECTOR_<ID>_*` | var + **secret** | unset | Per hosted connector (`ATLASSIAN`, `GITHUB`, `LINEAR`, `NOTION`, `SLACK`): `CLIENT_ID`, `CLIENT_SECRET` (secret), `SCOPES`, and overrides `MCP_URL`, `AUTHORIZE_URL`, `TOKEN_URL`, `REVOKE_URL` (https only). A connector is offered only when its client id and every URL are known (`src/connector-catalog.js` lists the defaults and what is missing). |
 | `NVIDIA_HOSTED` + `NVIDIA_API_KEY` | var + **secret** | unset = `false` (`"true"` in the lineup files) | `true`: the NVIDIA trial key serves users' free models, the owner's decision (2026-10-19, kept in the 2026-10-29 lineup; trial terms in [docs/PROVIDER_TERMS.md](docs/PROVIDER_TERMS.md)). `false`: NVIDIA is not offered. |
 | `OPENROUTER_HOSTED` + `OPENROUTER_API_KEY` | var + **secret** | unset = `false` (`"true"` in the lineup files) | `true`: the operator key serves the OpenRouter free models in `OPENROUTER_MODELS`, the owner's decision. `false`: users' own keys (BYOK) only, which work regardless. |
 | `OPENROUTER_MODELS` | var | `cohere/north-mini-code:free` (the lineup files too; `minimax/minimax-m3.1-flash:free` left them on 2026-11-04, when OpenRouter no longer listed it and every request answered service_unavailable) | Narrows the OpenRouter models offered, hosted and BYOK alike. |
@@ -311,7 +314,9 @@ and apply the missing ones, in order (the ten catalog and app migrations were re
 15. `20261106000000_pool_fair_share.sql` (per-user fair share of the free pools, security audit F6; see below)
 16. `20261105000000_billing_details.sql` (billing profiles and consent records; see below)
 17. `20261105000200_billing_tax_id.sql` (an optional `tax_id` on `zerox_billing_profiles` with its CHECK, and the two profile functions returning it; applies after `20261105000000`; see below)
-18. `20261105200000_search_quota.sql` (daily web search and research-run counters for `POST /v1/search`; see below)
+18. `20261105000000_connector_policy.sql` (connector policy per plan, `/api/account` `policy.connectors`; see below)
+19. `20261105000100_connector_accounts.sql` (hosted connector links and their audit log; unused while `HOSTED_CONNECTORS` is off; see below)
+20. `20261105200000_search_quota.sql` (daily web search and research-run counters for `POST /v1/search`; see below)
 
 **Billing details (`20261105000000_billing_details.sql`).** Two new tables (`zerox_billing_profiles`,
 `zerox_billing_consents`) and four functions; nothing existing changes, and it does not depend on
@@ -425,6 +430,88 @@ never to `wrangler.toml` `[vars]` (`gateway-env.mjs` refuses a name that is both
    `brave` otherwise.
 
 Roll back with `migrations/down/20261105200000_search_quota.down.sql` (drops the counters).
+**Connector policy (`20261105000000_connector_policy.sql`).** Adds
+`zerox_plan_policy.connector_policy jsonb` (contract section 18.1) and recreates
+`zerox_plan_policies_v2` with that column (same arguments and grants). Free gets local connectors
+only; Pro, Max and ultrawork get the hosted connector ids, which `/api/account` reports only while
+`HOSTED_CONNECTORS=true`. A plan whose policy is already set keeps it, so the file is safe to
+re-run. The gateway works on either side of it (without the column, `/api/account` has no
+`policy` block), so it can be pasted before or after the deploy. Verify:
+
+- `SELECT plan, connector_policy->'hosted' FROM public.zerox_plan_policy ORDER BY sort;` returns free
+  `[]` and the five hosted ids for pro, max and ultrawork.
+
+Edit a plan's policy with `UPDATE public.zerox_plan_policy SET connector_policy = '{...}'::jsonb
+WHERE plan = 'pro';` (ids are connector catalog ids; `"catalog:*"` in `allowed` allows the whole
+catalog). Roll back with `migrations/down/20261105000000_connector_policy.sql`; it must run before
+`down/20261102000000_free_token_window.sql` if both are rolled back.
+
+**Connector accounts (`20261105000100_connector_accounts.sql`).** New tables only:
+`zerox_connector_accounts` (one row per linked vendor account; `enc_refresh_token` is the sealed
+token envelope, never readable without `CONNECTOR_TOKENS_KEK`; disconnecting, or the vendor
+refusing the link, deletes the row, so no token is kept after its link ends),
+`zerox_connector_audit` (metadata of each `/mcp/<id>` call, purged after 30 days by the scheduled
+maintenance while hosted connectors are on) and `zerox_connector_rate` (one per-user request
+counter for `/mcp/`, shared by every runtime). Nothing uses them while `HOSTED_CONNECTORS` is off,
+so it can be pasted before or after any deploy. Verify:
+`SELECT count(*) FROM pg_proc WHERE proname LIKE 'zerox_connector_%';` returns 8. Roll back with `migrations/down/20261105000100_connector_accounts.sql` (switch hosted
+connectors off first; it deletes every link and audit row).
+
+**Hosted connectors (contract section 18.4; off until every step below is done).** Users link a
+SaaS account on the dashboard (Connectors tab) and Neuron reaches it through
+`https://zero-x.live/mcp/<id>`, which proxies to the vendor's official remote MCP server with the
+user's stored token (`src/routes/connectors.js`, `src/mcp-proxy.js`). Owner steps before
+`HOSTED_CONNECTORS=true` on production:
+
+1. Staging first: a test host (`EXTRA_WEB_HOSTS`, e.g. `staging.zero-x.live`) on its own database
+   with the migrations above, `HOSTED_CONNECTORS=true` there only, and test OAuth apps. Set
+   `CONNECTORS_CALLBACK_URL`, `CONNECTORS_RETURN_URL` and `HOSTED_CONNECTORS_BASE_URL` to the
+   staging origin. Production keeps the flag unset until staging passes the acceptance run (link
+   GitHub, `neuron` shows it ready with no local secret, disconnect turns it to needs_connect, a
+   Free account sees no hosted connector, a destructive tool asks before it runs).
+2. `CONNECTOR_TOKENS_KEK` as a secret on every runtime that serves `/mcp/` and `/api/connectors`
+   (Worker and EC2), the same value on both.
+3. One OAuth app per vendor, owned by the Zero-X organisation, redirect URI
+   `https://dashboard.zero-x.live/api/connectors/callback` (or the staging one), then
+   `CONNECTOR_<ID>_CLIENT_ID` / `CONNECTOR_<ID>_CLIENT_SECRET`:
+   - GitHub: an OAuth app (or a GitHub App with user tokens, which adds refresh tokens). Scopes
+     default to `repo read:org`; narrow them if the toolsets you allow need less. Confirm on
+     staging that the remote server `https://api.githubcopilot.com/mcp/` accepts the app's user
+     token for the toolsets you want.
+   - Linear: an OAuth application (Linear settings, API); default scopes `read,write`.
+   - Slack: a Slack app with user scopes for the MCP tools you allow (set `CONNECTOR_SLACK_SCOPES`,
+     there is no default). Slack allows MCP only for Marketplace-published or internal apps, so a
+     public alpha needs the Marketplace listing first.
+   - Notion: register a client with the authorization server that `https://mcp.notion.com/mcp`
+     advertises (its protected-resource metadata), then set `CONNECTOR_NOTION_AUTHORIZE_URL`,
+     `CONNECTOR_NOTION_TOKEN_URL` and the client id.
+   - Atlassian: the MCP URL defaults to `https://mcp.atlassian.com/v2/mcp`, which the
+     atlassian/atlassian-mcp-server README recommended on 2026-11-04. Register an OAuth 2.1 client
+     with the authorization server that endpoint advertises, then set
+     `CONNECTOR_ATLASSIAN_AUTHORIZE_URL`, `_TOKEN_URL`, `_SCOPES` and the client id. Delete tools
+     (`delete_jira`) are off by default on Atlassian's side; the gateway asks before any it allows.
+   - Check each vendor's tools/list on staging against `src/connector-catalog.js`: Atlassian's map
+     follows its published tool list, Notion's names come from third-party listings, and Linear
+     publishes no tool names (name rules only).
+   Set `CONNECTOR_<ID>_REVOKE_URL` where the vendor offers RFC 7009 revocation, so Disconnect also
+   revokes the refresh token (then the access token) at the vendor; without it Disconnect deletes
+   the stored tokens but the vendor's grant stays until the user removes the app there.
+   `/api/account` reports a connector as hosted only once its OAuth app is configured, so vendors
+   can be switched on one at a time.
+4. Decide where `/mcp/` runs. Both runtimes serve it; on the Worker a long tool call counts
+   against the request limits, on EC2 it does not. If EC2 should serve it, add `/mcp/` to
+   `EC2_PROXY_PREFIXES`.
+5. Legal and privacy text before launch: the privacy policy must say that Zero-X stores linked
+   accounts' OAuth tokens (encrypted, deleted when the user disconnects, when the vendor refuses
+   the link, or with the account; revoked at the vendor where it supports revocation), which
+   vendors receive the user's requests, that call metadata (tool name, time, sizes, a hash of the
+   arguments, never their content) is kept 30 days, and how to disconnect. The terms should
+   cover acting on the user's behalf in third-party services. Each vendor's developer terms apply
+   to its app (Slack's Marketplace rules, GitHub's OAuth app terms, Atlassian and Notion app
+   terms, Linear's API terms).
+6. Gateway-served connector catalog updates for the CLI need an ed25519 signing key held by the
+   owner; by the owner decision the CLI (neuron-v2) rejects every remote update until its public
+   key constant is set. This gateway does not serve catalog updates yet.
 
 `DATABASE_URL=… node scripts/apply-migrations.mjs --status`, then `--apply`; or run each file in the
 Supabase SQL editor followed by

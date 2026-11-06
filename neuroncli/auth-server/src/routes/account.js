@@ -1,5 +1,7 @@
 import { rpc, rpcRows } from '../account-store.js';
 import { ApiError, ALL_CREDENTIALS, bearerToken, invalidSession, withCaller } from '../auth-context.js';
+import { servableHostedIds } from '../connector-accounts.js';
+import { connectorPolicyBlock } from '../connector-policy.js';
 import { normalizePlanId, planById } from '../plan-policy.js';
 import { sessionExpiry } from '../session-store.js';
 import { colonyLimits, searchLimits } from '../search.js';
@@ -92,6 +94,12 @@ export async function accountPayload(env, caller, { token = '' } = {}) {
   const windowSeconds = windowLimit('window_seconds');
   const windowUsage = object(row.usage_window);
   const name = displayName(account, caller);
+  // The plan's connector policy (migration 20261105000000, contract section 18.1); left out when
+  // the plan has none or the database predates the column ("no gateway policy").
+  const connectors = connectorPolicyBlock(policy.connector_policy, env);
+  // `hosted` lists only connectors this gateway can serve now (contract section 18.1): a client
+  // sets up every id it gets, so an unconfigured vendor would only ever answer 503.
+  if (connectors) connectors.hosted = servableHostedIds(env, connectors.hosted);
   return {
     user: {
       id: caller.user_id,
@@ -142,6 +150,7 @@ export async function accountPayload(env, caller, { token = '' } = {}) {
       cancel_at_period_end: subscription.cancel_at_period_end === true,
     } : null,
     flags: { suspended: caller.suspended === true || account.suspended === true || account.status === 'suspended' || row.suspended === true },
+    ...(connectors ? { policy: { connectors } } : {}),
   };
 }
 

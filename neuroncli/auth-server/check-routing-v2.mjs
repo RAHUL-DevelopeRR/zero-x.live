@@ -5,13 +5,13 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { Hono } from 'hono';
-import { conversationKey, createChatHandler, MAX_OUTPUT_TOKENS, requestNeeds } from './src/chat-handler.js';
+import { conversationKey, createChatHandler, MAX_OUTPUT_TOKENS, requestNeeds, scopedPromptCacheKey, validateCompletionBody } from './src/chat-handler.js';
 import { RoutingEngine, fitMaxTokens } from './src/router.js';
 import { FailureKind, HealthState, ProviderHealthTracker } from './src/provider-health.js';
 import {
   AGENT_MIN_CONTEXT, BUILTIN_PLANS, CATALOG, EEA_COUNTRIES, MODEL_ALIASES, POOL_LIMITS, callerCountry, catalogEntry, catalogWarnings,
   expandCountries, familyMembers, familyModels, isFamilyId, listedMaxOutput, listModelsForCaller, loadPlanPolicies, modelIdentity, planPolicy,
-  poolConfigured, poolKey, resolveModelId, withIdentity,
+  poolConfigured, poolKey, resolveModelId, withIdentity, POOR_TOOL_CALLERS, poorToolCaller,
 } from './src/catalog.js';
 import { cleanModelName, MAKERS } from './src/model-families.js';
 import {
@@ -21,7 +21,7 @@ import {
 import { errorBody, errorResponse } from './src/errors.js';
 import { RESERVED_OUTPUT_TOKENS, reservationArgs, reservedTokens, reserveError, settlementArgs } from './src/capacity.js';
 import { exhaustedBudget, poolBudgetState, resetPoolBudgets } from './src/pool-budget.js';
-import { buildUpstreamPayload, classifyUpstreamFailure, listModelsForSession, retryAfterSeconds } from './src/providers.js';
+import { PROVIDER_PARAMS, buildUpstreamPayload, classifyUpstreamFailure, listModelsForSession, retryAfterSeconds } from './src/providers.js';
 import { resetHubClientCache } from './src/health-hub-client.js';
 import { planPolicyRows } from './contract-rows.mjs';
 
@@ -125,9 +125,9 @@ function gateway({ tracker = new ProviderHealthTracker(), router = new RoutingEn
   const addSession = (token, session) => store.set(token, JSON.stringify({ created: Date.now(), plan: 'free',
     requests: 0, tokens_used: 0, usage_day: today(), ...session }));
   const session = token => JSON.parse(store.get(token));
-  const call = (env, body, { token = 'ses_anon', country, signal, ctx } = {}) => {
+  const call = (env, body, { token = 'ses_anon', country, signal, ctx, headers = {} } = {}) => {
     const request = new Request('https://zero-x.live/v1/chat/completions', {
-      method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...headers },
       body: typeof body === 'string' ? body : JSON.stringify(body), signal,
     });
     if (country) Object.defineProperty(request, 'cf', { value: { country } });
@@ -455,14 +455,22 @@ try {
   await test('auto ranks by quality, free pools before paid, skipping geo-blocked free pools', () => {
     const router = new RoutingEngine(new ProviderHealthTracker());
     const base = { env: KEYS, requestedModel: 'auto', needsTools: true, promptTokens: 500, maxTokens: 2000 };
+    // Tools attached: gpt-oss is no agentic auto candidate (catalog.js POOR_TOOL_CALLERS).
     assert.deepEqual(ids(router.route({ ...base, tiers: ['free'], country: 'US' })), ['gemini/gemini-2.5-flash#free',
+      'gemini/gemini-3.5-flash#free', 'gemini/gemini-3.6-flash#free', 'groq/qwen/qwen3.8-27b#free']);
+    assert.deepEqual(ids(router.route({ ...base, tiers: ['free', 'paid'], country: 'US' })).slice(-2),
+      ['gemini/gemini-2.5-flash#paid', 'gemini/gemini-3.6-flash#paid']);
+    assert.ok(!ids(router.route({ ...base, tiers: ['free', 'paid'] })).some(id => id.startsWith('gemini/gemini-2.5-pro')), 'auto never picks 2.5 Pro');
+    assert.equal(ids(router.route({ ...base, tiers: ['free'], country: 'DE' }))[0], 'groq/qwen/qwen3.8-27b#free');
+    assert.equal(ids(router.route({ ...base, tiers: ['free', 'paid'], country: 'DE' }))[0], 'groq/qwen/qwen3.8-27b#free');
+    // Without tools (plain chat) the whole tool-capable lineup is still auto's, in quality order.
+    const chat = { ...base, needsTools: false };
+    assert.deepEqual(ids(router.route({ ...chat, tiers: ['free'], country: 'US' })), ['gemini/gemini-2.5-flash#free',
       'gemini/gemini-3.5-flash#free', 'gemini/gemini-3.6-flash#free',
       'groq/openai/gpt-oss-120b#free', 'groq/qwen/qwen3.8-27b#free', 'groq/openai/gpt-oss-20b#free']);
-    assert.deepEqual(ids(router.route({ ...base, tiers: ['free', 'paid'], country: 'US' })).slice(-3),
+    assert.deepEqual(ids(router.route({ ...chat, tiers: ['free', 'paid'], country: 'US' })).slice(-3),
       ['gemini/gemini-2.5-flash#paid', 'gemini/gemini-3.6-flash#paid', 'groq/openai/gpt-oss-120b#paid']);
-    assert.ok(!ids(router.route({ ...base, tiers: ['free', 'paid'] })).some(id => id.startsWith('gemini/gemini-2.5-pro')), 'auto never picks 2.5 Pro');
-    assert.equal(ids(router.route({ ...base, tiers: ['free'], country: 'DE' }))[0], 'groq/openai/gpt-oss-120b#free');
-    assert.equal(ids(router.route({ ...base, tiers: ['free', 'paid'], country: 'DE' }))[0], 'groq/openai/gpt-oss-120b#free');
+    assert.equal(ids(router.route({ ...chat, tiers: ['free'], country: 'DE' }))[0], 'groq/openai/gpt-oss-120b#free');
     assert.ok(ids(router.route({ ...base, tiers: ['free', 'paid'], country: 'DE' })).includes('gemini/gemini-2.5-flash#paid'));
   });
 
@@ -479,8 +487,8 @@ try {
     for (const entry of CATALOG.filter(item => item.provider === 'gemini' || item.provider === 'groq')) {
       for (const item of entry.pools) tracker.recordFailure(poolKey(entry, item), { kind: FailureKind.RATE_LIMITED, retryAfterSeconds: 60 });
     }
-    assert.deepEqual(ids(router.route(base)), ['nvidia/openai/gpt-oss-20b#free', 'nvidia/nvidia/nemotron-3-ultra-550b-a55b#free'],
-      'with Gemini and Groq parked, auto goes to NVIDIA');
+    assert.deepEqual(ids(router.route(base)), ['nvidia/nvidia/nemotron-3-ultra-550b-a55b#free'],
+      'with Gemini and Groq parked, auto goes to NVIDIA (not to gpt-oss-20b, catalog.js POOR_TOOL_CALLERS)');
     assert.deepEqual(ids(router.route({ ...base, requestedModel: 'llama-3.3-70b' })), [`${LLAMA}#free`], 'explicit alias');
     assert.deepEqual(ids(router.route({ ...base, requestedModel: LLAMA })), [`${LLAMA}#free`], 'explicit id');
 
@@ -529,13 +537,14 @@ try {
     const router = new RoutingEngine(new ProviderHealthTracker());
     const base = { env, requestedModel: 'auto', needsTools: true, promptTokens: 500, maxTokens: 2000, tiers: ['free', 'paid'], country: 'US' };
     const route = ids(router.route(base));
-    assert.deepEqual(route.slice(0, 3), ['groq/openai/gpt-oss-120b#free', 'groq/qwen/qwen3.8-27b#free', 'groq/openai/gpt-oss-20b#free']);
+    assert.deepEqual(route.slice(0, 2), ['groq/qwen/qwen3.8-27b#free', 'nvidia/nvidia/nemotron-3-ultra-550b-a55b#free'],
+      'tools attached: the gpt-oss models are left out (catalog.js POOR_TOOL_CALLERS)');
     assert.ok(!route.some(id => id.startsWith('gemini/') || id.startsWith('@cf/')), 'auto never reaches them');
     // Z.ai is the low-priority fallback: its two free pools come after every other free pool.
     const free = route.filter(id => id.endsWith('#free'));
     assert.deepEqual(free.slice(-2), ['zai/glm-4.7-flash#free', 'zai/glm-4.5-flash#free']);
     assert.deepEqual(free.slice(0, -2).map(id => id.split('/')[0]),
-      ['groq', 'groq', 'groq', 'nvidia', 'nvidia', 'cohere']);
+      ['groq', 'nvidia', 'cohere']); // tools attached: gpt-oss routes are skipped
     // 2026-11-04: OpenRouter no longer lists minimax/minimax-m3.1-flash:free and every request for
     // it answered service_unavailable, so the lineup's OPENROUTER_MODELS leaves it out.
     assert.ok(!listModelsForCaller(env, { country: 'US' }).data.some(model => model.id.startsWith('minimax/')), 'MiniMax free is not offered');
@@ -580,13 +589,13 @@ try {
     const sticky = router.route(conversation).sticky;
     router.remember(sticky, 'zai/glm-4.7-flash');
     assert.deepEqual(ids(router.route(conversation)), route, 'one fallback to Z.ai does not pin the conversation to it');
-    router.remember(sticky, 'nvidia/openai/gpt-oss-20b');
-    assert.equal(ids(router.route(conversation))[0], 'nvidia/openai/gpt-oss-20b#free', 'other models stick as before');
+    router.remember(sticky, 'nvidia/nvidia/nemotron-3-ultra-550b-a55b');
+    assert.equal(ids(router.route(conversation))[0], 'nvidia/nvidia/nemotron-3-ultra-550b-a55b#free', 'other models stick as before');
     // Pools that are degraded, failing or whose budget this isolate saw spent go after the healthy
     // ones, and still before Z.ai's.
     const spent = ids(router.route({ ...base, budgetState: key => (key.startsWith('groq:') ? { until: Date.now() + 60_000 } : null) }));
     assert.deepEqual(spent.filter(id => id.endsWith('#free')).map(id => id.split('/')[0]),
-      ['nvidia', 'nvidia', 'cohere', 'groq', 'groq', 'groq', 'zai', 'zai']);
+      ['nvidia', 'cohere', 'groq', 'zai', 'zai']);
 
     // Through the chat handler: turn 1 is served by Groq and sticks; turn 2 finds every other free
     // pool rate limited and falls back to Z.ai, which serves without replacing the remembered model;
@@ -598,7 +607,7 @@ try {
     const key = `ses_anon|${conversationKey(undefined, messages)}`;
     reset({ groq: () => completion({ content: 'from groq' }) });
     assert.equal((await gw.call(handlerEnv, { model: 'auto', messages, tools }, { country: 'US' })).status, 200);
-    assert.equal(gw.router.sticky.get(key), 'groq/openai/gpt-oss-120b');
+    assert.equal(gw.router.sticky.get(key), 'groq/qwen/qwen3.8-27b');
     const limited = () => Response.json({ error: { message: 'slow down', code: 'rate_limit_exceeded' } }, { status: 429, headers: { 'Retry-After': '30' } });
     const quiet = await captureLogs(async () => {
       reset({ groq: limited, nvidia: limited, openrouter: limited, zai: () => completion({ content: 'from zai' }) });
@@ -613,9 +622,158 @@ try {
     assert.equal(fallback.headers.get('x-neuron-model'), 'zai/glm-4.7-flash');
     assert.equal(fallbackTargets.at(-1), 'zai');
     assert.ok(!fallbackTargets.slice(0, -1).includes('zai'), 'Z.ai is tried after every other free pool');
-    assert.equal(gw.router.sticky.get(key), 'groq/openai/gpt-oss-120b', 'the Z.ai fallback is not remembered');
+    assert.equal(gw.router.sticky.get(key), 'groq/qwen/qwen3.8-27b', 'the Z.ai fallback is not remembered');
     assert.notEqual(forced.status, 200);
     assert.ok(!forcedTargets.includes('zai'), 'a forced tool call is never sent to Z.ai');
+  });
+
+  // Neuron alpha.3 bug sweep (2026-11-03): on Free with `auto`, "build me a todo app in this
+  // folder" went to groq/openai/gpt-oss-120b, which answered with code in chat and called no tool.
+  // An agentic request (tools attached, or the CLI's x-neuron-route: agentic hint) now gets only
+  // tool-capable models with a good tool-call record (catalog.js POOR_TOOL_CALLERS).
+  await test('agentic auto: a build prompt no longer routes to gpt-oss; plain chat and explicit ids are unchanged', async () => {
+    const build = [{ role: 'system', content: 'You are Neuron, a coding agent.' },
+      { role: 'user', content: 'build me a todo app in this folder' }];
+    const writeFile = { type: 'function', function: { name: 'write_file', description: 'Write a file',
+      parameters: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string' } } } } };
+    // The list covers the gpt-oss family exactly, matched on the upstream model (so catalog rows too).
+    assert.deepEqual(CATALOG.filter(poorToolCaller).map(entry => entry.id).sort(), ['@cf/openai/gpt-oss-120b',
+      'groq/openai/gpt-oss-120b', 'groq/openai/gpt-oss-20b', 'nvidia/openai/gpt-oss-20b']);
+    assert.equal(poorToolCaller({ upstream_model: 'openai/gpt-oss-120b' }), true);
+    assert.equal(poorToolCaller({ upstream_model: 'qwen/qwen3.8-27b' }), false);
+    assert.ok(POOR_TOOL_CALLERS.every(rule => typeof rule.reason === 'string' && rule.reason));
+
+    // The hint: tools attached, or x-neuron-route: agentic (any case, trimmed); nothing else.
+    assert.equal(requestNeeds({ messages: build, tools: [writeFile] }).agentic, true);
+    assert.equal(requestNeeds({ messages: build }, ' Agentic ').agentic, true);
+    for (const hint of [null, undefined, '', 'chat', 'agentic-ish', 7]) assert.equal(requestNeeds({ messages: build }, hint).agentic, false, String(hint));
+
+    // The production lineup (Gemini off), where gpt-oss-120b used to be auto's first model.
+    const env = lineupEnv();
+    const router = new RoutingEngine(new ProviderHealthTracker());
+    const base = { env, requestedModel: 'auto', promptTokens: 500, maxTokens: 2000, tiers: ['free'], country: 'US' };
+    const plain = ids(router.route(base));
+    assert.equal(plain[0], 'groq/openai/gpt-oss-120b#free', 'plain chat (no tools, no hint) keeps the old order');
+    const hinted = router.route({ ...base, needs: requestNeeds({ messages: build }, 'agentic') });
+    const withTools = router.route({ ...base, needs: requestNeeds({ messages: build, tools: [writeFile] }) });
+    for (const [label, route] of [['hint', hinted], ['tools', withTools]]) {
+      assert.equal(ids(route)[0], 'groq/qwen/qwen3.8-27b#free', `${label}: the build prompt goes to a model that calls tools`);
+      assert.ok(!ids(route).some(id => id.includes('gpt-oss')), `${label}: no gpt-oss candidate, not even as a fallback`);
+      assert.ok(route.candidates.every(candidate => candidate.entry.supports_tools), `${label}: tool-capable models only`);
+    }
+    assert.deepEqual(ids(hinted), ids(withTools));
+    // Asked for by name, gpt-oss still serves an agentic request.
+    assert.deepEqual(ids(router.route({ ...base, requestedModel: 'groq/openai/gpt-oss-120b', needs: { tools: true, agentic: true } })),
+      ['groq/openai/gpt-oss-120b#free']);
+    // A gateway whose only tool-capable models are excluded says so instead of serving a chat answer.
+    const onlyGptOss = router.route({ ...base, env: { GROQ_API_KEY: 'g', GROQ_MODELS: 'openai/gpt-oss-120b,openai/gpt-oss-20b' },
+      needs: { tools: true } });
+    assert.deepEqual([onlyGptOss.ok, onlyGptOss.error], [false, 'service_unavailable']);
+    assert.match(onlyGptOss.message, /reliably calls tools.*choose a model by name/);
+
+    // OpenRouter ids carry a `:variant` suffix; a catalog row or a BYOK model of gpt-oss is listed
+    // all the same. Other models whose name merely starts with gpt-oss are not.
+    for (const upstream of ['openai/gpt-oss-120b:free', 'openai/gpt-oss-20b:nitro', 'OpenAI/GPT-OSS-120B:Free', 'gpt-oss-20b']) {
+      assert.equal(poorToolCaller({ upstream_model: upstream }), true, upstream);
+    }
+    for (const upstream of ['openai/gpt-oss-120b-vault', 'openai/gpt-oss-120b:free/extra', 'openai/gpt-oss-safeguard', 'qwen/qwen3.8-27b:free']) {
+      assert.equal(poorToolCaller({ upstream_model: upstream }), false, upstream);
+    }
+
+    // A BYOK session's own OpenRouter models: auto leaves gpt-oss out of an agentic request too,
+    // and the hint alone never makes a model asked for by name need tools (contract section 14.2).
+    const byokEnv = { ...KEYS, OPENROUTER_API_KEY: 'operator-key' };
+    const owned = [
+      { id: 'openai/gpt-oss-120b:free', upstream_model: 'openai/gpt-oss-120b:free', supports_tools: true },
+      { id: 'meta-llama/llama-3.2-3b-instruct:free', upstream_model: 'meta-llama/llama-3.2-3b-instruct:free', supports_tools: false },
+      { id: 'qwen/qwen3.8-27b:free', upstream_model: 'qwen/qwen3.8-27b:free', supports_tools: true },
+    ].map(entry => ({ ...entry, provider: 'openrouter', pools: [{ tier: 'byok' }], tiers: ['free'], pricing: null }));
+    const byok = (requestedModel, needs, ownedCatalog = owned) => router.route({ env: byokEnv, requestedModel, needs,
+      promptTokens: 500, maxTokens: 2000, ownedCatalog });
+    const agenticOwned = { agentic: true };
+    assert.deepEqual(ids(byok('auto', {})), ['openai/gpt-oss-120b:free#byok', 'meta-llama/llama-3.2-3b-instruct:free#byok'],
+      'plain chat on BYOK keeps the caller\'s order');
+    for (const needs of [agenticOwned, { tools: true, agentic: true }]) {
+      assert.deepEqual(ids(byok('auto', needs)), ['qwen/qwen3.8-27b:free#byok'], `BYOK auto, ${JSON.stringify(needs)}: no gpt-oss`);
+    }
+    assert.deepEqual(ids(byok('meta-llama/llama-3.2-3b-instruct:free', agenticOwned)), ['meta-llama/llama-3.2-3b-instruct:free#byok'],
+      'the hint alone does not refuse a model without tools asked for by name');
+    assert.equal(byok('meta-llama/llama-3.2-3b-instruct:free', { tools: true, agentic: true }).error, 'invalid_request',
+      'tools attached to a model without tools still answer 400');
+    assert.deepEqual(ids(byok('openai/gpt-oss-120b:free', { tools: true, agentic: true })), ['openai/gpt-oss-120b:free#byok'],
+      'asked for by name, gpt-oss still serves');
+    const onlyPoorOwned = byok('auto', { tools: true, agentic: true }, owned.slice(0, 2));
+    assert.deepEqual([onlyPoorOwned.error, onlyPoorOwned.message],
+      ['invalid_request', 'None of your OpenRouter models reliably calls tools; choose a model by name.']);
+    assert.equal(byok('auto', { tools: true }, owned.slice(1, 2)).message, 'None of your OpenRouter models support tools.');
+
+    // Through the chat handler, as the CLI sends it.
+    const gw = gateway();
+    gw.addSession('ses_anon', {});
+    const served = async (body, headers) => {
+      reset({ groq: () => completion({ content: 'ok' }), nvidia: () => completion({ content: 'ok' }) });
+      const response = await gw.call(env, { model: 'auto', messages: build, ...body }, { country: 'US', headers });
+      assert.equal(response.status, 200);
+      return [response.headers.get('x-neuron-model'), upstreamCalls().map(call => call.body.model)];
+    };
+    assert.deepEqual(await served({ tools: [writeFile] }, { 'x-neuron-route': 'agentic' }), ['groq/qwen/qwen3.8-27b', ['qwen/qwen3.8-27b']]);
+    assert.deepEqual(await served({ tools: [writeFile] }, {}), ['groq/qwen/qwen3.8-27b', ['qwen/qwen3.8-27b']]);
+    assert.deepEqual(await served({}, { 'x-neuron-route': 'agentic' }), ['groq/qwen/qwen3.8-27b', ['qwen/qwen3.8-27b']]);
+    // A different conversation (the sticky choice is per conversation) without tools or the hint.
+    assert.deepEqual(await served({ messages: [{ role: 'user', content: 'what is a closure?' }] }, {}),
+      ['groq/openai/gpt-oss-120b', ['openai/gpt-oss-120b']]);
+  });
+
+  // Contract section 14.3: the CLI may send prompt_cache_key (a hash of its session id). The
+  // gateway forwards a caller-scoped hash of it to the upstreams that accept the field (OpenRouter)
+  // and drops it for the others; quota accounting does not change.
+  await test('prompt_cache_key: validated, scoped to the caller, sent to OpenRouter only, quota unchanged', async () => {
+    const NUL = String.fromCharCode(0);
+    const expected = (caller, key) => createHash('sha256').update(`zx-cache:${caller}${NUL}${key}`).digest('hex').slice(0, 32);
+    assert.equal(await scopedPromptCacheKey('user-1', 'sess-hash'), expected('user-1', 'sess-hash'));
+    assert.notEqual(await scopedPromptCacheKey('user-2', 'sess-hash'), await scopedPromptCacheKey('user-1', 'sess-hash'),
+      'two callers sending the same key never share one upstream');
+    const valid = { model: 'auto', messages };
+    assert.equal(validateCompletionBody({ ...valid, prompt_cache_key: 'a1B2.c3_d4:e5-f6' }), null);
+    assert.equal(validateCompletionBody({ ...valid, prompt_cache_key: 'k'.repeat(128) }), null);
+    for (const bad of ['', 'k'.repeat(129), 'has space', 'semi;colon', 42, {}, ['k']]) {
+      assert.match(validateCompletionBody({ ...valid, prompt_cache_key: bad }), /prompt_cache_key must be/, JSON.stringify(bad));
+    }
+    assert.equal(validateCompletionBody({ ...valid, prompt_cache_key: null }), null, 'null is no key');
+
+    // Request shaping: only OpenRouter keeps the field.
+    assert.deepEqual(Object.keys(PROVIDER_PARAMS).filter(provider => PROVIDER_PARAMS[provider].includes('prompt_cache_key')), ['openrouter']);
+    const body = { messages, prompt_cache_key: 'scoped' };
+    for (const id of ['groq/openai/gpt-oss-120b', 'gemini/gemini-2.5-flash', 'nvidia/openai/gpt-oss-20b', '@cf/openai/gpt-oss-120b',
+      'zai/glm-4.7-flash', 'anthropic/claude-sonnet-5-5']) {
+      assert.ok(!('prompt_cache_key' in buildUpstreamPayload(catalogEntry(id), body, 100)), `${id}: dropped`);
+    }
+    assert.equal(buildUpstreamPayload(catalogEntry('cohere/north-mini-code:free'), body, 100).prompt_cache_key, 'scoped');
+
+    // Through the chat handler.
+    const env = lineupEnv();
+    const gw = gateway();
+    gw.addSession('ses_anon', {});
+    const send = async (model, extra) => {
+      reset({ groq: () => completion({ content: 'ok' }), openrouter: () => completion({ content: 'ok' }) });
+      const before = gw.session('ses_anon');
+      const response = await gw.call(env, { model, messages, ...extra }, { country: 'US' });
+      assert.equal(response.status, 200);
+      const after = gw.session('ses_anon');
+      return { upstream: upstreamCalls()[0].body, requests: after.requests - before.requests, tokens: after.tokens_used - before.tokens_used };
+    };
+    const openrouter = await send('cohere/north-mini-code:free', { prompt_cache_key: 'session-hash-1' });
+    assert.equal(openrouter.upstream.prompt_cache_key, expected('ses_anon', 'session-hash-1'), 'OpenRouter gets the caller-scoped key');
+    assert.ok(!JSON.stringify(openrouter.upstream).includes('session-hash-1'), 'the key as sent never leaves the gateway');
+    assert.equal((await send('cohere/north-mini-code:free', { prompt_cache_key: 'session-hash-1' })).upstream.prompt_cache_key,
+      openrouter.upstream.prompt_cache_key, 'stable for the conversation');
+    const groq = await send('groq/openai/gpt-oss-120b', { prompt_cache_key: 'session-hash-1' });
+    assert.ok(!('prompt_cache_key' in groq.upstream), 'Groq never sees it');
+    const plain = await send('cohere/north-mini-code:free', {});
+    assert.ok(!('prompt_cache_key' in plain.upstream));
+    assert.deepEqual([openrouter.requests, openrouter.tokens], [plain.requests, plain.tokens], 'quota accounting is unchanged');
+    await expectError(await gw.call(env, { model: 'auto', messages, prompt_cache_key: 'no spaces allowed' }, { country: 'US' }),
+      400, 'invalid_request');
   });
 
   // The same lineup wherever the gateway is configured: wrangler.api.toml (the API-only
@@ -661,9 +819,10 @@ try {
     assert.equal(fitMaxTokens(groq, groq.pools[0], 9000, 512), 0, 'prompt above TPM');
     assert.equal(fitMaxTokens(groq, groq.pools[1], 9000, 4096), 4096, 'paid pool has no 8K TPM cap');
     const router = new RoutingEngine(new ProviderHealthTracker());
-    // The opt-in Workers AI gpt-oss-120b (60K TPM) is the auto candidate that takes 12K in DE.
+    // The opt-in Workers AI gpt-oss-120b (60K TPM) is the auto candidate that takes 12K in DE. A
+    // request without tools: with tools, auto leaves gpt-oss out (catalog.js POOR_TOOL_CALLERS).
     const env = { ...KEYS, AI: {}, CLOUDFLARE_MODELS: '@cf/openai/gpt-oss-120b' };
-    const base = { env, requestedModel: 'auto', needsTools: true, maxTokens: 4096, tiers: ['free'], country: 'DE' };
+    const base = { env, requestedModel: 'auto', needsTools: false, maxTokens: 4096, tiers: ['free'], country: 'DE' };
     assert.deepEqual(ids(router.route({ ...base, promptTokens: 12000 })), ['@cf/openai/gpt-oss-120b#free']);
     assert.equal(router.route({ ...base, promptTokens: 12000 }).candidates[0].maxTokens, 4096);
     // Groq free (the only free pool in DE without Workers AI) would take the model but not 12K
@@ -1059,7 +1218,7 @@ try {
     reset({ gemini: quota, groq: () => completion({ content: 'from groq' }) });
     const response = await gw.call({ ...KEYS }, { model: 'auto', messages, tools }, { country: 'US' });
     assert.equal(response.status, 200);
-    assert.equal(response.headers.get('x-neuron-model'), 'groq/openai/gpt-oss-120b');
+    assert.equal(response.headers.get('x-neuron-model'), 'groq/qwen/qwen3.8-27b');
     assert.deepEqual(upstreamCalls().map(call => call.target), ['gemini', 'gemini', 'gemini', 'groq']);
     assert.equal(gw.session('ses_anon').requests, 1, 'the refused attempts are one request');
 
@@ -1110,7 +1269,8 @@ try {
     const A = 'gemini:gemini-2.5-flash:free';
     const order = () => upstreamCalls().map(call => `${call.target}:${call.body.model}`);
     const failing = { gemini: () => new Response('down', { status: 500 }), groq: () => new Response('down', { status: 500 }) };
-    const healthy = ['gemini:gemini-3.5-flash', 'groq:openai/gpt-oss-120b', 'groq:qwen/qwen3.8-27b', 'groq:openai/gpt-oss-20b'];
+    // Tools attached: the gpt-oss models are no auto candidates (catalog.js POOR_TOOL_CALLERS).
+    const healthy = ['gemini:gemini-3.5-flash', 'groq:qwen/qwen3.8-27b'];
     const ranked = ['gemini:gemini-2.5-flash', 'gemini:gemini-3.5-flash', 'gemini:gemini-3.6-flash', ...healthy.slice(1)];
     // HealthHub snapshot rows as src/health-hub.js sends them: slow_until only while it lasts.
     const hubOrder = async rowA => {
@@ -1788,7 +1948,8 @@ try {
     assert.equal(error.type, 'insufficient_quota');
     assert.ok(error.upgrade_url);
     const tiers = rpcCalls('zerox_reserve_v2').map(call => call.body.p_tier);
-    assert.deepEqual(tiers, [...Array(6).fill('free'), 'paid'], 'paid pools stop after the first credit refusal');
+    // Four free candidates: the gpt-oss models are no agentic auto candidates (catalog.js POOR_TOOL_CALLERS).
+    assert.deepEqual(tiers, [...Array(4).fill('free'), 'paid'], 'paid pools stop after the first credit refusal');
     reset({ 'rpc:zerox_plan_policies_v2': policiesRpc,
       'rpc:zerox_reserve_v2': () => Response.json([{ status: 'pool_exhausted', retry_after_seconds: 45 }]) });
     const freeUser = gateway();
@@ -2199,8 +2360,9 @@ try {
     // The first free pool sends nothing until the free share ends (700 ms); every other free pool would answer.
     for (const [label, paidFailure, paidTried] of [
       ['5xx', () => new Response('overloaded', { status: 503 }), ['gemini-paid-key:gemini-2.5-flash']],
+      // Groq's paid gpt-oss-120b is no agentic auto candidate (catalog.js POOR_TOOL_CALLERS).
       ['429 from every paid pool', () => new Response('busy', { status: 429 }),
-        ['gemini-paid-key:gemini-2.5-flash', 'gemini-paid-key:gemini-3.6-flash', 'groq-paid-key:openai/gpt-oss-120b']]]) {
+        ['gemini-paid-key:gemini-2.5-flash', 'gemini-paid-key:gemini-3.6-flash']]]) {
       const gw = accountGateway();
       reset({ 'rpc:zerox_plan_policies_v2': policiesRpc, 'rpc:zerox_reserve_v2': () => Response.json([okReserve()]),
         'rpc:zerox_settle_v2': () => Response.json([{ status: 'settled' }]),
@@ -2227,12 +2389,14 @@ try {
     let response = await gw.call(env, { model: 'auto', messages, tools, stream: true }, { token: 'ses_pro', country: 'US' });
     assert.equal(response.status, 200, 'paid pools out of budget: a held free pool answers');
     assert.ok((await response.text()).includes('next free'));
-    assert.deepEqual(rpcCalls('zerox_reserve_v2').map(call => call.body.p_tier), ['free', 'paid', 'paid', 'paid', 'free']);
+    assert.deepEqual(rpcCalls('zerox_reserve_v2').map(call => call.body.p_tier), ['free', 'paid', 'paid', 'free']);
     assert.deepEqual(route(), ['gemini-free-key:gemini-2.5-flash', 'gemini-free-key:gemini-3.5-flash']);
     resetPoolBudgets();
 
     // The only paid model's free pool rejected the request, so its paid pool is skipped as well:
-    // the free pool held back by the attempt kept for paid capacity gets that attempt.
+    // the free pool held back by the attempt kept for paid capacity gets that attempt. A request
+    // without tools: with tools the gpt-oss models are no auto candidates (catalog.js
+    // POOR_TOOL_CALLERS), and then no paid auto model is left without Gemini's paid key.
     const narrow = accountEnv({ GEMINI_PAID_API_KEY: undefined, GEMINI_MODELS: 'gemini-2.5-flash',
       GROQ_MODELS: 'openai/gpt-oss-120b,openai/gpt-oss-20b' });
     reset({ 'rpc:zerox_plan_policies_v2': policiesRpc, 'rpc:zerox_reserve_v2': () => Response.json([okReserve()]),
@@ -2241,7 +2405,7 @@ try {
       groq: call => call.body.model === 'openai/gpt-oss-120b'
         ? Response.json({ error: { message: 'Invalid value for temperature', type: 'invalid_request_error' } }, { status: 400 })
         : freeAnswer() });
-    response = await accountGateway().call(narrow, { model: 'auto', messages, tools, stream: true }, { token: 'ses_pro', country: 'US' });
+    response = await accountGateway().call(narrow, { model: 'auto', messages, stream: true }, { token: 'ses_pro', country: 'US' });
     assert.equal(response.status, 200, 'paid model ruled out: a held free pool answers');
     assert.ok((await response.text()).includes('next free'));
     assert.deepEqual(route(), ['gemini-free-key:gemini-2.5-flash', 'groq-free-key:openai/gpt-oss-120b', 'groq-free-key:openai/gpt-oss-20b']);

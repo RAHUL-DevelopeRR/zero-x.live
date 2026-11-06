@@ -342,8 +342,9 @@ try {
   // Baseline: every migration except the two under test, on a fresh PGlite.
   const scratch = await mkdtemp(join(tmpdir(), 'zerox-billing-caps-'));
   baseline = { scratch, db: null };
-  // Rolled back newest first: what the migrations before CAPS left (20261102000000 and
-  // 20261029001000, which replace zerox_reserve_v2 after PLANS, are rolled back first below).
+  // Rolled back newest first: what the migrations before CAPS left (20261104000000, which
+  // recreates zerox_plan_policies_v2, then 20261102000000 and 20261029001000, which replace
+  // zerox_reserve_v2 after PLANS, are rolled back first below).
   for (const migration of await listMigrations()) {
     if (migration.file < CAPS) await copyFile(migration.path, join(scratch, migration.file));
   }
@@ -365,6 +366,7 @@ try {
       has_function_privilege('anon', p.oid, 'EXECUTE') AS anon, has_function_privilege('authenticated', p.oid, 'EXECUTE') AS auth,
       has_function_privilege('service_role', p.oid, 'EXECUTE') AS service
     FROM pg_proc AS p JOIN pg_namespace AS n ON n.oid = p.pronamespace WHERE n.nspname = 'public' AND p.proname = ANY($1) ORDER BY 1, 2`, [names])).rows;
+  await db.exec(await readFile(join(root, 'migrations', 'down', '20261105000000_connector_policy.sql'), 'utf8'));
   // 20261104300000 only rewrites a Free feature line; its down script brings the line PLANS wrote back.
   await db.exec(await readFile(join(root, 'migrations', 'down', LINEUP), 'utf8'));
   assert.equal((await features(db)).find(row => row.plan === 'free').features[0],

@@ -5,6 +5,7 @@ import { passedAccess } from '../access-auth.js';
 import { entryPools, loadCatalog, offeredEntries, poolConfigured, poolKey } from '../catalog.js';
 import { globalHealthTracker } from '../provider-health.js';
 import { billedDailyCapMicrousd } from '../catalog-guardrails.js';
+import { hostedConnectorsEnabled } from '../connector-policy.js';
 
 const counter = value => {
   const number = Number(value);
@@ -102,6 +103,13 @@ export async function runScheduledMaintenance(env) {
   await rpc(env, 'zerox_device_purge', {}).catch(error => {
     console.warn('Device grant purge failed', { message: error?.message });
   });
+  // Hosted connector audit rows are kept 30 days (migration 20261105000100), only while hosted
+  // connectors are on (a database without the migration has no audit table).
+  if (hostedConnectorsEnabled(env)) {
+    await rpc(env, 'zerox_connector_audit_purge', { p_days: 30 }).catch(error => {
+      console.warn('Connector audit purge failed', { message: error?.message });
+    });
+  }
   return result;
 }
 

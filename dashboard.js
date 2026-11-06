@@ -7,7 +7,10 @@ import {
 import { collectBillingDetails, purchaseWithDetails } from './billing-details.js';
 import { PLAN_CATALOG, formatCount, formatMoney, formatTokens, normalizeCatalog } from './pricing.js';
 
-export const TABS = ['overview', 'usage', 'keys', 'billing', 'sessions', 'account'];
+export const TABS = ['overview', 'usage', 'keys', 'billing', 'sessions', 'connectors', 'account'];
+// Tabs shown only when the gateway serves them (Connectors: GET /api/connectors answers 404 unless
+// hosted connectors are switched on, docs/PLATFORM_CONTRACT.md section 14.4).
+export const OPTIONAL_TABS = ['connectors'];
 export const DEV_TOKEN_KEY = 'zx-dev-token';
 export const EVENTS_PAGE_SIZE = 25;
 export const MAX_ACTIVE_KEYS = 10;
@@ -31,19 +34,54 @@ function titleCase(value) {
   return String(value || '').replace(/[_-]+/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 }
 
-export function parseTab(hash) {
+export function parseTab(hash, tabs = TABS) {
   const id = String(hash || '').replace(/^#/, '').toLowerCase();
-  return TABS.includes(id) ? id : 'overview';
+  return tabs.includes(id) ? id : 'overview';
 }
 
 /** Keyboard navigation for the tablist (WAI-ARIA tabs pattern). */
-export function nextTab(current, key) {
-  const index = Math.max(0, TABS.indexOf(current));
-  if (key === 'ArrowRight') return TABS[(index + 1) % TABS.length];
-  if (key === 'ArrowLeft') return TABS[(index - 1 + TABS.length) % TABS.length];
-  if (key === 'Home') return TABS[0];
-  if (key === 'End') return TABS[TABS.length - 1];
+export function nextTab(current, key, tabs = TABS) {
+  const index = Math.max(0, tabs.indexOf(current));
+  if (key === 'ArrowRight') return tabs[(index + 1) % tabs.length];
+  if (key === 'ArrowLeft') return tabs[(index - 1 + tabs.length) % tabs.length];
+  if (key === 'Home') return tabs[0];
+  if (key === 'End') return tabs[tabs.length - 1];
   return null;
+}
+
+const CONNECTOR_STATUS = {
+  connected: ['Connected', 'success'], not_connected: ['Not connected', ''], not_in_plan: ['Pro and Max', 'purple'],
+  unavailable: ['Coming soon', ''],
+};
+/** GET /api/connectors rows, keeping only the fields the table shows. */
+export function normalizeConnectors(data) {
+  const rows = data && Array.isArray(data.connectors) ? data.connectors : [];
+  return rows.filter(row => row && typeof row.id === 'string' && /^[a-z0-9][a-z0-9._-]{0,63}$/.test(row.id)).map(row => ({
+    id: row.id,
+    name: text(row.name, 80) || row.id,
+    publisher: text(row.publisher, 80),
+    status: Object.hasOwn(CONNECTOR_STATUS, row.status) ? row.status : 'unavailable',
+    scopes: Array.isArray(row.scopes) ? row.scopes.filter(scope => typeof scope === 'string').map(scope => scope.slice(0, 64)).slice(0, 20) : [],
+    connected_at: typeof row.connected_at === 'string' ? row.connected_at : null,
+  }));
+}
+
+const CONNECT_REASONS = {
+  denied: 'you cancelled on the provider\u2019s page', expired: 'the link expired, so start again',
+  browser_mismatch: 'it was started in another browser, so start again here', not_in_plan: 'your plan does not include it',
+  token_exchange: 'the provider refused the sign-in', unavailable: 'it is not available right now',
+};
+/** The message for ?connector=<id>&connect=ok|error&reason=<code> after the provider sends the browser back. */
+export function connectResult(search, connectors = []) {
+  let params;
+  try { params = new URLSearchParams(String(search || '')); } catch { return null; }
+  const connect = params.get('connect');
+  if (connect !== 'ok' && connect !== 'error') return null;
+  const id = params.get('connector') || '';
+  const name = (connectors.find(row => row.id === id) || {}).name || 'The connector';
+  if (connect === 'ok') return { tone: 'success', message: name + ' is connected.' };
+  const reason = CONNECT_REASONS[params.get('reason')] || 'something went wrong, so try again';
+  return { tone: 'error', message: name + ' could not be connected: ' + reason + '.' };
 }
 
 /** USD amount (float) → "$7.42"; sub-cent costs keep four decimals ("$0.0012"). */
@@ -366,7 +404,9 @@ export function createDashboard({ doc = globalThis.document, win = globalThis.wi
     cursors: [null], page: 0, keys: [], sessions: [], billing: null, catalog: PLAN_CATALOG, revisions: {}, gated: false,
     paymentLocked: false, // a payment Razorpay took is not confirmed yet: no further purchases
     paymentLock: null, // the ApiError describing it (payment_unverified or payment_pending)
+    connectorsEnabled: false, connectors: [],
   };
+  const visibleTabs = () => TABS.filter(id => !OPTIONAL_TABS.includes(id) || (id === 'connectors' && state.connectorsEnabled));
   const api = (path, options = {}) => apiFetch(path, { ...options, auth: getAuth(), fetchImpl });
 
   function el(tag, props = {}, ...children) {
@@ -1032,6 +1072,88 @@ export function createDashboard({ doc = globalThis.document, win = globalThis.wi
     }
   }
 
+  /* Connectors (hosted, shown only when the gateway serves them) */
+
+  function renderConnectors() {
+    const body = $('connectors-list');
+    body.replaceChildren(...(state.connectors.length ? state.connectors.map(row => {
+      const [label, tone] = CONNECTOR_STATUS[row.status];
+      let action = null;
+      if (row.status === 'connected') {
+        action = el('button', { class: 'zx-btn zx-btn--danger zx-btn--sm', type: 'button', text: 'Disconnect',
+          'aria-label': 'Disconnect ' + row.name, 'data-connector': row.id, onclick: () => disconnectConnector(row) });
+      } else if (row.status === 'not_connected') {
+        action = el('button', { class: 'zx-btn zx-btn--sm', type: 'button', text: 'Connect',
+          'aria-label': 'Connect ' + row.name, 'data-connector': row.id, onclick: () => connectConnector(row) });
+      } else if (row.status === 'not_in_plan') {
+        action = el('a', { class: 'zx-btn zx-btn--sm', href: siteUrl('/pricing', host()), text: 'Upgrade' });
+      }
+      return el('tr', {},
+        el('th', { scope: 'row' }, row.name, row.publisher && row.publisher !== row.name ? el('span', { class: 'zx-muted', text: ' \u00b7 ' + row.publisher }) : null),
+        el('td', {}, badge(label, tone)),
+        cell(row.scopes.length ? row.scopes.join(', ') : '\u2014'),
+        cell(row.connected_at ? formatDate(row.connected_at) : '\u2014'),
+        el('td', {}, action));
+    }) : [emptyRow(5, 'No hosted connectors are offered yet.')]));
+  }
+
+  async function loadConnectors() {
+    const current = revision('connectors');
+    setAlert('connectors-error', '');
+    try {
+      const data = await api('/api/connectors');
+      if (!current()) return;
+      state.connectors = normalizeConnectors(data);
+      renderConnectors();
+    } catch (error) {
+      if (current()) handleError(error, 'connectors-error', loadConnectors);
+    }
+  }
+
+  // Shows the tab only when GET /api/connectors answers (404 while hosted connectors are off).
+  async function probeConnectors() {
+    try {
+      state.connectors = normalizeConnectors(await api('/api/connectors'));
+    } catch {
+      return;
+    }
+    state.connectorsEnabled = true;
+    $('tab-connectors').hidden = false;
+    state.loaded.add('connectors');
+    renderConnectors();
+    const result = connectResult(win.location && win.location.search, state.connectors);
+    if (result && result.tone === 'error') setAlert('connectors-error', result.message);
+    else if (result) setText('connectors-status', result.message);
+  }
+
+  async function connectConnector(row) {
+    setAlert('connectors-error', '');
+    try {
+      const data = await api('/api/connectors/' + encodeURIComponent(row.id) + '/connect', { method: 'POST', body: {} });
+      const url = safeHttpsUrl(data && data.authorize_url);
+      if (!url) throw new ApiError('The connection could not start. Try again.', { code: 'invalid_response' });
+      win.location.assign(url);
+    } catch (error) {
+      handleError(error, 'connectors-error');
+    }
+  }
+
+  async function disconnectConnector(row) {
+    const confirmed = await confirmAction({
+      title: 'Disconnect ' + row.name + '?',
+      body: 'Zero-X deletes its access to your ' + row.name + ' account. Neuron stops using it until you connect again.',
+      confirm: 'Disconnect',
+    });
+    if (!confirmed) return;
+    try {
+      await api('/api/connectors/' + encodeURIComponent(row.id), { method: 'DELETE' });
+      toast(row.name + ' disconnected.');
+      await loadConnectors();
+    } catch (error) {
+      handleError(error, 'connectors-error');
+    }
+  }
+
   /* Tabs */
 
   const loaders = {
@@ -1040,6 +1162,7 @@ export function createDashboard({ doc = globalThis.document, win = globalThis.wi
     keys: loadKeys,
     billing: () => loadBilling(),
     sessions: loadSessions,
+    connectors: loadConnectors,
     account: () => (state.account ? Promise.resolve() : loadAccount()),
   };
 
@@ -1070,7 +1193,7 @@ export function createDashboard({ doc = globalThis.document, win = globalThis.wi
   function bind() {
     for (const id of TABS) $('tab-' + id).addEventListener('click', () => navigate(id, false));
     $('dash-tabs').addEventListener('keydown', event => {
-      const target = nextTab(state.tab, event.key);
+      const target = nextTab(state.tab, event.key, visibleTabs());
       if (!target) return;
       event.preventDefault();
       navigate(target, true);
@@ -1078,7 +1201,7 @@ export function createDashboard({ doc = globalThis.document, win = globalThis.wi
     win.addEventListener('hashchange', () => {
       // Only tab hashes route; other fragments (the skip link's #main) keep the current tab.
       const id = String(win.location.hash || '').slice(1);
-      if (!state.gated && TABS.includes(id) && id !== state.tab) showTab(id);
+      if (!state.gated && visibleTabs().includes(id) && id !== state.tab) showTab(id);
     });
     $('gate-signin').addEventListener('click', async () => {
       setAlert('gate-error', '');
@@ -1144,12 +1267,13 @@ export function createDashboard({ doc = globalThis.document, win = globalThis.wi
     await loadAccount();
     state.loaded.add('overview');
     state.loaded.add('account');
-    await showTab(parseTab(win.location.hash));
+    await probeConnectors();
+    await showTab(parseTab(win.location.hash, visibleTabs()));
   }
 
   return {
     boot, showTab, loadAccount, loadUsage, loadEvents, loadKeys, createKey, revokeKey, loadBilling,
-    cancelSubscription, buyTopup, revokeSessions, signOut,
+    cancelSubscription, buyTopup, revokeSessions, signOut, loadConnectors,
     get state() { return state; },
   };
 }

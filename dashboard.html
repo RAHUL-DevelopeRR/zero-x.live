@@ -63,6 +63,7 @@
         <button class="zx-tab" type="button" role="tab" id="tab-keys" aria-controls="panel-keys" aria-selected="false" tabindex="-1">API keys</button>
         <button class="zx-tab" type="button" role="tab" id="tab-billing" aria-controls="panel-billing" aria-selected="false" tabindex="-1">Billing</button>
         <button class="zx-tab" type="button" role="tab" id="tab-sessions" aria-controls="panel-sessions" aria-selected="false" tabindex="-1">Sessions</button>
+        <button class="zx-tab" type="button" role="tab" id="tab-connectors" aria-controls="panel-connectors" aria-selected="false" tabindex="-1" hidden>Connectors</button>
         <button class="zx-tab" type="button" role="tab" id="tab-account" aria-controls="panel-account" aria-selected="false" tabindex="-1">Account</button>
       </div>
 
@@ -270,6 +271,21 @@ neuron -p "Run the tests and summarise failures"</code></pre></div>
         </div>
         <p id="sessions-status" class="zx-muted zx-mt" role="status" aria-live="polite"></p>
         <p class="zx-help">This does not sign out this browser, and API keys keep working unless you tick the box above. Single keys can be revoked from the API keys tab.</p>
+      </section>
+
+      <section class="zx-tabpanel" role="tabpanel" id="panel-connectors" aria-labelledby="tab-connectors" tabindex="0" hidden>
+        <h2>Connectors</h2>
+        <p class="zx-muted">Link a work account once and Neuron can use it on every device, including with an API key in CI, without keeping its token on your computer. Zero-X stores the account's token encrypted and never hands it to any app. Calls that can delete or overwrite data run only after you approve them in Neuron. Disconnect at any time.</p>
+        <div id="connectors-error" class="zx-alert zx-alert--error zx-mb" role="alert"></div>
+        <p id="connectors-status" class="zx-muted zx-mb" role="status" aria-live="polite"></p>
+        <div class="zx-table-wrap">
+          <table class="zx-table">
+            <caption>Hosted connectors</caption>
+            <thead><tr><th scope="col">Connector</th><th scope="col">Status</th><th scope="col">Access</th><th scope="col">Connected</th><th scope="col"><span class="zx-visually-hidden">Actions</span></th></tr></thead>
+            <tbody id="connectors-list"><tr><td colspan="5" class="zx-empty">Loading connectors…</td></tr></tbody>
+          </table>
+        </div>
+        <p class="zx-help zx-mt">Neuron picks up a connect or disconnect on its next request. Local connectors (files, git, browsers) never go through Zero-X.</p>
       </section>
 
       <section class="zx-tabpanel" role="tabpanel" id="panel-account" aria-labelledby="tab-account" tabindex="0" hidden>
