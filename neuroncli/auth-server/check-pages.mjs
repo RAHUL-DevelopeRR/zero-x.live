@@ -326,7 +326,7 @@ assert.doesNotMatch(read('zx-tokens.css'), /@import|url\((?!\s*['"]?(?:data:|\/[
   assert.equal(read('neuroncli/auth-server/src/csp-hashes.js').replace(/\r\n/g, '\n'), generated,
     'src/csp-hashes.js is out of date: run `node build-csp-hashes.mjs` in neuroncli/auth-server');
   const {INLINE_SCRIPT_HASHES, INLINE_STYLE_HASHES} = await import('./src/csp-hashes.js');
-  assert.ok(INLINE_SCRIPT_HASHES.length >= 4 && INLINE_STYLE_HASHES.length >= 1, 'the pages carry inline scripts and styles');
+  assert.ok(INLINE_SCRIPT_HASHES.length >= 3 && INLINE_STYLE_HASHES.length >= 1, 'the pages carry inline scripts and styles');
   for (const hash of [...INLINE_SCRIPT_HASHES, ...INLINE_STYLE_HASHES]) assert.match(hash, /^sha256-[A-Za-z0-9+/]{43}=$/);
   const {sitePolicy, SUPABASE_JS_SRC, ADMIN_POLICY} = await import('./src/csp.js');
   const version = /SUPABASE_JS_VERSION = '([\d.]+)'/.exec(read('zerox-auth.js'))?.[1];

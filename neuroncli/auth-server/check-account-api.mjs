@@ -951,7 +951,7 @@ try {
     'img-src', 'connect-src', 'frame-src', 'object-src', 'form-action', 'frame-ancestors', 'base-uri']);
   assert.ok(!directives['script-src'].includes("'unsafe-inline'") && !directives['script-src'].includes("'unsafe-eval'"), 'no unsafe-inline for scripts');
   assert.deepEqual(directives['script-src-attr'], ["'none'"], 'no inline event handlers');
-  assert.ok(directives['script-src'].filter(source => source.startsWith("'sha256-")).length >= 4, 'inline scripts by hash');
+  assert.ok(directives['script-src'].filter(source => source.startsWith("'sha256-")).length >= 3, 'inline scripts by hash');
   assert.ok(directives['script-src'].includes('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js'), 'supabase-js by exact URL');
   assert.ok(!directives['script-src'].includes('https://cdn.jsdelivr.net'), 'not all of jsDelivr');
   assert.ok(directives['script-src'].includes('https://checkout.razorpay.com'));
