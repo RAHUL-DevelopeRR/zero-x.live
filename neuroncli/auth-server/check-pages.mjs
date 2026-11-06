@@ -123,6 +123,14 @@ for (const file of [...PUBLIC_PAGES, ...PRIVATE_PAGES]) {
   }
 }
 
+// aria-current="page" marks the link to this very page, never another one (a footer copied from a
+// sibling page once marked Privacy Policy as current on three pages). Every site page is checked.
+for (const file of [...PUBLIC_PAGES, 'about.html', 'neucockpit.html', 'find-files-by-content.html', 'wheres-that-file.html', 'start.html']) {
+  for (const link of tags(stripScripts(read(file)), 'a').filter(a => a['aria-current'] === 'page' && a.href)) {
+    const own = file === 'index.html' ? '/' : '/' + file.replace(/\.html$/, '');
+    assert.equal(link.href.replace(/#.*$/, ''), own, file + ': aria-current marks ' + link.href + ', not this page');
+  }
+}
 assert.ok(!seoPages.some(page => PRIVATE_PAGES.includes(page.file)), 'Private pages must stay out of seo-pages.json');
 for (const file of PUBLIC_PAGES) assert.ok(seoPages.some(page => page.file === file), file + ' is listed in seo-pages.json');
 assert.match(read('neuroncli/index.html'), /<meta http-equiv="refresh" content="0; url=\/neuron-cli">/, 'Old /neuroncli/ page points to /neuron-cli');
