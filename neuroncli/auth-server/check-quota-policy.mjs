@@ -90,36 +90,48 @@ try {
 
 // The shared Gemini free pool refuses the 21st request of the day itself: Google allows 20 per
 // model per day (E2E 2026-10-27: 429 GenerateRequestsPerDayPerProjectPerModel-FreeTier, value 20).
+// No one user may take more than a quarter of a shared free pool's day (migration
+// 20261106000000, audit F6), so the pool's 20 requests are spread over four users here, and the
+// share itself is checked on the way.
 const geminiDb = new PGlite();
 try {
   await geminiDb.exec(DEV_BOOTSTRAP_SQL);
   for (const migration of await listMigrations()) await geminiDb.exec(await readFile(migration.path, 'utf8'));
-  const [{ id: userId }] = (await geminiDb.query("INSERT INTO auth.users (email) VALUES ('rpd@example.test') RETURNING id")).rows;
+  const userIds = [];
+  for (let index = 0; index < 5; index++) {
+    const [{ id }] = (await geminiDb.query(`INSERT INTO auth.users (email) VALUES ('rpd${index}@example.test') RETURNING id`)).rows;
+    userIds.push(id);
+  }
   await geminiDb.exec('SET ROLE service_role');
-  await geminiDb.query('SELECT * FROM public.zerox_sync_account($1, $2::jsonb)', [userId, JSON.stringify({ email: 'rpd@example.test' })]);
+  for (const [index, id] of userIds.entries()) {
+    await geminiDb.query('SELECT * FROM public.zerox_sync_account($1, $2::jsonb)', [id, JSON.stringify({ email: `rpd${index}@example.test` })]);
+  }
   const entry = catalogEntry('gemini/gemini-2.5-flash');
   const free = entry.pools.find(pool => pool.tier === 'free');
   assert.equal(poolKey(entry, free), 'gemini:gemini-2.5-flash:free');
   assert.equal(free.limits, POOL_LIMITS.gemini_free);
-  const reserve = async index => {
+  const reserve = async (userId, index) => {
     const args = reservationArgs({ session: { user_id: userId }, requestId: `gem_${index}`, entry, pool: free,
       promptTokens: 100, maxTokens: 8 });
     return (await geminiDb.query('SELECT * FROM public.zerox_reserve_v2($1, $2, $3, $4, $5, $6, $7::jsonb)', [args.p_user_id,
       args.p_request_id, args.p_model, args.p_tier, args.p_tokens, args.p_cost_microusd, JSON.stringify(args.p_pool)])).rows[0];
   };
   for (let index = 1; index <= 20; index++) {
-    const row = await reserve(index);
+    const row = await reserve(userIds[(index - 1) % 4], index);
     assert.equal(row.status, 'ok', `request ${index} of the day`);
     await geminiDb.query("SELECT * FROM public.zerox_settle_v2($1, 100, 1, 0, 'ok', 20, 'gemini', 'gemini-2.5-flash', NULL)",
       [row.reservation_id]);
     // Only the daily budget is under test: move the request out of the per-minute windows.
-    await geminiDb.query("UPDATE public.zerox_reservations SET created_at = created_at - interval '61 seconds' WHERE user_id = $1", [userId]);
+    await geminiDb.query("UPDATE public.zerox_reservations SET created_at = created_at - interval '61 seconds'");
     await geminiDb.exec("DELETE FROM public.zerox_pool_usage WHERE bucket = 'minute'");
   }
-  const refused = await reserve(21);
+  const refused = await reserve(userIds[4], 21);
   assert.equal(refused.status, 'pool_exhausted', 'the 21st request of the day is refused by the gateway, not by Google');
   assert.ok(refused.retry_after_seconds >= 1 && refused.retry_after_seconds <= 86400, `rpd retry ${refused.retry_after_seconds}`);
-  console.log('PASS: Gemini free pool budget refuses the 21st request of the day (Google free tier: 20 per model)');
+  // The user who has had its 5 (a quarter of 20) is told so, whatever is left of the pool.
+  const share = await reserve(userIds[0], 22);
+  assert.equal(share.status, 'user_pool_share', 'a user is refused after a quarter of the pool, before the pool is empty');
+  console.log('PASS: Gemini free pool budget refuses the 21st request of the day (Google free tier: 20 per model); one user takes at most a quarter');
 } finally { await geminiDb.close(); }
 
 // zerox_reserve_v2 counts the plan's requests per minute in client requests. The chat handler
