@@ -24,13 +24,15 @@
   <link rel="stylesheet" href="/site-fonts.css">
   <link rel="stylesheet" href="/zx-tokens.css">
   <script type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Zero-X","item":"https://zero-x.live/"},{"@type":"ListItem","position":2,"name":"Terms of Service","item":"https://zero-x.live/terms"}]}</script>
+  <script type="module" src="/site-nav.js"></script>
 </head>
 <body>
   <a class="zx-skip" href="#main">Skip to content</a>
   <header class="zx-header">
     <div class="zx-container zx-header__inner">
-      <a class="zx-brand" href="/"><img src="/Assets/zerox-favicon-32.png" width="28" height="28" alt="">Zero-X</a>
-      <nav class="zx-nav" aria-label="Main">
+      <a class="zx-brand" href="/"><img src="/Assets/zerox-mark.svg" width="28" height="28" alt="">Zero-X</a>
+      <button class="zx-nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" hidden><span class="zx-nav-toggle__bars" aria-hidden="true"></span>Menu</button>
+      <nav class="zx-nav" id="site-nav" aria-label="Main">
         <a href="/neuron-cli">Neuron CLI</a>
         <a href="/pricing">Pricing</a>
         <a href="/docs">Docs</a>
@@ -38,6 +40,7 @@
       </nav>
     </div>
   </header>
+  <script>(function(h){var b=h&&h.querySelector('.zx-nav-toggle');if(b&&'noModule'in HTMLScriptElement.prototype){h.dataset.nav='closed';b.hidden=false}})(document.querySelector('.zx-header'))</script>
 
   <main id="main" class="zx-container zx-legal zx-section--tight">
     <nav class="zx-breadcrumb" aria-label="Breadcrumb"><a href="/">Zero-X</a> / Terms of Service</nav>
@@ -52,7 +55,7 @@
     </ul>
 
     <h2 id="alpha">Alpha status</h2>
-    <p>Neuron 7.0.0-alpha.2 and parts of the services are pre-release software. Features, limits, models and prices can change, break or be withdrawn, and we may reset or remove data created during the alpha. Do not rely on the services for work that cannot tolerate interruption.</p>
+    <p>Neuron 7.0.0-alpha.4 and parts of the services are pre-release software. Features, limits, models and prices can change, break or be withdrawn, and we may reset or remove data created during the alpha. Do not rely on the services for work that cannot tolerate interruption.</p>
 
     <h2 id="plans">Plans</h2>
     <p>We offer a Free plan and paid Pro and Max plans. Each plan's price, request limits, token allowance, per-minute and concurrency limits, model pools and included credits are listed on the <a href="/pricing">pricing page</a>, which forms part of these terms. On the Free plan, tokens (prompt plus completion) are counted over a rolling 5-hour window, currently 1,000,000 tokens, with a daily cap on requests, currently 100. Paid plans have daily request and token caps. We may change plans, prices and limits. A price change for a paid plan applies from your next renewal after we notify you, and you can cancel before it takes effect.</p>
@@ -131,6 +134,8 @@
         <a href="/pricing">Pricing</a>
         <a href="/docs">Docs</a>
         <a href="/ai-coding-agent">AI coding agent guide</a>
+        <a href="/free-ai-coding-agent">Free AI coding agent</a>
+        <a href="/claude-code-alternative">Neuron compared</a>
         <a href="https://dashboard.zero-x.live/">Dashboard</a>
       </nav>
       <nav aria-label="Company">

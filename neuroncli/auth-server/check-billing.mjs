@@ -315,7 +315,7 @@ const rpc = {
   zerox_webhook_release: ({ p_event_id }) => { db.claims.delete(p_event_id); return []; },
   zerox_subscription_by_provider_id: ({ p_provider_subscription_id }) => db.subscriptions.has(p_provider_subscription_id)
     ? [db.subscriptions.get(p_provider_subscription_id)] : [],
-  // 20261103000000_billing_details.sql and 20261104000000_billing_tax_id.sql: profile and consent RPCs (the CHECKs live in the
+  // 20261105000000_billing_details.sql and 20261105000200_billing_tax_id.sql: profile and consent RPCs (the CHECKs live in the
   // SQL; check-billing-details-db.mjs).
   zerox_billing_profile_get: ({ p_user_id }) => db.profiles.has(p_user_id) ? [db.profiles.get(p_user_id)] : [],
   zerox_billing_profile_upsert: ({ p_user_id, p_profile }) => {
@@ -988,7 +988,7 @@ try {
   assert.equal(saved.status, 200);
   assert.deepEqual(saved.body, { profile: SAVED, complete: true, missing: [] }, 'normalised: name, India state code, PIN, E.164 phone');
   assert.equal(db.profiles.get(gate.id).phone_e164, '+919876543210');
-  assert.ok(!db.profileKeys.includes('tax_id'), 'without a tax id the key is not sent (so a database without 20261104000000 still saves it)');
+  assert.ok(!db.profileKeys.includes('tax_id'), 'without a tax id the key is not sent (so a database without 20261105000200 still saves it)');
   // The optional tax id: normalised, saved, read back and cleared by a PUT without it.
   const taxed = await gateCall(PROFILE_PATH, { method: 'PUT', body: { ...GOOD, tax_id: ' 33abcde 1234 f1z7 ' } });
   assert.deepEqual(taxed.body.profile, { ...SAVED, tax_id: GSTIN_TN }, 'spaces removed, upper case');

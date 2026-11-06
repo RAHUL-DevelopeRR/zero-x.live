@@ -4,7 +4,7 @@ BEGIN;
 SET LOCAL lock_timeout = '5s';
 
 -- An optional tax id on the billing details a buyer gives before Razorpay opens (owner decision of
--- 2026-11-04; docs/PLATFORM_CONTRACT.md section 14.6). 20261103000000_billing_details.sql left it out
+-- 2026-11-04; docs/PLATFORM_CONTRACT.md section 14.6). 20261105000000_billing_details.sql left it out
 -- because Zero-X is not registered for GST; that is still true: the number is kept with the buyer's
 -- billing details for Zero-X's billing records only. Zero-X charges no GST and issues no GST
 -- invoice, and the number is never sent to Razorpay.
@@ -22,8 +22,8 @@ SET LOCAL lock_timeout = '5s';
 -- and service_role-only grants. The upsert is still a PUT: an absent or empty tax_id is cleared.
 -- Existing rows get NULL; nothing else changes.
 --
--- Roll back with migrations/down/20261104000000_billing_tax_id.down.sql (psql -X -v ON_ERROR_STOP=1 -f);
--- that deletes every saved tax id and puts the two functions of 20261103000000 back.
+-- Roll back with migrations/down/20261105000200_billing_tax_id.down.sql (psql -X -v ON_ERROR_STOP=1 -f);
+-- that deletes every saved tax id and puts the two functions of 20261105000000 back.
 
 ALTER TABLE public.zerox_billing_profiles ADD COLUMN tax_id text;
 ALTER TABLE public.zerox_billing_profiles ADD CONSTRAINT zerox_billing_profiles_tax_id_check CHECK (

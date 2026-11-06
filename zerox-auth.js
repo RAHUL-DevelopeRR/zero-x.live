@@ -889,7 +889,8 @@
     // Always drop a local development identity, even when Supabase is the active provider.
     clearDevToken();
     if (state.client) {
-      const result = await state.client.auth.signOut();
+      // scope 'local' ends only this browser's session; the default also ends the account's others.
+      const result = await state.client.auth.signOut(options && options.scope ? { scope: options.scope } : undefined);
       if (result.error) {
         throw result.error;
       }

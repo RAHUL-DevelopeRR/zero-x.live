@@ -60,7 +60,7 @@ async function putProfile(c, caller) {
     throw new ApiError(400, 'invalid_request', result.errors[first], { param: first === '_' ? null : first, fields: result.errors });
   }
   // No tax id: the key is left out (the upsert clears an absent one all the same), so a profile
-  // without one still saves on a database that does not have 20261104000000_billing_tax_id.sql yet.
+  // without one still saves on a database that does not have 20261105000200_billing_tax_id.sql yet.
   const { tax_id: taxId, ...withoutTaxId } = result.value;
   const row = await rpc(c.env, 'zerox_billing_profile_upsert', { p_user_id: caller.user_id, p_profile: taxId ? result.value : withoutTaxId });
   return c.json({ profile: publicProfile(row), complete: true, missing: [] });

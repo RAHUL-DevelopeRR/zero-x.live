@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Neuron vs Claude Code, Codex CLI and Aider | Zero-X</title>
+  <meta name="description" content="Looking for a free, open-source alternative to Claude Code? How Neuron compares with Claude Code, OpenAI Codex CLI and Aider on licence, models and cost, and when another tool is the better choice.">
+  <meta name="robots" content="index,follow,max-image-preview:large">
+  <link rel="canonical" href="https://zero-x.live/claude-code-alternative">
+  <meta name="theme-color" content="#0A0A0C">
+  <link rel="icon" type="image/png" sizes="32x32" href="/Assets/zerox-favicon-32.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/Assets/zerox-apple-touch-icon.png">
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="Zero-X">
+  <meta property="og:title" content="Neuron compared with Claude Code, Codex CLI and Aider">
+  <meta property="og:description" content="A factual comparison of terminal AI coding agents: licence, which models they run and how you pay, written by the team behind Neuron.">
+  <meta property="og:url" content="https://zero-x.live/claude-code-alternative">
+  <meta property="og:image" content="https://zero-x.live/Assets/zerox-share.png">
+  <meta property="og:image:alt" content="Zero-X logo">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Neuron compared with Claude Code, Codex CLI and Aider">
+  <meta name="twitter:description" content="Terminal AI coding agents compared on licence, models and cost, by the team behind Neuron.">
+  <meta name="twitter:image" content="https://zero-x.live/Assets/zerox-share.png">
+  <meta name="twitter:image:alt" content="Zero-X logo">
+  <link rel="stylesheet" href="/site-fonts.css">
+  <link rel="stylesheet" href="/zx-tokens.css">
+  <script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"TechArticle","@id":"https://zero-x.live/claude-code-alternative#article","headline":"Neuron compared with Claude Code, Codex CLI and Aider","description":"How Neuron, an open-source AI coding agent for the terminal, compares with Claude Code, OpenAI Codex CLI and Aider on licence, models and cost.","datePublished":"2026-11-05","dateModified":"2026-11-05","author":{"@id":"https://zero-x.live/#organization"},"publisher":{"@id":"https://zero-x.live/#organization"},"mainEntityOfPage":"https://zero-x.live/claude-code-alternative","isPartOf":{"@id":"https://zero-x.live/#website"},"about":[{"@type":"Thing","name":"AI coding agent"},{"@id":"https://zero-x.live/#neuron"}],"image":"https://zero-x.live/Assets/zerox-share.png"},{"@type":"FAQPage","@id":"https://zero-x.live/claude-code-alternative#faq","mainEntity":[{"@type":"Question","name":"Is Neuron made by Anthropic?","acceptedAnswer":{"@type":"Answer","text":"No. Neuron is built by Zero-X, an independent team in India. Zero-X is not affiliated with Anthropic, OpenAI or the Aider project. Claude is a trademark of Anthropic."}},{"@type":"Question","name":"Can Neuron use Claude models?","acceptedAnswer":{"@type":"Answer","text":"Yes, on the Pro and Max plans, where Claude Sonnet 5.5 and Claude Opus 5.5 are billed from included credits. The Free plan uses free open-weight models instead."}},{"@type":"Question","name":"Can I move my CLAUDE.md or AGENTS.md instructions to Neuron?","acceptedAnswer":{"@type":"Answer","text":"Yes, and you do not need to copy them. Neuron reads NEURON.md first and also reads AGENTS.md and CLAUDE.md in each folder from the root down to your project, so your existing instructions work as they are. Run /init only if you want a separate NEURON.md for Neuron-specific rules, and keep each rule in one file so Neuron does not read it twice."}}]},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Zero-X","item":"https://zero-x.live/"},{"@type":"ListItem","position":2,"name":"Neuron compared","item":"https://zero-x.live/claude-code-alternative"}]}]}</script>
+  <script type="module" src="/site-nav.js"></script>
+</head>
+<body>
+  <a class="zx-skip" href="#main">Skip to content</a>
+  <header class="zx-header">
+    <div class="zx-container zx-header__inner">
+      <a class="zx-brand" href="/"><img src="/Assets/zerox-mark.svg" width="28" height="28" alt="">Zero-X</a>
+      <button class="zx-nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" hidden><span class="zx-nav-toggle__bars" aria-hidden="true"></span>Menu</button>
+      <nav class="zx-nav" id="site-nav" aria-label="Main">
+        <a href="/neuron-cli">Neuron CLI</a>
+        <a href="/pricing">Pricing</a>
+        <a href="/docs">Docs</a>
+        <a class="zx-btn zx-btn--sm" href="https://dashboard.zero-x.live/">Dashboard</a>
+      </nav>
+    </div>
+  </header>
+  <script>(function(h){var b=h&&h.querySelector('.zx-nav-toggle');if(b&&'noModule'in HTMLScriptElement.prototype){h.dataset.nav='closed';b.hidden=false}})(document.querySelector('.zx-header'))</script>
+
+  <main id="main" class="zx-container zx-legal zx-section--tight">
+    <nav class="zx-breadcrumb" aria-label="Breadcrumb"><a href="/">Zero-X</a> / Neuron compared</nav>
+    <article>
+    <h1>A free, open-source alternative to Claude Code</h1>
+    <p class="zx-updated">By <a href="/about">Zero-X</a>, the team behind Neuron. Checked against each project's own pages on 5 November 2026.</p>
+    <p class="zx-lead">Claude Code, OpenAI Codex CLI, Aider and <a href="/neuron-cli">Neuron</a> are all AI coding agents that run in a terminal: they read your repository, edit files and run commands. They differ mainly in licence, in which models they can use and in how you pay for those models.</p>
+    <p>We build Neuron, so read this as a vendor's comparison. We kept it to facts each project publishes and link to their pages so you can check them. Plans and prices change; the other projects' own sites are the authority on their terms.</p>
+
+    <h2 id="table">At a glance</h2>
+    <div class="zx-table-wrap">
+      <table class="zx-table zx-table--compare">
+        <caption>Terminal AI coding agents, as published by each project on 5 November 2026</caption>
+        <thead><tr><th scope="col">Agent</th><th scope="col">Made by</th><th scope="col">Licence</th><th scope="col">Models</th><th scope="col">How you pay for models</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">Neuron</th><td>Zero-X</td><td>MIT (open source)</td><td>Zero-X hosted models, or any OpenAI-compatible endpoint with your own key</td><td>Free plan with daily limits; Pro and Max for Claude models and higher limits; or your own provider</td></tr>
+          <tr><th scope="row"><a href="https://github.com/anthropics/claude-code">Claude Code</a></th><td>Anthropic</td><td>Not open source; use is subject to Anthropic's commercial terms</td><td>Anthropic's Claude models</td><td>A Claude subscription or Anthropic API usage</td></tr>
+          <tr><th scope="row"><a href="https://github.com/openai/codex">Codex CLI</a></th><td>OpenAI</td><td>Apache-2.0 (open source)</td><td>OpenAI models</td><td>Sign in with a ChatGPT plan, or an OpenAI API key</td></tr>
+          <tr><th scope="row"><a href="https://github.com/Aider-AI/aider">Aider</a></th><td>The Aider open-source project</td><td>Apache-2.0 (open source)</td><td>Many providers, including local models</td><td>Your own API key with your chosen provider</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="why-neuron">Why people pick Neuron</h2>
+    <ul>
+      <li><strong>Start at no cost.</strong> The Free plan gives hosted LLMs with <span data-plan-limit="free:daily_requests">100</span> requests a day and <span data-plan-limit="free:token_phrase">1M tokens every 5 hours</span>, with no API key to create and no card. See <a href="/free-ai-coding-agent">what is free and what is not</a>.</li>
+      <li><strong>Not tied to one model maker.</strong> Free models such as GPT-OSS and Qwen, Claude Sonnet 5.5 and Claude Opus 5.5 on Pro and Max, or your own OpenAI-compatible endpoint. The <a href="/#models">live model list</a> shows who makes each model and the context it accepts.</li>
+      <li><strong>Open source.</strong> MIT-licensed Rust, with the <a href="https://github.com/RAHUL-DevelopeRR/neuron-v2">source and releases on GitHub</a>.</li>
+      <li><strong>Familiar controls.</strong> Permission modes, an approval prompt (allow once, allow for the session, deny, or deny with a note), a full-screen terminal UI, MCP servers, subagents and headless runs with <code>neuron -p</code>.</li>
+      <li><strong>Simple install.</strong> <code>npm install -g @zero-x.live/neuron</code>, or <code>python -m pip install --pre neuroncli</code> (keep <code>--pre</code> while Neuron 7 is a pre-release), on macOS, Linux and Windows.</li>
+    </ul>
+
+    <h2 id="choose-another">When another tool is the better choice</h2>
+    <ul>
+      <li><strong>You want the model maker's own agent.</strong> If you already pay for Claude or ChatGPT and want the first-party tool built around those models, Claude Code or Codex CLI is the direct route.</li>
+      <li><strong>You need a stable, signed release.</strong> Neuron 7.0.0-alpha.4 is an alpha, and its binaries are not code-signed (Windows) or notarized (macOS). Read the <a href="https://github.com/RAHUL-DevelopeRR/neuron-v2/blob/HEAD/CHANGELOG.md">known limitations</a> first.</li>
+      <li><strong>You need long context on free models.</strong> Free hosted models are shared and some accept fewer tokens per request than their full window. Large repositories may need Pro, Max or your own provider.</li>
+      <li><strong>You want a long track record.</strong> Aider, Claude Code and Codex CLI have larger communities today. Neuron is younger and maintained by a small team.</li>
+    </ul>
+
+    <h2 id="switch">Trying Neuron next to your current agent</h2>
+    <p>You do not have to switch everything at once. Install Neuron, sign in, and give it the same small, checkable task you would give your current agent, such as adding a test and making it pass. Start in <code>read-only</code> mode in a repository you care about, and work on a clean git tree so every change is a diff you can review.</p>
+    <div class="zx-code"><span class="zx-code__label">npm, any terminal</span><pre><code>npm install -g @zero-x.live/neuron
+neuron login
+neuron --permission-mode read-only</code></pre></div>
+    <p>The <a href="/neuron-cli#install">install options</a> include pip and scripts for macOS, Linux, PowerShell and Command Prompt. The <a href="/docs#quickstart">quickstart</a> covers folder trust, models and commands.</p>
+    <div class="zx-row">
+      <a class="zx-btn zx-btn--primary" href="/neuron-cli#install">Install Neuron</a>
+      <a class="zx-btn" href="/ai-coding-agent">How coding agents work</a>
+      <a class="zx-btn zx-btn--ghost" href="/pricing">Compare plans</a>
+    </div>
+
+    <h2 id="faq">Questions</h2>
+    <div class="zx-faq">
+      <details>
+        <summary>Is Neuron made by Anthropic?</summary>
+        <p>No. Neuron is built by Zero-X, an independent team in India. Zero-X is not affiliated with Anthropic, OpenAI or the Aider project. Claude is a trademark of Anthropic.</p>
+      </details>
+      <details>
+        <summary>Can Neuron use Claude models?</summary>
+        <p>Yes, on the Pro and Max plans, where Claude Sonnet 5.5 and Claude Opus 5.5 are billed from included credits. The Free plan uses free open-weight models instead.</p>
+      </details>
+      <details>
+        <summary>Can I move my CLAUDE.md or AGENTS.md instructions to Neuron?</summary>
+        <p>Yes, and you do not need to copy them. Neuron reads <code>NEURON.md</code> first and also reads <code>AGENTS.md</code> and <code>CLAUDE.md</code> in each folder from the root down to your project, so your existing instructions work as they are. Run <code>/init</code> only if you want a separate <code>NEURON.md</code> for Neuron-specific rules, and keep each rule in one file so Neuron does not read it twice. The <a href="/docs#configuration">configuration docs</a> list the files Neuron reads.</p>
+      </details>
+    </div>
+    </article>
+  </main>
+
+  <footer class="zx-footer">
+    <div class="zx-container zx-footer__grid">
+      <div>
+        <a class="zx-brand" href="/">Zero-X</a>
+        <p>Neuron CLI and NeuCockpit. Built in Tamil Nadu, India.</p>
+      </div>
+      <nav aria-label="Product">
+        <h2>Product</h2>
+        <a href="/neuron-cli">Neuron CLI</a>
+        <a href="/pricing">Pricing</a>
+        <a href="/docs">Docs</a>
+        <a href="/ai-coding-agent">AI coding agent guide</a>
+        <a href="/free-ai-coding-agent">Free AI coding agent</a>
+        <a href="/claude-code-alternative" aria-current="page">Neuron compared</a>
+        <a href="https://dashboard.zero-x.live/">Dashboard</a>
+      </nav>
+      <nav aria-label="Company">
+        <h2>Company</h2>
+        <a href="/about">About</a>
+        <a href="/contact">Contact</a>
+        <a href="https://zero-x.live/neucockpit">NeuCockpit</a>
+      </nav>
+      <nav aria-label="Legal">
+        <h2>Legal</h2>
+        <a href="/terms">Terms of Service</a>
+        <a href="/privacy">Privacy Policy</a>
+        <a href="/refund">Cancellation and refunds</a>
+        <a href="/shipping">Shipping and delivery</a>
+      </nav>
+    </div>
+    <p class="zx-container zx-footer__legal">© 2026 Zero-X · <a href="mailto:support@zero-x.live">support@zero-x.live</a> · <a href="/contact#grievance">Grievance officer</a></p>
+  </footer>
+</body>
+</html>

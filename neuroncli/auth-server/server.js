@@ -3,6 +3,7 @@ require('dotenv').config();
 const crypto = require('node:crypto');
 const http = require('node:http');
 const net = require('node:net');
+const os = require('node:os');
 const { Readable } = require('node:stream');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -486,6 +487,7 @@ function keepAlive(res, body, heartbeatMs) {
 }
 
 const IN_FLIGHT = Symbol('inFlight');
+const PROBES = Symbol('probes');
 const DRAINING = Symbol('draining');
 const COMPANIONS = Symbol('companions');
 
@@ -709,6 +711,11 @@ async function start() {
   // Logs the bound port, so AUTH_PORT=0 (any free port) can be discovered from stdout.
   server.listen({ port, host, ...(reusePort ? { reusePort } : {}) },
     () => console.log(`Neuron gateway listening on ${host}:${server.address().port}${reusePort ? ' (shared port)' : ''}`));
+  // Active model health checks (src/health-probes.js): every instance reads the shared verdicts,
+  // and the one holding the Postgres lease sends the test requests. HEALTH_PROBES=off or no
+  // database: none run, and models without recent traffic report unknown.
+  const { startHealthProbes } = await import('./src/health-probes.js');
+  server[PROBES] = startHealthProbes(env, { holder: `${os.hostname()}:${process.pid}:${crypto.randomUUID().slice(0, 8)}` });
   return server;
 }
 
@@ -759,6 +766,8 @@ function stopOnSignals(server, { graceMs = positiveMs(process.env.SHUTDOWN_GRACE
     if (stopping) return exit(1);
     stopping = true;
     console.log(`${signal || 'Stop'}: draining ${server[IN_FLIGHT]?.size ?? 0} request(s) for up to ${Math.round(graceMs / 1000)} s`);
+    // A leader hands the probe lease back at once, so the next release's instance takes over.
+    server[PROBES]?.stop().catch(() => {});
     drain(server, graceMs).then(clean => {
       if (!clean) console.warn(`Shutdown grace ended; requests still running were cut (${Math.round(cutTailMs / 1000)} s to settle them)`);
       setTimeout(() => exit(0), clean ? tailMs : cutTailMs);

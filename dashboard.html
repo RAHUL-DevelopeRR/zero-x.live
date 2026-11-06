@@ -11,6 +11,7 @@
   <link rel="apple-touch-icon" sizes="180x180" href="/Assets/zerox-apple-touch-icon.png">
   <link rel="stylesheet" href="/site-fonts.css">
   <link rel="stylesheet" href="/zx-tokens.css">
+  <script type="module" src="/site-nav.js"></script>
   <script src="/zerox-auth.js" defer></script>
   <script type="module" src="/dashboard.js"></script>
 </head>
@@ -18,14 +19,16 @@
   <a class="zx-skip" href="#main">Skip to content</a>
   <header class="zx-header">
     <div class="zx-container zx-header__inner">
-      <a class="zx-brand" href="https://zero-x.live/" data-site-path="/"><img src="/Assets/zerox-favicon-32.png" width="28" height="28" alt="">Zero-X</a>
-      <nav class="zx-nav" aria-label="Main">
+      <a class="zx-brand" href="https://zero-x.live/" data-site-path="/"><img src="/Assets/zerox-mark.svg" width="28" height="28" alt="">Zero-X</a>
+      <button class="zx-nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" hidden><span class="zx-nav-toggle__bars" aria-hidden="true"></span>Menu</button>
+      <nav class="zx-nav" id="site-nav" aria-label="Main">
         <a href="https://zero-x.live/neuron-cli" data-site-path="/neuron-cli">Neuron CLI</a>
         <a href="https://zero-x.live/pricing" data-site-path="/pricing">Pricing</a>
         <a href="https://zero-x.live/docs" data-site-path="/docs">Docs</a>
       </nav>
     </div>
   </header>
+  <script>(function(h){var b=h&&h.querySelector('.zx-nav-toggle');if(b&&'noModule'in HTMLScriptElement.prototype){h.dataset.nav='closed';b.hidden=false}})(document.querySelector('.zx-header'))</script>
 
   <main id="main" class="zx-container" data-dashboard-root tabindex="-1">
     <div class="zx-dash-head">
@@ -98,9 +101,10 @@
 
         <section class="zx-card zx-card--flat zx-mt" aria-labelledby="qs-title">
           <h3 id="qs-title">Quick start</h3>
-          <p class="zx-muted">Install Neuron 7.0.0-alpha.2 (a GitHub pre-release), sign in once with <code>neuron login</code> and approve the short code it shows, then run <code>neuron</code> in any project.</p>
-          <div class="zx-code zx-code--copy"><span class="zx-code__label">Install on macOS or Linux</span><pre><code id="qs-install">curl -fsSL https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.2/install.sh | sh -s -- --version 7.0.0-alpha.2</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="qs-install" data-copy-label="macOS and Linux install command">Copy</button></div>
-          <div class="zx-code zx-code--copy"><span class="zx-code__label">Install on Windows (PowerShell)</span><pre><code id="qs-install-win">&amp; ([scriptblock]::Create((irm https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.2/install.ps1))) -Version 7.0.0-alpha.2</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="qs-install-win" data-copy-label="Windows install command">Copy</button></div>
+          <p class="zx-muted">Install Neuron 7.0.0-alpha.4 (a GitHub pre-release), sign in once with <code>neuron login</code> and approve the short code it shows, then run <code>neuron</code> in any project.</p>
+          <div class="zx-code zx-code--copy"><span class="zx-code__label">Install with npm</span><pre><code id="qs-install">npm install -g @zero-x.live/neuron</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="qs-install" data-copy-label="npm install command">Copy</button></div>
+          <div class="zx-code zx-code--copy"><span class="zx-code__label">Or with pip</span><pre><code id="qs-install-pip">python -m pip install --pre neuroncli</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="qs-install-pip" data-copy-label="pip install command">Copy</button></div>
+          <p class="zx-help">Both work in any terminal on macOS, Linux or Windows. npm needs Node.js 22.14 or later; pip needs Python 3.8 or later; keep <code>--pre</code> while Neuron 7 is a pre-release. No Node.js or Python? The install scripts for macOS and Linux, Windows PowerShell and Command Prompt are on the <a href="https://zero-x.live/download#cli" data-site-path="/download#cli">download page</a>.</p>
           <div class="zx-code zx-code--copy"><span class="zx-code__label">Sign in</span><pre><code id="qs-login">neuron login</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="qs-login" data-copy-label="Login command">Copy</button></div>
           <div class="zx-code zx-code--copy"><span class="zx-code__label">OpenAI-compatible base URL</span><pre><code id="qs-base">https://zero-x.live/v1</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="qs-base" data-copy-label="Base URL">Copy</button></div>
           <p class="zx-help">Need more? Read the <a href="https://zero-x.live/docs" data-site-path="/docs">documentation</a>.</p>

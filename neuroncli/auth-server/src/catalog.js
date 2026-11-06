@@ -19,8 +19,9 @@ import {
 import { effectiveSpendCapUsd, entryFromSpec } from './catalog-guardrails.js';
 import { CLAUDE_MODEL_SPECS } from './catalog-claude.js';
 import { catalogSnapshot, loadCatalog, loadCatalogDbModels } from './catalog-db.js';
+import { familyOf, modelIdentity } from './model-families.js';
 
-export { loadCatalog, loadCatalogDbModels };
+export { loadCatalog, loadCatalogDbModels, familyOf, modelIdentity };
 
 // EU-27 plus Iceland, Liechtenstein and Norway.
 export const EEA_COUNTRIES = Object.freeze(['AT', 'BE', 'BG', 'HR', 'CY', 'CZ', 'DK', 'EE', 'FI', 'FR',
@@ -234,9 +235,11 @@ const MODELS = [
   // 128K and 96K. Output is listed at what max_tokens validation accepts (chat-handler.js
   // MAX_OUTPUT_TOKENS). Both call tools, stream, and think by default (reasoning_content), which
   // reasoning_effort "none" turns off. Z.ai publishes no request or token budget for them, so the
-  // pools have none; they serve one request at a time per account and model
-  // (src/catalog-types.js PROVIDER_TYPES.zai.free_concurrency), so auto tries them only after
-  // every other free pool.
+  // pools have none. They serve one request at a time (src/catalog-types.js
+  // PROVIDER_TYPES.zai.free_concurrency): users' reservations are limited per model, and since it is
+  // not established whether Z.ai counts per model or per account, the health checker treats the
+  // slot as one per account (src/health-probes.js slotSiblings). auto tries them only after every
+  // other free pool.
   ...[
     ['glm-4.7-flash', 'GLM-4.7-Flash (Z.ai, free)', 14, 200000, 65536],
     ['glm-4.5-flash', 'GLM-4.5-Flash (Z.ai, free)', 15, 131072, 65536],
@@ -280,14 +283,68 @@ export function catalogEntry(id, env) {
   return typeof id === 'string' ? catalogSnapshot(env).byId.get(id.toLowerCase()) ?? null : null;
 }
 
+// Family id (lower case) -> { id, members } of a served snapshot, members in list order
+// (src/model-families.js; contract section 14).
+const familyIndexes = new WeakMap();
+function familyIndex(snapshot) {
+  let index = familyIndexes.get(snapshot);
+  if (index) return index;
+  index = new Map();
+  for (const entry of snapshot.entries) {
+    const family = familyOf(entry);
+    const key = family.toLowerCase();
+    if (!index.has(key)) index.set(key, { id: family, members: [] });
+    index.get(key).members.push(entry);
+  }
+  familyIndexes.set(snapshot, index);
+  return index;
+}
+
+// The served routes of a family, in list order ([] for an unknown family id).
+export function familyMembers(familyId, env) {
+  if (typeof familyId !== 'string') return [];
+  return familyIndex(catalogSnapshot(env)).get(familyId.toLowerCase())?.members ?? [];
+}
+
+// True when `id` names a family rather than one route. A family whose id is also a route id (one
+// route whose own id is already clean, like Claude's) resolves to that route.
+export function isFamilyId(id, env) {
+  if (typeof id !== 'string' || id === AUTO_MODEL_ID) return false;
+  const snapshot = catalogSnapshot(env);
+  return !snapshot.byId.has(id.toLowerCase()) && familyIndex(snapshot).has(id.toLowerCase());
+}
+
+// Family prefixes an OpenAI-compatible client may strip before sending: Neuron's
+// strip_routing_prefix removes openai/ and xai/, so the family "openai/gpt-oss-20b" arrives as
+// "gpt-oss-20b".
+const CLIENT_STRIPPED_FAMILY_PREFIXES = Object.freeze(['openai/', 'xai/']);
+
+// An alias equal to its route's family leaf ("gpt-oss-20b" for openai/gpt-oss-20b) names the
+// model, not one route: it resolves to the family, so the request can fall back to another route.
+// Provider-qualified aliases ("workers-ai/gpt-oss-120b") keep their route.
+function aliasTarget(snapshot, index, value) {
+  const routeId = snapshot.aliases.get(value);
+  if (!routeId) return null;
+  const entry = snapshot.byId.get(routeId.toLowerCase());
+  const family = entry ? familyOf(entry).toLowerCase() : null;
+  if (!family || !index.has(family) || family.slice(family.indexOf('/') + 1) !== value) return routeId;
+  return index.get(family).id;
+}
+
+// Route ids first (old clients keep the route they asked for), then family ids, then aliases (a
+// family-leaf alias names its family), then a bare name a client stripped a family prefix from.
 function lookup(value, env) {
   if (value === AUTO_MODEL_ID) return AUTO_MODEL_ID;
   const snapshot = catalogSnapshot(env);
-  return snapshot.byId.get(value)?.id ?? snapshot.aliases.get(value) ?? null;
+  const index = familyIndex(snapshot);
+  const found = snapshot.byId.get(value)?.id ?? index.get(value)?.id ?? aliasTarget(snapshot, index, value);
+  if (found || value.includes('/')) return found ?? null;
+  return CLIENT_STRIPPED_FAMILY_PREFIXES.map(prefix => index.get(prefix + value)?.id).find(Boolean) ?? null;
 }
 
-// Resolves a requested model to a public id ('auto' included). An `openai/` transport
-// prefix (added by OpenAI-compatible clients) is accepted when the remainder resolves.
+// Resolves a requested model to a public id ('auto' included): a route id, or a family id
+// (isFamilyId) that src/router.js serves from the best healthy route of the family. An `openai/`
+// transport prefix (added by OpenAI-compatible clients) is accepted when the remainder resolves.
 // Catalog rows resolve only for an `env` whose catalog was loaded (loadCatalog).
 export function resolveModelId(requested, env) {
   if (typeof requested !== 'string') return null;
@@ -586,12 +643,43 @@ export function planPolicy(env, plan, policies) {
 }
 
 // ── GET /v1/models (contract §3.2, §12.4) ──
+// A coding agent's system prompt and tool schemas alone take ~4K tokens (Neuron 7.0.0-alpha.4:
+// 3.8K input tokens for a one-line prompt), so a window below this cannot hold a working
+// session. Such a model stays listed, but never sets the window `auto` advertises.
+export const AGENT_MIN_CONTEXT = 65536;
+
+// The largest request (prompt plus max_tokens) the caller's usable pools take. A pool's
+// per-minute token budget caps every request (router.js fitMaxTokens: Groq's free org refuses
+// one over its 8K TPM), so on the Free plan a Groq model holds ~8K tokens, not its 131K window;
+// advertising 131K let clients grow a session the gateway then refused as too large.
+export function usableContextWindow(entry, pools) {
+  if (!pools.length) return entry.context_window;
+  return Math.min(entry.context_window, Math.max(...pools.map(pool => pool.limits?.tpm || entry.context_window)));
+}
+
+// Room the listed max_output_tokens leaves for the prompt. Clients size max_tokens from
+// max_output_tokens and refuse locally to send a request whose prompt plus max_tokens exceeds
+// context_window (Neuron 7.0.0-alpha.4, api providers/mod.rs preflight_message_request), so a
+// window listed with max_output_tokens equal to it blocked every request: Groq's 8K Free window
+// with 8K of output left no room for alpha.4's ~4K first turn. The router still fits max_tokens to
+// each request (router.js fitMaxTokens); this only keeps the listed pair sendable.
+export const AGENT_PROMPT_RESERVE = 6000;
+const MIN_LISTED_OUTPUT_TOKENS = 1024; // router.js MIN_OUTPUT_TOKENS
+
+// The max_output_tokens listed with a usable window: the model's own, but never so much of the
+// window that a coding agent's prompt no longer fits beside it.
+export function listedMaxOutput(maxOutputTokens, window) {
+  return Math.min(maxOutputTokens, window, Math.max(MIN_LISTED_OUTPUT_TOKENS, window - AGENT_PROMPT_RESERVE));
+}
+
 // The caller's data policy (src/oiop/policy.js) removes pools whose offer it rules out; a model
 // whose configured pools are all ruled out is unavailable with reason policy_restricted.
 function describeEntry(env, entry, tiers, country, policy) {
   const verdicts = poolVerdicts(env, entry, tiers, country);
   const permitted = verdicts.map(verdict => ({ ...verdict, configured: verdict.configured && !policyBlock(verdict.offer, policy) }));
   const configured = permitted.filter(verdict => verdict.configured).map(verdict => verdict.pool);
+  const window = usableContextWindow(entry, permitted.filter(verdict => verdict.configured && verdict.inPlan && verdict.region)
+    .map(verdict => verdict.pool));
   const reason = verdicts.some(verdict => verdict.configured) && !configured.length ? 'policy_restricted' : unavailableReason(permitted);
   const paid = configured.find(pool => pool.tier === 'paid' && pool.price);
   const shown = configured.length ? permitted.filter(verdict => verdict.configured) : verdicts;
@@ -604,10 +692,12 @@ function describeEntry(env, entry, tiers, country, policy) {
     created: 0,
     owned_by: entry.provider,
     display_name: entry.display_name,
-    context_window: entry.context_window,
+    // What this caller can send (usableContextWindow); native_context_window is the model's own.
+    context_window: window,
     // OpenAI-compatible clients (opencode, Freebuff BYOK, Cursor) read context_length.
-    context_length: entry.context_window,
-    max_output_tokens: entry.max_output_tokens,
+    context_length: window,
+    native_context_window: entry.context_window,
+    max_output_tokens: listedMaxOutput(entry.max_output_tokens, window),
     capabilities: {
       tools: entry.supports_tools, streaming: entry.supports_streaming,
       vision: entry.supports_vision, reasoning: entry.reasoning_efforts.length > 0,
@@ -627,7 +717,11 @@ function describeEntry(env, entry, tiers, country, policy) {
 function describeAuto(models, env) {
   const candidates = models.filter(model => catalogEntry(model.id, env)?.auto_rank != null && model.capabilities.tools);
   const available = candidates.filter(model => model.available);
-  const pool = available.length ? available : candidates;
+  const listed = available.length ? available : candidates;
+  // A candidate below AGENT_MIN_CONTEXT serves only the requests that fit it (router.js skips it
+  // otherwise), so it does not shrink the window auto advertises.
+  const roomy = listed.filter(model => model.context_window >= AGENT_MIN_CONTEXT);
+  const pool = roomy.length ? roomy : listed;
   const reasons = candidates.map(model => model.unavailable_reason);
   const reason = available.length ? null : !candidates.length ? 'not_configured'
     : ['upgrade_required', 'region_unavailable', 'policy_restricted', 'not_configured'].find(value => reasons.includes(value));
@@ -642,13 +736,14 @@ function describeAuto(models, env) {
     // 131K-context fallback rejected the request.
     context_window: pool.length ? Math.min(...pool.map(model => model.context_window)) : 0,
     context_length: pool.length ? Math.min(...pool.map(model => model.context_window)) : 0,
+    native_context_window: pool.length ? Math.min(...pool.map(model => model.context_window)) : 0,
     max_output_tokens: pool.length ? Math.min(...pool.map(model => model.max_output_tokens)) : 0,
     capabilities: {
       tools: true, streaming: true, vision: false,
-      reasoning: pool.some(model => model.capabilities.reasoning),
+      reasoning: listed.some(model => model.capabilities.reasoning),
     },
     reasoning_efforts: [],
-    tiers: [...new Set(pool.flatMap(model => model.tiers))],
+    tiers: [...new Set(listed.flatMap(model => model.tiers))],
     available: reason === null,
     unavailable_reason: reason,
     pricing: null,
@@ -665,4 +760,128 @@ export function listModelsForCaller(env = {}, { plan = 'free', country = null, t
   const code = normalizeCountry(country);
   const data = offeredEntries(env).map(entry => describeEntry(env, entry, allowed, code, policy));
   return { object: 'list', data: [describeAuto(data, env), ...data] };
+}
+
+// ── Model families on /v1/models (contract section 14) ──
+// GET /v1/models lists one entry per family (src/model-families.js): the routes of a model
+// rolled up for the caller. Route ids stay listed under ?routes=1, each with its identity.
+// Public statuses (health-share.js withHealth); `blurred` is the word clients before section 15 read.
+const STATUS_RANK = Object.freeze({ available: 0, degraded: 1, unknown: 2, busy: 3, unavailable: 4, blurred: 4 });
+const REASON_ORDER = Object.freeze(['upgrade_required', 'region_unavailable', 'policy_restricted', 'not_configured']);
+const AUTO_IDENTITY = Object.freeze({ maker: 'zero-x', maker_name: 'Zero-X', family: AUTO_MODEL_ID, model_name: 'Auto' });
+
+// A described route (listModelsForCaller item) plus maker, maker_name, family and model_name.
+export function withIdentity(model, env) {
+  if (model.id === AUTO_MODEL_ID) return { ...model, ...AUTO_IDENTITY };
+  const entry = catalogEntry(model.id, env);
+  if (!entry) return model;
+  const { maker, maker_name: makerName, family, name } = modelIdentity(entry);
+  return { ...model, maker, maker_name: makerName, family, model_name: name };
+}
+
+const time = value => (value ? Date.parse(value) || 0 : 0);
+const union = lists => [...new Set(lists.flat())];
+
+// Routes that can take a request now: available or degraded (a route without any status counts
+// as available). Without one, the routes with the best status (unknown, which routing still
+// tries, then busy, then unavailable): the window the model takes once they free up.
+function servingRoutes(listed) {
+  const rank = model => STATUS_RANK[model.status ?? 'available'] ?? STATUS_RANK.unknown;
+  const now = listed.filter(model => rank(model) <= STATUS_RANK.degraded);
+  if (now.length) return now;
+  const best = Math.min(...listed.map(rank));
+  return listed.filter(model => rank(model) === best);
+}
+
+// The data-policy fields of the routes' offers. An offer id names the serving provider
+// ("groq.free"), so the family view lists the fields without it; ?routes=1 keeps the ids.
+function familyOffers(listed) {
+  const offers = listed.flatMap(model => model.offers || []).map(offer => ({
+    tier: offer.tier, owner: offer.owner, trust_tier: offer.trust_tier, trains_on_inputs: offer.trains_on_inputs,
+  }));
+  return [...new Map(offers.map(offer => [JSON.stringify(offer), offer])).values()];
+}
+
+// One family entry from its described routes (with their runtime health when withHealth ran).
+// Only the routes the caller can use count (all routes when none can). The context window is the
+// largest the routes that can serve now take (servingRoutes; the router skips routes a request
+// does not fit), so a busy route never advertises a window the healthy ones cannot serve. The
+// status is the best of theirs, checked_at the newest observation. Nothing names the serving
+// provider: provider is the maker, offers carry no ids, models_dev_id is null.
+function describeFamily(identity, routes) {
+  const usable = routes.filter(model => model.available);
+  const listed = usable.length ? usable : routes;
+  const serving = servingRoutes(listed);
+  const largest = (key, from = listed) => Math.max(0, ...from.map(model => Number(model[key]) || 0));
+  const any = key => listed.some(model => Boolean(model.capabilities?.[key]));
+  const reasons = routes.map(model => model.unavailable_reason);
+  const priced = listed.filter(model => model.pricing)
+    .sort((a, b) => (b.pricing.input_per_mtok_usd ?? 0) - (a.pricing.input_per_mtok_usd ?? 0))[0];
+  const window = largest('context_window', serving);
+  const facts = listed.map(model => model.facts).find(Boolean);
+  const family = {
+    id: identity.family,
+    object: 'model',
+    created: 0,
+    owned_by: identity.maker,
+    display_name: identity.name,
+    model_name: identity.name,
+    maker: identity.maker,
+    maker_name: identity.maker_name,
+    family: identity.family,
+    context_window: window,
+    context_length: window,
+    // The model's own window does not change with route health.
+    native_context_window: largest('native_context_window'),
+    max_output_tokens: Math.min(largest('max_output_tokens', serving), window),
+    capabilities: { tools: any('tools'), streaming: any('streaming'), vision: any('vision'), reasoning: any('reasoning') },
+    reasoning_efforts: union(listed.map(model => model.reasoning_efforts || [])),
+    tiers: union(listed.map(model => model.tiers || [])),
+    available: usable.length > 0,
+    unavailable_reason: usable.length ? null : REASON_ORDER.find(reason => reasons.includes(reason)) ?? 'not_configured',
+    pricing: priced?.pricing ?? null,
+    // The family has no single serving provider: the block names the maker.
+    provider: { id: identity.maker, name: identity.maker_name, logo_url: null, logo_fallback_url: null },
+    offers: familyOffers(listed),
+    // A models.dev id names a provider ("groq/openai/gpt-oss-120b"): routes only.
+    models_dev_id: null,
+  };
+  if (routes.some(model => 'facts' in model)) family.facts = facts ? { ...facts, models_dev_id: null } : null;
+  const observed = listed.filter(model => model.status);
+  if (observed.length) {
+    // The best route speaks for the family, with its own observation time, latency and last
+    // failure: a fresh failure on another route never dates an older verdict.
+    const rank = model => STATUS_RANK[model.status] ?? STATUS_RANK.unknown;
+    const best = [...observed].sort((a, b) => rank(a) - rank(b)
+      || time(a.available_again_at) - time(b.available_again_at) || time(b.checked_at) - time(a.checked_at))[0];
+    Object.assign(family, { status: best.status, available_again_at: best.available_again_at ?? null,
+      checked_at: best.checked_at ?? null, latency_ms: best.latency_ms ?? null, last_success_at: best.last_success_at ?? null,
+      last_failure_class: best.last_failure_class ?? null,
+      ...(best.stale_after_seconds != null ? { stale_after_seconds: best.stale_after_seconds } : {}) });
+  }
+  return family;
+}
+
+/**
+ * Rolls described routes (listModelsForCaller(...).data, after withHealth) up into one entry per
+ * family, in the order each family first appears. `auto` stays as it is, with its identity.
+ */
+export function familyModels(models, env) {
+  const groups = new Map();
+  const order = [];
+  for (const model of models) {
+    const entry = model.id === AUTO_MODEL_ID ? null : catalogEntry(model.id, env);
+    if (!entry) {
+      order.push(withIdentity(model, env));
+      continue;
+    }
+    const identity = modelIdentity(entry);
+    const key = identity.family.toLowerCase();
+    if (!groups.has(key)) {
+      groups.set(key, { identity, routes: [] });
+      order.push(groups.get(key));
+    }
+    groups.get(key).routes.push(model);
+  }
+  return order.map(item => (item.identity && item.routes ? describeFamily(item.identity, item.routes) : item));
 }

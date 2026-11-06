@@ -31,6 +31,7 @@ async function run({ search = '?user_code=bdwp-hqpk', signedIn = true, lookup = 
   const timers = [];
   let replaced = null;
   let redirect = null;
+  let signOut = null;
   const context = vm.createContext({
     URL, URLSearchParams, AbortSignal, Date, console, Math, JSON, String, Object, Number,
     setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; },
@@ -41,6 +42,7 @@ async function run({ search = '?user_code=bdwp-hqpk', signedIn = true, lookup = 
       async init() {}, async getProfile() { return signedIn ? { email: 'owner@example.com' } : null; },
       async getAccessToken() { return 'identity-token'; }, onAuthStateChange() {},
       async openAuthModal(options) { redirect = options.redirectTo; },
+      async signOut(options) { signOut = options; },
     } },
     fetch: async (path, options) => {
       calls.push({ path, body: JSON.parse(options.body), headers: options.headers, credentials: options.credentials });
@@ -51,7 +53,8 @@ async function run({ search = '?user_code=bdwp-hqpk', signedIn = true, lookup = 
   });
   vm.runInContext(source, context);
   await drain();
-  return { el, calls, timers, get replaced() { return replaced; }, get redirect() { return redirect; } };
+  return { el, calls, timers, get replaced() { return replaced; }, get redirect() { return redirect; },
+    get signOut() { return signOut; } };
 }
 
 // Signed in with a prefilled code: looked up, shown, nothing approved without a click.
@@ -65,6 +68,7 @@ assert.equal(app.el('confirm-code').textContent, 'BDWP-HQPK');
 assert.match(app.el('device').textContent, /laptop · windows · neuron-cli 7\.0\.0 \(reported by the device\)/);
 assert.match(app.el('location').textContent, /Chennai, TN, IN · 203\.0\.113\.7/);
 assert.equal(app.el('mismatch').hidden, true);
+assert.equal(app.el('switch').hidden, false, 'a signed-in visitor can switch accounts');
 assert.equal(app.el('approve').disabled, true, 'Approve is held after the details appear');
 assert.equal(app.timers.at(-1).ms, 1500);
 app.timers.at(-1).fn();
@@ -73,6 +77,14 @@ await app.el('approve').listeners.click();
 await drain();
 assert.deepEqual(app.calls.at(-1).body, { grant_id: LOOKUP.grant_id, approval_nonce: '123.signature', decision: 'approve' });
 assert.match(app.el('done').textContent, /Approved/);
+assert.equal(app.el('switch').hidden, true, 'no account switch once decided');
+
+// Wrong account: sign this browser out only and come back to the same code, deciding nothing.
+const other = await run();
+await other.el('switch').listeners.click();
+await drain();
+assert.deepEqual({ ...other.signOut }, { scope: 'local', redirectUrl: 'https://neuron.zero-x.live/device?user_code=BDWP-HQPK' });
+assert.deepEqual(other.calls.map(call => call.path), ['/auth/device/lookup'], 'switching neither approves nor denies');
 
 // Another country: a visible warning. Deny sends a deny.
 const far = await run({ lookup: { ...LOOKUP, requester: { ...LOOKUP.requester, country: 'RU' } } });
@@ -98,9 +110,10 @@ assert.equal(typed.calls[0].body.user_code, 'BDWPHQPK');
 const signedOut = await run({ signedIn: false });
 assert.equal(signedOut.calls.length, 0);
 assert.equal(signedOut.el('signin-step').hidden, false);
+assert.equal(signedOut.el('switch').hidden, true);
 await signedOut.el('signin').listeners.click();
 assert.equal(signedOut.redirect, 'https://neuron.zero-x.live/device?user_code=BDWP-HQPK');
 
 assert.match(html, /<meta name="referrer" content="no-referrer">/);
 assert.ok(!/<script>(?!<\/script>)/.test(html.replace(/<script[^>]*src=[^>]*><\/script>/g, '')), 'no inline script');
-console.log('PASS: device approval page: explicit approve/deny, 1.5 s hold, code removed from URL, nonce returned, country warning, sign-in keeps the code');
+console.log('PASS: device approval page: explicit approve/deny, 1.5 s hold, code removed from URL, nonce returned, country warning, sign-in keeps the code, switch account signs out locally');

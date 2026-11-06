@@ -30,7 +30,7 @@ SET LOCAL lock_timeout = '5s';
 --   zerox_billing_profile_upsert(user, json) saves the whole profile (a PUT: absent optional keys are cleared)
 --   zerox_billing_record_consents(user, context, {document: version}) appends one row per document
 --   zerox_billing_consents_latest(user)      the newest version of each document the buyer agreed to
--- Roll back with migrations/down/20261103000000_billing_details.down.sql (psql -X -v ON_ERROR_STOP=1 -f);
+-- Roll back with migrations/down/20261105000000_billing_details.down.sql (psql -X -v ON_ERROR_STOP=1 -f);
 -- that deletes every saved profile and consent record.
 
 CREATE TABLE public.zerox_billing_profiles (

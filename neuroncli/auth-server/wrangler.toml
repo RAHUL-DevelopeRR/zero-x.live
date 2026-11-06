@@ -37,7 +37,7 @@ custom_domain = true
 # CLOUDFLARE_MODELS / NVIDIA_MODELS / ANTHROPIC_MODELS can only narrow it (unknown ids are ignored
 # and reported on /v1/providers/health); *_TOOL_MODELS are no longer read.
 # OPENROUTER_MODELS narrows the OpenRouter models offered, hosted and BYOK alike.
-OPENROUTER_MODELS = "cohere/north-mini-code:free,minimax/minimax-m3.1-flash:free"
+OPENROUTER_MODELS = "cohere/north-mini-code:free"
 SUPABASE_URL = "https://norrtosjwcossxrhhtvd.supabase.co"
 # Public browser key. OAuth, SMTP, SMS and service-role secrets stay outside this repository.
 SUPABASE_PUBLISHABLE_KEY = "sb_publishable_Fgrm-Cfyj3w0xAfepK-CFg_SpUydF2T"
@@ -125,7 +125,14 @@ binding = "AI"
 
 # HealthHub (src/health-hub.js): one Durable Object holding every pool's health, with a 30 s
 # alarm for free checks and capped test requests. /v1/models reads it; without the binding the
-# gateway falls back to sharing health through SESSIONS_KV.
+# gateway falls back to sharing health through SESSIONS_KV. One checker per pool: while
+# EC2_PROXY_PREFIXES routes chat to the Node gateway, whose checker (src/health-probes.js) tests
+# the pools, the hub sends no test requests or canaries (free list checks and isolates' reports go
+# on); deleting the secret brings them back. HEALTH_HUB_PROBES = "on" or "off" overrides that.
+# auto does not know whether the Node checker runs: while it is off on the VM (HEALTH_PROBES=off,
+# no database, or migration 20261104000000_health_probes.sql missing; the operator's /health on
+# Node says node_probes and a warning), set HEALTH_HUB_PROBES = "on" here, or nothing tests the pools.
+# HEALTH_HUB_PROBES = "auto"
 [[durable_objects.bindings]]
 name = "HEALTH_HUB"
 class_name = "HealthHub"

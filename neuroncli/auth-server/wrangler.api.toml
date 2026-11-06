@@ -23,7 +23,7 @@ PRICING_URL = "https://zero-x.live/pricing"
 # configuration only: an empty list offers none of the provider's models, by name or in auto.
 NVIDIA_HOSTED = "true"
 OPENROUTER_HOSTED = "true"
-OPENROUTER_MODELS = "cohere/north-mini-code:free,minimax/minimax-m3.1-flash:free"
+OPENROUTER_MODELS = "cohere/north-mini-code:free"
 GEMINI_MODELS = ""
 CLOUDFLARE_MODELS = ""
 # With ANTHROPIC_API_KEY set, the anthropic.paid key serves these Claude models only (wrangler.toml).

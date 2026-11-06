@@ -24,13 +24,15 @@
   <link rel="stylesheet" href="/site-fonts.css">
   <link rel="stylesheet" href="/zx-tokens.css">
   <script type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Zero-X","item":"https://zero-x.live/"},{"@type":"ListItem","position":2,"name":"Shipping and Delivery Policy","item":"https://zero-x.live/shipping"}]}</script>
+  <script type="module" src="/site-nav.js"></script>
 </head>
 <body>
   <a class="zx-skip" href="#main">Skip to content</a>
   <header class="zx-header">
     <div class="zx-container zx-header__inner">
-      <a class="zx-brand" href="/"><img src="/Assets/zerox-favicon-32.png" width="28" height="28" alt="">Zero-X</a>
-      <nav class="zx-nav" aria-label="Main">
+      <a class="zx-brand" href="/"><img src="/Assets/zerox-mark.svg" width="28" height="28" alt="">Zero-X</a>
+      <button class="zx-nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" hidden><span class="zx-nav-toggle__bars" aria-hidden="true"></span>Menu</button>
+      <nav class="zx-nav" id="site-nav" aria-label="Main">
         <a href="/neuron-cli">Neuron CLI</a>
         <a href="/pricing">Pricing</a>
         <a href="/docs">Docs</a>
@@ -38,6 +40,7 @@
       </nav>
     </div>
   </header>
+  <script>(function(h){var b=h&&h.querySelector('.zx-nav-toggle');if(b&&'noModule'in HTMLScriptElement.prototype){h.dataset.nav='closed';b.hidden=false}})(document.querySelector('.zx-header'))</script>
 
   <main id="main" class="zx-container zx-legal zx-section--tight">
     <nav class="zx-breadcrumb" aria-label="Breadcrumb"><a href="/">Zero-X</a> / Shipping and Delivery Policy</nav>
@@ -51,7 +54,7 @@
     <ul>
       <li><strong>Subscriptions:</strong> your account is upgraded as soon as Razorpay confirms the payment, normally within a minute. The new plan, limits and included credits appear in the <a href="https://dashboard.zero-x.live/">dashboard</a> and apply to Neuron CLI immediately.</li>
       <li><strong>Credit top-ups:</strong> credits are added to your balance as soon as the payment is confirmed.</li>
-      <li><strong>Neuron software:</strong> free to download from <a href="https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/tag/v7.0.0-alpha.2">GitHub Releases</a>. The current release, 7.0.0-alpha.2, is a pre-release, so install it by version; see the <a href="/neuron-cli#install">install options</a>. The older Neuron packages on npm and PyPI are not supported.</li>
+      <li><strong>Neuron software:</strong> free to download from <a href="https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/tag/v7.0.0-alpha.4">GitHub Releases</a>, npm and PyPI. The current release, 7.0.0-alpha.4, is a pre-release; see the <a href="/neuron-cli#install">install options</a>. The old 6.2.x packages on npm and PyPI are not supported.</li>
     </ul>
     <p>Razorpay emails a payment receipt to the address you used at checkout. Delivery is to your Zero-X account, so make sure you are signed in with the account you want upgraded.</p>
 
@@ -77,6 +80,8 @@
         <a href="/pricing">Pricing</a>
         <a href="/docs">Docs</a>
         <a href="/ai-coding-agent">AI coding agent guide</a>
+        <a href="/free-ai-coding-agent">Free AI coding agent</a>
+        <a href="/claude-code-alternative">Neuron compared</a>
         <a href="https://dashboard.zero-x.live/">Dashboard</a>
       </nav>
       <nav aria-label="Company">

@@ -21,6 +21,15 @@
  * Real outcomes also feed a rolling window per pool (last 50): p50/p95 latency to the first
  * byte and the error rate, which the snapshot carries for routing (router.js penalty).
  * A failed list, key or status-page check and every test request log one line (no bodies or headers).
+ *
+ * One checker per pool in production: once the Worker forwards chat to the Node gateway on EC2
+ * (EC2_PROXY_PREFIXES routes /v1/chat/completions, src/ec2-proxy.js chatRoutedToEc2), the Node
+ * gateway serves /v1 and its own checker (src/health-probes.js) sends the test requests, so this
+ * hub sends none (steps 3 and 4 stop: no test request, no canary). It keeps the free checks (model
+ * lists, key checks, status pages, which spend no model quota) and the passive part: isolates'
+ * reports and the snapshot. HEALTH_HUB_PROBES overrides the choice: "on" or "off"; unset or "auto"
+ * follows the forward switch, so deleting EC2_PROXY_PREFIXES (the rollback to the Worker) brings
+ * the hub's test requests back at its next alarm.
  * /v1/models reads a snapshot from here; the KV path in health-share.js remains for the Node
  * server, which has no Durable Objects.
  *
@@ -33,6 +42,7 @@ import { entryPools, loadCatalog, offeredEntries, poolConfigured, poolKey, poolS
 import { ADAPTERS, buildUpstreamPayload, classifyUpstreamFailure, requestCompletion, upstreamErrorSummary } from './providers.js';
 import { loadVaultKeys } from './provider-keys.js';
 import { readStream, TEST_TOOL } from './discovery/verify.js';
+import { chatRoutedToEc2 } from './ec2-proxy.js';
 
 export const ALARM_INTERVAL_MS = 30_000;
 const CHECK_INTERVAL_MS = 60_000; // each list, key or status page check at most once a minute
@@ -44,7 +54,8 @@ const FETCH_TIMEOUT_MS = 8_000;
 // Test requests per pool (model and key) per UTC day: about 2.4% of Groq's 1,000 requests, under
 // 4% of the Workers AI daily neurons. 0 = never: Gemini's free tier allows 20 requests per model
 // per day (catalog.js POOL_LIMITS), so its free model list is its only check; Z.ai's free models
-// serve one request at a time per account, so a test request would take a user's slot.
+// serve one request at a time (treated as per account: src/health-probes.js slotSiblings), so a
+// test request would take a user's slot.
 export const PROBE_DAILY_CAPS = Object.freeze({ groq: 24, gemini: 0, cloudflare: 48, nvidia: 0, openrouter: 0, zai: 0 });
 const CANARY_IDLE_MS = 15 * 60_000; // real traffic within this already proves the pool
 const CANARIES_PER_ALARM = 1;
@@ -63,7 +74,7 @@ const percentile = (values, fraction) => {
 
 // Free model lists. A `header` list is read with each key and judges only that key's free pools
 // (a paid key's pool is not checked); a public list (no header) is read once for all of them.
-const LIST_CHECKS = Object.freeze({
+export const LIST_CHECKS = Object.freeze({
   groq: { url: 'https://api.groq.com/openai/v1/models', header: 'bearer',
     ids: body => body?.data?.map(model => model.id) },
   gemini: { url: 'https://generativelanguage.googleapis.com/v1beta/models?pageSize=200',
@@ -76,7 +87,7 @@ const LIST_CHECKS = Object.freeze({
 });
 
 // Free endpoints that tell a live key from a dead one where the model list is public.
-const KEY_CHECKS = Object.freeze({
+export const KEY_CHECKS = Object.freeze({
   openrouter: { url: 'https://openrouter.ai/api/v1/key', header: 'bearer' },
 });
 
@@ -102,6 +113,18 @@ const STATUS_CHECKS = Object.freeze({
 });
 
 const utcDay = now => new Date(now).toISOString().slice(0, 10);
+
+/**
+ * Whether this hub sends upstream test requests and canaries (HEALTH_HUB_PROBES: on | off | auto,
+ * default auto). auto: only while the Worker serves chat itself, that is while chat is not routed
+ * to the Node gateway, whose checker probes the same pools.
+ */
+export function hubSendsTestRequests(env = {}) {
+  const value = String(env?.HEALTH_HUB_PROBES ?? 'auto').trim().toLowerCase();
+  if (['on', 'true', '1', 'yes'].includes(value)) return true;
+  if (['off', 'false', '0', 'no'].includes(value)) return false;
+  return !chatRoutedToEc2(env);
+}
 
 export class HealthHub {
   constructor(state, env, { fetchImpl = (...args) => fetch(...args), now = () => Date.now(),
@@ -294,6 +317,14 @@ export class HealthHub {
       else if (unit.type === 'key') await this.checkKey(unit, now);
       else await this.checkStatusPage(unit.provider, unit.pools, now);
     }
+    if (!hubSendsTestRequests(this.env)) {
+      if (!this.testsOffLogged) {
+        this.testsOffLogged = true;
+        console.info('HealthHub test requests off: chat is routed to EC2, whose Node checker should probe the pools (check node_probes in its operator /health; set HEALTH_HUB_PROBES=on while it is off)');
+      }
+      return;
+    }
+    this.testsOffLogged = false;
     await this.runProbes(byProvider, now);
     await this.runCanaries(byProvider, now);
   }

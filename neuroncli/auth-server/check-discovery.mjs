@@ -444,7 +444,8 @@ try {
     try { parsed = JSON.parse(text); } catch { /* HTML page */ }
     return { status: response.status, body: parsed, text, headers: response.headers };
   };
-  const servedIds = async env => (await call('/v1/models', { token: null, env })).body.data.map(model => model.id);
+  // Route ids are listed under ?routes=1 (contract section 14).
+  const servedIds = async env => (await call('/v1/models?routes=1', { token: null, env })).body.data.map(model => model.id);
   const page = await call('/admin/discovery', { token: null });
   assert.equal(page.status, 200);
   assert.match(page.text, /<title>Provider discovery<\/title>/);
@@ -513,8 +514,10 @@ try {
   assert.equal(approval.status, 200, approval.text);
   const servingEnv = { ...adminEnv };
   const models = (await call('/v1/models', { token: null, env: servingEnv })).body.data;
-  const served = models.find(model => model.id === 'acme/coder-pro:free');
+  // Listed under its family id (contract section 14); the route id still routes (below).
+  const served = models.find(model => model.id === 'acme/coder-pro');
   assert.ok(served, 'an approved row is listed');
+  assert.deepEqual([served.maker, served.display_name.includes('OpenRouter')], ['other', false]);
   assert.deepEqual([served.capabilities.tools, served.context_window, served.max_output_tokens, served.tiers], [true, 131072, 16384, ['free']]);
   const router = new RoutingEngine(new ProviderHealthTracker());
   const routed = router.route({ env: servingEnv, requestedModel: 'acme/coder-pro:free', needsTools: true, promptTokens: 100,

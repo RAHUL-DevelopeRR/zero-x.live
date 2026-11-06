@@ -324,6 +324,9 @@ try {
     ...(LIVE ? { ROUTER_MAX_ATTEMPTS: '2' } : {}),
     // The fake Claude key must not start the weekly research jobs.
     DISCOVERY_RESEARCH: 'false',
+    // The active health checker would send its own test requests (real ones with --live) and make
+    // the upstream call counts below depend on timing; check-health-probes.mjs covers it.
+    HEALTH_PROBES: 'off',
   };
   for (const key of Object.keys(env)) if (env[key] === undefined) delete env[key];
   server = await startGateway(env);
@@ -351,9 +354,11 @@ try {
   step('dev token -> POST /auth/cli/session', `ses_ session for the dev identity ${userId} (auth.users row provisioned on PGlite), 720 h TTL`);
 
   // ── 3. /v1/models with plan-aware availability ──
-  const modelKeys = ['available', 'available_again_at', 'capabilities', 'checked_at', 'context_length', 'context_window',
-    'created', 'display_name', 'facts', 'id', 'max_output_tokens', 'models_dev_id', 'object', 'offers', 'owned_by', 'pricing',
-    'provider', 'reasoning_efforts', 'status', 'tiers', 'unavailable_reason'];
+  // One entry per model family (contract section 14), named by its maker: no route or provider.
+  const modelKeys = ['availability', 'available', 'available_again_at', 'capabilities', 'checked_at', 'context_length', 'context_window',
+    'created', 'display_name', 'facts', 'family', 'id', 'last_failure_class', 'last_success_at', 'latency_ms', 'maker', 'maker_name',
+    'max_output_tokens', 'model_name', 'models_dev_id', 'native_context_window', 'object', 'offers', 'owned_by', 'pricing',
+    'provider', 'reasoning_efforts', 'stale_after_seconds', 'status', 'tiers', 'unavailable_reason'];
   const models = async token => {
     const listed = await call('/v1/models', { token });
     assert.equal(listed.status, 200);
@@ -366,17 +371,37 @@ try {
   const free = await models(ses);
   for (const view of [anonymous, free]) {
     assert.equal(view.auto.available, true);
-    assert.equal(view['groq/openai/gpt-oss-120b'].available, true);
-    assert.equal(view['gemini/gemini-2.5-flash'].available, true);
-    assert.equal(view['gemini/gemini-2.5-pro'].available, false);
-    assert.equal(view['gemini/gemini-2.5-pro'].unavailable_reason, 'upgrade_required');
+    assert.equal(view['openai/gpt-oss-120b'].available, true);
+    assert.deepEqual([view['openai/gpt-oss-120b'].display_name, view['openai/gpt-oss-120b'].maker], ['GPT-OSS 120B', 'openai']);
+    assert.equal(view['google/gemini-2.5-flash'].available, true);
+    assert.equal(view['google/gemini-2.5-pro'].available, false);
+    assert.equal(view['google/gemini-2.5-pro'].unavailable_reason, 'upgrade_required');
+    // Free plan: Groq's free pool takes 8K tokens per minute, so that is the usable window.
+    assert.deepEqual([view['openai/gpt-oss-120b'].context_window, view['openai/gpt-oss-120b'].native_context_window], [8000, 131072]);
+    // Neuron 7.0.0-alpha.4 sends max_tokens = min(max_output_tokens, 32000) and blocks locally a
+    // request whose ~4K first turn plus max_tokens exceeds context_window: every usable family
+    // must leave it that room (catalog.js listedMaxOutput).
+    for (const model of Object.values(view).filter(model => model.available && model.context_window > 0)) {
+      const maxTokens = Math.min(model.max_output_tokens, model.id === 'auto' ? 8192 : 32000);
+      assert.ok(4100 + maxTokens <= model.context_window, `${model.id}: alpha.4 preflight would block it`);
+    }
+    assert.ok(!view['groq/openai/gpt-oss-120b'], 'route ids are listed only under ?routes=1');
   }
+  const routeList = await call('/v1/models?routes=1', { token: ses });
+  assert.ok(routeList.body.data.some(model => model.id === 'groq/openai/gpt-oss-120b' && model.family === 'openai/gpt-oss-120b'));
   assert.ok(!Object.values(free).some(model => ['nvidia', 'openrouter'].includes(model.owned_by)), 'non-hosted providers are not listed');
-  assert.ok(Object.values(free).every(model => model.status === 'available'), 'no failures yet: every model is available');
+  // HEALTH_PROBES=off and no traffic yet: nothing observed them, so every model is unknown
+  // (contract section 15), never available.
+  assert.ok(Object.values(free).every(model => model.status === 'unknown'), 'nothing observed yet: every model is unknown');
+  assert.ok(Object.values(free).every(model => model.availability === 'unknown' && model.stale_after_seconds === 1200),
+    'availability says the same; no checker here, so every route keeps HEALTH_STALE_SECONDS');
+  // Neuron 7.0.0-alpha.4 knows the v1.3 words in `status` (contract section 15.1): never `unavailable`.
+  assert.ok(Object.values(free).every(model => ['available', 'degraded', 'busy', 'blurred', 'unknown'].includes(model.status)));
   const status = await call('/v1/models/status', { token: ses });
   assert.equal(status.status, 200);
   assert.equal(status.body.poll_interval_seconds, 30);
   assert.equal(status.body.data.length, Object.keys(free).length);
+  assert.deepEqual(status.body.data.find(row => row.id === 'openai/gpt-oss-120b')?.display_name, 'GPT-OSS 120B');
   const etag = status.headers.get('etag');
   assert.match(etag, /^W\/"[0-9a-f]{24}"$/);
   const unchanged = await call('/v1/models/status', { token: ses, headers: { 'If-None-Match': etag } });
@@ -456,6 +481,11 @@ try {
   assert.equal(keyChat.headers.get('x-neuron-model'), 'groq/openai/gpt-oss-20b');
   assert.equal(keyChat.body.object, 'chat.completion');
   if (!LIVE) assert.equal(upstream.calls.at(-1).key, 'e2e-groq-free');
+  // A family id (contract section 14) is served by the best healthy route of the model.
+  const familyChat = await call('/v1/chat/completions', { method: 'POST', token: apiKey,
+    body: { model: 'openai/gpt-oss-20b', messages: [{ role: 'user', content: 'Reply with the single word pong.' }], max_tokens: 64 } });
+  assert.equal(familyChat.status, 200, redact(familyChat.text).slice(0, 400));
+  assert.equal(familyChat.headers.get('x-neuron-model'), 'groq/openai/gpt-oss-20b', 'the route that served it');
   expectError(await call('/api/keys', { method: 'POST', token: apiKey, body: { name: 'nested' } }), 403, 'api_key_not_allowed');
   assert.equal((await call('/api/account', { token: apiKey })).status, 200);
   const listedKeys = (await call('/api/keys', { token: ses })).body.keys;
@@ -603,7 +633,7 @@ try {
     city: 'Karur', postal_code: '639113', phone: '9876543210', tax_id: '33abcde 1234f1z7' } });
   assert.equal(savedDetails.status, 200, redact(savedDetails.text));
   assert.deepEqual([savedDetails.body.profile.state, savedDetails.body.profile.phone, savedDetails.body.profile.tax_id, savedDetails.body.complete],
-    ['TN', '+919876543210', '33ABCDE1234F1Z7', true], 'the optional GSTIN is normalised and stored (20261104000000)');
+    ['TN', '+919876543210', '33ABCDE1234F1Z7', true], 'the optional GSTIN is normalised and stored (20261105000200)');
   assert.deepEqual((await call('/api/billing/profile', { token: ses })).body.profile, savedDetails.body.profile, 'the profile is stored and read back');
   const needsAgreement = expectError(await call('/api/billing/checkout', { method: 'POST', token: ses, body: { plan: 'pro', currency: 'INR' } }), 409, 'consent_required');
   assert.deepEqual(needsAgreement.missing, ['terms', 'privacy', 'auto_renewal', 'refund']);
@@ -638,7 +668,7 @@ try {
   assert.equal(account.credits.balance_usd, 8, "the first month's credits are granted at verify, before any webhook");
   assert.equal(account.plan.id, 'pro');
   assert.equal(account.subscription.status, 'active');
-  assert.equal((await models(ses))['gemini/gemini-2.5-pro'].available, true, 'Pro unlocks the paid pool');
+  assert.equal((await models(ses))['google/gemini-2.5-pro'].available, true, 'Pro unlocks the paid pool');
   expectError(await call('/api/billing/checkout', { method: 'POST', token: ses, body: { plan: 'max', currency: 'USD', consent } }), 409, 'already_subscribed');
   step('Pro checkout -> verify', `subscription ${subscriptionId} (a second tab reuses it), bad signature -> 400, signed verify -> plan pro; gemini-2.5-pro now available; another checkout -> 409 already_subscribed`);
 
