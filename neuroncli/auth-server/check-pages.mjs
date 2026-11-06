@@ -86,6 +86,12 @@ for (const file of [...PUBLIC_PAGES, ...PRIVATE_PAGES]) {
     assert.deepEqual([toggle.type, toggle['aria-expanded'], toggle['aria-controls'], 'hidden' in toggle], ['button', 'false', 'site-nav', true],
       file + ': the menu button is a hidden disclosure button for #site-nav');
     assert.ok(tags(body, 'nav').some(a => a.id === 'site-nav' && a['aria-label'] === 'Main'), file + ': the main nav is #site-nav');
+    // The same links on every page: no page-only anchor (the home page once had a Models link the others lacked).
+    const navHtml = (/<nav class="zx-nav" id="site-nav"[^>]*>([\s\S]*?)<\/nav>/.exec(body) || [])[1] || '';
+    for (const link of tags(navHtml, 'a')) assert.doesNotMatch(link.href || '', /^#/, file + ': the header nav has no page-only anchor links');
+    if (/<main[^>]*class="[^"]*\bzx-legal\b/.test(body)) {
+      assert.ok(tags(html, 'link').some(a => a.rel === 'stylesheet' && a.href === '/content.css'), file + ': a reading page loads content.css');
+    }
     assert.match(body, /<button class="zx-nav-toggle"[^>]*>[\s\S]*?Menu<\/button>\s*<nav class="zx-nav" id="site-nav"/, file + ': the button has a visible name and sits before the nav');
     assert.ok(tags(html, 'script').some(a => a.type === 'module' && a.src === '/site-nav.js'), file + ': loads /site-nav.js');
     // Review 2026-11-05: menu mode before first paint (no wrapped header that then jumps 96 px):
@@ -123,6 +129,14 @@ for (const file of [...PUBLIC_PAGES, ...PRIVATE_PAGES]) {
   }
 }
 
+// aria-current="page" marks the link to this very page, never another one (a footer copied from a
+// sibling page once marked Privacy Policy as current on three pages). Every site page is checked.
+for (const file of [...PUBLIC_PAGES, 'about.html', 'neucockpit.html', 'find-files-by-content.html', 'wheres-that-file.html', 'start.html']) {
+  for (const link of tags(stripScripts(read(file)), 'a').filter(a => a['aria-current'] === 'page' && a.href)) {
+    const own = file === 'index.html' ? '/' : '/' + file.replace(/\.html$/, '');
+    assert.equal(link.href.replace(/#.*$/, ''), own, file + ': aria-current marks ' + link.href + ', not this page');
+  }
+}
 assert.ok(!seoPages.some(page => PRIVATE_PAGES.includes(page.file)), 'Private pages must stay out of seo-pages.json');
 for (const file of PUBLIC_PAGES) assert.ok(seoPages.some(page => page.file === file), file + ' is listed in seo-pages.json');
 assert.match(read('neuroncli/index.html'), /<meta http-equiv="refresh" content="0; url=\/neuron-cli">/, 'Old /neuroncli/ page points to /neuron-cli');
