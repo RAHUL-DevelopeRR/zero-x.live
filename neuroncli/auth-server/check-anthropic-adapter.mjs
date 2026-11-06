@@ -463,6 +463,43 @@ try {
     assert.throws(() => request({ ...OPUS, upstream_model: 'gpt-5' }), ClaudeRequestError);
   });
 
+  await test("Claude Haiku 5.5: adaptive thinking at effort medium by default; 'none' is thinking {type:'disabled'} at effort low (no binding, beta or replay); no budget_tokens or sampling ever; forced tool choice stays auto", () => {
+    const HAIKU = catalogEntry('anthropic/claude-haiku-5-5');
+    assert.equal(HAIKU.upstream_model, 'claude-haiku-5-5');
+    const base = { messages: [{ role: 'user', content: 'hi' }], max_tokens: 100, stream: true };
+    const request = (extra = {}, options = {}) => toClaudeRequest(HAIKU, { ...base, ...extra }, options);
+    const standard = request();
+    assert.deepEqual(standard.body.thinking, { type: 'adaptive', display: 'summarized', block_binding: { prefix_mismatch_behavior: 'drop_block' } });
+    assert.deepEqual(standard.body.output_config, { effort: 'medium' }, 'the default effort is medium');
+    assert.deepEqual(standard.betas, [BINDING_BETA]);
+    assert.equal(standard.rememberTurns, true, 'thinking on: turns are remembered for replay');
+    assert.deepEqual(request({ reasoning_effort: 'high' }).body.output_config, { effort: 'high' });
+    assert.deepEqual(request({ reasoning_effort: 'minimal' }).body.output_config, { effort: 'low' });
+    assert.deepEqual(request({ reasoning_effort: 'default' }).body.output_config, { effort: 'medium' });
+    assert.deepEqual(request({ reasoning_effort: 'xhigh' }).body.output_config, { effort: 'medium' }, 'xhigh is not offered: the default');
+    const none = request({ reasoning_effort: 'none' });
+    assert.deepEqual(none.body.thinking, { type: 'disabled' }, 'disabled, accepted at effort high or below; no display or block_binding beside it');
+    assert.deepEqual(none.body.output_config, { effort: 'low' });
+    assert.deepEqual(none.betas, [], 'no binding beta without block_binding');
+    assert.equal(none.rememberTurns, false);
+    assert.equal(none.replay, false);
+    // The other 5.5 models never get disabled, and between_tools is Sonnet's alone (a 400 on Haiku).
+    assert.ok(!JSON.stringify(request({ reasoning_effort: 'none' }).body).includes('between_tools'));
+    assert.deepEqual(toClaudeRequest(SONNET, { ...base, reasoning_effort: 'none' }).body.thinking, { type: 'between_tools' });
+    assert.equal(toClaudeRequest(OPUS, { ...base, reasoning_effort: 'none' }).body.thinking.type, 'adaptive');
+    for (const value of [undefined, 'none', 'minimal', 'low', 'medium', 'high', 'default']) {
+      const body = request(value === undefined ? {} : { reasoning_effort: value, temperature: 0.2, top_p: 0.5, seed: 3 }).body;
+      const text = JSON.stringify(body);
+      assert.ok(!/budget_tokens|"enabled"|temperature|top_p|top_k/.test(text), `Haiku ${value}: no thinking budget, no sampling parameter`);
+      assert.equal(body.messages.at(-1).role, 'user', 'no assistant prefill');
+    }
+    const forced = request({ tools: TOOLS, tool_choice: { type: 'function', function: { name: 'read_file' } } });
+    assert.deepEqual(forced.body.tool_choice, { type: 'auto' }, 'a forced tool_choice is sent as auto with an instruction, as for the other Claude models');
+    assert.match(JSON.stringify(forced.body.system), /You must call the read_file tool/);
+    assert.equal(claudeTraits('claude-haiku-5-5').thinkingOff, 'disabled');
+    assert.deepEqual(claudeEffort(claudeTraits('claude-haiku-5-5'), 'none'), { effort: 'low', thinkingOff: true });
+  });
+
   await test('caching: identical bodies serialize identically, the next turn extends the previous messages, at most 3 breakpoints', () => {
     const system = { role: 'system', content: 'You are Neuron, a coding agent. '.repeat(40) };
     const turnN = [system, { role: 'user', content: 'Read a.txt and b.txt' }];

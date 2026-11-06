@@ -27,8 +27,9 @@ const budget = limits => limits ? { rpm: limits.rpm ?? null, rpd: limits.rpd ?? 
 // bucket), budget and health. The pool itself reports the model totals: counters summed over
 // its keys, `limits` the sum of their budgets and its best key's health, since it serves while
 // any key can. Keys disabled since they served today keep their counters (with no budget or
-// health), as they are part of the totals. Paid pools add spend_cap_microusd, their daily spend
-// cap in billed micro-USD (p_pool.cpd), to compare with cost_today_microusd.
+// health), as they are part of the totals. Paid pools and sponsored free pools add spend_cap_microusd,
+// their daily spend cap in billed micro-USD (p_pool.cpd), to compare with cost_today_microusd (the
+// held plus settled cost, which includes what Zero-X paid for a sponsored pool's free requests).
 export function overviewPools(env, rows = [], tracker = globalHealthTracker) {
   const byPool = new Map(rows.filter(row => row && typeof row === 'object').map(row => [`${row.model}#${row.tier}`, row]));
   const snapshot = tracker.getSnapshot();
@@ -65,7 +66,9 @@ export function overviewPools(env, rows = [], tracker = globalHealthTracker) {
         configured: served.some(item => poolConfigured(env, entry, item)),
         ...counters(row),
         limits: budget(served[0]?.shared_limits || pool.limits),
-        ...(pool.tier === 'paid' ? { spend_cap_microusd: billedDailyCapMicrousd(env, entry, pool) } : {}),
+        // Paid pools, and sponsored free pools (contract section 16.1): the day's spend cap, with `sponsored`.
+        ...(pool.tier === 'paid' || pool.sponsored === true ? { spend_cap_microusd: billedDailyCapMicrousd(env, entry, pool) } : {}),
+        ...(pool.sponsored === true ? { sponsored: true } : {}),
         health: best.health,
         ...(keys.some(key => key.source === 'vault') ? { keys } : {}),
       });

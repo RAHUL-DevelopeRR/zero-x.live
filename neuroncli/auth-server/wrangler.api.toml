@@ -27,7 +27,7 @@ OPENROUTER_MODELS = "cohere/north-mini-code:free"
 GEMINI_MODELS = ""
 CLOUDFLARE_MODELS = ""
 # With ANTHROPIC_API_KEY set, the anthropic.paid key serves these Claude models only (wrangler.toml).
-ANTHROPIC_MODELS = "claude-sonnet-5-5,claude-opus-5-5"
+ANTHROPIC_MODELS = "claude-sonnet-5-5,claude-opus-5-5,claude-haiku-5-5"
 RAZORPAY_KEY_ID = ""
 
 [triggers]

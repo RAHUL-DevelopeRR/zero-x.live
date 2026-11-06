@@ -155,7 +155,7 @@ const entry = id => CATALOG.find(item => item.id === id);
   // and effort high or below; forced tool_choice is a 400; sampling parameters are refused;
   // effort is low | medium | high | xhigh | max. Thinking counts toward max_tokens.
   const claudes = CATALOG.filter(item => item.provider === 'anthropic');
-  assert.deepEqual(claudes.map(item => item.upstream_model).sort(), ['claude-opus-5-5', 'claude-sonnet-5-5'], 'every Claude model in the catalog');
+  assert.deepEqual(claudes.map(item => item.upstream_model).sort(), ['claude-haiku-5-5', 'claude-opus-5-5', 'claude-sonnet-5-5'], 'every Claude model in the catalog');
   const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
   for (const item of claudes) {
     for (const kind of ['chat', 'tool']) {
@@ -163,10 +163,16 @@ const entry = id => CATALOG.find(item => item.id === id);
       const { body } = toClaudeRequest(item, payload);
       const where = `${item.upstream_model} ${kind}`;
       assert.equal(body.model, item.upstream_model, where);
-      assert.ok(['adaptive', 'between_tools'].includes(body.thinking?.type), `${where}: thinking adaptive or between_tools, never disabled`);
+      assert.ok(['adaptive', 'between_tools', 'disabled'].includes(body.thinking?.type), `${where}: thinking adaptive, between_tools (Sonnet) or disabled (Haiku)`);
+      assert.ok(body.thinking.type !== 'disabled' || item.upstream_model === 'claude-haiku-5-5', `${where}: disabled is Haiku 5.5 only`);
       assert.ok(!('budget_tokens' in body.thinking), `${where}: no budget_tokens`);
       assert.ok(EFFORTS.includes(body.output_config?.effort), `${where}: a valid effort`);
       assert.equal(body.output_config.effort, 'low', `${where}: the cheapest effort`);
+      if (body.thinking.type === 'disabled') {
+        assert.deepEqual(Object.keys(body.thinking), ['type'], `${where}: no other field with disabled`);
+        assert.ok(['low', 'medium', 'high'].includes(body.output_config.effort), `${where}: disabled at high or below`);
+        assert.ok(!('block_binding' in body.thinking), `${where}: no block_binding with thinking disabled (a 400)`);
+      }
       if (body.thinking.type === 'between_tools') {
         assert.equal(item.upstream_model, 'claude-sonnet-5-5', `${where}: between_tools is Sonnet 5.5 only`);
         assert.deepEqual(Object.keys(body.thinking), ['type'], `${where}: no other field with between_tools`);
@@ -186,12 +192,20 @@ const entry = id => CATALOG.find(item => item.id === id);
   }
   const sonnet = claudes.find(item => item.upstream_model === 'claude-sonnet-5-5');
   const opus = claudes.find(item => item.upstream_model === 'claude-opus-5-5');
+  const haiku = claudes.find(item => item.upstream_model === 'claude-haiku-5-5');
   assert.deepEqual([lowestEffort(sonnet), probeThinks(sonnet), probeMaxTokens(sonnet, 'chat'), probeMaxTokens(sonnet, 'tool')],
     ['none', false, CHAT_MAX_TOKENS, TOOL_MAX_TOKENS], 'Sonnet 5.5: between_tools, so the 3-token test');
   assert.equal(toClaudeRequest(sonnet, probePayload(sonnet, 'chat')).body.thinking.type, 'between_tools');
   assert.deepEqual([lowestEffort(opus), probeThinks(opus), probeMaxTokens(opus, 'chat'), probeMaxTokens(opus, 'tool')],
     ['low', true, THINKING_CHAT_MAX_TOKENS, THINKING_TOOL_MAX_TOKENS], 'Opus 5.5 keeps thinking: room for it');
   assert.equal(toClaudeRequest(opus, probePayload(opus, 'chat')).body.thinking.type, 'adaptive');
+  // Haiku 5.5 (a sponsored free pool): thinking disabled at effort low, so the 3-token test; 160 for the tool call.
+  assert.deepEqual([lowestEffort(haiku), probeThinks(haiku), probeMaxTokens(haiku, 'chat'), probeMaxTokens(haiku, 'tool')],
+    ['none', false, CHAT_MAX_TOKENS, TOOL_MAX_TOKENS], 'Haiku 5.5: thinking disabled, so the 3-token test');
+  assert.deepEqual(toClaudeRequest(haiku, probePayload(haiku, 'chat')).body.thinking, { type: 'disabled' });
+  assert.equal(probePayload(haiku, 'chat').max_tokens, 3);
+  assert.equal(toClaudeRequest(haiku, probePayload(haiku, 'tool')).body.max_tokens, 160);
+  assert.deepEqual(toClaudeRequest(haiku, probePayload(haiku, 'tool')).body.tool_choice, { type: 'auto' }, 'tool_choice auto although Haiku accepts a forced one');
   // Other providers keep the tiny requests.
   assert.equal(probeMaxTokens(entry('groq/openai/gpt-oss-120b'), 'chat'), CHAT_MAX_TOKENS);
   assert.equal(probePayload(entry('groq/openai/gpt-oss-120b'), 'chat').max_tokens, CHAT_MAX_TOKENS);
@@ -213,6 +227,7 @@ const entry = id => CATALOG.find(item => item.id === id);
   assert.equal(horizon('zai/glm-4.7-flash'), 22.5, 'Z.ai, every 15 min: 22.5 min');
   assert.equal(horizon('cohere/north-mini-code:free'), 720, 'OpenRouter, every 8 h: 12 h');
   assert.equal(horizon('anthropic/claude-opus-5-5', 'paid'), 45, 'Claude, every 30 min: 45 min');
+  assert.equal(horizon('anthropic/claude-haiku-5-5', 'free'), 45, 'Claude Haiku 5.5 (a sponsored free pool), every 30 min: 45 min');
   assert.equal(horizon('nvidia/openai/gpt-oss-20b', 'free', { HEALTH_STALE_SECONDS: '3600' }), 60, 'never under the floor');
   for (const item of CATALOG) {
     for (const pool of item.pools) {

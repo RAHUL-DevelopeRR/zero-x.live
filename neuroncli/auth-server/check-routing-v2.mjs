@@ -2442,6 +2442,148 @@ try {
     assert.equal(gw.session('ses_anon').requests, 0, 'refused before any reservation');
   });
 
+  // ── Claude Haiku 5.5: a sponsored free model on every plan (docs/PLATFORM_CONTRACT.md section 16) ──
+  await test('Claude Haiku 5.5: free on every plan, never auto, needs an account ledger; reserves with p_cap and the pool cap, settles the sponsored cost; a spent month is a 429 for the family; a database without the migration fails closed', async () => {
+    const { sponsoredFreeTerms } = await import('./src/catalog-types.js');
+    const { resetSponsoredUnavailable } = await import('./src/sponsored.js');
+    const KEY = 'sk-ant-api03-haiku-check-key';
+    const HAIKU = 'anthropic/claude-haiku-5-5';
+    const entry = catalogEntry(HAIKU);
+    const terms = sponsoredFreeTerms('anthropic', 'claude-haiku-5-5');
+    assert.equal(terms.family, modelIdentity(entry).family, 'the sponsored family is the roll-up family of the row');
+    assert.deepEqual([entry.pools.map(pool => [pool.tier, pool.key_slot, pool.sponsored]), entry.auto_rank, entry.context_window, entry.max_output_tokens],
+      [[['free', 'anthropic.paid', true]], null, 100000, 32000]);
+    const env = accountEnv({ ANTHROPIC_API_KEY: KEY });
+    const byId = list => Object.fromEntries(list.data.map(model => [model.id, model]));
+
+    // Listing: free for everyone with an account ledger, no price, the allowance; upgrade_required without a ledger.
+    for (const [plan, tiers] of [['free', ['free']], ['pro', ['free', 'paid']], ['max', ['free', 'paid']]]) {
+      const haiku = byId(listModelsForCaller(env, { plan, tiers, country: 'US' }))[HAIKU];
+      assert.deepEqual([haiku.available, haiku.unavailable_reason, haiku.tiers, haiku.pricing, haiku.allowance, haiku.context_window, haiku.max_output_tokens],
+        [true, null, ['free'], null, { month_tokens: 10_000_000 }, 100000, 32000], plan);
+      assert.ok(4100 + Math.min(haiku.max_output_tokens, 32000) <= haiku.context_window, 'alpha.4 preflight leaves room for its first turn');
+    }
+    const noLedger = byId(listModelsForCaller(env, { plan: 'free', tiers: ['free'], country: 'US', ledger: false }))[HAIKU];
+    assert.deepEqual([noLedger.available, noLedger.unavailable_reason], [false, 'upgrade_required'], 'a session without an account ledger cannot be counted per month');
+    assert.equal(byId(listModelsForCaller({ ...KEYS }, { plan: 'free', country: 'US' }))[HAIKU].unavailable_reason, 'not_configured', 'without ANTHROPIC_API_KEY');
+    const family = byId(familyModels(listModelsForCaller(env, { plan: 'free', country: 'US' }).data, env).reduce((list, model) => ({ data: [...(list.data ?? []), model] }), {}));
+    assert.deepEqual([family[HAIKU].family, family[HAIKU].maker, family[HAIKU].model_name, family[HAIKU].allowance],
+      [HAIKU, 'anthropic', 'Claude Haiku 5.5', { month_tokens: 10_000_000 }]);
+
+    // Routing: auto never picks it; the alias, the id and the family id resolve to it; a ledger is needed.
+    const router = new RoutingEngine(new ProviderHealthTracker());
+    const base = { env, promptTokens: 500, tiers: ['free'], country: 'US', maxTokens: 4096 };
+    assert.ok(!ids(router.route({ ...base, requestedModel: 'auto', needsTools: true })).some(id => id.startsWith(HAIKU)), 'auto never picks Haiku');
+    for (const requested of ['claude-haiku-5-5', HAIKU, 'openai/claude-haiku-5-5']) {
+      assert.deepEqual(ids(router.route({ ...base, requestedModel: requested })), [`${HAIKU}#free`], requested);
+    }
+    assert.equal(router.route({ ...base, requestedModel: HAIKU }).candidates[0].maxTokens, 4096);
+    assert.equal(router.route({ ...base, requestedModel: HAIKU, maxTokens: 4096, maxTokensExplicit: false }).candidates[0].maxTokens, 16000);
+    assert.equal(router.route({ ...base, requestedModel: HAIKU, ledger: false }).error, 'upgrade_required');
+    assert.equal(router.route({ ...base, requestedModel: HAIKU, promptTokens: 120000 }).error, 'context_length_exceeded', 'over the 100,000 window');
+
+    // The arguments of the reservation and the settlement.
+    const reserved = reservationArgs({ env, session: { user_id: ACCOUNT }, requestId: 'req_h', entry, pool: entry.pools[0], promptTokens: 20000, maxTokens: 16000 });
+    const price = entry.pools[0].price;
+    assert.deepEqual([reserved.p_tier, reserved.p_model, reserved.p_cost_microusd, reserved.p_pool, reserved.p_cap], ['free', HAIKU,
+      reserveCostMicrousd(price, 20000, 16000), { rpm: 50, rpd: 10000, tpm: 400000, tpd: 60000000, cpd: 12500000 },
+      { family: HAIKU, month_tokens: 10_000_000 }]);
+    assert.ok(reserved.p_cost_microusd > 0 && reserved.p_cost_microusd < 15_000, 'the worst case is a fraction of a cent: ' + reserved.p_cost_microusd);
+    const groqEntry = catalogEntry('groq/openai/gpt-oss-120b');
+    const groqArgs = reservationArgs({ env, session: { user_id: ACCOUNT }, requestId: 'req_g', entry: groqEntry, pool: groqEntry.pools[0], promptTokens: 2000, maxTokens: 1000 });
+    assert.ok(!('p_cap' in groqArgs) && groqArgs.p_cost_microusd === 0 && !('cpd' in groqArgs.p_pool), 'every other free pool keeps the 8-argument call');
+    const usage = { prompt_tokens: 20800, completion_tokens: 800, prompt_tokens_details: { cached_tokens: 16000, cache_write_tokens: 4000 } };
+    const settlement = settlementArgs({ reservationId: 'r', entry, pool: entry.pools[0], usage, status: 'ok' });
+    assert.deepEqual([settlement.p_cost_microusd, settlement.p_cache_read_tokens, settlement.p_cache_write_tokens],
+      [costMicrousd(price, 20800, 800, { cache_read_tokens: 16000, cache_write_tokens: 4000 }), 16000, 4000]);
+    assert.equal(settlementArgs({ reservationId: 'r', entry, pool: entry.pools[0], usage, status: 'refunded' }).p_cost_microusd, 0);
+    const groqSettle = settlementArgs({ reservationId: 'r', entry: groqEntry, pool: groqEntry.pools[0], usage, status: 'ok' });
+    assert.equal(groqSettle.p_cost_microusd, 0, 'an unpriced free pool still costs nothing');
+
+    // A Free account through the chat handler: free, reserved with p_cap, month headers, a native Claude request.
+    const gw = gateway();
+    gw.addSession('ses_free', { account_backed: true, user_id: ACCOUNT, plan: 'free' });
+    const settled = [];
+    const cap = { cap_family: HAIKU, cap_tokens: 10_000_000, cap_used_tokens: 1_234_000, cap_resets_at: '2026-12-01T00:00:00+00:00' };
+    reset({ 'rpc:zerox_plan_policies_v2': policiesRpc, 'rpc:zerox_reserve_v2': () => Response.json([okReserve({ plan: 'free', ...cap })]),
+      'rpc:zerox_settle_v2': call => { settled.push(call.body); return Response.json([{ status: 'settled' }]); },
+      anthropic: () => claudeSse(claudeTurn({ usage: { input_tokens: 800, cache_creation_input_tokens: 4000, cache_read_input_tokens: 16000 } })) });
+    const answered = await gw.call(env, { model: 'claude-haiku-5-5', messages, stream: true, temperature: 0.2 }, { token: 'ses_free' });
+    assert.equal(answered.status, 200);
+    assert.deepEqual([answered.headers.get('x-neuron-model'), answered.headers.get('x-oiop-offer'), answered.headers.get('x-neuron-plan'),
+      answered.headers.get('x-neuron-quota-month-remaining-tokens')], [HAIKU, 'anthropic.paid', 'free', String(10_000_000 - 1_234_000)]);
+    assert.equal(parseSse(await answered.text()).at(-1), '[DONE]');
+    const [sentReserve] = rpcCalls('zerox_reserve_v2').map(call => call.body);
+    assert.deepEqual([sentReserve.p_tier, sentReserve.p_cap, sentReserve.p_pool.cpd], ['free', { family: HAIKU, month_tokens: 10_000_000 }, 12500000]);
+    const sentToClaude = upstreamCalls().find(call => call.target === 'anthropic').body;
+    assert.deepEqual([sentToClaude.model, sentToClaude.max_tokens, sentToClaude.output_config?.effort, sentToClaude.thinking?.type], ['claude-haiku-5-5', 16000, 'medium', 'adaptive']);
+    assert.ok(!('temperature' in sentToClaude) && !JSON.stringify(sentToClaude).includes('budget_tokens'));
+    assert.deepEqual([settled[0].p_status, settled[0].p_prompt_tokens, settled[0].p_completion_tokens, settled[0].p_cost_microusd],
+      ['ok', 20800, 800, costMicrousd(price, 20800, 800, { cache_read_tokens: 16000, cache_write_tokens: 4000 })]);
+
+    // A spent month: 429 insufficient_quota for the family, the renewal time, no upgrade_url, the quota headers; both messages.
+    const spent = (used, resets = '2026-12-01T00:00:00+00:00') => Response.json([{ status: 'user_family_month_tokens', reservation_id: null, plan: 'free',
+      remaining_requests: 90, remaining_tokens: 900000, credit_balance_microusd: 0, resets_at: resets, retry_after_seconds: 2160000,
+      cap_family: HAIKU, cap_tokens: 10_000_000, cap_used_tokens: used, cap_resets_at: resets }]);
+    reset({ 'rpc:zerox_plan_policies_v2': policiesRpc, 'rpc:zerox_reserve_v2': () => spent(10_000_000) });
+    const out = await gw.call(env, { model: HAIKU, messages }, { token: 'ses_free' });
+    const outError = await expectError(out, 429, 'insufficient_quota');
+    assert.equal(outError.message, 'You\'ve used your 10,000,000 Claude Haiku 5.5 tokens for November; the allowance renews on Dec 1, 00:00 UTC. Other models keep working.');
+    assert.deepEqual([outError.resets_at, outError.retry_after_seconds, 'upgrade_url' in outError, outError.type], ['2026-12-01T00:00:00.000Z', 2160000, false, 'insufficient_quota']);
+    assert.deepEqual([out.headers.get('retry-after'), out.headers.get('x-neuron-quota-family'), out.headers.get('x-neuron-quota-month-limit-tokens'),
+      out.headers.get('x-neuron-quota-month-used-tokens'), out.headers.get('x-neuron-quota-month-resets-at')],
+    ['2160000', HAIKU, '10000000', '10000000', '2026-12-01T00:00:00Z']);
+    assert.equal(out.headers.get('cache-control'), 'no-store');
+    assert.equal(upstreamCalls().length, 0, 'no upstream call for a refused request');
+    assert.equal(rpcCalls('zerox_settle_v2').length, 0, 'nothing to settle');
+    reset({ 'rpc:zerox_plan_policies_v2': policiesRpc, 'rpc:zerox_reserve_v2': () => spent(9_988_000) });
+    const left = await expectError(await gw.call(env, { model: HAIKU, messages: [{ role: 'user', content: 'x'.repeat(40000) }] }, { token: 'ses_free' }), 429, 'insufficient_quota');
+    assert.match(left.message, /^This request needs [\d,]+ tokens but only 12,000 of your 10,000,000 Claude Haiku 5\.5 tokens for November are left; the allowance renews on Dec 1, 00:00 UTC\. Choose another model until then\.$/);
+    assert.ok(!/anthropic|groq|nvidia|openrouter/i.test(left.message), 'a model name, never a provider');
+    // Larger than the whole allowance: no time makes it fit, so no resets_at and no Retry-After.
+    const tooBig = reserveError({ status: 'user_family_month_tokens', cap_family: HAIKU, cap_tokens: 10_000_000, cap_used_tokens: 0,
+      cap_resets_at: '2026-12-01T00:00:00+00:00', resets_at: null, retry_after_seconds: null }, Date.parse('2026-11-06T00:00:00Z'), 10_000_001, 'Claude Haiku 5.5');
+    assert.deepEqual([tooBig.code, tooBig.resetsAt, tooBig.retryAfterSeconds, tooBig.upgrade], ['insufficient_quota', null, undefined, false]);
+    assert.equal(tooBig.message, 'This request needs 10,000,001 tokens, more than the 10,000,000 Claude Haiku 5.5 tokens your plan allows a month, so it cannot run on this model.');
+    // alpha.4 reads code, message, retry_after_seconds and resets_at of an insufficient_quota 429, as for the window.
+    assert.deepEqual(Object.keys(outError).sort(), ['code', 'message', 'param', 'request_id', 'resets_at', 'retry_after_seconds', 'type']);
+
+    // A database without the migration: PGRST202 for the p_cap call. The candidate is skipped, one log line, the model
+    // lists not_configured for a while, and every other model keeps serving (their 8-argument call is unaffected).
+    resetSponsoredUnavailable(env);
+    const logged = [];
+    const realError = console.error;
+    console.error = (...args) => { logged.push(args.join(' ')); };
+    try {
+      reset({ 'rpc:zerox_plan_policies_v2': policiesRpc,
+        'rpc:zerox_reserve_v2': call => (call.body.p_cap ? Response.json({ code: 'PGRST202', message: 'Could not find the function public.zerox_reserve_v2' }, { status: 404 })
+          : Response.json([okReserve({ plan: 'free' })])),
+        'rpc:zerox_settle_v2': () => Response.json([{ status: 'settled' }]),
+        groq: () => sse([chunk({ role: 'assistant', content: 'ok' }), chunk({}, 'stop')]) });
+      const unavailable = await expectError(await gw.call(env, { model: HAIKU, messages }, { token: 'ses_free' }), 503, 'service_unavailable');
+      assert.match(unavailable.message, /temporarily unavailable|Retry shortly/);
+      assert.equal(upstreamCalls().length, 0, 'never served uncapped');
+      assert.equal(logged.filter(line => /20261105000000_sponsored_pools/.test(line)).length, 1, 'one log line');
+      const meanwhile = byId(listModelsForCaller(env, { plan: 'free', country: 'US' }));
+      assert.equal(meanwhile[HAIKU].unavailable_reason, 'not_configured', 'Haiku lists not_configured meanwhile');
+      assert.equal(meanwhile['groq/openai/gpt-oss-120b'].available, true, 'other models are unaffected');
+      const other = await gw.call(env, { model: 'groq/openai/gpt-oss-120b', messages, stream: true }, { token: 'ses_free' });
+      assert.equal(other.status, 200, 'another model still serves');
+      await other.text();
+      assert.equal(rpcCalls('zerox_reserve_v2').filter(call => call.body.p_cap).length, 1, 'the second Haiku request is not even tried');
+      await expectError(await gw.call(env, { model: HAIKU, messages }, { token: 'ses_free' }), 503, 'service_unavailable');
+      assert.equal(rpcCalls('zerox_reserve_v2').filter(call => call.body.p_cap).length, 1);
+    } finally {
+      console.error = realError;
+      resetSponsoredUnavailable(env);
+    }
+    // The spend cap: pool_exhausted with cpd is the usual capacity_exhausted with the spending-limit message.
+    reset({ 'rpc:zerox_plan_policies_v2': policiesRpc, 'rpc:zerox_reserve_v2': () => Response.json([{ status: 'pool_exhausted', reservation_id: null, plan: 'free',
+      remaining_requests: 90, remaining_tokens: 900000, credit_balance_microusd: 0, resets_at: null, retry_after_seconds: 3600 }]) });
+    const capped = await expectError(await gw.call(env, { model: HAIKU, messages }, { token: 'ses_free' }), 503, 'capacity_exhausted');
+    assert.match(capped.message, /has reached today's spending limit on Zero-X/);
+  });
+
   // ── Claude (src/anthropic-adapter.js) ──
   await test('Claude Sonnet and Opus 5.5: Pro and Max only, never auto, default max_tokens, cache-aware billing through the adapter', async () => {
     const KEY = 'sk-ant-api03-routing-check-key';

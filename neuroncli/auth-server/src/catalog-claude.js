@@ -1,5 +1,6 @@
-// Claude in the code catalog: the reviewed definition of the two Claude rows (seeded by
-// migration 20261029000700_catalog_seed.sql) and of the OIOP offer their pools belong to.
+// Claude in the code catalog: the reviewed definition of the Claude rows (Sonnet and Opus seeded by
+// migration 20261029000700_catalog_seed.sql, Haiku by 20261105000100_haiku_catalog.sql) and of the OIOP
+// offer their pools belong to.
 // src/catalog-db.js serves these from code whenever the database has no row for them, and
 // check-catalog-db.mjs proves the seeded rows equal them exactly.
 //
@@ -7,8 +8,8 @@
 // servesOperatorPools would keep the pools unconfigured), and src/catalog.js builds its code
 // entries for Claude with entryFromSpec(id, spec, { source: 'code' }) from CLAUDE_MODEL_SPECS.
 //
-// Paid tier only (Pro and Max), key slot anthropic.paid (ANTHROPIC_API_KEY), never chosen by
-// `auto`. Context and output are kept to what the gateway can carry: MAX_BODY_BYTES (1 MiB) holds
+// Sonnet and Opus: paid tier only (Pro and Max), key slot anthropic.paid (ANTHROPIC_API_KEY), never chosen by
+// `auto`; Haiku: a sponsored free pool on the same slot (below). Context and output are kept to what the gateway can carry: MAX_BODY_BYTES (1 MiB) holds
 // roughly 300K tokens, so the rows advertise 200,000 rather than Claude's 1M. Prices are the list
 // prices in src/list-prices.js; the daily spend caps ($10 Sonnet, $6 Opus, upstream USD) are
 // enforced in Postgres (zerox_reserve_v2, p_pool.cpd).
@@ -38,6 +39,25 @@ const claude = ({ upstream, name, efforts, map, position, capUsd }) => ({
   }],
 });
 
+// Claude Haiku 5.5: a sponsored free pool on every plan (catalog-types.js SPONSORED_FREE_MODELS, contract
+// section 16). Users pay nothing; the pool carries the list price so Zero-X's own cost is recorded and
+// capped ($10 upstream a day, enforced as p_pool.cpd). context_window 100,000 keeps every request on the
+// lower rate card (the price's long rate is never reached) and still holds a coding session; `auto`
+// never picks it (auto_rank null), a user selects it by name. Per-user 10M tokens a month is enforced
+// in zerox_reserve_v2 (p_cap).
+const haiku = ({ upstream, name, position, capUsd, limits }) => ({
+  provider_type: 'anthropic', upstream_model: upstream, display_name: name,
+  context_window: 100000, max_output_tokens: 32000, default_max_tokens: 16000,
+  supports_tools: true, supports_vision: true,
+  reasoning_efforts: ['none', 'low', 'medium', 'high'], reasoning_effort_map: { minimal: 'low' }, default_reasoning_effort: 'medium',
+  aliases: [upstream], geo_block_free: [], auto_rank: null, position, default_enabled: true,
+  pools: [{
+    tier: 'free', key_slot: 'anthropic.paid',
+    price: listPriceMicro('anthropic', upstream, Date.parse('2026-11-05T00:00:00Z')),
+    limits, daily_spend_cap_microusd: capUsd * 1_000_000,
+  }],
+});
+
 // Sonnet 5.5 turns thinking off between tool calls for reasoning_effort 'none' (the adapter sends
 // {type:'between_tools'} at effort low); Opus 5.5 cannot disable thinking, so 'none' maps to low.
 export const CLAUDE_MODEL_SPECS = deepFreeze([
@@ -45,6 +65,8 @@ export const CLAUDE_MODEL_SPECS = deepFreeze([
     map: { minimal: 'low' }, position: 150, capUsd: 10 }),
   claude({ upstream: 'claude-opus-5-5', name: 'Claude Opus 5.5', efforts: ['low', 'medium', 'high'],
     map: { minimal: 'low', none: 'low' }, position: 160, capUsd: 6 }),
+  haiku({ upstream: 'claude-haiku-5-5', name: 'Claude Haiku 5.5', position: 165, capUsd: 10,
+    limits: { rpm: 50, rpd: 10000, tpm: 400000, tpd: 60000000 } }),
 ]);
 
 const COMMERCIAL_TERMS = 'https://www.anthropic.com/legal/commercial-terms';

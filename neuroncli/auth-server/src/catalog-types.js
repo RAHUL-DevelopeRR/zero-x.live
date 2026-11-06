@@ -30,7 +30,9 @@ export const KEY_SLOTS = deepFreeze({
   'openrouter.free': { env: 'OPENROUTER_API_KEY', vault: 'openrouter' },
   'omniroute.free': { env: 'OMNIROUTE_API_KEY' },
   'cloudflare.binding': { binding: 'cloudflare', billed: true },
-  'anthropic.paid': { env: 'ANTHROPIC_API_KEY' },
+  // `sponsors`: the operator pays for this slot, so a free-tier pool on it is a sponsored pool
+  // (SPONSORED_FREE_MODELS): users pay nothing, Zero-X's own cost is recorded and capped.
+  'anthropic.paid': { env: 'ANTHROPIC_API_KEY', sponsors: true },
   'zai.free': { env: 'GLM_API_KEY' },
 });
 
@@ -68,6 +70,43 @@ export function billedFreeLimits(typeId, upstream) {
 export function slotBilled(slotId) {
   return typeof slotId === 'string' && Object.hasOwn(KEY_SLOTS, slotId) && KEY_SLOTS[slotId].billed === true;
 }
+
+// Sponsored free pools (docs/PLATFORM_CONTRACT.md section 16): free-tier pools on a slot the operator
+// pays for (KEY_SLOTS `sponsors`), per provider type and upstream model. Only these models may have
+// one; the pool must carry the list price (src/list-prices.js) exactly, every limit set and none above
+// `limits`, and a daily spend cap (at most the type maximum). `user_month_tokens` is the per-user
+// monthly token allowance of the model's family (family = the public model id), checked atomically in
+// zerox_reserve_v2 (p_cap). `requires_ledger`: sessions without an account ledger cannot be counted
+// per month, so they cannot use the pool.
+export const SPONSORED_FREE_MODELS = deepFreeze({
+  anthropic: {
+    'claude-haiku-5-5': {
+      family: 'anthropic/claude-haiku-5-5', user_month_tokens: 10_000_000, requires_ledger: true,
+      limits: { rpm: 50, rpd: 10000, tpm: 400000, tpd: 60000000 },
+    },
+  },
+});
+
+// The sponsored-pool terms of `typeId:upstream`, or null when the model may not have such a pool.
+export function sponsoredFreeTerms(typeId, upstream) {
+  const models = typeof typeId === 'string' && Object.hasOwn(SPONSORED_FREE_MODELS, typeId) ? SPONSORED_FREE_MODELS[typeId] : null;
+  return models && typeof upstream === 'string' && Object.hasOwn(models, upstream) ? models[upstream] : null;
+}
+
+// The monthly allowances of every sponsored family as zerox_account_overview's p_caps:
+// [{ family, month_tokens }].
+export function sponsoredCaps() {
+  return Object.values(SPONSORED_FREE_MODELS).flatMap(models => Object.values(models))
+    .map(terms => ({ family: terms.family, month_tokens: terms.user_month_tokens }));
+}
+
+export function slotSponsors(slotId) {
+  return typeof slotId === 'string' && Object.hasOwn(KEY_SLOTS, slotId) && KEY_SLOTS[slotId].sponsors === true;
+}
+
+// The offer a slot's pools belong to when a pool names none (a sponsored free pool keeps the offer
+// of its paid slot, whose data-policy facts it reports).
+export const SLOT_OFFERS = deepFreeze({ 'anthropic.paid': 'anthropic.paid' });
 
 const ORG_MODEL = /^[a-z0-9][a-z0-9._-]{0,40}\/[a-z0-9][a-z0-9._-]{0,80}$/;
 
@@ -142,7 +181,7 @@ export const PROVIDER_TYPES = deepFreeze({
   }),
   anthropic: type({
     adapter: 'anthropic', base_url: 'https://api.anthropic.com', id_prefix: 'anthropic/',
-    upstream: /^claude-[a-z0-9][a-z0-9-]{0,60}$/, slots: { free: [], paid: ['anthropic.paid'] },
+    upstream: /^claude-[a-z0-9][a-z0-9-]{0,60}$/, slots: { free: ['anthropic.paid'], paid: ['anthropic.paid'] },
     models_var: 'ANTHROPIC_MODELS', requires_cache_prices: true, max_daily_spend_usd: 50,
     models_dev: 'anthropic', info: { name: 'Anthropic', homepage: 'https://www.anthropic.com' },
   }),

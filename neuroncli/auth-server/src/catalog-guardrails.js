@@ -19,7 +19,7 @@ import { MARKUP, priceFromCost, publicPricing } from './pricing.js';
 import { listPriceMicro, MAX_DAILY_SPEND_CAP_USD } from './list-prices.js';
 import {
   PROVIDER_TYPES, TIERS, billedFreeLimits, poolSource, providerType, publicIdFor, slotAllowed, slotBilled, slotForPool,
-  typeMaxCapMicrousd, upstreamAllowed,
+  slotSponsors, sponsoredFreeTerms, typeMaxCapMicrousd, upstreamAllowed,
 } from './catalog-types.js';
 import { canonicalJson } from './oiop/manifest.js';
 
@@ -126,6 +126,44 @@ function billedFreeReasons(typeId, spec, pool) {
   return reasons;
 }
 
+function capReasons(typeId, pool) {
+  const cap = pool.daily_spend_cap_microusd;
+  if (cap === null) return ['cap_missing'];
+  if (!isInt(cap, 1, Number.MAX_SAFE_INTEGER)) return ['cap_invalid'];
+  return cap > typeMaxCapMicrousd(typeId) ? ['cap_above_max'] : [];
+}
+
+function listedPriceReasons(typeId, spec, price, now, registry) {
+  const reasons = [];
+  // Listed only, for every provider type: a model without a list price would be billed at
+  // whatever the row declares, and its daily cap counts that declared price, not the upstream's.
+  const list = upstreamAllowed(typeId, spec.upstream_model) ? listPriceMicro(typeId, spec.upstream_model, now) : null;
+  if (!list) reasons.push('unlisted_paid_not_allowed');
+  else if (!samePrice(price, list)) reasons.push('price_mismatch_list');
+  if (registry.requires_cache_prices && (price.cache_read === null || price.cache_write === null)) reasons.push('cache_price_missing');
+  return reasons;
+}
+
+// A free pool on a slot the operator pays for (catalog-types.js KEY_SLOTS `sponsors`): the model must
+// be in SPONSORED_FREE_MODELS, the pool must carry its list price exactly (cache rates included),
+// every limit set and none above the code ceiling, and a daily spend cap within the type maximum.
+function sponsoredReasons(typeId, spec, pool, now, registry) {
+  const terms = sponsoredFreeTerms(typeId, spec.upstream_model);
+  if (!terms) return ['sponsored_not_listed'];
+  const reasons = [];
+  const price = pool.price;
+  if (price === null) reasons.push('sponsored_price_required');
+  else if (!priceShapeValid(price)) reasons.push('price_invalid');
+  else if (!(price.input > 0) || !(price.output > 0)) reasons.push('sponsored_price_required');
+  else reasons.push(...listedPriceReasons(typeId, spec, price, now, registry).filter(reason => reason !== 'unlisted_paid_not_allowed'));
+  if (LIMIT_KEYS.some(key => pool.limits[key] === null)) reasons.push('free_limits_required');
+  if (LIMIT_KEYS.some(key => isInt(pool.limits[key], 0, 1e15) && (terms.limits[key] === null || pool.limits[key] > terms.limits[key]))) {
+    reasons.push('free_limits_above_max');
+  }
+  reasons.push(...capReasons(typeId, pool));
+  return reasons;
+}
+
 function poolReasons(typeId, spec, pool, now) {
   const registry = PROVIDER_TYPES[typeId];
   const reasons = [];
@@ -134,6 +172,10 @@ function poolReasons(typeId, spec, pool, now) {
   if (!slotAllowed(typeId, tier, pool.key_slot)) reasons.push('key_slot_not_allowed');
   if (LIMIT_KEYS.some(key => pool.limits[key] !== null && !isInt(pool.limits[key], 0, 1e15))) reasons.push('limits_invalid');
   if (tier === 'free') {
+    if (slotSponsors(pool.key_slot)) {
+      reasons.push(...sponsoredReasons(typeId, spec, pool, now, registry));
+      return reasons;
+    }
     if (pool.price !== null || pool.daily_spend_cap_microusd !== null) reasons.push('free_pool_priced');
     if (slotBilled(pool.key_slot)) reasons.push(...billedFreeReasons(typeId, spec, pool));
     return reasons;
@@ -143,17 +185,9 @@ function poolReasons(typeId, spec, pool, now) {
   else if (!priceShapeValid(price)) reasons.push('price_invalid');
   else if (!(price.input > 0) || !(price.output > 0)) reasons.push('paid_without_price');
   else {
-    // Listed only, for every provider type: a model without a list price would be billed at
-    // whatever the row declares, and its daily cap counts that declared price, not the upstream's.
-    const list = upstreamAllowed(typeId, spec.upstream_model) ? listPriceMicro(typeId, spec.upstream_model, now) : null;
-    if (!list) reasons.push('unlisted_paid_not_allowed');
-    else if (!samePrice(price, list)) reasons.push('price_mismatch_list');
-    if (registry.requires_cache_prices && (price.cache_read === null || price.cache_write === null)) reasons.push('cache_price_missing');
+    reasons.push(...listedPriceReasons(typeId, spec, price, now, registry));
   }
-  const cap = pool.daily_spend_cap_microusd;
-  if (cap === null) reasons.push('cap_missing');
-  else if (!isInt(cap, 1, Number.MAX_SAFE_INTEGER)) reasons.push('cap_invalid');
-  else if (cap > typeMaxCapMicrousd(typeId)) reasons.push('cap_above_max');
+  reasons.push(...capReasons(typeId, pool));
   return reasons;
 }
 
@@ -246,7 +280,7 @@ export function specValid(validation) {
  * billedDailyCapMicrousd).
  */
 export function effectiveSpendCapUsd(env, entry, pool) {
-  if (pool?.tier !== 'paid') return null;
+  if (pool?.tier !== 'paid' && !sponsoredTermsFor(entry, pool)) return null;
   const registry = providerType(entry?.provider);
   if (!registry) return null;
   const own = Number(pool.daily_spend_cap_usd) > 0 ? Number(pool.daily_spend_cap_usd) : registry.paid_daily_cap_usd;
@@ -262,6 +296,11 @@ export function effectiveSpendCapUsd(env, entry, pool) {
 export function billedDailyCapMicrousd(env, entry, pool) {
   const usd = effectiveSpendCapUsd(env, entry, pool);
   return usd === null ? null : Math.round(usd * MICRO * MARKUP);
+}
+
+// The sponsored-pool terms (catalog-types.js SPONSORED_FREE_MODELS) of an entry's free pool, or null.
+export function sponsoredTermsFor(entry, pool) {
+  return pool?.tier === 'free' && pool.sponsored === true ? sponsoredFreeTerms(entry?.provider, entry?.upstream_model) : null;
 }
 
 // ── Entries ──
@@ -287,6 +326,7 @@ function poolFromSpec(typeId, pool) {
     ...poolSource(pool.key_slot),
     ...(limited ? { limits: Object.freeze({ ...pool.limits }) } : {}),
     ...(flag ? { requires_flag: flag } : {}),
+    ...(pool.tier === 'free' && slotSponsors(pool.key_slot) ? { sponsored: true } : {}),
     ...(pool.price ? { price: priceFromSpec(pool.price) } : {}),
     ...(pool.daily_spend_cap_microusd !== null ? { daily_spend_cap_usd: pool.daily_spend_cap_microusd / MICRO } : {}),
     key_slot: pool.key_slot,
@@ -335,7 +375,7 @@ function priceToMicro(price) {
 }
 
 function codeCapMicro(entry, pool) {
-  if (pool.tier !== 'paid') return null;
+  if (pool.tier !== 'paid' && !sponsoredTermsFor(entry, pool)) return null;
   if (Number(pool.daily_spend_cap_usd) > 0) return usdToMicro(Number(pool.daily_spend_cap_usd));
   if (Number(pool.limits?.cpd) > 0) return billedToMicro(Number(pool.limits.cpd));
   const fallback = providerType(entry.provider)?.paid_daily_cap_usd;

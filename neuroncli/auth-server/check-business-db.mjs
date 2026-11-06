@@ -117,7 +117,8 @@ try {
     '20261028000000_reservation_leases.sql', '20261029000000_session_devices.sql', '20261029000100_push_tokens.sql',
     '20261029000200_provider_keys.sql', '20261029000300_provider_key_budgets.sql', '20261029000400_oiop_offers.sql',
     '20261029000500_credit_programs.sql', '20261029000800_paid_billing_caps.sql', '20261029000900_plan_features_claude.sql',
-    '20261029001000_pool_concurrency.sql', '20261102000000_free_token_window.sql', '20261104000000_health_probes.sql'];
+    '20261029001000_pool_concurrency.sql', '20261102000000_free_token_window.sql', '20261104000000_health_probes.sql',
+    '20261105000000_sponsored_pools.sql'];
   assert.deepEqual(migrations.map(migration => migration.file).filter(file => businessMigrations.includes(file)), businessMigrations);
   assert.equal((await sql('SELECT count(*)::int AS n FROM supabase_migrations.schema_migrations'))[0].n, migrations.length);
   await assert.rejects(rpc(env, 'zerox_does_not_exist', {}), error =>
@@ -263,7 +264,8 @@ try {
   const missing = await reserve(randomUUID());
   assert.deepEqual(missing, { status: 'no_account', reservation_id: null, plan: null, remaining_requests: null,
     remaining_tokens: null, credit_balance_microusd: null, resets_at: null, retry_after_seconds: null,
-    window_tokens: null, window_seconds: null, window_used_tokens: null, window_resets_at: null });
+    window_tokens: null, window_seconds: null, window_used_tokens: null, window_resets_at: null,
+    cap_family: null, cap_tokens: null, cap_used_tokens: null, cap_resets_at: null });
   const suspendedUser = await newUser('pro', { suspended: true, credits: 5000000 });
   const suspended = await reserve(suspendedUser);
   assert.equal(suspended.status, 'suspended');
@@ -1517,8 +1519,8 @@ try {
     { day: utcDay(0), requests: 2, prompt_tokens: 8, completion_tokens: 4, cost_microusd: 2500 },
   ], 'series is zero-filled per UTC day');
   assert.deepEqual(await rpcRows(env, 'zerox_usage_by_model', { p_user_id: statsUser, p_from: utcDay(-3), p_to: utcDay(0) }), [
-    { model: 'm/a', requests: 3, prompt_tokens: 307, cache_read_tokens: 0, cache_write_tokens: 0, completion_tokens: 33, cost_microusd: 0 },
-    { model: 'm/b', requests: 2, prompt_tokens: 51, cache_read_tokens: 0, cache_write_tokens: 0, completion_tokens: 6, cost_microusd: 4000 },
+    { model: 'm/a', requests: 3, prompt_tokens: 307, cache_read_tokens: 0, cache_write_tokens: 0, completion_tokens: 33, cost_microusd: 0, sponsored_cost_microusd: 0 },
+    { model: 'm/b', requests: 2, prompt_tokens: 51, cache_read_tokens: 0, cache_write_tokens: 0, completion_tokens: 6, cost_microusd: 4000, sponsored_cost_microusd: 0 },
   ]);
   assert.deepEqual(await rpcRows(env, 'zerox_usage_by_model', { p_user_id: statsUser, p_from: utcDay(-1), p_to: utcDay(-1) }), []);
   await assert.rejects(rpcRows(env, 'zerox_usage_series', { p_user_id: statsUser, p_from: utcDay(0), p_to: utcDay(-1) }), /invalid_range/);
@@ -1539,8 +1541,9 @@ try {
 
   // ---------------------------------------------------------------- account overview and admin overview
   const statsOverview = await rpc(env, 'zerox_account_overview', { p_user_id: statsUser });
-  assert.deepEqual(Object.keys(statsOverview).sort(), ['account', 'credits', 'policy', 'subscription', 'usage_today', 'usage_window']);
+  assert.deepEqual(Object.keys(statsOverview).sort(), ['account', 'credits', 'policy', 'subscription', 'usage_month', 'usage_today', 'usage_window']);
   assert.equal(statsOverview.usage_window, null, 'no window on Max');
+  assert.deepEqual(statsOverview.usage_month, [], 'no monthly family usage without a sponsored pool');
   assert.equal(statsOverview.account.id, statsUser);
   assert.equal(statsOverview.policy.daily_requests, 10000);
   assert.equal(statsOverview.credits.balance_microusd, 10000000 - 4000);
@@ -1829,7 +1832,8 @@ try {
   // check-catalog-db.mjs).
   const downFiles = (await readdir(join(root, 'migrations/down'))).filter(file => !file.endsWith('.down.sql')).sort();
   assert.deepEqual(downFiles, ['20261028000000_reservation_leases.sql', '20261029001000_pool_concurrency.sql',
-    '20261102000000_free_token_window.sql', '20261104000000_health_probes.sql', '20261104300000_free_plan_features_lineup.sql']);
+    '20261102000000_free_token_window.sql', '20261104000000_health_probes.sql', '20261104300000_free_plan_features_lineup.sql',
+    '20261105000000_sponsored_pools.sql', '20261105000100_haiku_catalog.sql', '20261105000200_plan_features_haiku.sql']);
   for (const file of downFiles) {
     const migration = migrations.find(candidate => candidate.file === file);
     assert.ok(migration, `${file} undoes a migration of the same name`);

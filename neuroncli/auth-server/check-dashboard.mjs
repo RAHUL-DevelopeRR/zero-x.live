@@ -727,7 +727,7 @@ async function mountPricing({profile = null, routes = {}, hostname = 'zero-x.liv
   const freeFeatures = doc.querySelector('[data-plan-features="free"]').querySelectorAll('li');
   assert.equal(freeFeatures[1].textContent, XSS, 'API feature strings render as text');
   assert.equal(freeFeatures[1].querySelectorAll('img').length, 0);
-  assert.equal(doc.querySelector('[data-plan-features="pro"]').querySelectorAll('li').length, 5, 'Empty API features keep the static list');
+  assert.equal(doc.querySelector('[data-plan-features="pro"]').querySelectorAll('li').length, 6, 'Empty API features keep the static list');
   assert.equal(doc.querySelector('[data-currency="USD"]').getAttribute('aria-pressed'), 'true');
   doc.querySelector('[data-currency="INR"]').click();
   assert.equal(doc.querySelector('[data-plan-price="pro"]').textContent, '₹899');

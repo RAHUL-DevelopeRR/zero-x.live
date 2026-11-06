@@ -52,8 +52,10 @@ const asRole = async (role, text, params) => (await handle()).db.transaction(asy
 const clone = value => structuredClone(value);
 const SONNET = CLAUDE_MODEL_SPECS[0];
 const OPUS = CLAUDE_MODEL_SPECS[1];
+const HAIKU = CLAUDE_MODEL_SPECS[2];
 const SONNET_ID = 'anthropic/claude-sonnet-5-5';
 const OPUS_ID = 'anthropic/claude-opus-5-5';
+const HAIKU_ID = 'anthropic/claude-haiku-5-5';
 const realFetch = globalThis.fetch;
 globalThis.fetch = async input => { throw new Error(`Unexpected outbound request: ${String(input?.url ?? input)}`); };
 
@@ -224,8 +226,8 @@ try {
   {
     const { items } = codeCatalog();
     assert.equal(items.length, CATALOG.length, 'code catalog = src/catalog.js CATALOG');
-    assert.deepEqual(CATALOG.filter(entry => entry.provider === 'anthropic').map(entry => entry.id), [SONNET_ID, OPUS_ID],
-      'src/catalog.js lists the two Claude rows from src/catalog-claude.js');
+    assert.deepEqual(CATALOG.filter(entry => entry.provider === 'anthropic').map(entry => entry.id), [SONNET_ID, OPUS_ID, HAIKU_ID],
+      'src/catalog.js lists the three Claude rows from src/catalog-claude.js');
     for (const item of items) {
       const validation = validateSpec(item.id, item.spec);
       assert.ok(specValid(validation), `${item.id}: ${JSON.stringify(validation)}`);
@@ -239,9 +241,12 @@ try {
       const id = publicIdFor(spec.provider_type, spec.upstream_model);
       const entry = entryFromSpec(id, spec, { source: 'code' });
       assert.equal(canonicalSpec(codeSpec(entry)), canonicalSpec(spec), `${id}: entry and spec round trip`);
+      // Haiku 5.5 is a sponsored free pool whose window stays at 100,000 (every request on the lower rate card).
+      const haiku = id === HAIKU_ID;
       assert.deepEqual([entry.auto_rank, entry.context_window, entry.max_output_tokens, entry.default_max_tokens, entry.default_reasoning_effort],
-        [null, 200000, 32000, 16000, 'medium']);
-      assert.deepEqual(entry.pools.map(pool => [pool.tier, pool.key_var, pool.key_slot]), [['paid', 'ANTHROPIC_API_KEY', 'anthropic.paid']]);
+        [null, haiku ? 100000 : 200000, 32000, 16000, 'medium']);
+      assert.deepEqual(entry.pools.map(pool => [pool.tier, pool.key_var, pool.key_slot]), [[haiku ? 'free' : 'paid', 'ANTHROPIC_API_KEY', 'anthropic.paid']]);
+      assert.equal(entry.pools[0].sponsored === true, haiku, `${id}: only the Haiku pool is sponsored`);
     }
     const sonnetEntry = codeCatalog().byId.get(SONNET_ID).entry;
     const opusEntry = codeCatalog().byId.get(OPUS_ID).entry;
@@ -278,8 +283,22 @@ try {
       ['cap above the code maximum', SONNET_ID, variant(SONNET, s => { paid(s).daily_spend_cap_microusd = 1_000_000 * 1_000_000; }), 'paid:cap_above_max'],
       ['cap above the anthropic maximum', SONNET_ID, variant(SONNET, s => { paid(s).daily_spend_cap_microusd = 51_000_000; }), 'paid:cap_above_max'],
       ['no cap', SONNET_ID, variant(SONNET, s => { paid(s).daily_spend_cap_microusd = null; }), 'paid:cap_missing'],
-      ['an anthropic free pool', SONNET_ID, variant(SONNET, s => { s.pools.unshift({ tier: 'free', key_slot: 'anthropic.paid', price: null,
-        limits: {}, daily_spend_cap_microusd: null }); }), 'free:tier_not_offered'],
+      ['an anthropic free pool on a model that is not sponsored', SONNET_ID, variant(SONNET, s => { s.pools.unshift({ tier: 'free', key_slot: 'anthropic.paid', price: null,
+        limits: {}, daily_spend_cap_microusd: null }); }), 'free:sponsored_not_listed'],
+      // Sponsored pools (contract section 16.1): listed model, list price exactly, every limit set and under the ceiling, a cap.
+      ['sponsored: no price', HAIKU_ID, variant(HAIKU, s => { s.pools[0].price = null; }), 'free:sponsored_price_required'],
+      ['sponsored: input above list', HAIKU_ID, variant(HAIKU, s => { s.pools[0].price.input = 110000; }), 'free:price_mismatch_list'],
+      ['sponsored: output below list', HAIKU_ID, variant(HAIKU, s => { s.pools[0].price.output = 400000; }), 'free:price_mismatch_list'],
+      ['sponsored: missing cache prices', HAIKU_ID, variant(HAIKU, s => { Object.assign(s.pools[0].price, { cache_read: null, cache_write: null }); }), 'free:cache_price_missing'],
+      ['sponsored: long-context rate dropped', HAIKU_ID, variant(HAIKU, s => { s.pools[0].price.long = null; }), 'free:price_mismatch_list'],
+      ['sponsored: no cap', HAIKU_ID, variant(HAIKU, s => { s.pools[0].daily_spend_cap_microusd = null; }), 'free:cap_missing'],
+      ['sponsored: cap above the anthropic maximum', HAIKU_ID, variant(HAIKU, s => { s.pools[0].daily_spend_cap_microusd = 60_000_000; }), 'free:cap_above_max'],
+      ['sponsored: rpm above the ceiling', HAIKU_ID, variant(HAIKU, s => { s.pools[0].limits.rpm = 51; }), 'free:free_limits_above_max'],
+      ['sponsored: tpd above the ceiling', HAIKU_ID, variant(HAIKU, s => { s.pools[0].limits.tpd = 60_000_001; }), 'free:free_limits_above_max'],
+      ['sponsored: tpm unset', HAIKU_ID, variant(HAIKU, s => { s.pools[0].limits.tpm = null; }), 'free:free_limits_required'],
+      ['sponsored: a Claude model nobody listed', 'anthropic/claude-haiku-9', variant(HAIKU, s => { s.upstream_model = 'claude-haiku-9'; s.aliases = []; }), 'free:sponsored_not_listed'],
+      ['a priced free pool on a slot nobody sponsors', 'groq/openai/gpt-oss-120b', variant(codeCatalog().byId.get('groq/openai/gpt-oss-120b').spec, s => {
+        s.pools.find(pool => pool.tier === 'free').price = clone(HAIKU.pools[0].price); }), 'free:free_pool_priced'],
       ['unlisted Claude model', 'anthropic/claude-sonnet-9', variant(SONNET, s => { s.upstream_model = 'claude-sonnet-9'; s.aliases = []; }),
         'paid:unlisted_paid_not_allowed'],
       ['path injection', '@cf/../../accounts/x', variant(codeCatalog().byId.get('@cf/openai/gpt-oss-120b').spec, s => {
@@ -329,8 +348,8 @@ try {
     assert.deepEqual(droppedTiers(validateSpec('gemini/gemini-9-flash', unlisted)), ['paid'], 'an unlisted Gemini model may only be free');
     assert.ok(specValid(validateSpec('gemini/gemini-9-flash', { ...unlisted, pools: unlisted.pools.filter(pool => pool.tier === 'free') })));
     assert.ok(Object.values(PROVIDER_TYPES).every(registry => registry.paid_pricing === 'listed_only'), 'every provider type: listed only');
-    assert.deepEqual(Object.keys(LIST_PRICES).filter(key => key.startsWith('anthropic:')), ['anthropic:claude-sonnet-5-5', 'anthropic:claude-opus-5-5'],
-      'the anthropic.paid key can reach Sonnet 5.5 and Opus 5.5 only');
+    assert.deepEqual(Object.keys(LIST_PRICES).filter(key => key.startsWith('anthropic:')), ['anthropic:claude-sonnet-5-5', 'anthropic:claude-opus-5-5', 'anthropic:claude-haiku-5-5'],
+      'the anthropic.paid key can reach Sonnet 5.5, Opus 5.5 and Haiku 5.5 only');
     // Free Workers AI pools at or below the code ceiling pass; the code catalog uses the ceiling itself.
     const tighter = variant(codeCatalog().byId.get('@cf/meta/llama-3.3-70b-instruct-fp8-fast').spec, s => {
       s.pools[0].limits = { rpm: 5, rpd: 100, tpm: 10000, tpd: 50000 }; });
@@ -408,7 +427,7 @@ try {
       const fromCode = JSON.parse(JSON.stringify(modules.catalog.listModelsForCaller(codeEnvs.get(key), testCase.options).data));
       assert.deepEqual(fromRows, fromCode, `${testCase.name}: rows and CATALOG_SOURCE=code agree`);
       assert.deepEqual(withoutClaude(fromRows), testCase.data.map(index => items[index]), `${testCase.name}: equals the baseline`);
-      assert.deepEqual(fromRows.filter(item => item.id.startsWith('anthropic/')).map(item => item.id), [SONNET_ID, OPUS_ID]);
+      assert.deepEqual(fromRows.filter(item => item.id.startsWith('anthropic/')).map(item => item.id), [SONNET_ID, OPUS_ID, HAIKU_ID]);
       assert.deepEqual(fromRows.filter(item => item.id.startsWith('zai/')).map(item => item.id), ['zai/glm-4.7-flash', 'zai/glm-4.5-flash']);
       compared++;
     }
@@ -416,7 +435,9 @@ try {
     const claude = modules.catalog.listModelsForCaller(keys, { plan: 'max', tiers: ['free', 'paid'], country: 'US' }).data
       .filter(item => item.id.startsWith('anthropic/'));
     assert.deepEqual(claude.map(item => [item.tiers, item.context_window, item.max_output_tokens, item.capabilities.vision]),
-      [[['paid'], 200000, 32000, true], [['paid'], 200000, 32000, true]]);
+      [[['paid'], 200000, 32000, true], [['paid'], 200000, 32000, true], [['free'], 100000, 32000, true]]);
+    assert.deepEqual(claude.map(item => item.pricing === null), [false, false, true], 'Haiku costs the caller nothing: no pricing');
+    assert.deepEqual(claude.map(item => item.allowance ?? null), [null, null, { month_tokens: 10_000_000 }], 'Haiku lists its monthly allowance');
     const auto = modules.catalog.listModelsForCaller(keys, { plan: 'max', tiers: ['free', 'paid'], country: 'US' }).data[0];
     assert.equal(auto.id, 'auto');
     // Owner lineup (2026-10-29): the empty GEMINI_MODELS and CLOUDFLARE_MODELS of wrangler.toml
@@ -428,7 +449,7 @@ try {
       .map(item => item.id);
     assert.ok(lineupIds.includes('groq/openai/gpt-oss-120b'));
     assert.ok(!lineupIds.some(id => id.startsWith('gemini/') || id.startsWith('@cf/')), 'no Gemini or Workers AI row is offered');
-    ok(`/v1/models from the seeded rows equals CATALOG_SOURCE=code and fixtures/v1-models-baseline.json (minus the two Claude rows) on all ${compared} cases${modules.integrated ? '' : ' (catalog view; src/catalog.js not wired yet)'}`);
+    ok(`/v1/models from the seeded rows equals CATALOG_SOURCE=code and fixtures/v1-models-baseline.json (minus the three Claude rows) on all ${compared} cases${modules.integrated ? '' : ' (catalog view; src/catalog.js not wired yet)'}`);
   }
 
   // ── 7. Routing from the rows equals routing from code ──
@@ -543,7 +564,11 @@ try {
       [{ ...sonnetSpec, pools: [{ ...sonnetSpec.pools[0], daily_spend_cap_microusd: 1e12 }] }, /check constraint|above the anthropic maximum/],
       [{ ...sonnetSpec, pools: [{ ...sonnetSpec.pools[0], daily_spend_cap_microusd: null }] }, /check constraint/],
       [{ ...sonnetSpec, pools: [{ ...sonnetSpec.pools[0], price: { ...sonnetSpec.pools[0].price, input: 0 } }] }, /check constraint/],
-      [{ ...sonnetSpec, pools: [{ ...sonnetSpec.pools[0], tier: 'free' }] }, /check constraint|not allowed/],
+      // A free pool carries no price, cache rate or spend cap, unless its slot is one the operator pays for
+      // (zerox_catalog_slot_sponsors, migration 20261105000100): the check constraint says so.
+      [{ ...coder, pools: [{ ...coder.pools[0], price: { input: 1000, output: 2000, cache_read: null, cache_write: null, cache_write_1h: null, long: null } }] }, /check constraint/],
+      [{ ...coder, pools: [{ ...coder.pools[0], daily_spend_cap_microusd: 1_000_000 }] }, /check constraint|above the nvidia maximum/],
+      [{ ...sonnetSpec, pools: [{ ...sonnetSpec.pools[0], tier: 'free', key_slot: 'groq.free' }] }, /not allowed/],
       [{ ...sonnetSpec, upstream_model: 'claude-x/../../v1/files' }, /not a valid anthropic model id/],
       [{ ...sonnetSpec, provider_type: 'evil' }, /unknown provider type/],
       [{ ...sonnetSpec, display_name: '<script>' }, /check constraint/],
@@ -752,7 +777,8 @@ try {
     assert.equal(types.headers.get('cache-control'), 'no-store');
     assert.ok(!JSON.stringify(types.body).includes('sk-ant-api03-check-secret-value'), 'no secret value is ever returned');
     const anthropic = types.body.types.find(type => type.id === 'anthropic');
-    assert.deepEqual(anthropic.slots, { free: [], paid: [{ id: 'anthropic.paid', env: 'ANTHROPIC_API_KEY', binding: null, configured: true }] });
+    const claudeSlot = { id: 'anthropic.paid', env: 'ANTHROPIC_API_KEY', binding: null, configured: true };
+    assert.deepEqual(anthropic.slots, { free: [claudeSlot], paid: [claudeSlot] }, 'the free tier of the Claude slot is the sponsored pool of Haiku 5.5');
     assert.equal(anthropic.list_prices['claude-sonnet-5-5'].billed.input_usd_per_mtok, 2.5);
     assert.deepEqual([types.body.markup, anthropic.max_daily_spend_usd], [1.25, 50]);
 
@@ -914,6 +940,16 @@ try {
       assert.deepEqual([snap.status, snap.spec], ['draft', null]);
       // Down scripts, newest first, then the up migrations again.
       const down = name => readFileSync(new URL(`./migrations/down/${name}`, import.meta.url), 'utf8');
+      // Claude Haiku 5.5 (migration 20261105000100) goes first: its row is disabled (never deleted), the free tier of the
+      // Claude slot is refused again and the table check on free pools is back (for new rows).
+      await db.exec(down('20261105000100_haiku_catalog.sql'));
+      assert.equal((await db.query("SELECT status FROM public.zerox_catalog_models WHERE id = 'anthropic/claude-haiku-5-5'")).rows[0].status, 'disabled');
+      assert.equal((await db.query("SELECT public.zerox_catalog_slot_ok('anthropic', 'free', 'anthropic.paid') AS ok")).rows[0].ok, false);
+      assert.equal((await db.query("SELECT count(*)::int AS n FROM pg_proc WHERE proname = 'zerox_catalog_slot_sponsors'")).rows[0].n, 0);
+      await db.exec(readFileSync(new URL('./migrations/20261105000100_haiku_catalog.sql', import.meta.url), 'utf8'));
+      assert.equal((await db.query("SELECT status FROM public.zerox_catalog_models WHERE id = 'anthropic/claude-haiku-5-5'")).rows[0].status, 'active',
+        'applied again, the row is enabled again');
+      await db.exec(down('20261105000100_haiku_catalog.sql'));
       await db.exec(down('20261029000700_catalog_seed.down.sql'));
       assert.equal((await db.query("SELECT count(*)::int AS n FROM public.zerox_catalog_models WHERE source IN ('seed', 'discovery')")).rows[0].n, 0);
       assert.equal((await db.query("SELECT count(*)::int AS n FROM public.zerox_offers WHERE id = 'anthropic.paid'")).rows[0].n, 0);
@@ -923,8 +959,8 @@ try {
         WHERE n.nspname = 'public' AND p.proname LIKE 'zerox_catalog%' AND p.proname <> 'zerox_catalog_db_models'`)).rows[0].n;
       const tables = (await db.query("SELECT count(*)::int AS n FROM pg_tables WHERE schemaname = 'public' AND tablename LIKE 'zerox_catalog%'")).rows[0].n;
       assert.deepEqual([left, tables], [0, 0], 'the down scripts remove every catalog table and function');
-      assert.equal((await db.query("SELECT count(*)::int AS n FROM supabase_migrations.schema_migrations WHERE version IN ('20261029000600', '20261029000700')")).rows[0].n, 0);
-      for (const file of ['20261029000600_catalog_models.sql', '20261029000700_catalog_seed.sql']) {
+      assert.equal((await db.query("SELECT count(*)::int AS n FROM supabase_migrations.schema_migrations WHERE version IN ('20261029000600', '20261029000700', '20261105000100')")).rows[0].n, 0);
+      for (const file of ['20261029000600_catalog_models.sql', '20261029000700_catalog_seed.sql', '20261105000100_haiku_catalog.sql']) {
         await db.exec(readFileSync(new URL(`./migrations/${file}`, import.meta.url), 'utf8'));
       }
       assert.equal((await db.query("SELECT count(*)::int AS n FROM public.zerox_catalog_snapshot() WHERE status = 'active'")).rows[0].n, codeCatalog().items.length,

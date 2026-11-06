@@ -33,21 +33,23 @@ export async function loadPlanLimits(env) {
 // migration 20261102000000_free_token_window.sql: 1M every 5 hours; its daily_tokens is the most
 // five windows allow in a UTC day and does not refuse requests); null = no window. Free has the
 // free tier only; Pro and Max add the paid tier (Claude Sonnet 5.5 and Claude Opus 5.5, billed
-// from credits); every plan has the same Neuron features.
+// from credits); every plan has the same Neuron features and Claude Haiku 5.5 at no charge, up to
+// 10M tokens a month (migration 20261105000200_plan_features_haiku.sql, contract section 16).
 export const PAID_PLAN_IDS = Object.freeze(['pro', 'max']);
 export const PLAN_CATALOG = Object.freeze([
   Object.freeze({
     id: 'free', name: 'Free', price: { usd_cents: 0, inr_paise: 0 }, interval: 'month',
     limits: { daily_requests: 100, daily_tokens: 5000000, window_tokens: 1000000, window_seconds: 18000, rpm: 10, concurrency: 2 },
     monthly_credit_microusd: 0, tiers: ['free'], highlighted: false,
-    features: ['Free models chosen for coding, with tool use',
+    features: ['Free models chosen for coding, with tool use', 'Claude Haiku 5.5 included: 10M tokens a month at no charge',
       '100 requests per day and 1M tokens every 5 hours', '10 requests per minute, 2 at once', 'Every Neuron feature, the same on all plans'],
   }),
   Object.freeze({
     id: 'pro', name: 'Pro', price: { usd_cents: 1000, inr_paise: 89900 }, interval: 'month',
     limits: { daily_requests: 2000, daily_tokens: 10000000, window_tokens: null, window_seconds: null, rpm: 30, concurrency: 4 },
     monthly_credit_microusd: 8000000, tiers: ['free', 'paid'], highlighted: true,
-    features: ['Claude Sonnet 5.5 and Claude Opus 5.5, billed from credits', '$8 of credits included every month',
+    features: ['Claude Haiku 5.5 included: 10M tokens a month at no charge',
+      'Claude Sonnet 5.5 and Claude Opus 5.5, billed from credits', '$8 of credits included every month',
       'Free models with higher limits: 2,000 requests and 10M tokens per day', '30 requests per minute, 4 at once',
       'Every Neuron feature, the same on all plans'],
   }),
@@ -55,7 +57,8 @@ export const PLAN_CATALOG = Object.freeze([
     id: 'max', name: 'Max', price: { usd_cents: 4000, inr_paise: 349900 }, interval: 'month',
     limits: { daily_requests: 10000, daily_tokens: 50000000, window_tokens: null, window_seconds: null, rpm: 60, concurrency: 8 },
     monthly_credit_microusd: 35000000, tiers: ['free', 'paid'], highlighted: false,
-    features: ['Claude Sonnet 5.5 and Claude Opus 5.5, billed from credits', '$35 of credits included every month',
+    features: ['Claude Haiku 5.5 included: 10M tokens a month at no charge',
+      'Claude Sonnet 5.5 and Claude Opus 5.5, billed from credits', '$35 of credits included every month',
       'Free models with higher limits: 10,000 requests and 50M tokens per day', '60 requests per minute, 8 at once',
       'Every Neuron feature, the same on all plans'],
   }),

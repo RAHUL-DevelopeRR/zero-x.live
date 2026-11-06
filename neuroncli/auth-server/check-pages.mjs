@@ -366,7 +366,8 @@ const ADDRESS = '6/2, N. Pugalur, Karur 639113, Tamil Nadu, India';
   assert.ok(anthropicRow, 'privacy: Anthropic is listed as a processor');
   assert.match(anthropicRow[1], /does not use these prompts or responses to train its models/);
   assert.doesNotMatch(anthropicRow[1], /\d+[ -]days?/, 'privacy: no Anthropic retention period until it is confirmed in docs/PROVIDER_TERMS.md');
-  assert.match(privacy, /On Pro and Max, requests to Claude Sonnet 5\.5 or Claude Opus 5\.5 go to Anthropic/);
+  assert.match(privacy, /Requests to Claude Haiku 5\.5, which every plan includes, go to Anthropic, and so do requests to Claude Sonnet 5\.5 or Claude Opus 5\.5 on Pro and Max/);
+  assert.match(anthropicRow[1], /Claude Haiku 5\.5 on every plan and the paid models on Pro and Max/, 'privacy: Haiku on the Free plan reaches Anthropic');
   assert.match(privacy, /read from or written to Anthropic's prompt cache/);
   assert.match(text('terms.html'), /including Anthropic, Groq, Google, Cloudflare, NVIDIA and OpenRouter;/);
   assert.match(text('terms.html'), /paid-capacity models, including Claude Sonnet 5\.5 and Claude Opus 5\.5/);
@@ -374,7 +375,15 @@ const ADDRESS = '6/2, N. Pugalur, Karur 639113, Tamil Nadu, India';
   const pricingPage = text('pricing.html');
   assert.match(pricingPage, /Claude Sonnet 5\.5 \$2\.50 \$0\.25 \$3\.125 \$12\.50/, 'pricing: Sonnet 5.5 at list price plus 25%');
   assert.match(pricingPage, /Claude Opus 5\.5 \$5\.00 \$0\.25 \$6\.25 \$25\.00/, 'pricing: Opus 5.5 at list price plus 25%');
-  assert.match(pricingPage, /Anthropic \(Claude Sonnet 5\.5 and Claude Opus 5\.5\)/, 'pricing: the provider FAQ names Anthropic');
+  assert.match(pricingPage, /Anthropic \(Claude Haiku 5\.5 on every plan, Claude Sonnet 5\.5 and Claude Opus 5\.5 on Pro and Max\)/, 'pricing: the provider FAQ names Anthropic');
+  // Claude Haiku 5.5 on every plan (contract section 16): the copy says what it is and how it is limited, and names no provider.
+  assert.match(pricingPage, /Every plan includes Claude Haiku 5\.5 at no charge, up to 10M tokens a month per account/);
+  assert.match(pricingPage, /Claude Haiku 5\.5 on every plan Pick it with \/model claude-haiku-5-5 ; auto stays on the free models\. It costs no credits\./);
+  assert.match(pricingPage, /renews on the first of each month \(UTC\)[\s\S]*insufficient_quota[\s\S]*every other model keeps working/);
+  assert.match(pricingPage, /Models Free models and Claude Haiku 5\.5 Free models, Claude Haiku 5\.5, Claude Sonnet 5\.5 and Claude Opus 5\.5/);
+  const haikuCopy = pricingPage.slice(pricingPage.indexOf('Claude Haiku 5.5 on every plan Pick it'), pricingPage.indexOf('Claude prices billed from credits'));
+  assert.ok(haikuCopy.length > 100 && !/anthropic|groq|nvidia|openrouter|z\.ai/i.test(haikuCopy), 'pricing: the Haiku block names no provider');
+  for (const file of ['index.html', 'neuron-cli.html']) assert.match(text(file), /Claude Haiku 5\.5 100K context/, file + ': the built-in model list has Haiku');
   // The price table shows exactly what the gateway bills (src/catalog.js: list price x MARKUP).
   const { catalogEntry } = await import('./src/catalog.js');
   const dollars = micro => `$${(micro / 1e6).toFixed(Math.max(2, String(micro / 1e6).split('.')[1]?.length ?? 0))}`;

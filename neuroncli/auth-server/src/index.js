@@ -45,6 +45,7 @@ import { extraWebOrigins, isExtraWebHost } from './web-hosts.js';
 export { HealthHub } from './health-hub.js';
 import { hubSendsTestRequests } from './health-hub.js';
 import { probeCheckerState } from './health-probes.js';
+import { dbProbeRowsState } from './probe-rows-db.js';
 import { registerWebhookRoutes } from './routes/webhooks.js';
 
 const SERVICE = 'neuroncli-gateway-worker';
@@ -614,7 +615,10 @@ function healthCheckerStatus(env) {
     return node === 'running' ? { node_probes: node }
       : { node_probes: node, warning: 'The Node checker is not testing the pools; set HEALTH_HUB_PROBES=on on the Worker until it runs' };
   }
-  return { hub_test_requests: hubSendsTestRequests(env), chat_routed_to_node: chatRoutedToEc2(env) };
+  // The Worker has no checker of its own: it reads the Node checker's verdict rows from Postgres
+  // (src/probe-rows-db.js), source 'database' once a read succeeded, else the HealthHub's rows alone.
+  return { hub_test_requests: hubSendsTestRequests(env), chat_routed_to_node: chatRoutedToEc2(env),
+    verdict_rows: dbProbeRowsState(env) };
 }
 
 api.get('/ready', async c => {

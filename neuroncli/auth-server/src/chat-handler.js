@@ -11,7 +11,8 @@ import { FailureKind, globalHealthTracker } from './provider-health.js';
 import { hubHealthForRouting, hubHealthRows, publishHealth } from './health-hub-client.js';
 import { readShared } from './health-share.js';
 import { probeRoutingRows } from './health-probes.js';
-import { callerCountry, loadCatalog, loadPlanPolicies, planPolicy, poolSecret, resolveModelId } from './catalog.js';
+import { callerCountry, loadCatalog, loadPlanPolicies, modelIdentity, planPolicy, poolSecret, resolveModelId } from './catalog.js';
+import { noteSponsoredFailure } from './sponsored.js';
 import { touchVaultKey } from './provider-keys.js';
 import { billableUsage, estimateOutputTokens, estimatePromptTokens, reserveCostMicrousd, utf8Bytes } from './pricing.js';
 import { exhaustedBudget, notePoolExhausted, notePoolReserved, poolBudgetState } from './pool-budget.js';
@@ -208,19 +209,22 @@ async function orderBySharedHealth(env, candidates, tracker, sharedHealth = null
     .map(item => item.candidate);
 }
 
-// A paid model whose daily spend cap (p_pool.cpd) is spent for every user until 00:00 UTC.
+// A paid or sponsored model whose daily spend cap (p_pool.cpd) is spent for every user until 00:00 UTC. A sponsored
+// pool also sets daily request and token budgets, so its refusal names them too ('rpd|tpd|cpd'): all reset at 00:00 UTC.
 function spendLimitMessage(exhausted) {
-  if (!exhausted.length || !exhausted.every(row => row.budget === 'cpd')) return undefined;
+  if (!exhausted.length || !exhausted.every(row => String(row.budget).split('|').includes('cpd'))) return undefined;
   const names = [...new Set(exhausted.map(row => row.model))];
   return `${names.length === 1 ? names[0] : 'This model'} has reached today's spending limit on Zero-X. ` +
     'It resets at 00:00 UTC; choose another model until then.';
 }
 
 // The client-facing error once every candidate failed (contract §3.3).
-function finalError({ failures, exhausted, paidDenied }) {
+function finalError({ failures, exhausted, paidDenied, monthDenied = null }) {
   const paid = paidDenied ? reserveError(paidDenied) : null;
   if (!failures.length) {
     if (paid) return paid;
+    // The caller's own monthly allowance of a sponsored model (contract section 16.3): nothing else could serve.
+    if (monthDenied) return reserveError(monthDenied.row, Date.now(), monthDenied.tokens, monthDenied.name);
     if (exhausted.length) {
       return { code: 'capacity_exhausted', retryAfterSeconds: minimum(exhausted.map(row => row.retry_after_seconds)) ?? 60,
         message: spendLimitMessage(exhausted) };
@@ -256,7 +260,7 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
     const requestId = newRequestId();
     const env = c.env || {};
     const headers = { 'x-request-id': requestId };
-    const fail = (code, options = {}) => errorResponse(code, { ...options, env, requestId, headers });
+    const fail = (code, options = {}) => errorResponse(code, { ...options, env, requestId, headers: { ...headers, ...(options.headers || {}) } });
 
     let valid;
     try {
@@ -303,6 +307,7 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
         maxTokens: requestedMax,
         maxTokensExplicit: isSet(explicitMax),
         tiers: sessionTiers(env, session, policy),
+        ledger,
         country: callerCountry(c.req.raw, env),
         ownedCatalog: isOwnedSession(session) ? await ownedCatalog(env, session) : null,
         affinity: caller,
@@ -611,6 +616,7 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
     const first = candidates[0];
     let firstMiss = null;
     let paidDenied = null;
+    let monthDenied = null; // the first refusal by a sponsored family's monthly allowance
     let pending = null; // reservation of the last failed attempt, settled once its fate is known
     let current = null; // reservation whose attempt is in flight
     let reservations = 0;
@@ -689,11 +695,25 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
               requestId: reservations ? `${requestId}.${reservations}` : requestId, promptTokens, maxTokens: candidate.maxTokens });
             row = await reserveCapacity(env, args);
           } catch (error) {
+            // A sponsored pool needs the p_cap migration: without it the pool is skipped (and reads
+            // not_configured for 10 minutes), never served uncapped; the other candidates carry on.
+            if (args?.p_cap && noteSponsoredFailure(env, error)) {
+              skipModels.add(candidate.entry.id);
+              continue;
+            }
             console.error('Neuron capacity reservation unavailable', { name: error?.name, request_id: requestId });
             stopLeases();
             return fail('service_unavailable');
           }
           if (!accountCanPay(row)) releaseHeld(index);
+          if (row.status === 'user_family_month_tokens') {
+            // Only this family is out for the month: its other candidates are skipped and the rest are tried.
+            const identity = modelIdentity(candidate.entry);
+            monthDenied ??= { row, tokens: args.p_tokens, name: identity.name };
+            for (const other of queue) if (modelIdentity(other.entry).family === identity.family) skipModels.add(other.entry.id);
+            if (candidate === first) firstMiss = row.status;
+            continue;
+          }
           if (row.status !== 'ok') {
             if (TERMINAL_RESERVE_STATUSES.has(row.status) || !RESERVE_ERRORS[row.status]) {
               stopLeases();
@@ -739,6 +759,9 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
           current = { reservation, candidate };
           if (row.plan) headers['x-neuron-plan'] = String(row.plan);
           setQuotaHeaders(row.remaining_requests, row.remaining_tokens);
+          if (isSet(row.cap_tokens) && isSet(row.cap_used_tokens)) {
+            headers['x-neuron-quota-month-remaining-tokens'] = String(Math.max(0, Number(row.cap_tokens) - Number(row.cap_used_tokens)));
+          }
         }
         attempts++;
         if (candidate.pool.tier !== 'paid') freeAttempts++;
@@ -792,7 +815,7 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
     // upstream_error; a client error (a slow 400 or 413), a cancellation or a capacity refusal
     // (with its Retry-After) still answers as such.
     const budgetSpent = outOfTime || failures.some(failure => failure.budgetCut);
-    let final = finalError({ failures, exhausted, paidDenied });
+    let final = finalError({ failures, exhausted, paidDenied, monthDenied });
     if (budgetSpent && !aborted && final.code === 'upstream_error') final = { code: 'upstream_timeout' };
     if (aborted || outOfTime) {
       console.warn(aborted ? 'Neuron client disconnected before the first byte' : 'Neuron failover budget spent',

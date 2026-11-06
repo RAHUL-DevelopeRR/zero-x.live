@@ -67,13 +67,14 @@ GEMINI_MODELS = ""
 CLOUDFLARE_MODELS = ""
 # Z.ai's free GLM-4.7-Flash and GLM-4.5-Flash use the Worker secret GLM_API_KEY (deploy.yml pushes
 # it from the GitHub secret); without it they list as not_configured. ZAI_MODELS would narrow them.
-# Claude Sonnet 5.5 and Claude Opus 5.5 (paid pools, Pro and Max, billed from credits) use the
-# Worker secret ANTHROPIC_API_KEY, which deploy.yml pushes from the GitHub secret; without it they
+# Claude Sonnet 5.5 and Claude Opus 5.5 (paid pools, Pro and Max, billed from credits) and Claude
+# Haiku 5.5 (a sponsored free pool on every plan, 10M tokens a month per user, docs/PLATFORM_CONTRACT.md
+# section 16) use the Worker secret ANTHROPIC_API_KEY, which deploy.yml pushes from the GitHub secret; without it they
 # list as not_configured. The same key enables the weekly discovery research and credits jobs;
 # DISCOVERY_RESEARCH = "false" turns those off. ANTHROPIC_MODELS narrows the Claude models offered
 # like the other *_MODELS: a second gate beside the list prices in src/list-prices.js, so the
-# anthropic.paid key serves these two only, whatever catalog rows say. The base URL is pinned in code.
-ANTHROPIC_MODELS = "claude-sonnet-5-5,claude-opus-5-5"
+# anthropic.paid key serves these three only, whatever catalog rows say. The base URL is pinned in code.
+ANTHROPIC_MODELS = "claude-sonnet-5-5,claude-opus-5-5,claude-haiku-5-5"
 # DISCOVERY_RESEARCH = "false"
 # Model catalog source (src/catalog-db.js). Unset: the approved database rows when the database is
 # configured (cached 45 s per isolate; a database outage keeps the last catalog that loaded, else
