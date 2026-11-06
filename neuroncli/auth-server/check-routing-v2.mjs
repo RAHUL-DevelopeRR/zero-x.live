@@ -1523,7 +1523,7 @@ try {
       ['no_account', 401, 'invalid_session', 1], ['suspended', 403, 'account_suspended', 1],
       ['user_daily_requests', 429, 'insufficient_quota', 1], ['user_daily_tokens', 429, 'insufficient_quota', 1],
       ['user_rpm', 429, 'rate_limited', 1], ['user_concurrency', 429, 'rate_limited', 1],
-      ['pool_exhausted', 503, 'capacity_exhausted', 2], ['upgrade_required', 403, 'upgrade_required', 1],
+      ['pool_exhausted', 503, 'capacity_exhausted', 2], ['user_pool_share', 503, 'capacity_exhausted', 2], ['upgrade_required', 403, 'upgrade_required', 1],
       ['insufficient_credits', 402, 'insufficient_credits', 1], ['mystery', 503, 'service_unavailable', 1],
     ];
     for (const [status, http, code, reserves] of cases) {
@@ -1542,6 +1542,52 @@ try {
     }
     assert.equal(reserveError({ status: 'user_rpm' }).retryAfterSeconds, 60);
     assert.equal(reserveError({ status: 'pool_exhausted' }).retryAfterSeconds, 60);
+  });
+
+  // Fair share of a free pool (migration 20261106000000, audit F6): 'user_pool_share' is about one
+  // user, so the request moves on to the next pool and the pool is not remembered as spent for
+  // everyone; when every pool refuses it the answer says whose share it is.
+  await test('user_pool_share: the next pool serves, nothing is parked; refused everywhere it names the share', async () => {
+    const gw = accountGateway();
+    resetPoolBudgets();
+    let refusals = 1;
+    reset({ 'rpc:zerox_plan_policies_v2': policiesRpc,
+      'rpc:zerox_reserve_v2': () => Response.json([refusals-- > 0 ? { status: 'user_pool_share', reservation_id: null, plan: 'free', retry_after_seconds: 3000 } : okReserve({ plan: 'free' })]),
+      'rpc:zerox_settle_v2': () => Response.json([{ status: 'settled' }]),
+      groq: () => completion({ content: 'from the second pool' }) });
+    const served = await gw.call(accountEnv(), { model: 'groq/openai/gpt-oss-120b', messages }, { token: 'ses_pro' });
+    assert.equal(served.status, 200, 'the second pool of the model served the refused caller');
+    assert.equal(rpcCalls('zerox_reserve_v2').length, 2);
+    assert.equal(poolBudgetState('groq:openai/gpt-oss-120b:free'), null, 'the refused pool is not parked');
+    resetPoolBudgets();
+    reset({ 'rpc:zerox_plan_policies_v2': policiesRpc,
+      'rpc:zerox_reserve_v2': () => Response.json([{ status: 'user_pool_share', reservation_id: null, plan: 'free', retry_after_seconds: 3000 }]) });
+    const refused = await expectError(await gw.call(accountEnv(), { model: 'groq/openai/gpt-oss-120b', messages }, { token: 'ses_pro' }), 503, 'capacity_exhausted');
+    assert.match(refused.message, /your share of the free capacity/);
+    assert.equal(refused.retry_after_seconds, 3000);
+    assert.equal(poolBudgetState('groq:openai/gpt-oss-120b:free'), null, 'still nothing parked');
+    assert.equal(upstreamCalls().length, 0);
+  });
+
+  // A deeply nested body (a 1 MiB body can nest 100,000 levels) made the prompt estimate throw: 503
+  // service_unavailable instead of 400 (audit 3b, path-ssrf). Legitimate tool schemas nest a few levels.
+  await test('a deeply nested request body is a 400, never a 503', async () => {
+    const gw = accountGateway();
+    for (const place of ['tools', 'messages']) {
+      reset({ 'rpc:zerox_plan_policies_v2': policiesRpc, 'rpc:zerox_reserve_v2': () => Response.json([okReserve({ plan: 'free' })]) });
+      const nested = '['.repeat(30000) + ']'.repeat(30000);
+      const request = place === 'tools'
+        ? `{"model":"groq/openai/gpt-oss-120b","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"f","parameters":${nested}}}]}`
+        : `{"model":"groq/openai/gpt-oss-120b","messages":[{"role":"user","content":"hi","extra":${nested}}]}`;
+      const error = await expectError(await gw.call(accountEnv(), request, { token: 'ses_pro' }), 400, 'invalid_request');
+      assert.match(error.message, /nested/i, place);
+      assert.equal(rpcCalls('zerox_reserve_v2').length, 0, 'nothing reserved');
+    }
+    const ok = JSON.parse('{"a":'.repeat(40) + '1' + '}'.repeat(40));
+    reset({ 'rpc:zerox_plan_policies_v2': policiesRpc, 'rpc:zerox_reserve_v2': () => Response.json([okReserve({ plan: 'free' })]),
+      'rpc:zerox_settle_v2': () => Response.json([{ status: 'settled' }]), groq: () => completion({ content: 'fine' }) });
+    const served = await gw.call(accountEnv(), { model: 'groq/openai/gpt-oss-120b', messages, tools: [{ type: 'function', function: { name: 'f', parameters: ok } }] }, { token: 'ses_pro' });
+    assert.equal(served.status, 200, 'forty levels of schema are fine');
   });
 
   // Free's rolling 5-hour window (migration 20261102000000): a terminal 429 that says how many

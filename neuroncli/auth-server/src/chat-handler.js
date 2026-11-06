@@ -13,6 +13,7 @@ import { readShared } from './health-share.js';
 import { probeRoutingRows } from './health-probes.js';
 import { callerCountry, loadCatalog, loadPlanPolicies, planPolicy, poolSecret, resolveModelId } from './catalog.js';
 import { touchVaultKey } from './provider-keys.js';
+import { jsonNestingExceeds } from './request-limits.js';
 import { billableUsage, estimateOutputTokens, estimatePromptTokens, reserveCostMicrousd, utf8Bytes } from './pricing.js';
 import { exhaustedBudget, notePoolExhausted, notePoolReserved, poolBudgetState } from './pool-budget.js';
 import { loadOffers, offerIdFor } from './oiop/offers.js';
@@ -210,6 +211,10 @@ async function orderBySharedHealth(env, candidates, tracker, sharedHealth = null
 
 // A paid model whose daily spend cap (p_pool.cpd) is spent for every user until 00:00 UTC.
 function spendLimitMessage(exhausted) {
+  if (exhausted.length && exhausted.every(row => row.budget === 'share')) {
+    return 'You have used your share of the free capacity for these models today. It resets at 00:00 UTC; ' +
+      'try another model, or upgrade for dedicated capacity.';
+  }
   if (!exhausted.length || !exhausted.every(row => row.budget === 'cpd')) return undefined;
   const names = [...new Set(exhausted.map(row => row.model))];
   return `${names.length === 1 ? names[0] : 'This model'} has reached today's spending limit on Zero-X. ` +
@@ -272,6 +277,11 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
     if (utf8Bytes(raw) > MAX_BODY_BYTES) return fail('invalid_request', { message: 'Completion request exceeds 1 MiB.' });
     let body = null;
     try { body = JSON.parse(raw); } catch { /* reported as invalid below */ }
+    // Before anything walks or serialises the body (audit 3b): a body nested tens of thousands of
+    // levels deep passes the size limit and used to crash the estimate with a 503.
+    if (jsonNestingExceeds(body, positiveInt(env.MAX_JSON_DEPTH, 128))) {
+      return fail('invalid_request', { message: 'The request body is nested too deeply.' });
+    }
     const invalid = validateCompletionBody(body);
     if (invalid) return fail('invalid_request', { message: invalid });
 
@@ -701,6 +711,13 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
               return fail(error.code, error);
             }
             if (candidate === first) firstMiss = row.status;
+            if (row.status === 'user_pool_share') {
+              // This caller has used its fair share of the pool (audit F6). Other users are not
+              // affected, so the pool is not noted as spent; the next candidate is tried.
+              exhausted.push({ ...row, budget: 'share', model: candidate.entry.display_name });
+              if (!paidLeft(index)) releaseHeld(index);
+              continue;
+            }
             if (PAID_DENIED_STATUSES.has(row.status)) {
               paidDenied = row;
               releaseHeld(index);

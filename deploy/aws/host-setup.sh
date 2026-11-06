@@ -6,7 +6,9 @@
 #
 # Installs from this directory:
 #   - zerox-gateway@.service, zerox-cron.service and .timer, cloudflared.service (once
-#     /etc/cloudflared/token exists, if a tunnel already runs from a unit of its own);
+#     /etc/cloudflared/token exists, if a tunnel already runs from a unit of its own), and the
+#     system user cloudflared it runs as (no home, no shell; the token stays root's, systemd
+#     hands the service a copy through LoadCredential=);
 #   - /etc/sudoers.d/zerox-deploy, checked with visudo before and after; cloud-init's older rule
 #     for deploy (restart of the single-instance unit) is removed, so the file is all deploy may
 #     run as root, and the run fails if any other sudo rule or an administrators group names deploy;
@@ -40,6 +42,11 @@ fail() { echo "host-setup: $*" >&2; exit 1; }
 # ── What the first boot (cloud-init's zerox-bootstrap) leaves behind ──
 for user in zerox deploy; do id "$user" >/dev/null 2>&1 || fail "user $user is missing: the first boot did not finish (README.md, \"First boot\")"; done
 [ -d "$sys/opt/zerox/releases" ] && [ -d "$sys/etc/zerox" ] || fail "/opt/zerox/releases or /etc/zerox is missing: run sudo /usr/local/sbin/zerox-bootstrap"
+# The tunnel's own user (cloudflared.service: User=cloudflared); the first boot made only zerox and deploy.
+if ! id cloudflared >/dev/null 2>&1; then
+  useradd --system --user-group --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin cloudflared
+  echo "created the system user cloudflared"
+fi
 # reusePort (two instances on one port) needs Node 22.12 or later.
 node -e 'const [major, minor] = process.versions.node.split(".").map(Number); process.exit(major > 22 || (major === 22 && minor >= 12) ? 0 : 1)' ||
   fail "node $(node --version) is older than 22.12"

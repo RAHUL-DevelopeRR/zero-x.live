@@ -5,6 +5,12 @@
 # process list and the journal, which the deploy user can read. cloudflared only dials out (QUIC
 # on UDP 7844, HTTP/2 on TCP 7844 as fallback); /ready on the metrics port answers 200 while at
 # least one connection to Cloudflare is up (loopback only).
+#
+# Runs as the unprivileged system user cloudflared (host-setup.sh creates it: no home, no shell)
+# in the gateway's sandbox (zerox-gateway@.service): outbound sockets need no capability. The
+# token stays root's (0600): systemd reads it as root through LoadCredential= and hands the
+# process a copy under $CREDENTIALS_DIRECTORY, which only this service sees, so the user
+# cloudflared never has a file it could read on the disk.
 [Unit]
 Description=Cloudflare Tunnel client (zerox-aws)
 After=network-online.target
@@ -12,10 +18,40 @@ Wants=network-online.target
 
 [Service]
 Type=notify
+User=cloudflared
+Group=cloudflared
 TimeoutStartSec=15
-ExecStart=/usr/bin/cloudflared --no-autoupdate tunnel --metrics 127.0.0.1:20241 run --token-file /etc/cloudflared/token
+LoadCredential=token:/etc/cloudflared/token
+ExecStart=/usr/bin/cloudflared --no-autoupdate tunnel --metrics 127.0.0.1:20241 run --token-file ${CREDENTIALS_DIRECTORY}/token
 Restart=on-failure
 RestartSec=5s
+MemoryMax=256M
+TasksMax=128
+
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RemoveIPC=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+UMask=0077
 
 [Install]
 WantedBy=multi-user.target

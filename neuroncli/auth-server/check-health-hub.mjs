@@ -168,6 +168,14 @@ try {
   }
   console.log('ok - lineup: with Gemini and Workers AI switched off by configuration, no check or test request goes to them');
 
+  // A check carries a provider key, so a redirect is never followed (audit 3b).
+  {
+    const inits = [];
+    const redirectHub = new HealthHub(fakeState(), ENV, { now: clock, fetchImpl: async (url, init) => { inits.push(init); return new Response(null, { status: 302, headers: { Location: 'https://evil.example/' } }); } });
+    const result = await redirectHub.getJson('redirect-check', 'https://provider.test/v1/models', { Authorization: 'Bearer test-key' });
+    assert.equal(inits[0].redirect, 'manual', 'the fetch does not follow redirects');
+    assert.equal(result.status, 302, 'a redirect is a failed check, not a followed request');
+  }
   // Z.ai's free models serve one request at a time per account: a test request or canary would
   // take a user's slot, so they get none, and there is no free list or status page to check.
   {

@@ -17,7 +17,7 @@ import { LIST_SOURCES, MODELS_DEV_URL, parseKilo, parseLlm7, parseNvidia, parseO
 import { OMNIROUTE_CATALOG_URL, omnirouteDiff, parseOmnirouteCatalog } from './src/discovery/omniroute.js';
 import { parseResearchAnswer, researchBudget, researchCostMicrousd, researchRows, RESEARCH_MODEL } from './src/discovery/research.js';
 import { verificationTarget, verifyCandidate } from './src/discovery/verify.js';
-import { REVIEW_PAGE } from './src/discovery/review-page.js';
+import { REVIEW_PAGE, REVIEW_SCRIPT, REVIEW_STYLE } from './src/discovery/review-page.js';
 import { DAY, discoveryJobs, researchEnabled, runDiscoveryTick, WEEK } from './src/discovery/jobs.js';
 import { anthropicFetch } from './src/anthropic-transport.js';
 import app from './src/index.js';
@@ -554,9 +554,25 @@ try {
   assert.match(managed.body.error.message, /acme\/coder-pro:free is a catalog row \(active\); disable it on \/admin\/models/);
   assert.equal((await sql("SELECT status FROM public.zerox_catalog_models WHERE id = 'acme/coder-pro:free'"))[0].status, 'active');
   assert.ok((await servedIds({ ...adminEnv })).includes('acme/coder-pro:free'), 'the active row keeps serving and nothing claims otherwise');
-  assert.match(REVIEW_PAGE, /row\.promoted && !row\.catalog_model_id\) button\('Remove legacy row', 'demote'\)/,
+  assert.match(REVIEW_SCRIPT, /row\.promoted && !row\.catalog_model_id\) button\('Remove legacy row', 'demote'\)/,
     'the page offers no demote next to a catalog row');
-  assert.ok(!REVIEW_PAGE.includes('Removed from the catalog.'));
+  assert.ok(!REVIEW_SCRIPT.includes('Removed from the catalog.'));
+  // The page, its script and its stylesheet are three files under the strict operator policy (audit F15).
+  assert.ok(!/<script>|<style|\sstyle=|\son[a-z]+=/.test(REVIEW_PAGE), 'no inline script, style or handler in the page');
+  for (const [path, type, text] of [['/admin/discovery/review.js', /^text\/javascript/, REVIEW_SCRIPT], ['/admin/discovery/review.css', /^text\/css/, REVIEW_STYLE]]) {
+    const file = await call(path, { token: null });
+    assert.equal(file.status, 200, path);
+    assert.match(file.headers.get('content-type'), type);
+    assert.equal(file.text, text);
+  }
+  assert.match(page.text, /<script src="\/admin\/discovery\/review\.js"><\/script>/);
+  const legacyPage = await app.request('https://zero-x.live/neuroncli/auth-server/admin/discovery', {}, adminEnv);
+  assert.match(await legacyPage.text(), /href="\/neuroncli\/auth-server\/admin\/discovery\/review\.css"/, 'the legacy mount keeps its prefix');
+  for (const path of ['/admin/discovery', '/admin/discovery/review.js', '/admin/discovery/review.css']) {
+    const policy = (await call(path, { token: null })).headers.get('content-security-policy');
+    assert.match(policy, /^default-src 'none'; script-src 'self'; script-src-attr 'none'; style-src 'self';/, `${path}: the strict operator policy, enforced`);
+    assert.ok(!policy.includes('unsafe-inline'), path);
+  }
   assert.equal((await call('/admin/catalog/disable', { method: 'POST', body: { model_id: 'acme/coder-pro:free' } })).status, 200);
   // A legacy row without a catalog row can still be disabled; the answer says it was never served.
   const [legacy] = await sql(`INSERT INTO public.zerox_provider_candidates (source, provider, model_id, status)

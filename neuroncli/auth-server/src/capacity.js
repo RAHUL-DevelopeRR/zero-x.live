@@ -29,6 +29,9 @@ export const RESERVE_ERRORS = Object.freeze({
   user_concurrency: 'rate_limited',
   insufficient_credits: 'insufficient_credits',
   pool_exhausted: 'capacity_exhausted',
+  // This user has used its fair share of a free pool (migration 20261106000000, audit F6): the pool
+  // is not exhausted for anyone else, so it is skipped for this request without being remembered.
+  user_pool_share: 'capacity_exhausted',
 });
 
 // Statuses about the caller rather than the pool: failover cannot help.

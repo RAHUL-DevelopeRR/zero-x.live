@@ -688,6 +688,45 @@ try {
   assert.equal((await poolRow('pool/unlimited', 'free', 'day')).requests, 2, 'counters are kept even without limits');
   ok('pool_exhausted for rpm/tpm/rpd/tpd shared across users, retry hints, per-tier pools, unlimited budgets');
 
+  // ---------------------------------------------------------------- fair share of free pools (audit F6)
+  // One user may take at most a quarter of a free pool's daily request (rpd) and token (tpd)
+  // budgets; the refusal is 'user_pool_share', not pool_exhausted: the pool is not spent for others.
+  await clockHeadroom();
+  const [shareHog, shareOther, sharePaid] = [await newUser('max'), await newUser('max'), await newUser('max', { credits: 1000000 })];
+  const sharePool = { rpd: 8 };
+  for (let i = 0; i < 2; i++) assert.equal((await reserve(shareHog, { p_model: 'share/rpd', p_pool: sharePool })).status, 'ok', `request ${i + 1} of the share`);
+  const shareRefused = await reserve(shareHog, { p_model: 'share/rpd', p_pool: sharePool });
+  assert.equal(shareRefused.status, 'user_pool_share', 'a quarter of 8 requests is 2');
+  assert.equal(shareRefused.reservation_id, null);
+  const shareRetry = Math.ceil((Date.parse(nextResets) - Date.now()) / 1000);
+  assert.ok(Math.abs(shareRefused.retry_after_seconds - shareRetry) <= 5, 'retries at UTC midnight');
+  assert.equal((await poolRow('share/rpd', 'free', 'day')).requests, 2, 'a refused request counts nowhere');
+  assert.equal((await reserve(shareOther, { p_model: 'share/rpd', p_pool: sharePool })).status, 'ok', 'another user still has its share of the same pool');
+  assert.equal((await reserve(shareHog, { p_model: 'share/other', p_pool: sharePool })).status, 'ok', 'each pool has its own share');
+  assert.equal((await reserve(shareHog, { p_model: 'share/rpd', p_pool: { rpd: 8, rpm: 100 }, p_pool_key: 'vault:key-b' })).status, 'ok', 'and each pool key');
+  assert.equal((await reserve(sharePaid, { p_model: 'share/paid', p_tier: 'paid', p_cost_microusd: 10, p_pool: { rpd: 4 } })).status, 'ok');
+  assert.equal((await reserve(sharePaid, { p_model: 'share/paid', p_tier: 'paid', p_cost_microusd: 10, p_pool: { rpd: 4 } })).status, 'ok', 'paid pools have no share');
+  // A released (refunded) reservation does not count against the share.
+  const refunded = await reserve(shareOther, { p_model: 'share/rpd', p_pool: sharePool });
+  assert.equal(refunded.status, 'ok');
+  assert.equal((await reserve(shareOther, { p_model: 'share/rpd', p_pool: sharePool })).status, 'user_pool_share');
+  await sql(`UPDATE public.zerox_reservations SET status = 'released' WHERE id = $1`, [refunded.reservation_id]);
+  assert.equal((await reserve(shareOther, { p_model: 'share/rpd', p_pool: sharePool })).status, 'ok', 'released reservations free their share');
+  // Tokens: refused once the user has used a quarter of tpd, never for one large request alone.
+  const tokenPool = { tpd: 4000 };
+  assert.equal((await reserve(shareHog, { p_model: 'share/tpd', p_tokens: 3000, p_pool: tokenPool })).status, 'ok',
+    'a request larger than the whole share is allowed while the share is unused');
+  assert.equal((await reserve(shareHog, { p_model: 'share/tpd', p_tokens: 10, p_pool: tokenPool })).status, 'user_pool_share');
+  assert.equal((await reserve(shareOther, { p_model: 'share/tpd', p_tokens: 500, p_pool: tokenPool })).status, 'ok');
+  // The pool's own budget is still judged first for what is left of it: a full pool says pool_exhausted.
+  const fullPool = { rpd: 2 };
+  const fullUsers = [await newUser('max'), await newUser('max')];
+  assert.equal((await reserve(fullUsers[0], { p_model: 'share/full', p_pool: fullPool })).status, 'ok');
+  assert.equal((await reserve(fullUsers[1], { p_model: 'share/full', p_pool: fullPool })).status, 'ok');
+  assert.equal((await reserve(await newUser('max'), { p_model: 'share/full', p_pool: fullPool })).status, 'pool_exhausted');
+  assert.equal((await reserve(shareHog, { p_model: 'share/unbudgeted', p_pool: { rpm: 5 } })).status, 'ok', 'no daily budget, no share');
+  ok('fair share: a user takes at most a quarter of a free pool per day (user_pool_share, midnight retry), per pool key, not on paid pools, released reservations free it, other users unaffected');
+
   // ---------------------------------------------------------------- Groq free pool: turns per minute
   // E2E finding (2026-10-21): a Groq reservation held the prompt plus max_tokens fitted to the
   // 8K TPM budget, i.e. the whole minute for every user, so a 3-turn tool task on gpt-oss-120b got
@@ -1829,7 +1868,8 @@ try {
   // check-catalog-db.mjs).
   const downFiles = (await readdir(join(root, 'migrations/down'))).filter(file => !file.endsWith('.down.sql')).sort();
   assert.deepEqual(downFiles, ['20261028000000_reservation_leases.sql', '20261029001000_pool_concurrency.sql',
-    '20261102000000_free_token_window.sql', '20261104000000_health_probes.sql', '20261104300000_free_plan_features_lineup.sql']);
+    '20261102000000_free_token_window.sql', '20261104000000_health_probes.sql', '20261104300000_free_plan_features_lineup.sql',
+    '20261106000000_pool_fair_share.sql']);
   for (const file of downFiles) {
     const migration = migrations.find(candidate => candidate.file === file);
     assert.ok(migration, `${file} undoes a migration of the same name`);
