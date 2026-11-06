@@ -1,44 +1,85 @@
 /* Homepage (Neuron landing). Builds on zx-tokens.css; colours come from its tokens so the
-   light theme follows automatically. The terminal mock stays dark in both themes. */
+   light theme follows automatically. The terminal mock stays dark in both themes. The live model
+   pane is shared with the Neuron CLI page, so its styles live in zx-tokens.css. */
 
+/* Hero */
 .zx-home-hero {
   position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 40px;
   align-items: center;
-  padding-block: 48px 24px;
+  padding-block: 40px 24px;
 }
 .zx-home-hero::before {
   content: '';
   position: absolute;
-  inset: -40px 0 auto;
-  height: 420px;
+  inset: -64px 0 auto;
+  height: 560px;
   z-index: -1;
   pointer-events: none;
-  background: radial-gradient(60% 60% at 20% 20%, var(--zx-accent-soft), transparent 70%),
-              radial-gradient(40% 50% at 85% 30%, var(--zx-purple-soft), transparent 70%);
+  background:
+    radial-gradient(45% 55% at 18% 18%, rgba(47, 124, 246, .20), transparent 70%),
+    radial-gradient(30% 40% at 52% 8%, rgba(52, 168, 83, .10), transparent 70%),
+    radial-gradient(35% 45% at 88% 28%, rgba(234, 67, 53, .09), transparent 70%),
+    radial-gradient(30% 40% at 70% 70%, rgba(251, 188, 5, .07), transparent 70%);
+}
+/* A faint grid behind the hero, like graph paper, fading out at the edges. */
+.zx-home-hero::after {
+  content: '';
+  position: absolute;
+  inset: -64px 0 auto;
+  height: 560px;
+  z-index: -1;
+  pointer-events: none;
+  background-image: linear-gradient(var(--zx-border) 1px, transparent 1px), linear-gradient(90deg, var(--zx-border) 1px, transparent 1px);
+  background-size: 44px 44px;
+  -webkit-mask-image: radial-gradient(60% 70% at 40% 30%, #000, transparent 80%);
+  mask-image: radial-gradient(60% 70% at 40% 30%, #000, transparent 80%);
+  opacity: .55;
 }
 .zx-home-hero > * { min-width: 0; }
-.zx-home-hero h1 { font-size: clamp(2.25rem, 7.5vw, 4rem); letter-spacing: -.025em; max-width: 14ch; }
+.zx-home-hero h1 { font-size: clamp(2.3rem, 8vw, 4.1rem); letter-spacing: -.028em; line-height: 1.04; max-width: 13ch; margin-bottom: 18px; }
 /* The eyebrow sits inside the h1 so the heading names Zero-X; it still looks like a standalone eyebrow. */
-.zx-home-hero h1 .zx-eyebrow { display: block; width: max-content; font-weight: 400; line-height: 1.5; }
-.zx-home-hero .zx-lead { max-width: 620px; }
-@media (min-width: 960px) {
-  .zx-home-hero { grid-template-columns: minmax(0, 1.05fr) minmax(0, .95fr); gap: 56px; padding-block: 88px 40px; }
+.zx-home-hero h1 .zx-eyebrow { display: flex; width: max-content; font-weight: 400; line-height: 1.5; letter-spacing: .1em; margin-bottom: 16px; }
+.zx-home-hero .zx-lead { max-width: 560px; font-size: clamp(1.05rem, 2.6vw, 1.2rem); color: var(--zx-muted); }
+.zx-home-release {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin: 0 0 22px;
+  padding: 5px 14px 5px 6px;
+  border: 1px solid var(--zx-border-strong);
+  border-radius: 14px;
+  background: var(--zx-surface);
+  font-size: .86rem;
+  color: var(--zx-muted);
+}
+.zx-home-release a { white-space: nowrap; }
+@media (min-width: 1000px) {
+  .zx-home-hero { grid-template-columns: minmax(0, 1.08fr) minmax(0, .92fr); gap: 56px; padding-block: 80px 48px; }
 }
 
-/* Install box */
+/* Install box: tabs as a segmented strip above the command */
 .zx-home-install {
-  margin: 24px 0 20px;
-  padding: 8px 16px 4px;
-  border: 1px solid var(--zx-border);
+  margin: 26px 0 20px;
+  padding: 6px;
+  border: 1px solid var(--zx-border-strong);
   border-radius: var(--zx-radius-lg);
   background: var(--zx-surface);
+  box-shadow: var(--zx-shadow-sm);
 }
-.zx-home-install .zx-home-tabs { margin: 0 -16px 14px; padding-inline: 8px; }
-.zx-home-install .zx-code { margin-bottom: 8px; }
-.zx-home-install .zx-help { margin-bottom: 10px; }
+.zx-home-install .zx-home-tabs { flex-wrap: wrap; gap: 2px; margin: 0 0 6px; padding: 2px; border: 0; border-radius: 11px; background: var(--zx-bg-raised); scrollbar-width: none; }
+.zx-home-install .zx-home-tabs::-webkit-scrollbar { display: none; }
+.zx-home-install .zx-tab { min-height: 38px; padding: 6px 12px; border: 0; border-radius: 9px; font-size: .88rem; }
+.zx-home-install .zx-tab[aria-selected="true"] { background: var(--zx-card-hover); color: var(--zx-heading); box-shadow: 0 0 0 1px var(--zx-border-strong) inset; }
+.zx-home-install .zx-tab:focus-visible { box-shadow: 0 0 0 2px var(--zx-accent-text) inset; border-radius: 9px; }
+.zx-home-install .zx-install { padding: 0 2px 4px; }
+.zx-home-install .zx-code { margin-bottom: 8px; border-color: var(--zx-border); }
+.zx-home-install .zx-code pre { font-size: .9rem; }
+.zx-home-install .zx-code pre::before { content: '$ '; color: var(--zx-faint); user-select: none; }
+.zx-home-install .zx-help { padding: 0 10px 6px; }
 
 .zx-home-facts {
   display: flex;
@@ -46,9 +87,9 @@
   gap: 8px 20px;
   list-style: none;
   padding: 0;
-  margin: 20px 0 0;
+  margin: 22px 0 0;
   color: var(--zx-muted);
-  font-size: .93rem;
+  font-size: .9rem;
 }
 .zx-home-facts li { position: relative; margin: 0; padding-left: 20px; }
 .zx-home-facts li::before {
@@ -58,26 +99,28 @@
   top: .5em;
   width: 9px;
   height: 5px;
-  border-left: 2px solid var(--zx-accent-text);
-  border-bottom: 2px solid var(--zx-accent-text);
+  border-left: 2px solid var(--zx-green);
+  border-bottom: 2px solid var(--zx-green);
   transform: rotate(-45deg);
 }
 
 /* Terminal mock */
 .zx-term {
+  position: relative;
   margin: 0;
   min-width: 0;
   border: 1px solid rgba(255, 255, 255, .12);
   border-radius: var(--zx-radius-lg);
   background: #0B0B0E;
-  box-shadow: var(--zx-shadow);
+  box-shadow: var(--zx-shadow), 0 0 0 1px rgba(47, 124, 246, .12);
   overflow: hidden;
 }
+.zx-term::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px; background: var(--zx-brand-line); }
 .zx-term__bar {
   display: flex;
   align-items: center;
   gap: 7px;
-  padding: 11px 14px;
+  padding: 12px 14px;
   border-bottom: 1px solid rgba(255, 255, 255, .08);
   background: #121216;
 }
@@ -97,10 +140,10 @@
   overflow-wrap: anywhere;
   font-variant-ligatures: none;
 }
-.zx-term__prompt { color: #00E5FF; font-weight: 700; }
+.zx-term__prompt { color: #7AAEFF; font-weight: 700; }
 .zx-term__dim { color: #8B8B97; }
 .zx-term__tool { color: #A58AFF; font-weight: 600; }
-.zx-term__cmd { color: #00E5FF; }
+.zx-term__cmd { color: #7AAEFF; }
 .zx-term__add { color: #4ADE80; }
 .zx-term__del { color: #F87171; }
 .zx-term__ok { color: #4ADE80; }
@@ -112,88 +155,38 @@
   color: #9999A5;
 }
 
-/* Section headings with a control on the right */
-.zx-home-heading { align-items: flex-end; margin-bottom: 8px; }
-.zx-home-heading h2 { margin-bottom: 8px; }
+/* Section headings */
+.zx-home-heading { margin-bottom: 20px; }
+.zx-home-heading h2 { margin-bottom: 10px; }
+.zx-home-heading > .zx-muted { max-width: 820px; }
+.zx-home-heading.zx-row { align-items: flex-end; }
 .zx-home-heading .zx-segmented { margin-bottom: 12px; }
 
 /* Steps */
-.zx-home-steps { margin-top: 24px; max-width: 760px; }
+.zx-home-steps { margin-top: 24px; max-width: 780px; }
 .zx-home-steps > li { margin-bottom: 28px; }
 .zx-home-steps > li + li { margin-top: 0; }
 
 /* Feature cards */
+.zx-feature { transition: border-color .15s ease; }
+.zx-feature:hover { border-color: var(--zx-border-strong); }
 .zx-feature h3 { font-size: 1.05rem; }
+.zx-feature h3::before { content: ''; display: block; width: 28px; height: 3px; margin-bottom: 14px; border-radius: 3px; background: var(--zx-blue); }
+.zx-home-features .zx-feature:nth-child(4n + 2) h3::before { background: var(--zx-red); }
+.zx-home-features .zx-feature:nth-child(4n + 3) h3::before { background: var(--zx-yellow); }
+.zx-home-features .zx-feature:nth-child(4n + 4) h3::before { background: var(--zx-green); }
 .zx-feature p { margin: 0; font-size: .95rem; }
-
-/* Model status legend and list */
-.zx-home-legend {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 16px;
-  list-style: none;
-  padding: 0;
-  margin: 0 0 12px;
-  font-size: .88rem;
-  color: var(--zx-muted);
-}
-.zx-home-legend li { display: inline-flex; align-items: center; gap: 8px; margin: 0; }
-.zx-home-legend li::before { content: ''; width: 9px; height: 9px; border-radius: 50%; background: var(--zx-tone, var(--zx-success)); }
-[data-tone="ok"] { --zx-tone: var(--zx-success); }
-[data-tone="warn"], [data-tone="busy"] { --zx-tone: var(--zx-warning); }
-[data-tone="off"] { --zx-tone: var(--zx-faint); }
-[data-tone="locked"] { --zx-tone: var(--zx-purple); }
-
-.zx-models {
-  list-style: none;
-  padding: 0;
-  margin: 20px 0 12px;
-  border: 1px solid var(--zx-border);
-  border-radius: var(--zx-radius);
-  background: var(--zx-surface);
-  overflow: hidden;
-}
-.zx-model {
-  display: grid;
-  grid-template-columns: 10px minmax(0, 1fr) auto;
-  grid-template-areas: "dot name status" ". id id" ". meta meta" ". tags tags";
-  gap: 2px 12px;
-  align-items: center;
-  margin: 0;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--zx-border);
-  transition: opacity .3s ease;
-}
-.zx-model:last-child { border-bottom: 0; }
-.zx-model + .zx-model { margin-top: 0; }
-.zx-model__dot { grid-area: dot; width: 10px; height: 10px; border-radius: 50%; background: var(--zx-tone); }
-.zx-model[data-tone="ok"] .zx-model__dot { box-shadow: 0 0 0 4px var(--zx-success-soft); }
-.zx-model__name { grid-area: name; font-weight: 700; color: var(--zx-heading); }
-.zx-model__id { grid-area: id; justify-self: start; font-size: .8rem; }
-.zx-model__meta { grid-area: meta; font-size: .88rem; color: var(--zx-muted); }
-.zx-model__tags { grid-area: tags; display: flex; flex-wrap: wrap; gap: 6px; }
-.zx-model__tags:empty { display: none; }
-.zx-model__status { grid-area: status; font-size: .85rem; font-weight: 600; color: var(--zx-tone); text-align: right; }
-.zx-model[data-tone="off"] { opacity: .5; }
-.zx-model[data-tone="locked"] { opacity: .8; }
-@media (min-width: 900px) {
-  .zx-model {
-    grid-template-columns: 10px minmax(0, 1.7fr) minmax(0, 1.1fr) minmax(0, 1.3fr) 170px;
-    grid-template-areas: "dot name meta tags status" ". id meta tags status";
-    gap: 2px 20px;
-  }
-}
 
 /* Docs links */
 .zx-doc-link { display: block; text-decoration: none; color: inherit; }
 .zx-doc-link h3 { font-size: 1.05rem; color: var(--zx-heading); }
 .zx-doc-link h3::after { content: ' \2192'; color: var(--zx-accent-text); }
 .zx-doc-link p { margin: 0; }
-.zx-doc-link:hover { border-color: var(--zx-accent); color: inherit; }
+.zx-doc-link:hover { color: inherit; }
 
 /* Products */
 .zx-product { display: flex; flex-direction: column; gap: 12px; text-decoration: none; color: inherit; }
-a.zx-product:hover { border-color: var(--zx-accent); color: inherit; }
+a.zx-product:hover { color: inherit; }
 .zx-product__mark { width: 40px; height: 40px; object-fit: contain; }
 .zx-product__name { font: 700 1.15rem var(--zx-font-display); color: var(--zx-heading); }
 .zx-product__more { margin-top: auto; color: var(--zx-accent-text); font-weight: 600; }
@@ -201,13 +194,16 @@ a.zx-product:hover { border-color: var(--zx-accent); color: inherit; }
 
 /* Closing call to action */
 .zx-home-cta {
+  position: relative;
   margin-block: 24px 48px;
   padding: 40px var(--zx-gutter);
   text-align: center;
   border: 1px solid var(--zx-border);
   border-radius: var(--zx-radius-lg);
   background: radial-gradient(70% 120% at 50% 0%, var(--zx-accent-soft), transparent 70%), var(--zx-surface);
+  overflow: hidden;
 }
+.zx-home-cta::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; background: var(--zx-brand-line); }
 .zx-home-cta .zx-code { max-width: 560px; margin: 20px auto; text-align: left; }
 .zx-home-cta .zx-row { justify-content: center; }
 @media (min-width: 960px) { .zx-home-cta { max-width: calc(var(--zx-max) - 48px); padding: 56px 32px; } }
@@ -215,4 +211,5 @@ a.zx-product:hover { border-color: var(--zx-accent); color: inherit; }
 /* Phones: wrap long commands so they never slide under the Copy button */
 @media (max-width: 639px) {
   [data-home] .zx-code--copy pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .zx-home-hero .zx-row .zx-btn { flex: 1 1 auto; }
 }

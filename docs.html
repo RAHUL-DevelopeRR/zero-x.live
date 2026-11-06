@@ -25,13 +25,15 @@
   <link rel="stylesheet" href="/site-fonts.css">
   <link rel="stylesheet" href="/zx-tokens.css">
   <script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"TechArticle","@id":"https://zero-x.live/docs#article","headline":"Neuron CLI and Zero-X API documentation","url":"https://zero-x.live/docs","about":{"@id":"https://zero-x.live/neuron-cli#software"},"publisher":{"@id":"https://zero-x.live/#organization"},"inLanguage":"en"},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Zero-X","item":"https://zero-x.live/"},{"@type":"ListItem","position":2,"name":"Docs","item":"https://zero-x.live/docs"}]}]}</script>
+  <script type="module" src="/site-nav.js"></script>
 </head>
 <body>
   <a class="zx-skip" href="#main">Skip to content</a>
   <header class="zx-header">
     <div class="zx-container zx-header__inner">
-      <a class="zx-brand" href="/"><img src="/Assets/zerox-favicon-32.png" width="28" height="28" alt="">Zero-X</a>
-      <nav class="zx-nav" aria-label="Main">
+      <a class="zx-brand" href="/"><img src="/Assets/zerox-mark.svg" width="28" height="28" alt="">Zero-X</a>
+      <button class="zx-nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" hidden><span class="zx-nav-toggle__bars" aria-hidden="true"></span>Menu</button>
+      <nav class="zx-nav" id="site-nav" aria-label="Main">
         <a href="/neuron-cli">Neuron CLI</a>
         <a href="/pricing">Pricing</a>
         <a href="/docs" aria-current="page">Docs</a>
@@ -39,13 +41,14 @@
       </nav>
     </div>
   </header>
+  <script>(function(h){var b=h&&h.querySelector('.zx-nav-toggle');if(b&&'noModule'in HTMLScriptElement.prototype){h.dataset.nav='closed';b.hidden=false}})(document.querySelector('.zx-header'))</script>
 
   <main id="main" class="zx-container">
     <div class="zx-hero">
       <nav class="zx-breadcrumb" aria-label="Breadcrumb"><a href="/">Zero-X</a> / Docs</nav>
       <h1>Neuron CLI and Zero-X API docs</h1>
       <p class="zx-lead">Everything you need to install Neuron, sign in, configure it, and call the OpenAI-compatible gateway directly.</p>
-      <p class="zx-help">These docs cover Neuron 7.0.0-alpha.2, a GitHub pre-release published on 26 October 2026. The full reference is the <a href="https://github.com/RAHUL-DevelopeRR/neuron-v2/blob/HEAD/USAGE.md">usage guide</a>; see the <a href="https://github.com/RAHUL-DevelopeRR/neuron-v2/blob/HEAD/CHANGELOG.md">changelog</a> for known limitations.</p>
+      <p class="zx-help">These docs cover Neuron 7.0.0-alpha.4, a GitHub pre-release published on 3 November 2026. It adds a status bar under the prompt in the full-screen UI: the model, thinking level, folder and branch, permission mode and how full the context is. The full reference is the <a href="https://github.com/RAHUL-DevelopeRR/neuron-v2/blob/HEAD/USAGE.md">usage guide</a>; see the <a href="https://github.com/RAHUL-DevelopeRR/neuron-v2/blob/HEAD/CHANGELOG.md">changelog</a> for known limitations.</p>
     </div>
     <div class="zx-docs">
       <nav class="zx-toc" aria-label="On this page">
@@ -65,11 +68,11 @@
         <section id="quickstart" aria-labelledby="quickstart-title">
           <h2 id="quickstart-title">Quickstart</h2>
           <ol>
-            <li>Install: on macOS and Linux, <code>curl -fsSL https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.2/install.sh | sh -s -- --version 7.0.0-alpha.2</code>; on Windows (PowerShell 5.1 or 7), <code>&amp; ([scriptblock]::Create((irm https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.2/install.ps1))) -Version 7.0.0-alpha.2</code>. Not on npm or pip yet: npm still serves the old, unsupported 6.2.0 build and PyPI the old, unsupported <code>neuroncli</code> 6.2.4. Every install option is on <a href="/download">the download page</a>.</li>
+            <li>Install with npm in any terminal (needs Node.js 22.14 or later): <code>npm install -g @zero-x.live/neuron</code>. Or with pip (Python 3.8 or later): <code>python -m pip install --pre neuroncli</code>; keep <code>--pre</code> while Neuron 7 is a pre-release, or pip installs the old, unsupported 6.2.4. Without Node.js or Python, use an install script: in a macOS or Linux terminal, <code>curl -fsSL https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.4/install.sh | sh -s -- --version 7.0.0-alpha.4</code>; in Windows PowerShell, <code>&amp; ([scriptblock]::Create((irm https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.4/install.ps1))) -Version 7.0.0-alpha.4 -AddToPath</code>; in Command Prompt (cmd.exe), <code>powershell -NoProfile -ExecutionPolicy Bypass -Command "&amp; ([scriptblock]::Create((irm https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.4/install.ps1))) -Version 7.0.0-alpha.4 -AddToPath"</code>. On Windows, <code>-AddToPath</code> puts Neuron on your user PATH: open a new terminal before you run it. Every install option is on <a href="/download">the download page</a>.</li>
             <li>Sign in: <code>neuron login</code> prints <code>https://neuron.zero-x.live/device</code> and a short code. Open it in any browser, sign in, check the code and choose <strong>Approve</strong>. The code expires after 10 minutes.</li>
             <li>Run <code>neuron</code> inside a project; on a terminal it opens the full-screen UI. The UI cannot trust a folder yet: run <code>neuron --no-tui</code> there once and press 1, or add the folder to <code>trustedRoots</code> in <code>~/.neuron/settings.json</code>. Until then the folder's own settings, hooks and MCP servers are ignored. <a href="/docs/trust">Security and trust</a> explains what trusting a folder allows.</li>
           </ol>
-          <div class="zx-code"><pre><code>curl -fsSL https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.2/install.sh | sh -s -- --version 7.0.0-alpha.2
+          <div class="zx-code"><span class="zx-code__label">Any terminal: macOS, Linux or Windows</span><pre><code>npm install -g @zero-x.live/neuron
 neuron login
 cd path/to/project
 neuron</code></pre></div>
@@ -87,7 +90,7 @@ neuron</code></pre></div>
                 <tr><th scope="row"><code>neuron prompt "…"</code>, <code>neuron -p "…"</code></th><td>Run one prompt and exit (scripts and CI). In a script, a tool call that needs approval is denied, and a run that denied one exits with code 2.</td></tr>
                 <tr><th scope="row"><code>neuron --continue [CHAT]</code></th><td>Reopen the latest chat for this folder (or CHAT) in the full-screen UI.</td></tr>
                 <tr><th scope="row"><code>neuron --resume latest</code></th><td>Continue the newest saved line-REPL session.</td></tr>
-                <tr><th scope="row"><code>neuron --model &lt;id&gt;</code></th><td>Start with a specific model, for example <code>auto</code> or <code>gemini/gemini-2.5-flash</code>.</td></tr>
+                <tr><th scope="row"><code>neuron --model &lt;id&gt;</code></th><td>Start with a specific model, for example <code>auto</code> or <code>openai/gpt-oss-120b</code>.</td></tr>
                 <tr><th scope="row"><code>neuron --permission-mode &lt;mode&gt;</code></th><td><code>read-only</code>, <code>workspace-write</code> (the default) or <code>danger-full-access</code>.</td></tr>
                 <tr><th scope="row"><code>neuron login</code> (or <code>neuron auth login</code>)</th><td>Sign in with a device code that you approve at <code>https://neuron.zero-x.live/device</code>; works over SSH, in WSL and in containers. The session goes to the macOS Keychain or Windows Credential Manager, or on Linux to <code>~/.neuroncli/credentials.json</code> (owner-only).</td></tr>
                 <tr><th scope="row"><code>neuron login --with-token</code></th><td>Read an <code>nzx_</code> API key or a <code>ses_</code> session from standard input, for CI.</td></tr>
@@ -154,7 +157,8 @@ neuron</code></pre></div>
                 <tr><th scope="row"><code>~/.neuron/settings.json</code></th><td>User settings for every project.</td></tr>
                 <tr><th scope="row"><code>.neuron.json</code>, <code>.neuron/settings.json</code></th><td>Project settings, safe to commit. They apply only after you trust the folder, and they cannot select a full-access mode.</td></tr>
                 <tr><th scope="row"><code>.neuron/settings.local.json</code></th><td>Machine-local overrides; keep out of version control.</td></tr>
-                <tr><th scope="row"><code>NEURON.md</code></th><td>Project instructions Neuron reads at the start of each session.</td></tr>
+                <tr><th scope="row"><code>NEURON.md</code></th><td>Project instructions Neuron reads at the start of each session, in every folder from the root down to the project.</td></tr>
+                <tr><th scope="row"><code>AGENTS.md</code>, <code>CLAUDE.md</code>, <code>CLAUDE.local.md</code></th><td>Instructions written for other coding agents. Neuron reads them after <code>NEURON.md</code>, so you do not need to copy them.</td></tr>
               </tbody>
             </table>
           </div>
@@ -165,21 +169,25 @@ neuron</code></pre></div>
           <h2 id="api-title">API reference</h2>
           <p>The gateway speaks the OpenAI Chat Completions protocol. Base URL: <code>https://zero-x.live/v1</code>. Authenticate with <code>Authorization: Bearer &lt;token&gt;</code>, where the token is an API key from the dashboard or a CLI session.</p>
           <h3 id="models-endpoint">GET /v1/models</h3>
-          <p>Lists the catalog. Authentication is optional; <code>available</code> is computed for your plan (anonymous callers see the Free plan).</p>
+          <p>Lists the catalog, one entry per model. Authentication is optional; <code>available</code> and <code>context_window</code> are computed for your plan (anonymous callers see the Free plan).</p>
           <div class="zx-code"><pre><code>curl https://zero-x.live/v1/models -H "Authorization: Bearer $NEURON_TOKEN"</code></pre></div>
           <div class="zx-code"><pre><code>{
   "object": "list",
   "data": [{
-    "id": "gemini/gemini-2.5-flash",
+    "id": "openai/gpt-oss-120b",
     "object": "model",
     "created": 0,
-    "owned_by": "gemini",
-    "display_name": "Gemini 2.5 Flash",
-    "context_window": 1048576,
-    "context_length": 1048576,
-    "max_output_tokens": 65536,
-    "capabilities": { "tools": true, "streaming": true, "vision": true, "reasoning": true },
-    "reasoning_efforts": ["none", "low", "medium", "high"],
+    "owned_by": "openai",
+    "display_name": "GPT-OSS 120B",
+    "maker": "openai",
+    "maker_name": "OpenAI",
+    "family": "openai/gpt-oss-120b",
+    "context_window": 8000,
+    "context_length": 8000,
+    "native_context_window": 131072,
+    "max_output_tokens": 8000,
+    "capabilities": { "tools": true, "streaming": true, "vision": false, "reasoning": true },
+    "reasoning_efforts": ["low", "medium", "high"],
     "tiers": ["free"],
     "available": true,
     "unavailable_reason": null,
@@ -189,7 +197,7 @@ neuron</code></pre></div>
     "checked_at": "2026-10-24T13:53:52.473Z"
   }]
 }</code></pre></div>
-          <p><code>unavailable_reason</code> is <code>null</code>, <code>upgrade_required</code>, <code>region_unavailable</code>, <code>policy_restricted</code> or <code>not_configured</code>. <code>pricing</code> is the paid-capacity price per million tokens (<code>input_per_mtok_usd</code>, <code>output_per_mtok_usd</code>, and for Claude <code>cache_read_per_mtok_usd</code> and <code>cache_write_per_mtok_usd</code>), or <code>null</code> for free-only models. Claude Sonnet 5.5 (<code>anthropic/claude-sonnet-5-5</code>) and Claude Opus 5.5 (<code>anthropic/claude-opus-5-5</code>) are paid models: Pro and Max can choose them and are billed from credits, Free sees them with <code>upgrade_required</code>, and <code>auto</code> never picks them. <code>status</code> is <code>available</code>, <code>degraded</code>, <code>busy</code> or <code>blurred</code>; a blurred model is temporarily unavailable until <code>available_again_at</code>. <code>GET /v1/models/status</code> returns the same availability fields for polling. The list includes the pseudo-model <code>auto</code>.</p>
+          <p><code>unavailable_reason</code> is <code>null</code>, <code>upgrade_required</code>, <code>region_unavailable</code>, <code>policy_restricted</code> or <code>not_configured</code>. <code>pricing</code> is the paid-capacity price per million tokens (<code>input_per_mtok_usd</code>, <code>output_per_mtok_usd</code>, and for Claude <code>cache_read_per_mtok_usd</code> and <code>cache_write_per_mtok_usd</code>), or <code>null</code> for free-only models. Claude Sonnet 5.5 (<code>anthropic/claude-sonnet-5-5</code>) and Claude Opus 5.5 (<code>anthropic/claude-opus-5-5</code>) are paid models: Pro and Max can choose them and are billed from credits, Free sees them with <code>upgrade_required</code>, and <code>auto</code> never picks them. <code>context_window</code> is what you can send on your plan; <code>native_context_window</code> is the model's own maximum (some free models take smaller requests on the Free plan). <code>maker</code> names the company that made the model. <code>status</code> comes from the gateway's health checker: <code>available</code>, <code>degraded</code> (slower than usual), <code>busy</code>, <code>unavailable</code> (until <code>available_again_at</code>; older clients may see <code>blurred</code>) or <code>unknown</code> (nobody has checked it lately). <code>GET /v1/models/status</code> returns the same availability fields, with <code>checked_at</code>, for polling every 30 seconds. The list includes the pseudo-model <code>auto</code>.</p>
 
           <h3 id="chat-completions">POST /v1/chat/completions</h3>
           <p>Standard OpenAI request body. <code>model</code> may be <code>auto</code>. Set <code>"stream": true</code> for server-sent events ending with <code>data: [DONE]</code>; streamed <code>tool_calls</code> deltas always include <code>index</code>.</p>
@@ -255,7 +263,7 @@ neuron</code></pre></div>
             <li>Daily caps reset at 00:00 UTC. Tokens are prompt plus completion tokens.</li>
             <li>Free counts tokens over a rolling 5-hour window: each request's tokens count for 5 hours from when it started, and a running request counts with what it reserved (its prompt plus up to 1,024 output tokens) until it finishes. A request that would take the window past 1,000,000 tokens gets <code>insufficient_quota</code> with <code>resets_at</code> and <code>Retry-After</code> set to when enough of the window frees up; a single request larger than the whole window gets neither, since waiting does not make it fit. <code>GET /api/account</code> reports it as <code>usage_window</code>.</li>
             <li>Every free pool also has a global daily budget shared by all users; when it is spent you get <code>capacity_exhausted</code> even if your own cap has room.</li>
-            <li>Groq's free tier allows about 8,000 tokens per minute, so large prompts go to models with more headroom.</li>
+            <li>Some free models take small requests only (about 8,000 tokens), so <code>auto</code> sends large prompts to models with more headroom.</li>
             <li>Paid-capacity requests cost credits at the upstream price plus 25%. Free-pool requests cost no credits.</li>
           </ul>
         </section>
@@ -319,6 +327,8 @@ neuron</code></pre></div>
         <a href="/pricing">Pricing</a>
         <a href="/docs">Docs</a>
         <a href="/ai-coding-agent">AI coding agent guide</a>
+        <a href="/free-ai-coding-agent">Free AI coding agent</a>
+        <a href="/claude-code-alternative">Neuron compared</a>
         <a href="https://dashboard.zero-x.live/">Dashboard</a>
       </nav>
       <nav aria-label="Company">

@@ -6,6 +6,7 @@ import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
 // Site scripts load as ES modules whatever package.json lies above the checkout.
 import './site-modules.mjs';
+import {NEURON_INSTALL} from './src/neuron-release.js';
 
 const root = new URL('../../', import.meta.url);
 const read = file => readFileSync(new URL(file, root), 'utf8');
@@ -25,7 +26,7 @@ class Node {
   constructor(doc) { this.ownerDocument = doc; this.parentNode = null; this.childNodes = []; }
   get firstChild() { return this.childNodes[0] || null; }
   get children() { return this.childNodes.filter(n => n.nodeType === 1); }
-  appendChild(node) { if (node.parentNode) node.parentNode.removeChild(node); node.parentNode = this; this.childNodes.push(node); return node; }
+  appendChild(node) { if (node.nodeType === 11) { for (const child of [...node.childNodes]) this.appendChild(child); return node; } if (node.parentNode) node.parentNode.removeChild(node); node.parentNode = this; this.childNodes.push(node); return node; }
   append(...nodes) { for (const n of nodes) this.appendChild(typeof n === 'string' ? this.ownerDocument.createTextNode(n) : n); }
   prepend(...nodes) { for (const n of nodes.reverse()) this.insertBefore(typeof n === 'string' ? this.ownerDocument.createTextNode(n) : n, this.firstChild); }
   removeChild(node) { const i = this.childNodes.indexOf(node); if (i >= 0) { this.childNodes.splice(i, 1); node.parentNode = null; } return node; }
@@ -151,6 +152,7 @@ class Document extends Node {
   createElement(tag) { return new Element(this, tag); }
   createElementNS(ns, tag) { return new Element(this, tag, ns); }
   createTextNode(text) { return new Text(this, text); }
+  createDocumentFragment() { const fragment = new Node(this); fragment.nodeType = 11; return fragment; }
   getElementById(id) { let found = null; walk(this, n => { if (!found && n.nodeType === 1 && n.getAttribute('id') === id) found = n; }); return found; }
   querySelector(selector) { return Element.prototype.querySelector.call(this, selector); }
   querySelectorAll(selector) { return Element.prototype.querySelectorAll.call(this, selector); }
@@ -376,10 +378,10 @@ async function mountDashboard({profile = PROFILE, hash = '', search = '', state 
   // Copy quick-start command.
   doc.querySelector('[data-copy-target="qs-install"]').click();
   await settle();
-  assert.equal(win.copied, 'curl -fsSL https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.2/install.sh | sh -s -- --version 7.0.0-alpha.2');
-  doc.querySelector('[data-copy-target="qs-install-win"]').click();
+  assert.equal(win.copied, NEURON_INSTALL.npm);
+  doc.querySelector('[data-copy-target="qs-install-pip"]').click();
   await settle();
-  assert.equal(win.copied, '& ([scriptblock]::Create((irm https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.2/install.ps1))) -Version 7.0.0-alpha.2');
+  assert.equal(win.copied, NEURON_INSTALL.pip);
 
   // Hash routing to Usage.
   win.location.hash = '#usage';
@@ -883,33 +885,194 @@ for (const scenario of ['live', 'offline']) {
   vm.runInNewContext(script, {document: doc, fetch, Promise, Array, Math, isFinite, Error, TypeError});
   await settle();
   const tabs = doc.querySelectorAll('[role="tab"]');
-  assert.deepEqual(tabs.map(tab => tab.textContent), ['install.sh', 'install.ps1', 'npm', 'pip', 'From source']);
-  assert.equal(doc.getElementById('install-sh').hidden, false, 'The release installer is the default tab');
-  assert.equal(doc.getElementById('install-npm').hidden, true);
+  assert.deepEqual(tabs.map(tab => tab.textContent), ['npm', 'pip', 'macOS and Linux', 'PowerShell', 'Command Prompt', 'From source']);
+  assert.equal(doc.getElementById('install-npm').hidden, false, 'npm is the default tab');
+  assert.equal(doc.getElementById('install-ps1').hidden, true);
   tabs[2].click();
-  assert.equal(doc.getElementById('install-npm').hidden, false);
-  assert.equal(doc.getElementById('install-sh').hidden, true);
+  assert.equal(doc.getElementById('install-sh').hidden, false);
+  assert.equal(doc.getElementById('install-npm').hidden, true);
   assert.equal(tabs[2].getAttribute('aria-selected'), 'true');
   tabs[2].focus();
   doc.querySelector('[role="tablist"]').dispatchEvent(makeEvent('keydown', {key: 'ArrowRight', bubbles: true}));
-  assert.equal(doc.getElementById('install-pip').hidden, false);
+  assert.equal(doc.getElementById('install-ps1').hidden, false);
   assert.equal(doc.activeElement, tabs[3]);
-  const rows = doc.getElementById('models-body').querySelectorAll('tr');
-  if (scenario === 'live') {
-    assert.equal(rows.length, 3, 'Invalid catalog entries are skipped');
-    assert.equal(rows[1].querySelector('th').textContent, XSS);
-    assert.equal(rows[1].querySelectorAll('td')[2].textContent, '1,048,576');
-    assert.deepEqual(rows.map(row => row.querySelectorAll('td')[1].textContent), ['Zero-X', 'Google Gemini', 'Groq'], 'owned_by is shown as a provider name');
-    assert.equal(rows[1].querySelectorAll('td')[4].textContent, 'All plans (not in your region)');
-    assert.equal(rows[2].querySelectorAll('td')[4].textContent, 'Pro and Max');
-    assert.match(doc.getElementById('models-status').textContent, /Live catalog from the Zero-X gateway: 3 models/);
-  } else {
-    assert.equal(rows.length, 15, 'The static catalog (14 models plus auto) stays when /v1/models is unreachable');
-    assert.deepEqual(rows.slice(-2).map(row => [...row.querySelectorAll('td')].map(cell => cell.textContent)), [
-      ['anthropic/claude-sonnet-5-5', 'Anthropic', '200,000', 'Yes', 'Pro and Max'],
-      ['anthropic/claude-opus-5-5', 'Anthropic', '200,000', 'Yes', 'Pro and Max']], 'the static catalog lists Claude for Pro and Max');
-    assert.match(doc.getElementById('models-status').textContent, /Default catalog shown/);
+  // The model list is home.js's live pane now; the inline script only builds the install tabs.
+  assert.equal(doc.getElementById('models-body'), null);
+  if (scenario === 'live') assert.doesNotMatch(script, /fetch\(/, 'the inline script makes no network calls');
+}
+
+/* ───────────── Live model pane (home.js) ───────────── */
+
+{
+  const {liveModels} = await import(new URL('home.js', root));
+  const mount = status => {
+    const doc = parseDocument(read('index.html'));
+    const pane = {doc, clock: Date.parse('2026-11-05T10:00:00Z'), up: true, timers: new Map(), ticks: [], next: 1};
+    const win = {
+      setTimeout: (fn, ms) => { const id = pane.next++; pane.timers.set(id, {fn, at: pane.clock + ms}); return id; },
+      clearTimeout: id => { pane.timers.delete(id); },
+      setInterval: fn => { pane.ticks.push(fn); return 0; },
+    };
+    const models = {object: 'list', data: [
+      {id: 'openai/gpt-oss-120b', model_name: 'GPT-OSS 120B', maker: 'openai', context_window: 8000, tiers: ['free'], available: true, status: 'available'},
+      {id: 'nvidia/nemotron-3-ultra-550b', model_name: 'Nemotron 3 Ultra 550B', maker: 'nvidia', context_window: 131072, tiers: ['free'], available: true, status: 'degraded'}]};
+    const fetchImpl = async path => {
+      if (!pane.up) throw new TypeError('gateway unreachable');
+      if (path === '/v1/models') return json(200, models);
+      assert.equal(path, '/v1/models/status');
+      return json(200, status(pane.clock));
+    };
+    pane.advance = async seconds => {
+      pane.clock += seconds * 1000;
+      for (const [id, timer] of [...pane.timers].sort((a, b) => a[1].at - b[1].at)) {
+        if (timer.at > pane.clock || !pane.timers.has(id)) continue;
+        pane.timers.delete(id);
+        timer.fn();
+        await settle();
+      }
+      pane.ticks.forEach(fn => fn());
+    };
+    pane.view = () => ({
+      live: doc.getElementById('models-live-text').textContent,
+      note: doc.getElementById('models-note').textContent,
+      rows: doc.querySelectorAll('#models-list .zx-model').map(row => [row.dataset.tone, row.querySelector('.zx-model__status').textContent]),
+    });
+    liveModels(doc, win, {fetchImpl, clock: () => pane.clock});
+    return pane;
+  };
+  const checked = clock => ({object: 'list', checked_at: new Date(clock - 5000).toISOString(), poll_interval_seconds: 30, stale_after_seconds: 1200, data: [
+    {id: 'openai/gpt-oss-120b', available: true, status: 'available'}, {id: 'nvidia/nemotron-3-ultra-550b', available: true, status: 'degraded'}]});
+
+  // Live, then the gateway stops answering: the last verdicts stand for one missed poll, then every row reads unknown.
+  const pane = mount(checked);
+  await settle();
+  let view = pane.view();
+  assert.equal(view.live, 'Live · checked 5 s ago', 'the indicator is the health checker time');
+  assert.deepEqual(view.rows, [['ok', 'Available'], ['warn', 'Slower than usual']]);
+  assert.match(view.note, /^1 of 2 models available on the Free plan right now/);
+  pane.up = false;
+  await pane.advance(30);
+  view = pane.view();
+  assert.match(view.live, /^Reconnecting · last checked/);
+  assert.deepEqual(view.rows, [['ok', 'Available'], ['warn', 'Slower than usual']], 'one missed poll keeps the last verdicts');
+  await pane.advance(31);
+  view = pane.view();
+  assert.match(view.live, /^Reconnecting · last checked 1 min ago/);
+  assert.deepEqual(view.rows, [['unknown', 'Not checked recently'], ['unknown', 'Not checked recently']], 'unchecked verdicts are never shown as available');
+  assert.match(view.note, /not being checked right now/);
+  assert.doesNotMatch(view.note, /available on the Free plan/);
+  pane.up = true;
+  await pane.advance(30);
+  view = pane.view();
+  assert.equal(view.live, 'Live · checked 5 s ago', 'the pane recovers when the gateway answers again');
+  assert.deepEqual(view.rows, [['ok', 'Available'], ['warn', 'Slower than usual']]);
+  assert.match(view.note, /^1 of 2 models available/);
+
+  // Verdicts older than stale_after_seconds expire even sooner than two polls.
+  const old = mount(clock => ({...checked(clock), checked_at: new Date(clock - 50000).toISOString(), stale_after_seconds: 60}));
+  await settle();
+  old.up = false;
+  await old.advance(30);
+  assert.deepEqual(old.view().rows.map(row => row[0]), ['unknown', 'unknown'], 'the health checker last looked 80 s ago, past its 60 s limit');
+
+  // Per-route horizons (contract section 15.2) while the gateway keeps answering: a verdict expires
+  // once it outlives its own route's horizon, between polls, and the other rows keep theirs.
+  const t0 = Date.parse('2026-11-05T10:00:00Z');
+  const perRow = mount(() => ({object: 'list', checked_at: new Date(t0 - 20 * 60000).toISOString(), poll_interval_seconds: 30, stale_after_seconds: 1200, data: [
+    {id: 'openai/gpt-oss-120b', available: true, status: 'available', availability: 'available', checked_at: new Date(t0 - 60 * 60000).toISOString(), stale_after_seconds: 5400},
+    {id: 'nvidia/nemotron-3-ultra-550b', available: true, status: 'available', availability: 'available', checked_at: new Date(t0 - 20 * 60000).toISOString(), stale_after_seconds: 1350}]}));
+  await settle();
+  assert.deepEqual(perRow.view().rows, [['ok', 'Available'], ['ok', 'Available']], 'both verdicts within their horizons');
+  await perRow.advance(180);
+  assert.match(perRow.view().live, /^Live/, 'the gateway still answers');
+  assert.deepEqual(perRow.view().rows, [['ok', 'Available'], ['unknown', 'Not checked recently']],
+    'the NVIDIA verdict (22.5 min) expired; the hourly-checked Groq one (90 min) still stands');
+  assert.match(perRow.view().note, /^1 of 2 models available/);
+  // A gateway alpha.4 reads: status says blurred, availability says unavailable; the site greys it out.
+  const split = mount(clock => ({...checked(clock), data: [
+    {id: 'openai/gpt-oss-120b', available: true, status: 'blurred', availability: 'unavailable', checked_at: new Date(clock - 5000).toISOString(), stale_after_seconds: 5400},
+    {id: 'nvidia/nemotron-3-ultra-550b', available: true, status: 'unknown', availability: 'unknown'}]}));
+  await settle();
+  assert.deepEqual(split.view().rows, [['off', 'Temporarily unavailable'], ['unknown', 'Not checked recently']]);
+
+  // No checked_at (the health checker has checked nothing yet): no time is invented.
+  const fresh = mount(clock => ({...checked(clock), checked_at: null, data: [{id: 'openai/gpt-oss-120b', available: true, status: 'unknown'}]}));
+  await settle();
+  assert.equal(fresh.view().live, 'Live · not checked yet');
+  assert.deepEqual(fresh.view().rows[0], ['unknown', 'Not checked recently']);
+}
+
+/* ───────────── Site header menu on phones (site-nav.js) ───────────── */
+
+{
+  const {installNav} = await import(new URL('site-nav.js', root));
+  for (const file of ['index.html', 'pricing.html', 'docs/trust.html', 'dashboard.html']) {
+    const doc = parseDocument(read(file));
+    const header = doc.querySelector('.zx-header');
+    const button = header.querySelector('.zx-nav-toggle');
+    const nav = doc.getElementById('site-nav');
+    assert.equal(button.hidden, true, `${file}: without the script the menu button is hidden (the wrapped nav shows)`);
+    assert.equal(header.dataset.nav, undefined, `${file}: and the header is not in menu mode`);
+    // Review 2026-11-05: menu mode is chosen before first paint by the inline script right after
+    // </header>, not when the module runs (which follows the page's other modules), so the header
+    // never paints as three wrapped rows and then jumps up. Browsers without modules keep the
+    // wrapped nav (site-nav.js would never wire the button).
+    const preset = [...read(file).matchAll(/<\/header>\s*<script>([\s\S]*?)<\/script>/g)].map(m => m[1]);
+    assert.equal(preset.length, 1, `${file}: one inline script right after </header>`);
+    const legacy = parseDocument(read(file));
+    vm.runInNewContext(preset[0], {document: legacy, HTMLScriptElement: {prototype: {}}});
+    assert.deepEqual([legacy.querySelector('.zx-header').dataset.nav, legacy.querySelector('.zx-nav-toggle').hidden], [undefined, true],
+      `${file}: no module support: the wrapped nav stays`);
+    vm.runInNewContext(preset[0], {document: doc, HTMLScriptElement: {prototype: {noModule: false}}});
+    assert.deepEqual([header.dataset.nav, button.hidden], ['closed', false], `${file}: menu mode before the module runs`);
+    const menu = installNav(doc);
+    assert.ok(menu, `${file}: the header has a menu`);
+    assert.equal(button.hidden, false, `${file}: the script shows the button`);
+    assert.deepEqual([button.getAttribute('aria-expanded'), button.getAttribute('aria-controls'), header.dataset.nav], ['false', 'site-nav', 'closed']);
+    assert.equal(nav.getAttribute('aria-label'), 'Main');
+    button.click();
+    assert.deepEqual([button.getAttribute('aria-expanded'), header.dataset.nav], ['true', 'open'], `${file}: the button opens the nav`);
+    button.click();
+    assert.deepEqual([button.getAttribute('aria-expanded'), header.dataset.nav], ['false', 'closed'], `${file}: and closes it`);
+    // Escape closes it and puts focus back on the button.
+    button.click();
+    const link = nav.querySelector('a');
+    link.focus();
+    const escape = makeEvent('keydown', {bubbles: true, cancelable: true, key: 'Escape'});
+    link.dispatchEvent(escape);
+    assert.equal(menu.isOpen(), false, `${file}: Escape closes the menu`);
+    assert.equal(escape.defaultPrevented, true);
+    assert.equal(doc.activeElement, button, `${file}: focus returns to the Menu button`);
+    // Safari does not focus a button on click: after a tap on Menu the focus stays on the body,
+    // and Escape from a hardware keyboard still closes the menu.
+    button.click();
+    doc.body.focus();
+    const bodyEscape = makeEvent('keydown', {bubbles: true, cancelable: true, key: 'Escape'});
+    doc.body.dispatchEvent(bodyEscape);
+    assert.equal(menu.isOpen(), false, `${file}: Escape with focus on the body closes the menu`);
+    assert.equal(bodyEscape.defaultPrevented, true);
+    assert.equal(doc.activeElement, button, `${file}: and focus moves to the Menu button`);
+    // Escape with the menu closed does nothing.
+    const idle = makeEvent('keydown', {bubbles: true, cancelable: true, key: 'Escape'});
+    button.dispatchEvent(idle);
+    assert.equal(idle.defaultPrevented, false);
+    // Following a link closes it; so does a click outside the header or focus leaving it.
+    button.click();
+    link.click();
+    assert.equal(menu.isOpen(), false, `${file}: following a link closes the menu`);
+    button.click();
+    doc.querySelector('main').click();
+    assert.equal(menu.isOpen(), false, `${file}: a click outside closes it`);
+    button.click();
+    header.querySelector('.zx-brand').click();
+    assert.equal(menu.isOpen(), true, `${file}: a click inside the header leaves it open`);
+    const leave = makeEvent('focusout', {bubbles: true});
+    leave.relatedTarget = doc.querySelector('main');
+    link.dispatchEvent(leave);
+    assert.equal(menu.isOpen(), false, `${file}: focus leaving the header closes it`);
   }
+  assert.equal(installNav(parseDocument('<!doctype html><html><head></head><body><main id="main"></main></body></html>')), null, 'no header: nothing to wire');
+  console.log('ok - site header menu: a disclosure button (aria-expanded, aria-controls), Escape returns focus, link, outside click and focus loss close it, hidden without the script');
 }
 
 /* ───────────── zerox-auth.js development identity ───────────── */
@@ -1132,5 +1295,5 @@ async function loadAuth({hostname, config, session = makeStorage(), sdk = true})
   assert.equal(refused.$('pricing-error').querySelector('a').getAttribute('href'), 'https://zero-x.live/pricing#plans');
 }
 
-console.log('PASS: dashboard gate, contract-driven overview, hash tabs and keyboard, usage chart/table/pagination, key create-once/copy/revoke-confirm, billing cancel/top-up/verify, sessions, sign-out dev-token cleanup, 401/500 recovery, pricing currency/hydration/checkout/409/503/forged payloads, Neuron CLI tabs and models, zerox-auth dev identity and pinned SDK; untrusted data never reached innerHTML');
+console.log('PASS: dashboard gate, contract-driven overview, hash tabs and keyboard, usage chart/table/pagination, key create-once/copy/revoke-confirm, billing cancel/top-up/verify, sessions, sign-out dev-token cleanup, 401/500 recovery, pricing currency/hydration/checkout/409/503/forged payloads, Neuron CLI install tabs, zerox-auth dev identity and pinned SDK; untrusted data never reached innerHTML');
 process.exit(0);

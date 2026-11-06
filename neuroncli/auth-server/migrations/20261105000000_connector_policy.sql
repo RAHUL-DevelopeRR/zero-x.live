@@ -23,7 +23,7 @@ SET LOCAL lock_timeout = '5s';
 -- the hosted SaaS connectors. A plan whose policy an operator already set keeps it, so the file
 -- is safe to re-run. zerox_plan_policies_v2 gains the column, so it is dropped and created again
 -- (same arguments, same grants); zerox_account_overview returns to_jsonb of that row and picks the
--- column up unchanged. Roll back with migrations/down/20261104000000_connector_policy.sql
+-- column up unchanged. Roll back with migrations/down/20261105000000_connector_policy.sql
 -- (psql -X -v ON_ERROR_STOP=1 -f). The gateway works against a database without this migration:
 -- no policy.connectors block is returned.
 

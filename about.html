@@ -25,13 +25,15 @@
   <link rel="stylesheet" href="/site-fonts.css">
   <link rel="stylesheet" href="/zx-tokens.css">
   <script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"AboutPage","@id":"https://zero-x.live/about#page","url":"https://zero-x.live/about","name":"About Zero-X","isPartOf":{"@id":"https://zero-x.live/#website"},"mainEntity":{"@id":"https://zero-x.live/#organization"}},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Zero-X","item":"https://zero-x.live/"},{"@type":"ListItem","position":2,"name":"About","item":"https://zero-x.live/about"}]}]}</script>
+  <script type="module" src="/site-nav.js"></script>
 </head>
 <body>
   <a class="zx-skip" href="#main">Skip to content</a>
   <header class="zx-header">
     <div class="zx-container zx-header__inner">
-      <a class="zx-brand" href="/"><img src="/Assets/zerox-favicon-32.png" width="28" height="28" alt="">Zero-X</a>
-      <nav class="zx-nav" aria-label="Main">
+      <a class="zx-brand" href="/"><img src="/Assets/zerox-mark.svg" width="28" height="28" alt="">Zero-X</a>
+      <button class="zx-nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" hidden><span class="zx-nav-toggle__bars" aria-hidden="true"></span>Menu</button>
+      <nav class="zx-nav" id="site-nav" aria-label="Main">
         <a href="/neuron-cli">Neuron CLI</a>
         <a href="/pricing">Pricing</a>
         <a href="/docs">Docs</a>
@@ -39,6 +41,7 @@
       </nav>
     </div>
   </header>
+  <script>(function(h){var b=h&&h.querySelector('.zx-nav-toggle');if(b&&'noModule'in HTMLScriptElement.prototype){h.dataset.nav='closed';b.hidden=false}})(document.querySelector('.zx-header'))</script>
 
   <main id="main" class="zx-container zx-legal zx-section--tight">
     <nav class="zx-breadcrumb" aria-label="Breadcrumb"><a href="/">Zero-X</a> / About</nav>
@@ -48,7 +51,7 @@
 
     <h2 id="neuron">What Neuron does</h2>
     <p>Neuron reads your project, edits files and runs commands, and asks before it does anything your permission mode does not allow. Sign in once with <code>neuron login</code> to use hosted models through the Zero-X gateway, or bring your own provider key.</p>
-    <p>The current release, 7.0.0-alpha.2, is a GitHub pre-release for Linux (x64 and arm64), macOS (Apple silicon and Intel) and Windows x64. Neuron is MIT-licensed; its full-screen terminal UI is derived from Freebuff and is Apache-2.0.</p>
+    <p>The current release, 7.0.0-alpha.4, is a GitHub pre-release for Linux (x64 and arm64), macOS (Apple silicon and Intel) and Windows x64, also published to npm and PyPI. Neuron is MIT-licensed; its full-screen terminal UI is derived from Freebuff and is Apache-2.0.</p>
     <p><a href="/neuron-cli#install">Install Neuron</a>, read the <a href="/docs">documentation</a>, <a href="/pricing">compare plans</a> or learn <a href="/ai-coding-agent">how AI coding agents work</a>.</p>
 
     <h2 id="neucockpit">What NeuCockpit does</h2>
@@ -70,7 +73,7 @@
 
     <h2 id="privacy">Privacy and use</h2>
     <p>The <a href="/privacy">Privacy Policy</a> describes account and usage records, how prompts and code reach model providers, and payment processing. The <a href="/terms">Terms of Service</a> cover using the website and connected services.</p>
-    <p>Neuron and Zero-X are not affiliated with Anthropic, OpenAI, Google, Groq, Cloudflare or any other model provider.</p>
+    <p>Neuron and Zero-X are not affiliated with Anthropic, OpenAI, Google or any other model maker or provider.</p>
   </main>
 
   <footer class="zx-footer">
@@ -85,6 +88,8 @@
         <a href="/pricing">Pricing</a>
         <a href="/docs">Docs</a>
         <a href="/ai-coding-agent">AI coding agent guide</a>
+        <a href="/free-ai-coding-agent">Free AI coding agent</a>
+        <a href="/claude-code-alternative">Neuron compared</a>
         <a href="https://dashboard.zero-x.live/">Dashboard</a>
       </nav>
       <nav aria-label="Company">

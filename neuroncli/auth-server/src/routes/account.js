@@ -93,10 +93,10 @@ export async function accountPayload(env, caller, { token = '' } = {}) {
   const windowSeconds = windowLimit('window_seconds');
   const windowUsage = object(row.usage_window);
   const name = displayName(account, caller);
-  // The plan's connector policy (migration 20261104000000, contract section 14.1); left out when
+  // The plan's connector policy (migration 20261105000000, contract section 16.1); left out when
   // the plan has none or the database predates the column ("no gateway policy").
   const connectors = connectorPolicyBlock(policy.connector_policy, env);
-  // `hosted` lists only connectors this gateway can serve now (contract section 14.1): a client
+  // `hosted` lists only connectors this gateway can serve now (contract section 16.1): a client
   // sets up every id it gets, so an unconfigured vendor would only ever answer 503.
   if (connectors) connectors.hosted = servableHostedIds(env, connectors.hosted);
   return {

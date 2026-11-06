@@ -3,7 +3,7 @@ BEGIN;
 -- re-run) rather than queue behind a long transaction.
 SET LOCAL lock_timeout = '5s';
 
--- Rolls back 20261104000000_connector_policy.sql by hand: psql -X -v ON_ERROR_STOP=1 -f <this
+-- Rolls back 20261105000000_connector_policy.sql by hand: psql -X -v ON_ERROR_STOP=1 -f <this
 -- file>. The migration runner (scripts/apply-migrations.mjs) never reads migrations/down/.
 -- zerox_plan_policies_v2 comes back as 20261102000000_free_token_window.sql left it (dropped and
 -- created again, since its result loses a column; the grants are restored), and
@@ -34,7 +34,7 @@ GRANT EXECUTE ON FUNCTION public.zerox_plan_policies_v2() TO service_role;
 ALTER TABLE public.zerox_plan_policy DROP CONSTRAINT IF EXISTS zerox_plan_policy_connector_policy_check;
 ALTER TABLE public.zerox_plan_policy DROP COLUMN IF EXISTS connector_policy;
 
-DELETE FROM supabase_migrations.schema_migrations WHERE version = '20261104000000';
+DELETE FROM supabase_migrations.schema_migrations WHERE version = '20261105000000';
 
 NOTIFY pgrst, 'reload schema';
 

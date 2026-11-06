@@ -1,4 +1,4 @@
-// Hosted connectors (docs/PLATFORM_CONTRACT.md section 14.4) on a real database: every migration on
+// Hosted connectors (docs/PLATFORM_CONTRACT.md section 16.4) on a real database: every migration on
 // a fresh in-memory PGlite, the gateway on the local dev identity, a mock OAuth provider and a
 // mock vendor MCP server behind a fetch stub. Nothing leaves the process.
 // Run: node check-connectors.mjs

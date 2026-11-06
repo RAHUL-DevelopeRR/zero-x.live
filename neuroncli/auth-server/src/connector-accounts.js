@@ -1,4 +1,4 @@
-// Linked hosted connector accounts (migration 20261104000100_connector_accounts.sql): plan access,
+// Linked hosted connector accounts (migration 20261105000100_connector_accounts.sql): plan access,
 // the vendor token exchange and refresh, and the stored links. Shared by the account routes
 // (src/routes/connectors.js) and the MCP proxy (src/mcp-proxy.js). Tokens never leave this module
 // except as the bearer the proxy sends to the vendor; nothing here logs them.
@@ -38,7 +38,7 @@ export function connectorEndpoint(env, id) {
 
 const policyCache = new WeakMap(); // env -> { expires, byPlan: Map(plan -> block|null) }
 
-// The plan's policy.connectors block (contract section 14.1) or null; plans without a policy (or a
+// The plan's policy.connectors block (contract section 16.1) or null; plans without a policy (or a
 // database without the column) grant no hosted connector.
 export async function planConnectorPolicy(env, plan) {
   let cached = policyCache.get(env);

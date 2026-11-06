@@ -1,6 +1,6 @@
 /**
- * Envelope encryption for hosted connector tokens (migration 20261104000100_connector_accounts.sql,
- * docs/PLATFORM_CONTRACT.md section 14.4).
+ * Envelope encryption for hosted connector tokens (migration 20261105000100_connector_accounts.sql,
+ * docs/PLATFORM_CONTRACT.md section 16.4).
  *
  * zerox_connector_accounts.enc_refresh_token holds JSON text:
  *   {"v":1,"dek":<b64>,"dek_iv":<b64>,"iv":<b64>,"ct":<b64>}

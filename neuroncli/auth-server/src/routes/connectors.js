@@ -1,4 +1,4 @@
-// Hosted connector accounts (docs/PLATFORM_CONTRACT.md section 14.4). Every route answers 404 unless
+// Hosted connector accounts (docs/PLATFORM_CONTRACT.md section 16.4). Every route answers 404 unless
 // HOSTED_CONNECTORS=true.
 //   GET    /api/connectors              → {connectors:[{id, name, publisher, status, ...}], connect_url, catalog_version}
 //   POST   /api/connectors/:id/connect  → {authorize_url} (and a short-lived HttpOnly state cookie)

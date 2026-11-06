@@ -25,6 +25,7 @@
     #approve{background:var(--zx-accent);color:var(--zx-on-accent)}#approve:hover{background:var(--zx-accent-h)}
     #deny,#find,#signin{background:transparent;color:var(--zx-heading);border:1px solid var(--zx-border)}
     #find,#signin{background:var(--zx-accent);color:var(--zx-on-accent);border:0}
+    button.link{flex:none;min-height:0;padding:0;border:0;border-radius:0;background:none;color:var(--zx-accent);font-size:.875rem;text-decoration:underline}
     button:disabled{opacity:.55;cursor:not-allowed}button:focus-visible,input:focus-visible{outline:none;box-shadow:var(--zx-focus)}
     .done{font-size:1.1rem;color:var(--zx-heading)}
     .help{font-size:.875rem;margin-top:20px}.help+.help{margin-top:4px}
@@ -38,6 +39,7 @@
     <h1>Sign in to Neuron</h1>
     <p id="message" role="status" aria-live="polite">Checking your sign-in…</p>
     <p id="account"></p>
+    <button id="switch" class="link" type="button" hidden>Not you? Use another account</button>
 
     <section id="signin-step" hidden>
       <button id="signin" type="button">Sign in to Zero-X</button>

@@ -1,5 +1,5 @@
 // Hosted connector endpoint https://zero-x.live/mcp/<connector_id> (docs/PLATFORM_CONTRACT.md
-// section 14.4): a Streamable HTTP (MCP 2025-06-18) pass-through to the vendor's official remote
+// section 16.4): a Streamable HTTP (MCP 2025-06-18) pass-through to the vendor's official remote
 // MCP server, signed in as the user with the vendor tokens linked on the dashboard
 // (src/routes/connectors.js). Served only with HOSTED_CONNECTORS=true; otherwise /mcp/* is 404.
 //
@@ -55,7 +55,7 @@ const maxRequestBytes = env => boundedInt(env?.HOSTED_CONNECTORS_MAX_REQUEST_BYT
 const maxResponseBytes = env => boundedInt(env?.HOSTED_CONNECTORS_MAX_RESPONSE_BYTES, DEFAULT_MAX_RESPONSE_BYTES, 1024, 64 * 1024 * 1024);
 const requestsPerMinute = env => boundedInt(env?.HOSTED_CONNECTORS_RPM, DEFAULT_RPM, 1, 100_000);
 
-// Flat JSON errors on /mcp/ (contract section 14.4): {"error": code, "message": ..., ...}.
+// Flat JSON errors on /mcp/ (contract section 16.4): {"error": code, "message": ..., ...}.
 function fail(status, error, message, extra = {}, headers = {}) {
   return new Response(JSON.stringify({ error, message, ...extra }), {
     status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...headers },

@@ -41,9 +41,16 @@ try {
   const empty = (await (await app.request('https://zero-x.live/v1/models', {}, {})).json()).data;
   assert.equal(empty[0].id, 'auto');
   assert.ok(empty.length > 1 && empty.every(model => model.available === false && model.unavailable_reason === 'not_configured'));
-  const models = (await (await request('/v1/models')).json()).data;
+  // Contract section 14: one entry per model family, named by its maker; no route or provider.
+  const families = (await (await request('/v1/models')).json()).data;
+  assert.ok(families.some(model => model.id === 'meta/llama-3.3-70b' && model.maker === 'meta' && model.capabilities.tools && model.available));
+  assert.ok(families.some(model => model.id === 'openai/gpt-oss-120b' && model.owned_by === 'openai' && model.display_name === 'GPT-OSS 120B' && model.available));
+  assert.equal(families.filter(model => model.id === 'openai/gpt-oss-20b').length, 1, 'Groq and NVIDIA routes roll up into one family');
+  assert.ok(!families.some(model => /groq|nvidia|workers ai|openrouter/i.test(`${model.id} ${model.display_name} ${model.owned_by}`) && model.maker !== 'nvidia'));
+  // ?routes=1 lists the routes for diagnostics, each with its identity.
+  const models = (await (await request('/v1/models?routes=1')).json()).data;
   assert.ok(models.some(model => model.id === '@cf/meta/llama-3.3-70b-instruct-fp8-fast' && model.capabilities.tools && model.available));
-  assert.ok(models.some(model => model.id === 'groq/openai/gpt-oss-120b' && model.owned_by === 'groq' && model.available));
+  assert.ok(models.some(model => model.id === 'groq/openai/gpt-oss-120b' && model.owned_by === 'groq' && model.family === 'openai/gpt-oss-120b' && model.available));
   assert.ok(!models.some(model => model.owned_by === 'openrouter'), 'the operator OpenRouter key is not resold');
   assert.ok(!models.some(model => model.id.includes('llama-3.3-70b-versatile')), 'unverified *_MODELS ids are ignored');
   assert.ok(!models.some(model => model.id === 'gpt-5.4-pro'));

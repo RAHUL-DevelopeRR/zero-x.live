@@ -29,7 +29,8 @@ export class ZaiAdapter extends OpenAICompatibleAdapter {
   }
 
   // No network call: the models are the catalog's Z.ai rows, and the free models serve one
-  // request at a time per account, so operator health never spends a call on them.
+  // request at a time (treated as per account, src/health-probes.js slotSiblings), so operator
+  // health never spends a call on them.
   async discoverModels(env, session = {}) {
     const configured = this.isConfigured(env, session);
     return { provider: this.id, status: configured ? 'configured' : 'not_configured', discovery: false,

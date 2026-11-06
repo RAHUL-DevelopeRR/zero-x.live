@@ -573,7 +573,7 @@ try {
     credits: { balance_usd: 1.234567, monthly_grant_usd: 0 },
     subscription: null,
     flags: { suspended: false },
-    // Contract section 14.1: Free has local connectors only.
+    // Contract section 16.1: Free has local connectors only.
     policy: { connectors: { allowed: ['catalog:*'], denied: [], required: [], hosted: [], allow_unvetted: true,
       catalog_version: '2026-11-03' } },
   });
@@ -597,7 +597,7 @@ try {
   assert.deepEqual([account.body.limits.window_tokens, account.body.limits.window_seconds], [3000000, 7200]);
   assert.deepEqual(account.body.usage_window, { tokens: 6000, limit_tokens: 3000000, remaining_tokens: 2994000, window_seconds: 7200,
     resets_at: `${dayOffset(0)}T22:30:00.000Z` });
-  // Connector policy (migration 20261104000000, contract section 14.1). Pro's hosted connectors
+  // Connector policy (migration 20261104000000, contract section 16.1). Pro's hosted connectors
   // are seeded but reported only while hosted connectors are switched on.
   const HOSTED = ['atlassian', 'github', 'linear', 'notion', 'slack'];
   db.policyOverrides = {};
@@ -838,6 +838,13 @@ try {
   assert.equal(fullHealth.body.session_encryption, false);
   assert.deepEqual(fullHealth.body.ec2_proxy, { entries: 0, invalid: [], chat_routed: false, chat_routed_by: [], refusal: null }, 'the proxy switch, off');
   assert.ok(!JSON.stringify(fullHealth.body).includes(SECRET) && !JSON.stringify(fullHealth.body).includes(OPERATOR));
+  // One checker per pool (review 2026-11-05): the operator view says which runtime's checker tests.
+  assert.deepEqual(fullHealth.body.health_checker, { hub_test_requests: true, chat_routed_to_node: false }, 'the Worker hub tests');
+  assert.deepEqual((await json(await request('/health', { bindings: { ...operatorEnv, EC2_PROXY_PREFIXES: 'zero-x.live/v1/' }, token: OPERATOR })))
+    .body.health_checker, { hub_test_requests: false, chat_routed_to_node: true }, 'chat on Node: the hub sends none');
+  const nodeChecker = (await json(await request('/health', { bindings: { ...operatorEnv, NEURON_RUNTIME: 'node' }, token: OPERATOR }))).body.health_checker;
+  assert.equal(nodeChecker.node_probes, 'not_started', 'no Node checker started in this process yet');
+  assert.match(nodeChecker.warning, /HEALTH_HUB_PROBES=on/, 'and the operator is told how to keep one checker');
   assertOpenAIError(await json(await request('/admin/overview', { bindings: operatorEnv })), 401, 'invalid_session');
   assertOpenAIError(await json(await request('/admin/overview', { bindings: operatorEnv, token: bobSession.body.session_token })), 401, 'invalid_session');
   assertOpenAIError(await json(await request('/admin/overview', { bindings: env, token: OPERATOR })), 401, 'invalid_session');
@@ -994,23 +1001,24 @@ try {
   const byId = payload => Object.fromEntries(payload.data.map(model => [model.id, model]));
   db.policiesV2 = B1_POLICY_ROWS;
   const pro = { plan: 'pro', account_backed: true, user_id: userA.id };
+  // One entry per model family (contract section 14): Gemini routes are listed as google/<model>.
   let models = byId(await v1ModelsPayload(modelsContext(modelsEnv(), { country: 'DE' }), pro));
   assert.equal(models.auto.available, true);
-  assert.equal(models['gemini/gemini-2.5-flash'].available, true, 'Pro reaches the paid Gemini pool from the EEA');
-  assert.equal(models['gemini/gemini-3.5-flash'].unavailable_reason, 'region_unavailable');
-  assert.deepEqual(models['gemini/gemini-2.5-flash'].pricing, { input_per_mtok_usd: 0.375, output_per_mtok_usd: 3.125 });
+  assert.equal(models['google/gemini-2.5-flash'].available, true, 'Pro reaches the paid Gemini pool from the EEA');
+  assert.equal(models['google/gemini-3.5-flash'].unavailable_reason, 'region_unavailable');
+  assert.deepEqual(models['google/gemini-2.5-flash'].pricing, { input_per_mtok_usd: 0.375, output_per_mtok_usd: 3.125 });
   models = byId(await v1ModelsPayload(modelsContext(modelsEnv(), { country: 'DE' }), {}));
-  assert.equal(models['gemini/gemini-2.5-flash'].unavailable_reason, 'upgrade_required', 'anonymous callers are on the free plan');
+  assert.equal(models['google/gemini-2.5-flash'].unavailable_reason, 'upgrade_required', 'anonymous callers are on the free plan');
   models = byId(await v1ModelsPayload(modelsContext(modelsEnv(), { country: 'DE' }), { plan: 'pro' }));
-  assert.equal(models['gemini/gemini-2.5-flash'].unavailable_reason, 'upgrade_required', 'paid tiers need an account ledger, as in routing');
+  assert.equal(models['google/gemini-2.5-flash'].unavailable_reason, 'upgrade_required', 'paid tiers need an account ledger, as in routing');
   db.policiesV2 = B1_POLICY_ROWS.map(row => row.plan === 'pro' ? { ...row, allowed_tiers: ['free'] } : row);
   models = byId(await v1ModelsPayload(modelsContext(modelsEnv(), { country: 'DE' }), pro));
-  assert.equal(models['gemini/gemini-2.5-flash'].unavailable_reason, 'upgrade_required', 'database plan tiers apply');
+  assert.equal(models['google/gemini-2.5-flash'].unavailable_reason, 'upgrade_required', 'database plan tiers apply');
   db.policiesV2 = [];
   const spoofed = byId(await v1ModelsPayload(modelsContext(modelsEnv(), { headers: { 'cf-ipcountry': 'US' } }), {}));
-  assert.equal(spoofed['gemini/gemini-3.5-flash'].unavailable_reason, 'region_unavailable', 'CF-IPCountry is not trusted by default');
+  assert.equal(spoofed['google/gemini-3.5-flash'].unavailable_reason, 'region_unavailable', 'CF-IPCountry is not trusted by default');
   const trusted = byId(await v1ModelsPayload(modelsContext(modelsEnv({ TRUST_CF_IPCOUNTRY: 'true' }), { headers: { 'cf-ipcountry': 'US' } }), {}));
-  assert.equal(trusted['gemini/gemini-3.5-flash'].available, true);
+  assert.equal(trusted['google/gemini-3.5-flash'].available, true);
   const routed = await json(await request('/v1/models', { bindings: modelsEnv({ ALLOW_ANONYMOUS_SESSIONS: 'true' }) }));
   assert.equal(routed.body.object, 'list');
   assert.equal(routed.body.data[0].id, 'auto');

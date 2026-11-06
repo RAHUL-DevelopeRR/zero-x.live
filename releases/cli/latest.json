@@ -10,6 +10,6 @@
   "checksums_url": null,
   "install": {
     "npm": "npm install -g @zero-x.live/neuron",
-    "pip": "python -m pip install neuroncli"
+    "pip": "python -m pip install --pre neuroncli"
   }
 }

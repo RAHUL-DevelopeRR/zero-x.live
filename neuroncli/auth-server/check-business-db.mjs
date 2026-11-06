@@ -117,7 +117,8 @@ try {
     '20261028000000_reservation_leases.sql', '20261029000000_session_devices.sql', '20261029000100_push_tokens.sql',
     '20261029000200_provider_keys.sql', '20261029000300_provider_key_budgets.sql', '20261029000400_oiop_offers.sql',
     '20261029000500_credit_programs.sql', '20261029000800_paid_billing_caps.sql', '20261029000900_plan_features_claude.sql',
-    '20261029001000_pool_concurrency.sql', '20261102000000_free_token_window.sql', '20261104000000_connector_policy.sql'];
+    '20261029001000_pool_concurrency.sql', '20261102000000_free_token_window.sql', '20261104000000_health_probes.sql',
+    '20261104300000_free_plan_features_lineup.sql', '20261105000000_connector_policy.sql', '20261105000100_connector_accounts.sql'];
   assert.deepEqual(migrations.map(migration => migration.file).filter(file => businessMigrations.includes(file)), businessMigrations);
   assert.equal((await sql('SELECT count(*)::int AS n FROM supabase_migrations.schema_migrations'))[0].n, migrations.length);
   await assert.rejects(rpc(env, 'zerox_does_not_exist', {}), error =>
@@ -208,7 +209,7 @@ try {
   assert.equal(sessionDailyTokenCap(legacy.pro), 10000000, 'a plan without a window keeps daily_tokens');
   await assert.rejects(sql(`INSERT INTO public.zerox_plan_policy (plan, name, daily_tokens, daily_requests, price_usd)
     VALUES ('enterprise', 'Enterprise', 1, 1, 1)`), /zerox_plan_policy_plan_check/);
-  // Connector policy (migrations/20261104000000_connector_policy.sql, contract section 14.1): Free
+  // Connector policy (migrations/20261105000000_connector_policy.sql, contract section 16.1): Free
   // local connectors only, Pro, Max and ultrawork the hosted SaaS connectors; the account overview
   // carries it in its policy column.
   const hostedIds = ['atlassian', 'github', 'linear', 'notion', 'slack'];
@@ -222,7 +223,7 @@ try {
     /zerox_plan_policy_connector_policy_check/, 'a connector policy is a JSON object or null');
   // Re-running the migration keeps a policy an operator set.
   await sql(`UPDATE public.zerox_plan_policy SET connector_policy = '{"denied": ["slack"]}'::jsonb WHERE plan = 'pro'`);
-  await db.exec(migrationScript(await readMigration(migrations.find(migration => migration.file === '20261104000000_connector_policy.sql'))));
+  await db.exec(migrationScript(await readMigration(migrations.find(migration => migration.file === '20261105000000_connector_policy.sql'))));
   handle.functions.clear();
   assert.deepEqual((await rpcRows(env, 'zerox_plan_policies_v2', {})).find(plan => plan.plan === 'pro').connector_policy, { denied: ['slack'] });
   await sql('UPDATE public.zerox_plan_policy SET connector_policy = $1::jsonb WHERE plan = $2', [JSON.stringify(connectorPolicyOf(hostedIds)), 'pro']);
@@ -775,7 +776,8 @@ try {
     assert.ok(!JSON.stringify(warnings).includes('groq-free-test-key'), 'no key in the logs');
     // /v1/models shows the spent budget until the next minute.
     const listed = await v1ModelsPayload({ env: chatEnv, req: { raw: new Request('http://127.0.0.1/v1/models') } }, session);
-    const groqModel = listed.data.find(model => model.id === 'groq/openai/gpt-oss-120b');
+    // The family entry (contract section 14) rolls up the Groq route, its only route here.
+    const groqModel = listed.data.find(model => model.id === 'openai/gpt-oss-120b');
     assert.equal(groqModel.status, 'busy');
     assert.ok(Math.abs(Date.parse(groqModel.available_again_at) - (Date.now() + refused.retry_after_seconds * 1000)) < 2000);
     resetPoolBudgets();
@@ -1846,7 +1848,8 @@ try {
   // check-catalog-db.mjs).
   const downFiles = (await readdir(join(root, 'migrations/down'))).filter(file => !file.endsWith('.down.sql')).sort();
   assert.deepEqual(downFiles, ['20261028000000_reservation_leases.sql', '20261029001000_pool_concurrency.sql',
-    '20261102000000_free_token_window.sql', '20261104000000_connector_policy.sql', '20261104000100_connector_accounts.sql']);
+    '20261102000000_free_token_window.sql', '20261104000000_health_probes.sql', '20261104300000_free_plan_features_lineup.sql',
+    '20261105000000_connector_policy.sql', '20261105000100_connector_accounts.sql']);
   for (const file of downFiles) {
     const migration = migrations.find(candidate => candidate.file === file);
     assert.ok(migration, `${file} undoes a migration of the same name`);
