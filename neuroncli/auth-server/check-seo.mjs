@@ -80,6 +80,7 @@ if (process.argv.includes('--live')) {
     ['https://zero-x.live/start','https://zero-x.live/neuron-cli#install'],
     ['https://zero-x.live/download.html','https://zero-x.live/download'],
     ['https://zero-x.live/docs/trust.html','https://zero-x.live/docs/trust'],
+    ['https://zero-x.live/docs/data.html','https://zero-x.live/docs/data'],
     ['https://zero-x.live/pricing.html','https://zero-x.live/pricing'],
     ['https://www.zero-x.live/pricing','https://zero-x.live/pricing'],
     ['https://zero-x.live/neuron-cli/','https://zero-x.live/neuron-cli'],

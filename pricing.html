@@ -56,7 +56,7 @@
           <button type="button" data-currency="USD" aria-pressed="true">USD</button>
           <button type="button" data-currency="INR" aria-pressed="false">INR</button>
         </div>
-        <p class="zx-help">Prices per month. Payments are processed by Razorpay; your checkout shows the final amount before you pay.</p>
+        <p class="zx-help">Prices per month. No GST is charged, so the price shown is the price you pay. Payments are processed by Razorpay; your checkout shows the final amount before you pay.</p>
       </div>
       <div id="pricing-status" class="zx-muted" role="status" aria-live="polite"></div>
       <div id="pricing-error" class="zx-alert zx-alert--error" role="alert"></div>
@@ -112,6 +112,7 @@
         </article>
       </div>
       <p class="zx-help">Already subscribed? Manage your plan from <a href="https://dashboard.zero-x.live/#billing">Billing in your dashboard</a>. Cancel any time; access continues until the end of the paid period.</p>
+      <p class="zx-help" id="checkout-notice">Before you pay, checkout asks for your billing details and for you to agree to the <a href="/terms#billing">renewal terms</a>, the <a href="/terms">Terms of Service</a>, the <a href="/privacy">Privacy Policy</a> and the <a href="/refund">cancellation and refund policy</a>. Pro and Max renew every month at the price shown until you cancel, and your bank or Razorpay may notify you before each charge. Razorpay processes the payment; Zero-X never sees your card details.</p>
     </section>
 
     <section class="zx-container zx-section" id="credits" aria-labelledby="credits-title">
@@ -119,7 +120,7 @@
       <div class="zx-grid zx-grid--2">
         <div class="zx-card zx-card--flat">
           <h3>Free plan: shared free pools</h3>
-          <p>Free requests run on free models chosen for coding, with tool use, served from the free tiers of upstream services. Every Zero-X user shares those pools, and each pool has its own daily budget. The <a href="/#models">live model list</a> shows which models are available right now.</p>
+          <p>Free requests run on free models chosen for coding, with tool use, served from the free tiers of upstream services. Every Zero-X user shares those pools, and each pool has its own daily budget. The <a href="/#models">live model list</a> shows which models are available right now. <strong>Free tiers may keep your requests, let people review them or use them to improve their models</strong>, so keep secrets and code you may not share out of Free-plan requests. The <a href="/privacy#processors">privacy policy</a> lists who receives requests and what each provider states.</p>
           <p>Free usage costs no credits but counts toward your daily request and token caps. When a shared pool runs out, requests fail with <code>capacity_exhausted</code> until it resets or another free model has capacity. Availability is best effort.</p>
         </div>
         <div class="zx-card zx-card--flat">
@@ -170,7 +171,7 @@
 
     <section class="zx-container zx-section" id="topups" aria-labelledby="topups-title">
       <h2 id="topups-title">Credit top-ups</h2>
-      <p class="zx-muted">One-time packs for Pro and Max subscribers who use more than their plan includes. Credits pay for Claude Sonnet 5.5, Claude Opus 5.5 and other paid capacity, and need an active Pro or Max plan to be used.</p>
+      <p class="zx-muted">One-time packs for Pro and Max subscribers who use more than their plan includes. A top-up is a single payment and does not renew. Credits pay for Claude Sonnet 5.5, Claude Opus 5.5 and other paid capacity, and need an active Pro or Max plan to be used.</p>
       <div class="zx-grid zx-grid--2">
         <article class="zx-card" aria-labelledby="topup-5-title">
           <h3 id="topup-5-title"><span data-topup-credit="credits_5">$5</span> of credits</h3>
@@ -197,6 +198,10 @@
           <p>Prompt tokens (what Neuron sends, including file contents and conversation history) plus completion tokens (what the model writes), as reported by the upstream provider. Both count toward your daily token cap. Long sessions grow the prompt; use <code>/compact</code> in Neuron to shrink it.</p>
         </details>
         <details>
+          <summary>How far does 1M tokens go?</summary>
+          <p>Free counts prompt and completion tokens together, over a rolling 5 hours. A coding agent sends the conversation so far and the files it read with every step, so a typical Neuron step uses about 25,000 tokens, and 1,000,000 tokens is roughly 40 such steps every 5 hours, not 1,000,000 tokens of output. Use <code>/compact</code> in Neuron to shrink the prompt.</p>
+        </details>
+        <details>
           <summary>What happens when I reach a limit?</summary>
           <p>At the daily request or token cap, the gateway returns <code>insufficient_quota</code> with the reset time (00:00 UTC). On Free, tokens are counted over a rolling 5-hour window: once a window holds 1M tokens, <code>insufficient_quota</code> says when enough of it frees up (also in <code>Retry-After</code>), and tokens older than 5 hours stop counting. Going over your per-minute rate returns <code>rate_limited</code> and Neuron retries after the delay. If a paid-capacity request needs more credits than you have, it returns <code>insufficient_credits</code>; top up or wait for your next renewal. Nothing is charged automatically beyond your plan. A Claude request holds the most it could cost until it finishes, so with a low balance a request with a large <code>max_tokens</code> can return <code>insufficient_credits</code>; lower <code>max_tokens</code> or top up. Each Claude model also has a daily spending limit shared by all users; when it is reached the model returns <code>capacity_exhausted</code> until 00:00 UTC.</p>
         </details>
@@ -205,8 +210,12 @@
           <p>Cancel any time from <a href="https://dashboard.zero-x.live/#billing">Billing in your dashboard</a>. Your plan stays active until the end of the period you paid for and does not renew. Refund terms are in the <a href="/refund">cancellation and refund policy</a>.</p>
         </details>
         <details>
+          <summary>Do prices include GST?</summary>
+          <p>No GST is charged: the price shown is the price you pay. For a card in another currency your bank may add its own conversion or card fee. Razorpay may email you a receipt, and your payments are listed in the Billing tab of your dashboard.</p>
+        </details>
+        <details>
           <summary>Who sees my prompts and code?</summary>
-          <p>Your requests are sent to the company that serves the selected model: Anthropic (Claude Sonnet 5.5 and Claude Opus 5.5) on Pro and Max, the free-tier services listed in the privacy policy for the free models, or your own OpenRouter account if you connect one. Anthropic does not train its models on requests sent through its API. Free tiers of some providers may use prompts to improve their models and allow human review, so do not send secrets or code you are not allowed to share on the Free plan. The <a href="/privacy">privacy policy</a> lists every processor.</p>
+          <p>Your requests are sent to the upstream provider that serves the selected model, or the one <code>auto</code> picks: Anthropic (Claude Sonnet 5.5 and Claude Opus 5.5) on Pro and Max, or the free tier of an upstream provider for a free model. Anthropic does not train its models on requests sent through its API. <strong>Free tiers of some providers may use prompts to improve their models and allow human review</strong>, and for some providers we could not confirm their position, so do not send secrets or code you are not allowed to share on the Free plan. The gateway stores usage metadata only, not the text of your prompts, and replaces credentials it recognises with placeholders before a request leaves. The <a href="/privacy#processors">privacy policy</a> has a table of who receives what and what each provider states; <a href="/docs/data">Data and subprocessors</a> shows the data flow. With your own provider key, requests go straight to that provider.</p>
         </details>
         <details>
           <summary>Can I use my own API key (BYOK)?</summary>
@@ -260,7 +269,7 @@
         <a href="/shipping">Shipping and delivery</a>
       </nav>
     </div>
-    <p class="zx-container zx-footer__legal">© 2026 Zero-X · <a href="mailto:support@zero-x.live">support@zero-x.live</a></p>
+    <p class="zx-container zx-footer__legal">© 2026 Zero-X · <a href="mailto:support@zero-x.live">support@zero-x.live</a> · <a href="/contact#grievance">Grievance officer</a></p>
   </footer>
 </body>
 </html>

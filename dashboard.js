@@ -4,6 +4,7 @@ import {
   ApiError, PAYMENT_LOCK_CODES, SUPPORT_EMAIL, apiFetch, clearPaymentLock, describeError, normalizeCurrency, readPaymentLock,
   rememberPaymentLock, safeHttpsUrl, siteUrl, startTopup,
 } from './billing-checkout.js';
+import { collectBillingDetails, purchaseWithDetails } from './billing-details.js';
 import { PLAN_CATALOG, formatCount, formatMoney, formatTokens, normalizeCatalog } from './pricing.js';
 
 export const TABS = ['overview', 'usage', 'keys', 'billing', 'sessions', 'account'];
@@ -356,7 +357,7 @@ export function eventStatusTone(status) {
 
 /* ───────────── Controller ───────────── */
 
-export function createDashboard({ doc = globalThis.document, win = globalThis.window, auth, fetchImpl, now = () => Date.now() } = {}) {
+export function createDashboard({ doc = globalThis.document, win = globalThis.window, auth, fetchImpl, now = () => Date.now(), collectDetails = collectBillingDetails } = {}) {
   const $ = id => doc.getElementById(id);
   const getAuth = () => auth || win.ZeroXAuth || null;
   const host = () => (win.location ? win.location.hostname : '');
@@ -917,7 +918,11 @@ export function createDashboard({ doc = globalThis.document, win = globalThis.wi
     buttons.forEach(button => { button.disabled = true; });
     setAlert('billing-error', '');
     try {
-      await startTopup({ pack, currency: topupCurrency(), auth: getAuth(), fetchImpl, win, doc, onStatus: message => setText('billing-status', message) });
+      const currency = topupCurrency();
+      const onStatus = message => setText('billing-status', message);
+      // Billing details and agreement come first (billing-details.js); Razorpay opens only after them.
+      await purchaseWithDetails({ kind: 'topup', pack: state.catalog.topups.find(item => item.id === pack), currency, auth: getAuth(), fetchImpl, win, doc, now, onStatus },
+        consent => startTopup({ pack, currency, consent, auth: getAuth(), fetchImpl, win, doc, onStatus }), { collect: collectDetails });
       setText('billing-status', 'Payment confirmed. Credits have been added to your balance.');
       toast('Credits added.');
       await Promise.all([loadBilling(), loadAccount()]);

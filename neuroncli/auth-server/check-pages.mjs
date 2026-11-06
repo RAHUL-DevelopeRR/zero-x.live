@@ -10,9 +10,9 @@ const root = new URL('../../', import.meta.url);
 const read = file => readFileSync(new URL(file, root), 'utf8');
 const isFile = file => existsSync(new URL(file, root)) && statSync(new URL(file, root)).isFile();
 
-const PUBLIC_PAGES = ['index.html', 'pricing.html', 'neuron-cli.html', 'docs.html', 'ai-coding-agent.html', 'free-ai-coding-agent.html', 'claude-code-alternative.html', 'docs/trust.html', 'download.html', 'changelog.html', 'refund.html', 'contact.html', 'shipping.html', 'privacy.html', 'terms.html'];
+const PUBLIC_PAGES = ['index.html', 'pricing.html', 'neuron-cli.html', 'docs.html', 'ai-coding-agent.html', 'free-ai-coding-agent.html', 'claude-code-alternative.html', 'docs/trust.html', 'docs/data.html', 'download.html', 'changelog.html', 'refund.html', 'contact.html', 'shipping.html', 'privacy.html', 'terms.html'];
 const PRIVATE_PAGES = ['dashboard.html', '404.html', 'neuroncli/index.html'];
-const SITE_SCRIPTS = ['dashboard.js', 'pricing.js', 'billing-checkout.js', 'home.js', 'download.js', 'changelog.js', 'site-nav.js'];
+const SITE_SCRIPTS = ['dashboard.js', 'pricing.js', 'billing-checkout.js', 'home.js', 'download.js', 'billing-details.js', 'changelog.js', 'site-nav.js'];
 const RELEASE_MANIFESTS = ['releases/cli/latest.json', 'releases/desktop/latest.json'];
 const SITE_FILES = [...PUBLIC_PAGES, ...PRIVATE_PAGES, ...SITE_SCRIPTS, ...RELEASE_MANIFESTS, 'zx-tokens.css', 'home.css', 'zerox-auth.js', 'neuroncli/login/index.html', 'neuroncli/callback/index.html'];
 const BASES = {'dashboard.html': 'https://dashboard.zero-x.live/', '404.html': 'https://zero-x.live/404', 'neuroncli/index.html': 'https://zero-x.live/neuroncli/'};
@@ -194,6 +194,24 @@ for (const file of ['index.html', 'neuron-cli.html', 'docs.html', 'ai-coding-age
   assert.match(html, /<code id="qs-login">neuron login<\/code>/);
   assert.match(html, /https:\/\/zero-x\.live\/v1/);
   assert.doesNotMatch(read('dashboard.js'), /alert\(|confirm\(/, 'No alert()/confirm() dialogs');
+}
+
+/* The billing details step (billing-details.js) sits in front of every purchase: no payment starts without it */
+{
+  for (const file of ['pricing.js', 'dashboard.js']) {
+    const source = read(file);
+    assert.match(source, /from '\.\/billing-details\.js'/, file + ' imports the billing details step');
+    assert.match(source, /purchaseWithDetails\(/, file + ' runs purchases through it');
+    assert.doesNotMatch(source, /await start(?:Subscription|Topup)\(/, file + ': a purchase starts only inside purchaseWithDetails, after the details step');
+  }
+  assert.doesNotMatch(read('billing-details.js'), /startSubscription|startTopup|loadRazorpay|runCheckout/, 'the step never starts a payment');
+  // The dialog and its form controls are built by the script (labels, autocomplete, errors: check-dashboard.mjs), so the pages carry no copy of it.
+  for (const file of ['pricing.html', 'dashboard.html']) assert.doesNotMatch(read(file), /bd-form|bd-title|billing-details/, file + ': no markup of the step');
+  assert.ok(read('zx-tokens.css').includes('.zx-dialog--billing'), 'the dialog styles ship with the shared tokens');
+  // In the two-column layout the long-hint fields (address lines, tax id, phone) span the full width.
+  const wide = read('zx-tokens.css').match(/@media \(min-width: 560px\) \{ \.zx-form-grid \{[^}]*\}([^{]*)\{ grid-column: 1 \/ -1; \}/);
+  assert.ok(wide, 'the details form has a two-column rule with full-width fields');
+  for (const id of ['bd-address-line1-field', 'bd-address-line2-field', 'bd-tax-id-field', 'bd-phone-field']) assert.ok(wide[1].includes('#' + id), id + ' spans both columns');
 }
 
 /* ───────────── Links resolve to files or routes ───────────── */
@@ -400,14 +418,16 @@ const ADDRESS = '6/2, N. Pugalur, Karur 639113, Tamil Nadu, India';
   assert.match(text('terms.html'), /at least 18 years old/);
 
   // Claude on Pro and Max (Anthropic as a processor, credit holds, daily spend limits).
-  for (const file of ['privacy.html', 'terms.html']) assert.match(text(file), /Effective date: 25 October 2026\. Replaces the (?:policy|terms) dated 24 October 2026/, file + ' effective date');
+  assert.match(text('terms.html'), /Effective date: 3 November 2026\. Replaces the terms dated 25 October 2026/, 'terms.html effective date');
+  // 4 November 2026: the optional GSTIN or tax ID (legal-versions.js privacy is 2026-11-04 with it, so buyers agree again).
+  assert.match(text('privacy.html'), /Effective date: 4 November 2026\. Replaces the policy dated 3 November 2026\. This version adds the optional GSTIN or tax ID/, 'privacy.html effective date');
   const anthropicRow = read('privacy.html').match(/<tr><th scope="row"><a href="https:\/\/www\.anthropic\.com\/legal\/privacy">Anthropic<\/a><\/th>([\s\S]*?)<\/tr>/);
   assert.ok(anthropicRow, 'privacy: Anthropic is listed as a processor');
-  assert.match(anthropicRow[1], /does not use these prompts or responses to train its models/);
+  assert.match(anthropicRow[1], /not used to train its models/);
   assert.doesNotMatch(anthropicRow[1], /\d+[ -]days?/, 'privacy: no Anthropic retention period until it is confirmed in docs/PROVIDER_TERMS.md');
   assert.match(privacy, /On Pro and Max, requests to Claude Sonnet 5\.5 or Claude Opus 5\.5 go to Anthropic/);
   assert.match(privacy, /read from or written to Anthropic's prompt cache/);
-  assert.match(text('terms.html'), /including Anthropic, Groq, Google, Cloudflare, NVIDIA and OpenRouter;/);
+  assert.match(text('terms.html'), /including Anthropic, Groq, Google, Cloudflare, NVIDIA, OpenRouter and Z\.ai;/);
   assert.match(text('terms.html'), /paid-capacity models, including Claude Sonnet 5\.5 and Claude Opus 5\.5/);
   assert.match(text('terms.html'), /we hold the most it could cost[\s\S]*daily spending limit shared by all users/);
   const pricingPage = text('pricing.html');
@@ -424,6 +444,88 @@ const ADDRESS = '6/2, N. Pugalur, Karur 639113, Tamil Nadu, India';
     assert.ok(pricingPage.includes(`${name} ${row}`), `pricing: ${name} row equals the gateway's billed rates (${row})`);
   }
   assert.match(text('docs.html'), /and for Claude cache_read_per_mtok_usd and cache_write_per_mtok_usd/, 'docs: the Claude cache price fields');
+
+  // Legal rewrite of 2026-11-03: every provider the gateway can serve is named, what the text says about
+  // Gemini and Workers AI follows the deploy configuration, and nothing promises what the schema does not do.
+  const { BUILTIN_OFFERS } = await import('./src/oiop/offers.js');
+  const providerNames = { anthropic: 'Anthropic', groq: 'Groq', nvidia: 'NVIDIA API Catalog', openrouter: 'OpenRouter', zai: 'Z.ai', gemini: 'Google Gemini API', cloudflare: 'Cloudflare Workers AI' };
+  for (const provider of new Set(BUILTIN_OFFERS.map(offer => offer.provider))) {
+    assert.ok(providerNames[provider], 'a provider the gateway can serve has a name in the legal text check: ' + provider);
+    assert.ok(privacy.includes(providerNames[provider]), 'privacy names provider ' + provider);
+  }
+  const wrangler = read('neuroncli/auth-server/wrangler.toml');
+  for (const [variable, phrase] of [['GEMINI_MODELS', 'Gemini models, only while Gemini is switched on (it is not at the moment)'], ['CLOUDFLARE_MODELS', 'Workers AI models, only while Workers AI is switched on (it is not at the moment)']]) {
+    const off = new RegExp('^' + variable + ' = ""', 'm').test(wrangler);
+    assert.equal(privacy.includes(phrase), off, 'privacy says ' + variable + (off ? ' is switched off' : ' is on') + ' (wrangler.toml; change both together)');
+  }
+  assert.match(privacy, /Amazon Web Services/);
+  // Statements the system cannot back up stay out of the public text (review of 2026-11-03): the consent record is
+  // described as the code writes it, the production host is hedged, no notice or receipt is promised on a third
+  // party's behalf, and the static Free-plan line and model lists follow what is switched on.
+  assert.doesNotMatch(text('privacy.html'), /Each time you start a payment/);
+  assert.match(text('privacy.html'), /no new record is made for it/);
+  assert.match(text('privacy.html'), /may also run on a server we operate on Amazon Web Services/);
+  assert.match(text('privacy.html'), /A record is made when the payment window is prepared, not when the payment goes through/);
+  for (const file of ['terms.html', 'pricing.html', 'docs.html', 'refund.html']) {
+    assert.doesNotMatch(text(file), /Razorpay (also )?emails (you )?a receipt|(bank or Razorpay|Razorpay or your bank) will notify/, file + ' promises no receipt or notice from Razorpay');
+  }
+  assert.match(text('terms.html'), /Razorpay may email you a receipt for a payment/);
+  const switchedOff = variable => new RegExp('^' + variable + ' = ""', 'm').test(wrangler);
+  if (switchedOff('GEMINI_MODELS') && switchedOff('CLOUDFLARE_MODELS')) {
+    for (const file of ['pricing.html', 'pricing.js', 'neuroncli/auth-server/src/plan-policy.js']) {
+      assert.ok(!read(file).includes('Free models from Groq, Google Gemini'), file + ': the Free plan line names only providers that are switched on');
+    }
+    for (const file of ['index.html', 'neuron-cli.html']) {
+      assert.ok(!/gemini\/gemini-|@cf\//.test(read(file)), file + ': the static model list has no Gemini or Workers AI row while they are switched off');
+    }
+  }
+  assert.match(privacy, /Microsoft/);
+  assert.match(privacy, /Expo/);
+  assert.match(privacy, /text message to your phone number/);
+  for (const id of ['billing-details', 'deletion', 'transfers', 'cookies', 'security', 'changes']) assert.ok(read('privacy.html').includes(`id="${id}"`), 'privacy: section ' + id);
+  // What really happens: the database removes payment records with the account, so the text must not promise otherwise.
+  assert.match(privacy, /our own copies of its credit ledger, subscription and payment records/);
+  assert.match(privacy, /Razorpay keeps its own record of every payment/);
+  assert.doesNotMatch(privacy, /even after account deletion/);
+  assert.match(privacy, /grievance officer: Rahul S, founder of Zero-X, at support@zero-x\.live/);
+  assert.doesNotMatch(privacy, /We do not ask for a tax or GST number/, 'the tax id is asked for (optionally) since 4 November 2026');
+  assert.match(privacy, /You can also give a GSTIN or tax ID; it is optional, and if you give one we keep it with these details and use it only for billing records\. It is not sent to Razorpay\./);
+  assert.match(privacy, /We never ask for card, UPI or bank details/);
+  assert.match(text('docs/data.html'), /optional street address, phone and GSTIN or tax ID, business name/);
+  assert.match(privacy, /Razorpay's payment window is filled in with your name \(the first 50 characters\), email address and phone number only/);
+  assert.match(contact, /Grievance officer Zero-X is a small business founded and run by Rahul S/);
+  assert.ok(read('contact.html').includes('id="grievance"'));
+  for (const file of PUBLIC_PAGES) assert.ok(read(file).match(/<footer[\s\S]*<\/footer>/)[0].includes('Grievance officer'), file + ': footer names the grievance officer');
+  assert.match(text('terms.html'), /Prices are the full amount you pay: no GST is charged on them/);
+  assert.match(text('terms.html'), /currently 1,000,000 tokens, with a daily cap on requests, currently 100/);
+  assert.match(text('terms.html'), /Neuron 7\.0\.0-alpha\.4 and parts of the services are pre-release/);
+  assert.match(text('terms.html'), /cancel at any time from the Billing tab/);
+  assert.match(text('terms.html'), /danger-full-access mode it runs any command without asking/);
+  for (const id of ['alpha', 'agent']) assert.ok(terms.includes(`id="${id}"`), 'terms: section ' + id);
+  assert.match(text('refund.html'), /When a payment is refunded in full, the subscription is cancelled at once/);
+  assert.match(text('refund.html'), /taken back in proportion/);
+  assert.match(text('refund.html'), /Razorpay may retry it/);
+  assert.match(text('refund.html'), /5 to 7 business days/);
+  assert.match(pricingPage, /No GST is charged, so the price shown is the price you pay/);
+  assert.match(pricingPage, /Pro and Max renew every month at the price shown until you cancel/);
+  assert.match(pricingPage, /How far does 1M tokens go\?/);
+  // The owner's rule (2026-11-04): the pricing page does not name the providers behind the free models; the
+  // privacy policy and docs/data.html, which disclose who receives requests, still do.
+  assert.doesNotMatch(pricingPage, /Groq|NVIDIA|Z\.ai|Gemini|Workers AI|free models on OpenRouter|OpenRouter, free/, 'pricing names no upstream provider of the free models');
+  assert.ok(read('pricing.html').includes('href="/privacy#processors"'), 'pricing links the privacy policy table of providers');
+  for (const file of ['pricing.html', 'pricing.js', 'neuroncli/auth-server/src/plan-policy.js']) {
+    assert.ok(read(file).includes('Free models chosen for coding, with tool use'), file + ': the Free plan line names no provider');
+  }
+  assert.match(read('zerox-auth.js'), /By continuing you agree to the <a href="https:\/\/zero-x\.live\/terms"[^>]*>Terms of Service<\/a> and the <a href="https:\/\/zero-x\.live\/privacy"[^>]*>Privacy Policy<\/a>, and confirm you are 18 or older/);
+  assert.match(text('neuroncli/device/index.html'), /By continuing you agree to the Terms of Service and the Privacy Policy ?, and confirm you are 18 or older/);
+  const data = text('docs/data.html');
+  for (const word of ['Anthropic', 'Groq', 'NVIDIA', 'OpenRouter', 'Z.ai', 'Cloudflare', 'Amazon Web Services', 'Supabase', 'Razorpay', 'Expo']) assert.ok(data.includes(word), 'docs/data.html names ' + word);
+  for (const id of ['flow', 'stored', 'processors', 'tokens', 'control', 'requests', 'security', 'changes']) assert.ok(ids(read('docs/data.html')).includes(id), 'docs/data.html #' + id);
+  assert.match(data, /At most 14 days on our server/);
+  assert.ok(ids(read('docs.html')).includes('data'), 'docs.html has a data section');
+  assert.match(read('docs.html'), /href="\/docs\/data"/);
+  const llmsText = read('llms.txt');
+  for (const link of ['/privacy', '/terms', '/refund', '/shipping', '/docs/trust', '/docs/data']) assert.ok(llmsText.includes('(https://zero-x.live' + link + ')'), 'llms.txt links ' + link);
   assert.match(text('dashboard.html'), /Credits pay for Claude Sonnet 5\.5, Claude Opus 5\.5 and other paid capacity/);
 }
 
@@ -980,8 +1082,9 @@ assert.equal(checkout.normalizeCurrency('EUR'), 'USD');
   assert.ok(ids(read('privacy.html')).includes('gateway-logging'), 'privacy: gateway logging paragraph');
   assert.match(privacy, /The gateway stores usage metadata only/);
   assert.match(privacy, /never written to our database or logs/);
-  assert.match(privacy, /Prompt and response text: not stored/);
-  assert.match(privacy, /Operational logs: [^.]*never prompt or response text[^.]*\. Kept for at most 7 days/);
+  assert.match(privacy, /Prompt and response text Not stored In memory/);
+  assert.match(privacy, /Operational logs Request ID[^.]*never keys At most 14 days on our server/);
+  assert.doesNotMatch(privacy, /at most 7 days/i, 'privacy: the server journal keeps 14 days (deploy/aws/gateway-vm.yaml MaxRetentionSec)');
 }
 
 {

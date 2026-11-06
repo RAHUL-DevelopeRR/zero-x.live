@@ -93,6 +93,7 @@ try {
   assert.ok(files.indexOf(CAPS) > files.indexOf('20261029000500_credit_programs.sql') && files.indexOf(PLANS) === files.indexOf(CAPS) + 1,
     'the billing migrations come after the OIOP credit programs, caps before plans');
   assert.ok(handle.applied.includes('20261029000800') && handle.applied.includes('20261029000900'));
+  assert.ok(files.indexOf(LINEUP) > files.indexOf(PLANS), 'the Free line is rewritten after the plan features are seeded');
   const settleFns = await functionRows('zerox_settle_v2');
   assert.equal(settleFns.length, 1, 'one zerox_settle_v2, so PostgREST never has to choose between overloads');
   assert.equal(settleFns[0].pronargs, 11);
@@ -330,6 +331,7 @@ try {
   await sql("UPDATE public.zerox_plan_policy SET allowed_tiers = ARRAY['free', 'paid'] WHERE plan = 'free'");
   const stamp = (await sql("SELECT updated_at FROM public.zerox_plan_policy WHERE plan = 'pro'"))[0].updated_at;
   await db.exec(await migrationSql(PLANS));
+  await db.exec(await migrationSql(LINEUP)); // the plans file seeds the old Free provider line; this file replaces it
   assert.deepEqual((await sql('SELECT plan, allowed_tiers FROM public.zerox_plan_policy ORDER BY sort')).map(row => [row.plan, row.allowed_tiers]),
     [['free', ['free']], ['pro', ['free', 'paid']], ['max', ['free', 'paid']], ['ultrawork', ['free', 'paid']]]);
   assert.equal((await sql("SELECT updated_at FROM public.zerox_plan_policy WHERE plan = 'pro'"))[0].updated_at.getTime(), stamp.getTime(),
@@ -391,7 +393,7 @@ try {
   }
   handle.functions.clear();
   assert.equal((await functionRows('zerox_settle_v2')).length, 1);
-  // The lineup migration replaces only lines it knows (here 20261103000100's, from the billing branch)
+  // The lineup migration replaces only lines it knows (here the earlier draft's, from the billing branch)
   // and leaves an operator's own wording alone.
   const freeFeatures = async () => (await sql("SELECT features FROM public.zerox_plan_policy WHERE plan = 'free'"))[0].features;
   await sql(`UPDATE public.zerox_plan_policy SET features = jsonb_set(features, '{0}', to_jsonb('Free models from Groq, NVIDIA, OpenRouter and Z.ai'::text)) WHERE plan = 'free'`);
@@ -411,6 +413,10 @@ try {
   assert.equal((await reserve(reverted, { p_tier: 'paid', p_cost_microusd: 1000, p_model: `${capModel}-again`, p_pool: { cpd: 1500 } })).status, 'pool_exhausted');
   await settle(again.reservation_id, { p_prompt_tokens: 100, p_cache_read_tokens: 90, p_cost_microusd: 400 });
   assert.equal((await eventFor(again.reservation_id)).cache_read_tokens, 90);
+  for (const plan of Object.values(PLAN_FEATURES)) {
+    assert.doesNotMatch(plan.join(' '), /Groq|NVIDIA|OpenRouter|Z\.ai|Gemini|Workers AI/, 'plan features name no upstream provider');
+  }
+  await db.exec(`UPDATE public.zerox_plan_policy SET features = '${JSON.stringify(PLAN_FEATURES.free).replaceAll("'", "''")}'::jsonb WHERE plan = 'free'`);
   ok('down scripts restore the previous functions, columns, features and grants exactly; the up migrations re-apply cleanly twice');
 
   console.log(`PASS: ${passed.length} billing-cap checks`);

@@ -73,7 +73,10 @@ Nothing below needs Supabase, Razorpay or provider accounts.
    ```
 
    For billing locally, use Razorpay test-mode keys (`rzp_test_...`) or point
-   `RAZORPAY_API_BASE` at a fake server, as `check-e2e-local.mjs` does.
+   `RAZORPAY_API_BASE` at a fake server, as `check-e2e-local.mjs` does. With test-mode keys,
+   `node --env-file=.dev.vars scripts/razorpay-bootstrap.mjs --apply --store-pglite D:/zerox-dev-db`
+   (server stopped) creates the four test plans and stores their ids in the local database, so
+   checkout opens Razorpay's test window on `http://127.0.0.1:8787/pricing`.
 
 3. **Server.** `npm start` (or `node server.js`) listens on `127.0.0.1:8787` and serves the
    website too. Open `http://127.0.0.1:8787/pricing` or `/dashboard`; the sign-in modal offers

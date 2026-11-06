@@ -534,6 +534,7 @@
             '<button type="submit" data-auth-dev-submit="true">Sign in locally</button>' +
             '<p style="font-size:12px;color:#A6A6B2;margin-top:10px">Local development identity. Only a gateway running on this computer with DEV_AUTH_ENABLED=true accepts it.</p>' +
           '</form>' +
+          '<p data-auth-agreement="true" class="zerox-auth__agreement">By continuing you agree to the <a href="https://zero-x.live/terms" target="_blank" rel="noopener">Terms of Service</a> and the <a href="https://zero-x.live/privacy" target="_blank" rel="noopener">Privacy Policy</a>, and confirm you are 18 or older.</p>' +
         '</div>';
 
       modal.addEventListener('click', function (event) {

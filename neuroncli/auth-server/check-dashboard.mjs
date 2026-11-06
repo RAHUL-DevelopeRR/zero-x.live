@@ -296,9 +296,20 @@ function dashboardRoutes(state) {
 const {createDashboard, TABS} = await import(new URL('dashboard.js', root));
 const {createPricingPage, PENDING_CHECKOUT_KEY} = await import(new URL('pricing.js', root));
 const {PAYMENT_LOCK_KEY, PAYMENT_LOCK_TTL_MS} = await import(new URL('billing-checkout.js', root));
+// The billing details step (billing-details.js) is replaced by a stub in every test but its own: it
+// answers like a buyer who filled in the details and ticked every box.
+const CONSENT_VERSIONS = {terms: '2026-10-25', privacy: '2026-10-25', auto_renewal: '2026-11-03', refund: '2026-10-24'};
+const STUB_DETAILS = [];
+const stubDetails = async options => {
+  STUB_DETAILS.push(options);
+  const documents = options.kind === 'subscription' ? ['terms', 'privacy', 'auto_renewal', 'refund'] : ['terms', 'privacy', 'refund'];
+  return {consent: Object.fromEntries(documents.map(name => [name, CONSENT_VERSIONS[name]]))};
+};
+const consentFor = kind => (kind === 'subscription' ? ['terms', 'privacy', 'auto_renewal', 'refund'] : ['terms', 'privacy', 'refund'])
+  .reduce((all, name) => ({...all, [name]: CONSENT_VERSIONS[name]}), {});
 const DASHBOARD_HTML = read('dashboard.html');
 
-async function mountDashboard({profile = PROFILE, hash = '', state = {}, routes = {}, session, local} = {}) {
+async function mountDashboard({profile = PROFILE, hash = '', state = {}, routes = {}, session, local, details = stubDetails} = {}) {
   const shared = {keys: [
     {id: 'k-1', name: 'Laptop', prefix: 'nzx_Qw12', created_at: '2026-10-01T00:00:00Z', last_used_at: '2026-10-15T00:00:00Z', revoked_at: null},
     {id: 'k-0', name: 'Old CI', prefix: 'nzx_Zz99', created_at: '2026-09-01T00:00:00Z', last_used_at: null, revoked_at: '2026-09-10T00:00:00Z'}],
@@ -316,7 +327,7 @@ async function mountDashboard({profile = PROFILE, hash = '', state = {}, routes 
   const win = makeWindow({hash, auth, session, ...(local ? {local} : {})});
   win.Razorpay = FakeRazorpay;
   const {fetchImpl, calls} = makeFetch({...dashboardRoutes(shared), ...routes});
-  const dashboard = createDashboard({doc, win, auth, fetchImpl, now: () => NOW});
+  const dashboard = createDashboard({doc, win, auth, fetchImpl, now: () => NOW, collectDetails: details});
   await dashboard.boot();
   await settle();
   return {doc, win, auth, calls, dashboard, shared, $: id => doc.getElementById(id)};
@@ -511,7 +522,8 @@ async function mountDashboard({profile = PROFILE, hash = '', state = {}, routes 
   FakeRazorpay.instances.length = 0;
   topup5.click();
   await settle();
-  assert.deepEqual(calls.find(call => call.path === '/api/billing/topup').body, {pack: 'credits_5', currency: 'INR'});
+  assert.deepEqual(calls.find(call => call.path === '/api/billing/topup').body, {pack: 'credits_5', currency: 'INR', consent: consentFor('topup')});
+  assert.deepEqual(STUB_DETAILS.at(-1) && [STUB_DETAILS.at(-1).kind, STUB_DETAILS.at(-1).pack.id, STUB_DETAILS.at(-1).currency], ['topup', 'credits_5', 'INR'], 'the details step runs before the top-up order is created');
   const checkout = FakeRazorpay.instances[0];
   assert.equal(checkout.opened, true);
   assert.equal(checkout.options.key, 'rzp_test_AbCdEf123456');
@@ -703,7 +715,7 @@ async function mountDashboard({profile = PROFILE, hash = '', state = {}, routes 
 
 /* ───────────── Pricing checkout ───────────── */
 
-async function mountPricing({profile = null, routes = {}, hostname = 'zero-x.live', local = makeStorage({'zx-currency': 'USD'})} = {}) {
+async function mountPricing({profile = null, routes = {}, hostname = 'zero-x.live', local = makeStorage({'zx-currency': 'USD'}), details = stubDetails} = {}) {
   const doc = parseDocument(read('pricing.html'));
   const auth = makeAuth(profile);
   const win = makeWindow({hostname, auth, local});
@@ -714,7 +726,7 @@ async function mountPricing({profile = null, routes = {}, hostname = 'zero-x.liv
     'POST /api/billing/verify': {status: 'ok', account: {}},
     ...routes,
   });
-  const page = createPricingPage({doc, win, auth, fetchImpl, now: () => NOW});
+  const page = createPricingPage({doc, win, auth, fetchImpl, now: () => NOW, collectDetails: details});
   await page.init();
   await settle();
   return {doc, win, auth, calls, page, $: id => doc.getElementById(id)};
@@ -751,7 +763,8 @@ async function mountPricing({profile = null, routes = {}, hostname = 'zero-x.liv
   await settle();
   assert.equal(win.localStorage.getItem(PENDING_CHECKOUT_KEY), null, 'removed once Razorpay opens');
   const checkoutCall = calls.find(call => call.path === '/api/billing/checkout');
-  assert.deepEqual(checkoutCall.body, {plan: 'pro', currency: 'INR'});
+  assert.deepEqual(checkoutCall.body, {plan: 'pro', currency: 'INR', consent: consentFor('subscription')});
+  assert.deepEqual([STUB_DETAILS.at(-1).kind, STUB_DETAILS.at(-1).plan.id], ['subscription', 'pro'], 'the details step runs before the subscription is created');
   assert.equal(checkoutCall.headers.Authorization, 'Bearer sb-access-token');
   const rzp = FakeRazorpay.instances[0];
   assert.equal(rzp.options.subscription_id, 'sub_TEST12345');
@@ -1099,7 +1112,7 @@ async function loadAuth({hostname, config, session = makeStorage(), sdk = true})
   const win = makeWindow({hostname: '127.0.0.1', auth: real.auth, session, local});
   win.Razorpay = FakeRazorpay;
   const first = makeFetch({'GET /api/plans': plansPayload, 'POST /api/billing/checkout': () => new Promise(() => {})});
-  const page = createPricingPage({doc, win, auth: real.auth, fetchImpl: first.fetchImpl, now: () => NOW});
+  const page = createPricingPage({doc, win, auth: real.auth, fetchImpl: first.fetchImpl, now: () => NOW, collectDetails: stubDetails});
   await page.init();
   await settle();
   doc.querySelector('[data-upgrade="pro"]').click();
@@ -1120,7 +1133,7 @@ async function loadAuth({hostname, config, session = makeStorage(), sdk = true})
   win2.Razorpay = FakeRazorpay;
   const second = makeFetch({'GET /api/plans': plansPayload,
     'POST /api/billing/checkout': {provider: 'razorpay', key_id: 'rzp_test_AbCdEf123456', subscription_id: 'sub_TEST12345', name: 'Zero-X'}});
-  const page2 = createPricingPage({doc: doc2, win: win2, auth: real.auth, fetchImpl: second.fetchImpl, now: () => NOW});
+  const page2 = createPricingPage({doc: doc2, win: win2, auth: real.auth, fetchImpl: second.fetchImpl, now: () => NOW, collectDetails: stubDetails});
   // init() resumes into checkout, which stays pending while the Razorpay window is open.
   page2.init();
   await settle();
@@ -1134,9 +1147,9 @@ async function loadAuth({hostname, config, session = makeStorage(), sdk = true})
   tab.Razorpay = FakeRazorpay;
   const third = makeFetch({'GET /api/plans': plansPayload,
     'POST /api/billing/checkout': call => ({provider: 'razorpay', key_id: 'rzp_test_AbCdEf123456', subscription_id: 'sub_TEST54321', notes: {plan: call.body.plan}})});
-  createPricingPage({doc: parseDocument(read('pricing.html')), win: tab, auth: real.auth, fetchImpl: third.fetchImpl, now: () => NOW}).init(); // stays pending with Razorpay open
+  createPricingPage({doc: parseDocument(read('pricing.html')), win: tab, auth: real.auth, fetchImpl: third.fetchImpl, now: () => NOW, collectDetails: stubDetails}).init(); // stays pending with Razorpay open
   await settle();
-  assert.deepEqual(third.calls.find(call => call.path === '/api/billing/checkout').body, {plan: 'max', currency: 'INR'});
+  assert.deepEqual(third.calls.find(call => call.path === '/api/billing/checkout').body, {plan: 'max', currency: 'INR', consent: consentFor('subscription')});
 }
 
 {
@@ -1233,5 +1246,376 @@ async function loadAuth({hostname, config, session = makeStorage(), sdk = true})
   assert.equal(refused.$('pricing-error').querySelector('a').getAttribute('href'), 'https://zero-x.live/pricing#plans');
 }
 
-console.log('PASS: dashboard gate, contract-driven overview, hash tabs and keyboard, usage chart/table/pagination, key create-once/copy/revoke-confirm, billing cancel/top-up/verify, sessions, sign-out dev-token cleanup, 401/500 recovery, pricing currency/hydration/checkout/409/503/forged payloads, Neuron CLI install tabs, zerox-auth dev identity and pinned SDK; untrusted data never reached innerHTML');
+/* ───────────── Billing details dialog (billing-details.js, the real module) ───────────── */
+
+{
+  const {collectBillingDetails} = await import(new URL('billing-details.js', root));
+  const DOCS = {terms: {version: '2026-10-25', path: '/terms'}, privacy: {version: '2026-10-25', path: '/privacy'},
+    refund: {version: '2026-10-24', path: '/refund'}, auto_renewal: {version: '2026-11-03', path: '/terms#billing'}};
+  const OPTIONS = {countries: [{code: 'IN', name: 'India'}, {code: 'US', name: 'United States'}, {code: 'AE', name: 'United Arab Emirates'}],
+    states: {IN: [{code: 'KA', name: 'Karnataka'}, {code: 'TN', name: 'Tamil Nadu'}]}, no_postal: ['AE']};
+  const SAVED = {customer_type: 'individual', full_name: 'Asha Kumar', business_name: null, country: 'IN', state: 'TN', city: 'Karur', postal_code: '639113',
+    address_line1: '6/2 N. Pugalur', address_line2: null, phone: '+919876543210', tax_id: null};
+  // GSTINs with a correct check character (check-billing-profile.mjs computes them): Tamil Nadu (33) and Karnataka (29).
+  const GSTIN_TN = '33ABCDE1234F1Z7';
+  const GSTIN_KA = '29ABCDE1234F1ZW';
+  const detailsPayload = (extra = {}) => ({profile: null, complete: false, missing: ['full_name', 'country', 'city', 'postal_code'], documents: DOCS, accepted: {},
+    tax: {no_gst_notice: false}, options: OPTIONS, ...extra});
+  const returning = (extra = {}) => detailsPayload({profile: SAVED, complete: true, missing: [],
+    accepted: {terms: {version: '2026-10-25', accepted_at: '2026-10-20T10:00:00.000Z', current: true}, privacy: {version: '2026-10-25', accepted_at: '2026-10-20T10:00:00.000Z', current: true},
+      refund: {version: '2026-10-24', accepted_at: '2026-10-20T10:00:00.000Z', current: true}}, ...extra});
+  const checkoutRoute = call => ({provider: 'razorpay', key_id: 'rzp_test_AbCdEf123456', subscription_id: 'sub_TEST12345', name: 'Zero-X', description: call.body.plan + ' plan',
+    prefill: {email: 'owner@example.com', name: 'Asha Kumar', contact: '+919876543210'}, notes: {plan: call.body.plan}});
+  const dialogOf = doc => doc.querySelector('dialog.zx-dialog--billing');
+  const field = (doc, id) => doc.getElementById(id);
+  const fill = (doc, values) => {
+    for (const [id, value] of Object.entries(values)) {
+      const element = field(doc, id);
+      element.value = value;
+      element.dispatchEvent(makeEvent(element.localName === 'select' ? 'change' : 'input', {bubbles: true}));
+    }
+  };
+  const tick = (doc, ids) => ids.forEach(id => { const box = field(doc, id); box.checked = true; box.dispatchEvent(makeEvent('change', {bubbles: true})); });
+  const submit = doc => field(doc, 'bd-submit').click();
+  const pricingWith = (routes, extra = {}) => mountPricing({profile: PROFILE, details: collectBillingDetails, routes: {
+    'POST /api/billing/checkout': checkoutRoute, 'GET /api/billing/profile': detailsPayload(), ...routes}, ...extra});
+
+  // ── First purchase: the form, its accessibility, validation, the order summary ──
+  {
+    const t = await pricingWith({'PUT /api/billing/profile': call => json(200, {profile: {...call.body, business_name: null, address_line1: null, address_line2: null, phone: null, state: call.body.state || null}, complete: true, missing: []})},
+      {local: makeStorage({'zx-currency': 'INR'})});
+    const {doc, calls} = t;
+    FakeRazorpay.instances.length = 0;
+    doc.querySelector('[data-upgrade="pro"]').click();
+    await settle();
+    const dialog = dialogOf(doc);
+    assert.ok(dialog && dialog.open, 'the details step opens before anything is created');
+    assert.equal(dialog.getAttribute('aria-labelledby'), 'bd-title');
+    assert.equal(dialog.getAttribute('aria-describedby'), 'bd-intro');
+    assert.equal(field(doc, 'bd-title').textContent, 'Billing details');
+    assert.ok(calls.some(call => call.path === '/api/billing/profile' && call.method === 'GET' && call.headers.Authorization === 'Bearer sb-access-token'));
+    assert.ok(!calls.some(call => call.path === '/api/billing/checkout'), 'no subscription is created until the details are given');
+    assert.equal(FakeRazorpay.instances.length, 0, 'Razorpay is not opened yet');
+    // Every control has a visible label and the right autocomplete token.
+    const labels = new Map(dialog.querySelectorAll('label').map(label => [label.getAttribute('for'), label.textContent]));
+    const expectations = {'bd-full-name': ['Full name', 'name'], 'bd-business-name': ['Business name', 'organization'], 'bd-country': ['Country', 'country'],
+      'bd-city': ['City', 'address-level2'], 'bd-postal-code': ['Postal code', 'postal-code'], 'bd-address-line1': ['Address line 1', 'address-line1'],
+      'bd-address-line2': ['Address line 2', 'address-line2'], 'bd-tax-id': ['GSTIN', 'off'], 'bd-phone': ['Phone number', 'tel']};
+    for (const [id, [label, token]] of Object.entries(expectations)) {
+      assert.ok(labels.get(id) && labels.get(id).startsWith(label), `${id} has the label ${label}`);
+      assert.equal(field(doc, id).getAttribute('autocomplete'), token, `${id} autocomplete`);
+      assert.ok(field(doc, id + '-error') && field(doc, id).getAttribute('aria-describedby').includes(id + '-error'), `${id} is described by its error`);
+    }
+    assert.ok(labels.get('bd-type-individual') && labels.get('bd-type-business') && dialog.querySelector('fieldset legend'), 'Individual or Business is a labelled group');
+    assert.match(labels.get('bd-full-name'), /\(required\)/);
+    assert.match(labels.get('bd-address-line1'), /\(optional\)/, 'the street address is optional for an individual');
+    assert.match(labels.get('bd-phone'), /\(optional\)/);
+    // The optional tax id, for individuals too: "GSTIN (optional)" in India, with the honest note about GST.
+    assert.equal(labels.get('bd-tax-id'), 'GSTIN (optional)');
+    assert.equal(field(doc, 'bd-tax-id-field').hidden, false, 'an individual can give a tax id too');
+    assert.equal(field(doc, 'bd-tax-id').getAttribute('maxlength'), '40');
+    // A code, not words: capitals on a phone keyboard, no autocorrect, no spelling underline.
+    assert.equal(field(doc, 'bd-tax-id').getAttribute('autocapitalize'), 'characters');
+    assert.equal(field(doc, 'bd-tax-id').getAttribute('autocorrect'), 'off');
+    assert.equal(field(doc, 'bd-tax-id').getAttribute('spellcheck'), 'false');
+    assert.equal(field(doc, 'bd-tax-id-hint').textContent,
+      "Optional. Zero-X keeps it with your billing details for its billing records; it is not sent to Razorpay and does not appear on Razorpay's receipt. Zero-X is not registered for GST, so no GST is charged and no GST invoice is issued.");
+    assert.ok(field(doc, 'bd-tax-id').getAttribute('aria-describedby').includes('bd-tax-id-hint'), 'the note describes the field');
+    assert.equal(field(doc, 'bd-business-name-field').hidden, true, 'business fields appear only for a business');
+    assert.equal(field(doc, 'bd-country').value, 'IN', 'paying in rupees: India is preselected (a guess the buyer can change)');
+    fill(doc, {'bd-country': ''});
+    assert.equal(field(doc, 'bd-tax-id-label').textContent, 'VAT or tax ID', 'outside India the field asks for a VAT or tax ID');
+    // The order summary is a description list with the price and renewal terms; no GST line unless the server says so.
+    const summary = field(doc, 'bd-summary');
+    const rows = Object.fromEntries(summary.querySelectorAll('dt').map((term, index) => [term.textContent, summary.querySelectorAll('dd')[index].textContent]));
+    assert.equal(rows.Plan, 'Neuron Pro');
+    assert.equal(rows.Price, '₹899 per month');
+    assert.equal(rows['Due today'], '₹899');
+    assert.equal(rows.Billing, 'Monthly, renews until you cancel');
+    assert.match(rows['First renewal'], /^About \d{1,2} \w+ 20\d\d, then monthly$/);
+    assert.ok(!('Tax' in rows) && !/GST/i.test(summary.textContent), 'the order summary does not mention GST until the owner turns the notice on');
+    const taxField = field(doc, 'bd-tax-id-field');
+    assert.ok(!/GST/i.test(dialog.textContent.replace(taxField.textContent, '')), 'outside the tax id field, the dialog says nothing about GST');
+    assert.match(field(doc, 'bd-notice').textContent, /renews monthly until you cancel.*Your bank or Razorpay may notify you before each charge.*Zero-X never sees your card details/);
+    assert.equal(dialog.querySelectorAll('input[type="checkbox"]').length, 4, 'terms, privacy, renewal notice and refund policy, all unticked');
+    assert.ok(dialog.querySelectorAll('input[type="checkbox"]').every(box => !box.checked));
+    assert.match(field(doc, 'bd-consent-auto-renewal').parentNode.textContent, /Pro plan renews every month at ₹899 until I cancel.*authorise Razorpay/);
+    const hrefs = dialog.querySelectorAll('a').map(anchor => anchor.getAttribute('href'));
+    for (const path of ['/terms', '/privacy', '/refund', '/terms#billing']) assert.ok(hrefs.includes('https://zero-x.live' + path), `links to ${path}`);
+    assert.ok(dialog.querySelectorAll('a').every(anchor => anchor.getAttribute('rel') === 'noopener noreferrer'));
+    assert.match(field(doc, 'bd-data-notice').textContent, /Razorpay receives only your name, e-mail address and phone number/);
+
+    // Submitting nothing: an error summary (role=alert), invalid fields, nothing saved, nothing created.
+    submit(doc);
+    await settle();
+    const errors = field(doc, 'bd-errors');
+    assert.equal(errors.getAttribute('role'), 'alert');
+    assert.match(errors.textContent, /things need your attention/);
+    for (const id of ['bd-full-name', 'bd-country', 'bd-city']) assert.equal(field(doc, id).getAttribute('aria-invalid'), 'true', `${id} is marked invalid`);
+    assert.equal(field(doc, 'bd-full-name-error').hidden, false);
+    assert.equal(field(doc, 'bd-consent-terms').getAttribute('aria-invalid'), 'true');
+    assert.ok(errors.querySelectorAll('a').length >= 6 && doc.activeElement === errors, 'the summary takes focus and links to each problem');
+    assert.ok(!calls.some(call => call.method === 'PUT') && !calls.some(call => call.path === '/api/billing/checkout'));
+
+    // India: the state is a list; fill in, tick, continue.
+    fill(doc, {'bd-full-name': 'Asha Kumar', 'bd-country': 'IN'});
+    const state = field(doc, 'bd-state');
+    assert.equal(state.localName, 'select');
+    assert.deepEqual(state.querySelectorAll('option').map(option => option.textContent), ['Choose…', 'Karnataka', 'Tamil Nadu']);
+    assert.match(labels.get('bd-state') || '', /^State|^$/);
+    assert.match(field(doc, 'bd-state-marker').textContent, /required/);
+    fill(doc, {'bd-state': 'TN', 'bd-city': 'Karur', 'bd-postal-code': '639113'});
+    assert.equal(field(doc, 'bd-tax-id-label').textContent, 'GSTIN');
+    // The GSTIN is checked in the browser with the server's rule: a Karnataka GSTIN for a Tamil Nadu address, then a typo.
+    fill(doc, {'bd-tax-id': GSTIN_KA});
+    submit(doc);
+    await settle();
+    assert.equal(field(doc, 'bd-tax-id-error').textContent, 'This GSTIN starts with 29, but the GST state code of Tamil Nadu is 33. Check the GSTIN or the state.');
+    // The error summary names the field with its own label ("GSTIN" in India), not a generic one.
+    assert.ok(field(doc, 'bd-errors').textContent.includes('GSTIN: This GSTIN starts with 29'), 'the summary uses the label of the field');
+    assert.ok(!field(doc, 'bd-errors').textContent.includes('GSTIN or tax ID'), 'no generic label in the summary');
+    assert.equal(field(doc, 'bd-tax-id').getAttribute('aria-invalid'), 'true');
+    fill(doc, {'bd-tax-id': GSTIN_TN.slice(0, 14) + 'A'});
+    submit(doc);
+    await settle();
+    assert.equal(field(doc, 'bd-tax-id-error').textContent, 'This GSTIN\'s last character does not match the rest. Check it for a typo.');
+    assert.ok(!calls.some(call => call.method === 'PUT'), 'a bad GSTIN is never sent');
+    fill(doc, {'bd-tax-id': ' ' + GSTIN_TN.slice(0, 7).toLowerCase() + ' ' + GSTIN_TN.slice(7) + ' '});
+    submit(doc);
+    await settle();
+    assert.equal(field(doc, 'bd-tax-id-error').hidden, true, 'lower case and spaces are fine (the server normalises them)');
+    assert.equal(field(doc, 'bd-consent-terms').getAttribute('aria-invalid'), 'true', 'the boxes still have to be ticked');
+    assert.ok(!calls.some(call => call.method === 'PUT'), 'nothing is saved until the boxes are ticked too');
+    tick(doc, ['bd-consent-terms', 'bd-consent-privacy', 'bd-consent-auto-renewal', 'bd-consent-refund']);
+    submit(doc);
+    await settle();
+    assert.deepEqual(calls.find(call => call.method === 'PUT').body, {customer_type: 'individual', full_name: 'Asha Kumar', country: 'IN', state: 'TN', city: 'Karur', postal_code: '639113',
+      tax_id: GSTIN_TN.slice(0, 7).toLowerCase() + ' ' + GSTIN_TN.slice(7)}, 'only what was filled in is sent, trimmed');
+    assert.deepEqual(calls.find(call => call.path === '/api/billing/checkout').body, {plan: 'pro', currency: 'INR', consent: consentFor('subscription')});
+    assert.equal(dialogOf(doc), null, 'the dialog is removed');
+    const razorpay = FakeRazorpay.instances[0];
+    assert.equal(razorpay.options.subscription_id, 'sub_TEST12345');
+    assert.deepEqual(razorpay.options.prefill, {email: 'owner@example.com', name: 'Asha Kumar', contact: '+919876543210'}, 'name, e-mail and phone only');
+    assert.ok(!JSON.stringify(razorpay.options).includes('639113') && !JSON.stringify(razorpay.options).includes('Karur'), 'no address reaches Razorpay');
+    assert.ok(!JSON.stringify(razorpay.options).includes(GSTIN_TN.slice(7)), 'no tax id reaches Razorpay');
+    assert.ok(![...t.win.localStorage.map.values(), ...t.win.sessionStorage.map.values()].some(value => /639113|Asha|Karur/.test(value)), 'details are never written to browser storage');
+  }
+
+  // ── The server's own messages (postal codes, phone numbers) are shown on their fields ──
+  {
+    let attempts = 0;
+    const t = await pricingWith({'PUT /api/billing/profile': () => (++attempts === 1
+      ? apiError(400, 'invalid_request', 'Enter a 6 digit PIN code.', {param: 'postal_code', fields: {postal_code: 'Enter a 6 digit PIN code.', phone: 'Enter the number with its country code.'}})
+      : json(200, {profile: SAVED, complete: true, missing: []}))});
+    t.doc.querySelector('[data-upgrade="max"]').click();
+    await settle();
+    const {doc, calls} = t;
+    fill(doc, {'bd-full-name': 'Asha Kumar', 'bd-country': 'IN'});
+    fill(doc, {'bd-state': 'TN', 'bd-city': 'Karur', 'bd-postal-code': '12345', 'bd-phone': '123'});
+    tick(doc, ['bd-consent-terms', 'bd-consent-privacy', 'bd-consent-auto-renewal', 'bd-consent-refund']);
+    submit(doc);
+    await settle();
+    assert.ok(dialogOf(doc) && dialogOf(doc).open, 'the dialog stays open on a refusal');
+    assert.equal(field(doc, 'bd-postal-code-error').textContent, 'Enter a 6 digit PIN code.');
+    assert.equal(field(doc, 'bd-phone-error').textContent, 'Enter the number with its country code.');
+    assert.equal(field(doc, 'bd-postal-code').getAttribute('aria-invalid'), 'true');
+    assert.equal(field(doc, 'bd-submit').disabled, false, 'the buyer can correct and retry');
+    assert.ok(!calls.some(call => call.path === '/api/billing/checkout'));
+    fill(doc, {'bd-postal-code': '639113', 'bd-phone': ''});
+    submit(doc);
+    await settle();
+    assert.equal(calls.filter(call => call.method === 'PUT').length, 2);
+    assert.deepEqual(calls.find(call => call.path === '/api/billing/checkout').body, {plan: 'max', currency: 'USD', consent: consentFor('subscription')});
+  }
+
+  // ── A business, outside India: type toggle, free-text state, no postal code needed in the UAE ──
+  {
+    const t = await pricingWith({'PUT /api/billing/profile': json(200, {profile: SAVED, complete: true, missing: []})});
+    t.doc.querySelector('[data-upgrade="pro"]').click();
+    await settle();
+    const {doc, calls} = t;
+    assert.equal(field(doc, 'bd-country').value, '', 'paying in dollars: no country is guessed');
+    const business = field(doc, 'bd-type-business');
+    business.checked = true;
+    business.dispatchEvent(makeEvent('change', {bubbles: true}));
+    assert.equal(field(doc, 'bd-business-name-field').hidden, false);
+    assert.match(field(doc, 'bd-address-line1-marker').textContent, /required/, 'a business gives its address');
+    fill(doc, {'bd-country': 'AE'});
+    assert.equal(field(doc, 'bd-tax-id-label').textContent, 'VAT or tax ID');
+    assert.equal(field(doc, 'bd-state').localName, 'input', 'free text where there is no list');
+    assert.equal(field(doc, 'bd-postal-code-field').hidden, true, 'no postal code where there are none');
+    submit(doc);
+    await settle();
+    assert.ok(field(doc, 'bd-business-name-error').textContent && field(doc, 'bd-address-line1-error').textContent);
+    assert.equal(field(doc, 'bd-postal-code-error').hidden, true);
+    fill(doc, {'bd-full-name': 'Asha Kumar', 'bd-business-name': 'Zero X Labs', 'bd-city': 'Dubai', 'bd-address-line1': 'Office 4', 'bd-state': 'Dubai'});
+    tick(doc, ['bd-consent-terms', 'bd-consent-privacy', 'bd-consent-auto-renewal', 'bd-consent-refund']);
+    fill(doc, {'bd-tax-id': 'TRN_1'});
+    submit(doc);
+    await settle();
+    assert.equal(field(doc, 'bd-tax-id-error').textContent, 'Enter a VAT or tax ID of 2 to 20 letters, digits or hyphens.');
+    assert.ok(field(doc, 'bd-errors').textContent.includes('VAT or tax ID: Enter a VAT or tax ID'), 'outside India the summary says VAT or tax ID');
+    assert.ok(!calls.some(call => call.method === 'PUT'));
+    fill(doc, {'bd-tax-id': '100 2345 6789 0003'});
+    submit(doc);
+    await settle();
+    assert.deepEqual(calls.find(call => call.method === 'PUT').body, {customer_type: 'business', full_name: 'Asha Kumar', business_name: 'Zero X Labs', country: 'AE', state: 'Dubai',
+      city: 'Dubai', address_line1: 'Office 4', tax_id: '100 2345 6789 0003'});
+  }
+
+  // ── Returning buyer: a one-click review; ticks only for what is new ──
+  {
+    const t = await pricingWith({'GET /api/billing/profile': returning(), 'PUT /api/billing/profile': json(200, {profile: SAVED, complete: true, missing: []})});
+    t.doc.querySelector('[data-upgrade="pro"]').click();
+    await settle();
+    const {doc, calls} = t;
+    const review = field(doc, 'bd-review');
+    assert.ok(review && !field(doc, 'bd-full-name'), 'the saved details are shown, not the form');
+    assert.match(review.textContent, /Asha Kumar/);
+    assert.match(review.textContent, /6\/2 N\. Pugalur/);
+    assert.match(review.textContent, /Karur, Tamil Nadu 639113/);
+    assert.match(review.textContent, /\+919876543210/);
+    assert.ok(!/GSTIN|tax ID/.test(review.textContent), 'no tax id row when none was given');
+    assert.equal(field(doc, 'bd-submit').textContent, 'Continue to payment');
+    assert.deepEqual(dialogOf(doc).querySelectorAll('input[type="checkbox"]').map(box => box.getAttribute('id')), ['bd-consent-auto-renewal'],
+      'only the renewal notice has to be ticked: it is about this purchase');
+    assert.match(field(doc, 'bd-earlier').textContent, /already accepted the Terms of Service, Privacy Policy and Cancellation and Refund Policy in their current versions/);
+    submit(doc);
+    await settle();
+    assert.equal(field(doc, 'bd-consent-auto-renewal').getAttribute('aria-invalid'), 'true');
+    assert.ok(!calls.some(call => call.path === '/api/billing/checkout'));
+    tick(doc, ['bd-consent-auto-renewal']);
+    submit(doc);
+    await settle();
+    assert.ok(!calls.some(call => call.method === 'PUT'), 'nothing is saved again when nothing was edited');
+    assert.deepEqual(calls.find(call => call.path === '/api/billing/checkout').body, {plan: 'pro', currency: 'USD', consent: {auto_renewal: '2026-11-03'}});
+  }
+  {
+    // Editing from the review screen shows the form with the saved values (the GSTIN too) and saves them.
+    const t = await pricingWith({'GET /api/billing/profile': returning({profile: {...SAVED, tax_id: GSTIN_TN}}), 'PUT /api/billing/profile': json(200, {profile: SAVED, complete: true, missing: []})});
+    t.doc.querySelector('[data-upgrade="pro"]').click();
+    await settle();
+    const {doc, calls} = t;
+    const reviewRows = Object.fromEntries(field(doc, 'bd-review').querySelectorAll('dt').map((term, index) => [term.textContent, field(doc, 'bd-review').querySelectorAll('dd')[index].textContent]));
+    assert.equal(reviewRows.GSTIN, GSTIN_TN, 'the saved GSTIN is shown for review');
+    field(doc, 'bd-edit').click();
+    assert.equal(field(doc, 'bd-tax-id').value, GSTIN_TN, 'and prefilled in the form');
+    assert.equal(field(doc, 'bd-full-name').value, 'Asha Kumar');
+    assert.equal(field(doc, 'bd-country').value, 'IN');
+    assert.equal(field(doc, 'bd-state').value, 'TN');
+    assert.equal(field(doc, 'bd-postal-code').value, '639113');
+    assert.equal(field(doc, 'bd-phone').value, '+919876543210');
+    fill(doc, {'bd-city': 'Chennai'});
+    tick(doc, ['bd-consent-auto-renewal']);
+    submit(doc);
+    await settle();
+    assert.equal(calls.find(call => call.method === 'PUT').body.city, 'Chennai');
+    assert.equal(calls.find(call => call.path === '/api/billing/checkout').body.consent.auto_renewal, '2026-11-03');
+  }
+  // A top-up for a returning buyer is one click (dashboard), with no consent to resend beyond what is new.
+  {
+    const t = await mountDashboard({details: collectBillingDetails, hash: '#billing', routes: {'GET /api/billing/profile': returning()}});
+    FakeRazorpay.instances.length = 0;
+    t.doc.querySelector('[data-topup="credits_5"]').click();
+    await settle();
+    assert.ok(dialogOf(t.doc) && dialogOf(t.doc).querySelectorAll('input[type="checkbox"]').length === 0, 'nothing to tick on a top-up once the documents are accepted');
+    assert.equal(field(t.doc, 'bd-title').textContent, 'Billing details for your top-up');
+    const rows = Object.fromEntries(field(t.doc, 'bd-summary').querySelectorAll('dt').map((term, index) => [term.textContent, field(t.doc, 'bd-summary').querySelectorAll('dd')[index].textContent]));
+    assert.deepEqual(rows, {Item: '$5 of Neuron credits', Payment: 'One time, no renewal', Price: '$5', 'Due today': '$5'});
+    assert.match(field(t.doc, 'bd-notice').textContent, /one-time payment/);
+    submit(t.doc);
+    await settle();
+    assert.deepEqual(t.calls.find(call => call.path === '/api/billing/topup').body, {pack: 'credits_5', currency: 'USD', consent: {}});
+    assert.equal(FakeRazorpay.instances[0].options.order_id, 'order_TEST123456');
+  }
+
+  // ── Closing the dialog: nothing is created, the buyer is told, and Esc counts ──
+  {
+    const t = await pricingWith({});
+    t.doc.querySelector('[data-upgrade="pro"]').click();
+    await settle();
+    field(t.doc, 'bd-cancel').click();
+    await settle();
+    assert.equal(dialogOf(t.doc), null);
+    assert.equal(t.$('pricing-status').textContent, 'Checkout closed. You have not been charged.');
+    assert.ok(!t.calls.some(call => call.path === '/api/billing/checkout'));
+    assert.equal(t.doc.querySelector('[data-upgrade="pro"]').disabled, false, 'the button works again');
+    t.doc.querySelector('[data-upgrade="pro"]').click();
+    await settle();
+    dialogOf(t.doc).dispatchEvent(makeEvent('cancel', {cancelable: true}));
+    await settle();
+    assert.equal(dialogOf(t.doc), null, 'Esc closes it too');
+    assert.ok(!t.calls.some(call => call.path === '/api/billing/checkout'));
+  }
+
+  // ── The owner's "No GST charged" notice appears only when the server says so ──
+  {
+    const t = await pricingWith({'GET /api/billing/profile': detailsPayload({tax: {no_gst_notice: true}})});
+    t.doc.querySelector('[data-upgrade="pro"]').click();
+    await settle();
+    const summary = field(t.doc, 'bd-summary');
+    const rows = Object.fromEntries(summary.querySelectorAll('dt').map((term, index) => [term.textContent, summary.querySelectorAll('dd')[index].textContent]));
+    assert.equal(rows.Tax, 'No GST charged');
+  }
+
+  // ── A document changed while the dialog was open: the step runs again with fresh data, once ──
+  {
+    let posts = 0;
+    let gets = 0;
+    const t = await pricingWith({'GET /api/billing/profile': () => { gets += 1; return returning(); },
+      'POST /api/billing/checkout': call => (++posts === 1 ? apiError(409, 'consent_required', 'Accept the current Terms of Service to continue.', {missing: ['terms']}) : checkoutRoute(call))});
+    t.doc.querySelector('[data-upgrade="pro"]').click();
+    await settle();
+    tick(t.doc, ['bd-consent-auto-renewal']);
+    submit(t.doc);
+    await settle();
+    assert.equal(posts, 1);
+    assert.ok(dialogOf(t.doc), 'the step reopens');
+    tick(t.doc, ['bd-consent-auto-renewal']);
+    submit(t.doc);
+    await settle();
+    assert.equal(gets, 2, 'with fresh details and documents');
+    assert.equal(posts, 2);
+    assert.equal(FakeRazorpay.instances.at(-1).options.subscription_id, 'sub_TEST12345');
+    // A second refusal is final: no loop.
+    let refusals = 0;
+    const loop = await pricingWith({'GET /api/billing/profile': returning(), 'POST /api/billing/checkout': () => { refusals += 1; return apiError(409, 'billing_profile_required', 'Add your billing details before you pay.', {missing: ['city']}); }});
+    loop.doc.querySelector('[data-upgrade="pro"]').click();
+    await settle();
+    tick(loop.doc, ['bd-consent-auto-renewal']);
+    submit(loop.doc);
+    await settle();
+    tick(loop.doc, ['bd-consent-auto-renewal']);
+    submit(loop.doc);
+    await settle();
+    assert.equal(refusals, 2, 'one reopen, then the refusal is shown');
+    assert.equal(dialogOf(loop.doc), null);
+    assert.match(loop.$('pricing-error').textContent, /Add your billing details to continue/);
+  }
+
+  // ── Untrusted data is text; a failed profile load is reported, not hidden ──
+  {
+    const t = await pricingWith({'GET /api/billing/profile': returning({profile: {...SAVED, full_name: XSS, address_line1: XSS, city: XSS}})});
+    t.doc.querySelector('[data-upgrade="pro"]').click();
+    await settle();
+    assert.equal(dialogOf(t.doc).querySelectorAll('img').length, 0);
+    assert.ok(field(t.doc, 'bd-review').textContent.includes(XSS), 'shown as text');
+    const failing = await pricingWith({'GET /api/billing/profile': apiError(503, 'service_unavailable', 'Zero-X is temporarily unavailable. Please retry shortly.')});
+    failing.doc.querySelector('[data-upgrade="pro"]').click();
+    await settle();
+    assert.equal(dialogOf(failing.doc), null);
+    assert.match(failing.$('pricing-error').textContent, /temporarily unavailable/);
+    assert.ok(!failing.calls.some(call => call.path === '/api/billing/checkout'));
+    const noPlan = await pricingWith({'GET /api/billing/profile': returning(), 'POST /api/billing/checkout': apiError(503, 'billing_plan_missing', 'Checkout for the Pro plan in USD is not set up yet.')});
+    noPlan.doc.querySelector('[data-upgrade="pro"]').click();
+    await settle();
+    tick(noPlan.doc, ['bd-consent-auto-renewal']);
+    submit(noPlan.doc);
+    await settle();
+    assert.match(noPlan.$('pricing-error').textContent, /Checkout for this plan is not set up yet\. Email support@zero-x\.live/);
+    assert.equal(noPlan.$('pricing-error').querySelector('a').getAttribute('href'), 'mailto:support@zero-x.live');
+  }
+}
+
+console.log('PASS: dashboard gate, contract-driven overview, hash tabs and keyboard, usage chart/table/pagination, key create-once/copy/revoke-confirm, billing cancel/top-up/verify, sessions, sign-out dev-token cleanup, 401/500 recovery, pricing currency/hydration/checkout/409/503/forged payloads, Neuron CLI install tabs, zerox-auth dev identity and pinned SDK; untrusted data never reached innerHTML, the billing details dialog (labelled controls, validation, server messages, review for returning buyers, one-click top-up, cancel, retry once, no GST line unless enabled)');
 process.exit(0);

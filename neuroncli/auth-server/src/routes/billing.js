@@ -6,6 +6,7 @@ import {
   isoFromUnix, LIVE_SUBSCRIPTION_STATUSES, razorpayConfigured, RazorpayError, refundPayment, subscriptionStatus, verifyCheckoutSignature,
 } from '../billing/razorpay.js';
 import { accountPayload, isoTime } from './account.js';
+import { registerBillingProfileRoutes, requireBillingDetails } from './billing-profile.js';
 
 export const PROVIDER = 'razorpay';
 const MERCHANT_NAME = 'Zero-X';
@@ -24,6 +25,12 @@ const pricingUrl = env => env.PRICING_URL || 'https://zero-x.live/pricing';
 
 export const billingNotConfigured = () => new ApiError(503, 'billing_not_configured',
   'Payments are not available on this gateway yet. Please try again later or contact https://zero-x.live/contact.');
+
+// The keys are set and the plan exists, but its Razorpay plan id for this currency is not stored
+// (zerox_plan_policy.razorpay_plan_id_inr / _usd, GATEWAY_SETUP.md): a setup gap, told apart from
+// missing keys so the operator can see which one it is. /health shows plans_configured.
+export const billingPlanMissing = (plan, currency) => new ApiError(503, 'billing_plan_missing',
+  `Checkout for the ${plan?.name || 'selected'} plan in ${currency} is not set up yet. Email support@zero-x.live and we will activate your plan.`);
 
 export function providerFailure(error, message = 'The payment provider could not complete the request. Please retry.') {
   if (error instanceof ApiError) return error;
@@ -155,10 +162,6 @@ const checkoutInProgress = () => new ApiError(409, 'checkout_in_progress',
 const duplicateSubscription = () => new ApiError(409, 'already_subscribed',
   'This subscription duplicates another subscription or checkout on your account, so it was cancelled and its payment is being refunded to your original payment method.');
 
-function checkoutPrefill(caller) {
-  return { email: caller.email || '', name: caller.name || '' };
-}
-
 // Ends a subscription at Razorpay now. A subscription that already ended (a retry after a
 // partial failure) is answered with its current state.
 export async function cancelImmediately(env, subscriptionId) {
@@ -249,15 +252,26 @@ async function checkout(c, caller) {
   await requireActiveAccount(env, caller);
   const plan = (await loadPlanCatalog(env)).plans.find(entry => entry.id === body.plan);
   const providerPlanId = currency === 'INR' ? plan?.razorpay_plan_id_inr : plan?.razorpay_plan_id_usd;
-  if (!providerPlanId) throw billingNotConfigured();
+  if (!providerPlanId) {
+    console.error('Razorpay plan id missing; store it in zerox_plan_policy (GATEWAY_SETUP.md)', { plan: body.plan, currency });
+    throw billingPlanMissing(plan, currency);
+  }
   const subscriptions = await userSubscriptions(env, caller.user_id);
   const live = subscriptions.find(entry => !entry.revoked_at && isLive(entry));
   if (live) throw alreadySubscribed(live);
+  // A saved billing profile and the current documents' agreement come before anything is created
+  // at Razorpay (a stale tab or a direct API call cannot skip the details step).
+  const details = await requireBillingDetails(env, caller, 'subscription', body);
+  // Only ids in notes: Razorpay copies notes back to us in webhooks, and they show in its dashboard.
   const notes = { user_id: caller.user_id, plan: plan.id };
-  const respond = subscriptionId => c.json({
-    provider: PROVIDER, key_id: env.RAZORPAY_KEY_ID, subscription_id: subscriptionId,
-    name: MERCHANT_NAME, description: `Neuron ${plan.name} plan, billed monthly`, prefill: checkoutPrefill(caller), notes,
-  });
+  // The agreements made in this request are recorded when a payable subscription is handed out.
+  const respond = async subscriptionId => {
+    await details.recordConsents();
+    return c.json({
+      provider: PROVIDER, key_id: env.RAZORPAY_KEY_ID, subscription_id: subscriptionId,
+      name: MERCHANT_NAME, description: `Neuron ${plan.name} plan, billed monthly`, prefill: details.prefill, notes,
+    });
+  };
   // An unpaid checkout (a second tab, a closed payment window) is reused for the same plan and
   // currency and retired for any other one, so the account never holds two payable subscriptions.
   for (const open of openCheckouts(subscriptions)) {
@@ -316,14 +330,16 @@ async function topup(c, caller) {
     throw new ApiError(403, 'upgrade_required', 'Credit top-ups are available on the Pro and Max plans. Upgrade first.',
       { upgrade_url: pricingUrl(c.env) });
   }
+  const details = await requireBillingDetails(c.env, caller, 'topup', body);
   const amount = priceFor(pack.price, currency);
   const receipt = 'topup_' + crypto.randomUUID().replace(/-/g, '').slice(0, 20);
   const order = await provider(() => createOrder(c.env, { amount, currency, receipt, notes: { user_id: caller.user_id, pack: pack.id } }),
     'Could not start checkout. No payment was taken; please retry.');
   if (!ID_PATTERNS.order.test(order.id || '')) throw new ApiError(502, 'payment_provider_error', 'Could not start checkout. Please retry.');
+  await details.recordConsents();
   return c.json({
     provider: PROVIDER, key_id: c.env.RAZORPAY_KEY_ID, order_id: order.id, amount_minor: amount, currency,
-    name: MERCHANT_NAME, description: `$${pack.credit_usd} Neuron credit top-up`, prefill: checkoutPrefill(caller),
+    name: MERCHANT_NAME, description: `$${pack.credit_usd} Neuron credit top-up`, prefill: details.prefill,
   });
 }
 
@@ -368,7 +384,13 @@ async function verifySubscriptionPayment(env, caller, { paymentId, subscriptionI
     await duplicate();
     throw duplicateSubscription();
   }
-  // Monthly credits are granted by the subscription.charged webhook (once per payment id).
+  // The first month's credits are granted here, not only by the subscription.charged webhook, so
+  // a plan never sits at $0 credits while the webhook is late or not configured. The ledger
+  // reference is the payment id either way, so whichever arrives second grants nothing. An
+  // authorized (not yet captured) payment is granted by the webhook once captured.
+  if (payment.status === 'captured' && plan.monthly_credit_microusd > 0) {
+    await grantCredits(env, { userId: caller.user_id, microusd: plan.monthly_credit_microusd, reason: creditReason.subscription(plan), ref: paymentId });
+  }
   return { pending: false };
 }
 
@@ -482,6 +504,7 @@ export function registerBillingRoutes(api) {
       payments: state.payments.map(paymentView),
     });
   }));
+  registerBillingProfileRoutes(api);
   api.post('/api/billing/checkout', withCaller(INTERACTIVE_CREDENTIALS, checkout));
   api.post('/api/billing/topup', withCaller(INTERACTIVE_CREDENTIALS, topup));
   api.post('/api/billing/verify', withCaller(INTERACTIVE_CREDENTIALS, verify));

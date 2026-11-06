@@ -86,6 +86,9 @@ RAZORPAY_KEY_ID = "rzp_live_TK43zZbnvcWZa8"
 # The Content-Security-Policy is enforced (inline scripts and styles by sha256, src/csp.js). "false" is the
 # kill switch: the same policy as Content-Security-Policy-Report-Only.
 CSP_ENFORCE = "true"
+# Checkout order summary: uncomment to show "No GST charged". Only after the owner has confirmed with
+# the CA that no GST is charged; until then the checkout says nothing about GST (GATEWAY_SETUP.md).
+# BILLING_NO_GST_NOTICE = "true"
 # Cloudflare Access application on dashboard.zero-x.live/admin (provider key vault and model
 # catalog pages, GATEWAY_SETUP.md step 5). With both set, the pages, /admin/providers/keys and
 # /admin/catalog/* also verify the Access JWT. The vault itself needs the Worker secret

@@ -309,6 +309,45 @@ and apply the missing ones, in order (the ten catalog and app migrations were re
 13. `20261104000000_health_probes.sql` (the active health checker's lease, verdict rows and `zerox_probe_take`; see below)
 14. `20261104300000_free_plan_features_lineup.sql` (the Free plan's feature line on the pricing page; no restart needed if applied late)
 15. `20261106000000_pool_fair_share.sql` (per-user fair share of the free pools, security audit F6; see below)
+16. `20261105000000_billing_details.sql` (billing profiles and consent records; see below)
+17. `20261105000200_billing_tax_id.sql` (an optional `tax_id` on `zerox_billing_profiles` with its CHECK, and the two profile functions returning it; applies after `20261105000000`; see below)
+
+**Billing details (`20261105000000_billing_details.sql`).** Two new tables (`zerox_billing_profiles`,
+`zerox_billing_consents`) and four functions; nothing existing changes, and it does not depend on
+`20261029000900_plan_features_claude.sql`. **Apply this migration before deploying the gateway
+that knows it**: that gateway answers checkout and top-up with 503 `service_unavailable` until the
+functions exist. (An older gateway keeps working against the new database. The old site script, which
+sends no `consent`, gets 409 `billing_profile_required` from the new gateway until the page is
+reloaded.) After the deploy:
+
+- the operator `/health` shows `plans_configured` `{inr: true, usd: true, missing: []}` once every paid
+  plan has its Razorpay plan id for both currencies (a `missing` entry such as `pro:USD` is what makes
+  checkout answer 503 `billing_plan_missing`; store the ids with the SQL `scripts/razorpay-bootstrap.mjs`
+  prints);
+- `BILLING_NO_GST_NOTICE` (a `[vars]` entry in `wrangler.toml` and `wrangler.api.toml`, commented out
+  by default) turns on the line "No GST charged" in the checkout order summary. Leave it off until the
+  owner has confirmed with the CA that no GST is charged; the checkout says nothing about GST before.
+
+Verify: `SELECT count(*) FROM pg_proc WHERE proname LIKE 'zerox_billing_%' AND proname IN
+('zerox_billing_profile_get', 'zerox_billing_profile_upsert', 'zerox_billing_record_consents',
+'zerox_billing_consents_latest');` returns 4. Roll back with
+`migrations/down/20261105000000_billing_details.down.sql` (psql -X -v ON_ERROR_STOP=1 -f, or paste
+it); that deletes every saved profile and consent record. If `20261105000200_billing_tax_id.sql` is
+applied, run its down script first.
+
+**Optional tax id (`20261105000200_billing_tax_id.sql`).** Adds the nullable column
+`zerox_billing_profiles.tax_id` with the CHECK `zerox_billing_profiles_tax_id_check` (a GSTIN shape
+for India, 2 to 20 of `[A-Z0-9-]` elsewhere) and replaces `zerox_billing_profile_get` /
+`zerox_billing_profile_upsert` so they return and save it (same SECURITY INVOKER, pinned search_path
+and service_role-only grants). Existing profiles keep everything and get `NULL`. **Apply it before
+deploying the gateway that knows it**: until then a buyer who types a tax id gets 503
+`service_unavailable` on saving (the old upsert refuses the unknown key); a buyer who leaves it empty
+is not affected, because the gateway then leaves the key out. The privacy policy changes with it
+(version `2026-11-04`), so every buyer is asked to agree again at their next checkout. Contract §14.6.
+Verify: `SELECT column_name FROM information_schema.columns WHERE table_name = 'zerox_billing_profiles'
+AND column_name = 'tax_id';` returns one row. Roll back with
+`migrations/down/20261105000200_billing_tax_id.down.sql`; that deletes every saved tax id and keeps
+every other billing detail and consent record.
 
 **Fair share of the free pools (`20261106000000_pool_fair_share.sql`).** One user may take at most a
 quarter of a free pool's daily request budget (`rpd`) and of its daily token budget (`tpd`); paid pools
