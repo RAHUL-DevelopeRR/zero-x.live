@@ -311,6 +311,7 @@ and apply the missing ones, in order (the ten catalog and app migrations were re
 15. `20261106000000_pool_fair_share.sql` (per-user fair share of the free pools, security audit F6; see below)
 16. `20261105000000_billing_details.sql` (billing profiles and consent records; see below)
 17. `20261105000200_billing_tax_id.sql` (an optional `tax_id` on `zerox_billing_profiles` with its CHECK, and the two profile functions returning it; applies after `20261105000000`; see below)
+18. `20261105200000_search_quota.sql` (daily web search and research-run counters for `POST /v1/search`; see below)
 
 **Billing details (`20261105000000_billing_details.sql`).** Two new tables (`zerox_billing_profiles`,
 `zerox_billing_consents`) and four functions; nothing existing changes, and it does not depend on
@@ -391,6 +392,39 @@ says the same, so the two can be applied in either order. Verify:
 Roll back with `migrations/down/20261102000000_free_token_window.sql` (psql -X -v ON_ERROR_STOP=1 -f,
 or paste it): Free gets 500,000 tokens a day back. It must run before
 `down/20261029001000_pool_concurrency.sql` if both are rolled back.
+
+**Web search (`20261105200000_search_quota.sql`, contract section 17).** New tables
+`zerox_search_usage` and `zerox_search_research_runs` and the functions `zerox_search_reserve` and
+`zerox_search_settle` (service_role only); nothing existing changes, so it can be applied before
+or after the deploy. Until it is applied, and while neither `SEARXNG_URL` nor `BRAVE_API_KEY` is
+set, `POST /v1/search` answers 503 `search_unavailable` (never unmetered); `/api/account` gains
+`limits.search` and `limits.colony` either way. Owner steps to switch search on:
+
+Both values reach the runtimes only through `.github/workflows/deploy.yml` (already wired): job
+ec2 rewrites `/etc/zerox/gateway.env` on every deploy, so a hand edit on the VM is gone at the next
+deploy. Add them as secrets of the GitHub environment "production", never of the repository, and
+never to `wrangler.toml` `[vars]` (`gateway-env.mjs` refuses a name that is both).
+
+1. Run SearXNG on its own host (not the gateway VM), with `search.formats: [html, json]` in its
+   `settings.yml`, its own `server.secret_key`, the limiter on, and reachable from the VM only
+   (private network, security group or tunnel). Add the environment secret `SEARXNG_URL` with its
+   base URL (`/search` is appended). It is VM-only (job ec2): a Worker cannot reach a private
+   host, so SearXNG answers only the searches the Worker forwards, which needs
+   `EC2_PROXY_PREFIXES` to cover `/v1/` (deploy/aws/CUTOVER.md). With forwarding off (the
+   rollback), the Worker serves search with Brave alone, or answers 503 `search_unavailable`
+   without a Brave key; it never waits on an unreachable SearXNG. Do not also set `SEARXNG_URL`
+   as a Worker secret: the Worker would wait up to 8 s on the unreachable host before every fallback.
+2. Optionally create a Brave Search API key (paid per query beyond the free allowance) and add the
+   environment secret `BRAVE_API_KEY`. The workflow binds it to the Worker and writes it to the
+   VM. Before forwarding covers `/v1/`, Brave is the only backend search can use, so set it
+   if search should work on the Worker.
+3. Apply the migration, then verify with
+   `SELECT proname FROM pg_proc WHERE proname LIKE 'zerox_search%';` (two rows).
+4. Deploy (the workflow picks both secrets up; an unset one is skipped with a warning), then
+   check `POST /v1/search` answers 200 with `provider` `searxng` through the forward and
+   `brave` otherwise.
+
+Roll back with `migrations/down/20261105200000_search_quota.down.sql` (drops the counters).
 
 `DATABASE_URL=… node scripts/apply-migrations.mjs --status`, then `--apply`; or run each file in the
 Supabase SQL editor followed by

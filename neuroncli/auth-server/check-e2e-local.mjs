@@ -452,7 +452,8 @@ try {
   assert.equal(account.user.id, userId);
   assert.equal(account.plan.id, 'free');
   assert.deepEqual(account.limits, { daily_requests: 100, daily_tokens: 5000000, rpm: 10, concurrency: 2,
-    window_tokens: 50000, window_seconds: 18000 });
+    window_tokens: 50000, window_seconds: 18000, search: { daily_searches: 40, daily_research_runs: 3 },
+    colony: { max_workers: 1, max_tokens_per_run: 300000 } });
   assert.equal(account.usage_today.requests, 1);
   assert.equal(account.usage_today.tokens, settled.prompt_tokens + settled.completion_tokens);
   assert.equal(account.usage_today.resets_at, nextUtcMidnight());

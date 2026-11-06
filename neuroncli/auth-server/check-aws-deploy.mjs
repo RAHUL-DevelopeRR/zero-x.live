@@ -202,10 +202,15 @@ assert.ok(WORKER_REQUIRED_KEYS.every(name => list(workerJob, 'REQUIRED_SECRETS')
 assert.ok(PARITY_SECRETS.every(name => list(workerJob, 'OPTIONAL_SECRETS').includes(name)), 'the Worker gets the parity secrets');
 assert.deepEqual(list(ec2Job, 'REQUIRED_SECRETS'), [...list(workerJob, 'REQUIRED_SECRETS'), ...PARITY_SECRETS]);
 // EC2_PROXY_SECRET_ROTATION is the VM's alone: the second proxy secret it accepts during a
-// rotation; the Worker only ever sends EC2_PROXY_SECRET.
-const VM_ONLY_SECRETS = ['EC2_PROXY_SECRET_ROTATION'];
+// rotation; the Worker only ever sends EC2_PROXY_SECRET. SEARXNG_URL is the VM's alone too: the
+// self-hosted SearXNG sits on a private network a Worker cannot reach (GATEWAY_SETUP.md, web search).
+const VM_ONLY_SECRETS = ['EC2_PROXY_SECRET_ROTATION', 'SEARXNG_URL'];
 assert.deepEqual(list(ec2Job, 'OPTIONAL_SECRETS'), [...list(workerJob, 'OPTIONAL_SECRETS').filter(name => !PARITY_SECRETS.includes(name)), ...VM_ONLY_SECRETS]);
 assert.ok(!/EC2_PROXY_SECRET_ROTATION/.test(workerJob), 'the Worker never gets the rotation value');
+assert.ok(!/secrets\.SEARXNG_URL/.test(workerJob), 'the Worker never gets the private SearXNG address');
+// Web search's fallback key reaches both runtimes, so a VM deploy never drops it.
+assert.ok(list(workerJob, 'OPTIONAL_SECRETS').includes('BRAVE_API_KEY') && list(ec2Job, 'OPTIONAL_SECRETS').includes('BRAVE_API_KEY'),
+  'BRAVE_API_KEY reaches the Worker and the VM');
 assert.deepEqual(list(ec2Job, 'VM_VARS'), ['EXTRA_WEB_HOSTS']);
 // package-release.sh dates the release's sitemap from the history, as job deploy does.
 assert.match(ec2Job, /uses: actions\/checkout@\S+ # v[\d.]+\n {8}with:\n {10}fetch-depth: 0\n/);

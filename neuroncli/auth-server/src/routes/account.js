@@ -2,6 +2,7 @@ import { rpc, rpcRows } from '../account-store.js';
 import { ApiError, ALL_CREDENTIALS, bearerToken, invalidSession, withCaller } from '../auth-context.js';
 import { normalizePlanId, planById } from '../plan-policy.js';
 import { sessionExpiry } from '../session-store.js';
+import { colonyLimits, searchLimits } from '../search.js';
 import { microusdToUsd } from './plans.js';
 
 const DAY_MS = 86400000;
@@ -111,6 +112,10 @@ export async function accountPayload(env, caller, { token = '' } = {}) {
       // window, daily_tokens is the most the window allows in a UTC day and refuses nothing.
       window_tokens: windowTokens && windowSeconds ? windowTokens : null,
       window_seconds: windowTokens && windowSeconds ? windowSeconds : null,
+      // Web searches and research runs per UTC day (POST /v1/search) and the CLI-enforced
+      // colony budget (docs/PLATFORM_CONTRACT.md section 17).
+      search: searchLimits(planId),
+      colony: colonyLimits(planId),
     },
     // Kept for released clients (the Neuron CLI shows "Tokens today"): today's UTC usage.
     usage_today: {

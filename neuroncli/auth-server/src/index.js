@@ -39,6 +39,7 @@ import { registerProviderKeyRoutes } from './routes/provider-keys.js';
 import { registerOfferRoutes } from './routes/offers.js';
 import { registerCatalogAdminRoutes } from './routes/catalog-admin.js';
 import { registerCreditRoutes } from './routes/credits.js';
+import { registerSearchRoutes } from './routes/search.js';
 import { loadVaultKeys, vaultConfigured } from './provider-keys.js';
 import { accessConfigured, passedAccess } from './access-auth.js';
 import { WORKER_HOSTS, chatRefusal, chatRoutedToEc2, forwardToEc2, proxyStatus, servingRuntime } from './ec2-proxy.js';
@@ -1147,6 +1148,7 @@ registerProviderKeyRoutes(api);
 registerOfferRoutes(api);
 registerCatalogAdminRoutes(api);
 registerCreditRoutes(api);
+registerSearchRoutes(api);
 
 app.route(API_MOUNT, api);
 app.route('/', api);

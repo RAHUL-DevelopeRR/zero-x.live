@@ -566,7 +566,8 @@ try {
       image_url: 'https://img.example.test/a.png' },
     session_expires_at: minted.body.expires_at,
     plan: { id: 'free', name: 'Free' },
-    limits: { daily_requests: 100, daily_tokens: 5000000, rpm: 10, concurrency: 2, window_tokens: 1000000, window_seconds: 18000 },
+    limits: { daily_requests: 100, daily_tokens: 5000000, rpm: 10, concurrency: 2, window_tokens: 1000000, window_seconds: 18000,
+      search: { daily_searches: 40, daily_research_runs: 3 }, colony: { max_workers: 1, max_tokens_per_run: 300000 } },
     usage_today: { requests: 7, tokens: 7000, resets_at: `${dayOffset(1)}T00:00:00.000Z` },
     usage_window: { tokens: 6000, limit_tokens: 1000000, remaining_tokens: 994000, window_seconds: 18000,
       resets_at: `${dayOffset(0)}T22:30:00.000Z` },
@@ -587,7 +588,8 @@ try {
   db.policyOverrides.pro = { rpm_limit: 99, concurrency_limit: 9, daily_requests: 2100 };
   account = await json(await request('/api/account', { token: sessionToken }));
   assert.deepEqual(account.body.limits, { daily_requests: 2100, daily_tokens: 10000000, rpm: 99, concurrency: 9,
-    window_tokens: null, window_seconds: null });
+    window_tokens: null, window_seconds: null, search: { daily_searches: 400, daily_research_runs: 30 },
+    colony: { max_workers: 4, max_tokens_per_run: 2000000 } });
   // A plan opts in to a window by its two policy columns.
   db.policyOverrides.pro = { window_tokens: 3000000, window_seconds: 7200 };
   account = await json(await request('/api/account', { token: sessionToken }));
