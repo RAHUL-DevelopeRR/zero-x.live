@@ -542,6 +542,8 @@ const FORWARD_REFUSALS = new Set(['proxy_secret_mismatch', 'misdirected_request'
 // The server therefore waits longer than cloudflared: the proxy always closes an idle connection
 // first. headersTimeout stays above it, as Node expects.
 const KEEP_ALIVE_MS = 95000;
+const limitsModule = () => (limitsPromise ||= import('./src/request-limits.js'));
+let limitsPromise = null;
 const HEADERS_TIMEOUT_MS = 96000;
 
 // One HTTP listener in front of the app. The readiness listener (readyOnly) answers GET /ready
@@ -593,12 +595,25 @@ function gatewayServer(app, env, { settings, heartbeatMs, readyOnly = false, ser
       if (server[DRAINING] || !server.listening) setImmediate(() => server.closeIdleConnections());
     });
     try {
+      // Body limits (audit F16): the route's limit (64 KiB, the chat routes 2 MiB, webhooks 256 KiB;
+      // src/request-limits.js) is checked against the declared Content-Length before a byte is
+      // read, then against the bytes actually read.
+      const limits = await limitsModule();
+      const limit = limits.bodyLimitFor(req.url.split('?')[0], env);
+      const tooLarge = () => {
+        const body = limits.bodyTooLargeBody(limit);
+        sendJson(res, 413, body, { 'Cache-Control': 'no-store', 'x-request-id': body.error.request_id, Connection: 'close' });
+      };
+      if (!['GET', 'HEAD'].includes(req.method) && limits.declaredBodyOver(req.headers, limit) !== null) {
+        tooLarge();
+        return;
+      }
       const chunks = [];
       let size = 0;
       for await (const chunk of req) {
         size += chunk.length;
-        if (size > 2 * 1024 * 1024) {
-          sendError(res, 413, 'invalid_request', { message: 'The request body is too large.' });
+        if (size > limit) {
+          tooLarge();
           return;
         }
         chunks.push(chunk);
@@ -631,6 +646,12 @@ function gatewayServer(app, env, { settings, heartbeatMs, readyOnly = false, ser
   if (!readyOnly) {
     server.keepAliveTimeout = KEEP_ALIVE_MS;
     server.headersTimeout = HEADERS_TIMEOUT_MS;
+    // The whole request (headers and body) must arrive within REQUEST_TIMEOUT_MS (2 minutes, never
+    // below headersTimeout, as Node requires), where Node's default is 5 minutes, and at most
+    // MAX_CONNECTIONS (2000) sockets are open per instance (audit F16). A response is never cut
+    // by either: streams run as long as before.
+    server.requestTimeout = Math.max(HEADERS_TIMEOUT_MS + 1000, positiveMs(process.env.REQUEST_TIMEOUT_MS, 120000));
+    server.maxConnections = positiveMs(process.env.MAX_CONNECTIONS, 2000);
   }
   return server;
 }

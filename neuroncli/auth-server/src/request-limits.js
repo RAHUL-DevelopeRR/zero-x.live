@@ -38,6 +38,14 @@ export function bodyLimits(env = {}) {
   return { default: fallback, chat: Math.max(fallback, positiveInt(env.CHAT_BODY_LIMIT_BYTES, 2 * MIB)) };
 }
 
+// The Razorpay webhook route keeps its own 256 KiB cap (src/routes/webhooks.js MAX_WEBHOOK_BYTES).
+const WEBHOOK_LIMIT = 256 * KIB;
+export const isWebhookPath = pathname => {
+  let path = String(pathname || '');
+  if (path.startsWith(API_MOUNT + '/')) path = path.slice(API_MOUNT.length);
+  return path.startsWith('/webhooks/');
+};
+
 export const isChatSizedPath = pathname => {
   let path = String(pathname || '');
   if (path.startsWith(API_MOUNT + '/')) path = path.slice(API_MOUNT.length);
@@ -46,7 +54,8 @@ export const isChatSizedPath = pathname => {
 
 export function bodyLimitFor(pathname, env = {}) {
   const limits = bodyLimits(env);
-  return isChatSizedPath(pathname) ? limits.chat : limits.default;
+  if (isChatSizedPath(pathname)) return limits.chat;
+  return isWebhookPath(pathname) ? Math.max(limits.default, WEBHOOK_LIMIT) : limits.default;
 }
 
 /**
@@ -153,4 +162,32 @@ export function streamSlots({ perIp = 4, max = 500 } = {}) {
 
 export function streamLimits(env = {}) {
   return { perIp: positiveInt(env.MODELS_STREAM_PER_IP, 4), max: positiveInt(env.MODELS_STREAM_MAX, 500) };
+}
+
+// The slots of this isolate (audit F2): MODELS_STREAM_PER_IP anonymous streams per address and
+// MODELS_STREAM_MAX in all, then 429 with Retry-After. The limits are read once per isolate.
+let streamSlotsOfIsolate = null;
+export const modelStreamSlots = env => (streamSlotsOfIsolate ||= streamSlots(streamLimits(env)));
+export const resetModelStreamSlots = () => { streamSlotsOfIsolate = null; };
+
+/**
+ * True when `value` (parsed JSON) nests objects or arrays deeper than `limit` levels. Iterative: the
+ * recursive JSON.stringify of the prompt estimate throws on a body that nests tens of thousands of
+ * levels (a 1 MiB body can), which used to answer 503 (audit 3b). Real tool schemas nest a few levels;
+ * the limit is MAX_JSON_DEPTH (128).
+ */
+export function jsonNestingExceeds(value, limit = 128) {
+  if (value === null || typeof value !== 'object') return false;
+  let level = [value];
+  for (let depth = 1; level.length; depth++) {
+    if (depth > limit) return true;
+    const next = [];
+    for (const item of level) {
+      for (const child of Array.isArray(item) ? item : Object.values(item)) {
+        if (child !== null && typeof child === 'object') next.push(child);
+      }
+    }
+    level = next;
+  }
+  return false;
 }

@@ -5,7 +5,7 @@ import {
 } from '../catalog.js';
 import { catalogStatus } from '../catalog-db.js';
 import { isOwnedSession, listModelsForSession } from '../providers.js';
-import { sessionTiers } from '../capacity.js';
+import { sessionTiers, usesLedger } from '../capacity.js';
 import { withHealth, withLegacyStatus } from '../health-share.js';
 import { hubHealthRows } from '../health-hub-client.js';
 import { healthStaleMs, probeHealthRows, probeStaleMsFor } from '../health-probes.js';
@@ -137,4 +137,35 @@ export async function v1ModelStatusPayload(c, session = {}, options = {}) {
   const checked = models.data.map(model => model.checked_at).filter(Boolean).sort().at(-1) ?? null;
   return { etag, body: { object: 'list', checked_at: checked, poll_interval_seconds: 30,
     stale_after_seconds: floorSeconds, catalog_version: catalogVersion, data } };
+}
+
+// One status payload and one serialised SSE frame per view per tick (security audit 2026-11-05, F2):
+// /v1/models/stream used to recompute the payload (catalog, health merge, SHA-256) once per open
+// connection every 15 s. Callers with the same view (plan, ledger, country, routes flag, caller
+// policy) now share one computation for `ttlMs`, shorter than the stream interval, so a change is
+// still seen on the next tick. A caller on its own OpenRouter key lists its own models and is never
+// shared. At most 64 views are kept per isolate.
+const sharedFrames = new Map();
+const SHARED_VIEWS_MAX = 64;
+
+export function resetSharedStatusFrames() { sharedFrames.clear(); }
+
+export async function sharedStatusFrame(c, session = {}, ttlMs = 5000) {
+  const env = c.env || {};
+  const build = async () => {
+    const { etag, body } = await v1ModelStatusPayload(c, session);
+    return { etag, body, frame: `id: ${etag}\nevent: catalog.updated\ndata: ${JSON.stringify(body)}\n\n` };
+  };
+  if (isOwnedSession(session)) return build();
+  const view = JSON.stringify([session?.plan || 'free', usesLedger(env, session), callerCountry(c.req.raw, env), wantsRoutes(c),
+    callerPolicy(c.req.raw.headers)]);
+  const now = Date.now();
+  const held = sharedFrames.get(view);
+  if (held && now - held.at < ttlMs) return held.promise;
+  const promise = build();
+  if (sharedFrames.size >= SHARED_VIEWS_MAX) sharedFrames.delete(sharedFrames.keys().next().value);
+  sharedFrames.set(view, { at: now, promise });
+  // A failed build is not kept for the next tick.
+  promise.catch(() => { if (sharedFrames.get(view)?.promise === promise) sharedFrames.delete(view); });
+  return promise;
 }

@@ -16,7 +16,7 @@ import { accessConfigured, passedAccess, verifyAccessJwt } from '../access-auth.
 import { discoveryJobs, JOB_INTERVALS, researchEnabled, runDiscoveryTick } from '../discovery/jobs.js';
 import { researchCap } from '../discovery/research.js';
 import { verificationTarget, verifyCandidate } from '../discovery/verify.js';
-import { REVIEW_PAGE } from '../discovery/review-page.js';
+import { REVIEW_SCRIPT, REVIEW_STYLE, reviewPage } from '../discovery/review-page.js';
 
 const STATUSES = new Set(['new', 'approved', 'verified', 'rejected', 'filtered', 'excluded']);
 const CONFLICTS = ['candidate_excluded', 'candidate_not_approved', 'candidate_not_verified', 'public_model_id_taken'];
@@ -103,10 +103,16 @@ export function registerDiscoveryRoutes(api) {
   };
 
   // The review page: a static shell that calls the routes below with the token typed into it.
+  // The page, its script and its stylesheet are separate files so the strict operator policy
+  // (no inline script or style, src/csp.js) covers them (audit F15). The legacy mount keeps its
+  // prefix in the links.
+  const mountPrefix = c => new URL(c.req.url).pathname.startsWith('/neuroncli/auth-server/') ? '/neuroncli/auth-server' : '';
   api.get('/admin/discovery', c => {
     c.header('Cache-Control', 'no-store');
-    return c.html(REVIEW_PAGE);
+    return c.html(reviewPage(mountPrefix(c)));
   });
+  api.get('/admin/discovery/review.js', c => c.body(REVIEW_SCRIPT, 200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-store' }));
+  api.get('/admin/discovery/review.css', c => c.body(REVIEW_STYLE, 200, { 'Content-Type': 'text/css; charset=utf-8', 'Cache-Control': 'no-store' }));
 
   api.get('/admin/discovery/candidates', operatorOnly(async c => {
     const status = c.req.query('status') || 'new';

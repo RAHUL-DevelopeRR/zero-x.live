@@ -64,7 +64,7 @@ provider off.
 | `HEALTH_CANARIES` | var | on | `false` stops HealthHub's canary requests (contract §12.5). |
 | `DISCOVERY_CREDITS` | var | on | With `ANTHROPIC_API_KEY`, the weekly job that finds free cloud and AI credit programs (contract §12.6); `false` turns it off. |
 | `DISCOVERY_RESEARCH` | var | on | With `ANTHROPIC_API_KEY`, the weekly research and credits jobs (Claude with web search, capped by `DISCOVERY_RESEARCH_MAX_USD`); `false` turns both off. |
-| `CSP_ENFORCE` | var | `false` | `true` sends `Content-Security-Policy` instead of `-Report-Only`. |
+| `CSP_ENFORCE` | var | `true` | The Content-Security-Policy is enforced; `false` is the kill switch and sends it as `Content-Security-Policy-Report-Only`. Inline scripts and styles are allowed by sha256 (`src/csp-hashes.js`, rebuilt with `npm run build:csp`), never by `'unsafe-inline'`. |
 | `PRICING_URL` | var | `https://zero-x.live/pricing` | `upgrade_url` in errors (https only). |
 
 ### Moving to the Node server on EC2
@@ -153,6 +153,26 @@ No new variables control request shaping or 429 handling; both are always on:
 No longer read: `*_TOOL_MODELS` (tool support comes from the catalog), `MAX_REQUESTS_PER_SESSION`,
 `OPENROUTER_CLIENT_ID`. Test-only: `E2E_*` (read by `e2e-upstream-shim.mjs`), `PGLITE_ENTRY`
 (`check-session-store.mjs`, `check-quota.mjs`).
+
+### Gateway limits
+
+Security audit 2026-11-05 (F2, F5, F16). Every limit is a variable with a default; a value that is not a
+positive integer keeps the default. The limits are per process (isolate on the Worker, instance on the VM).
+
+| Variable | Default | What |
+|---|---|---|
+| `BODY_LIMIT_BYTES` | 65536 | Request body limit of every route except the chat routes (`/v1/chat/completions`, `/v1/messages`, the `/auth/azure/*` aliases), the relay (2 MiB) and the Razorpay webhook (256 KiB). Over it: 413 `request_too_large` before any route or database call; on the VM the bytes are counted as they arrive, on the Worker the declared `Content-Length` is checked. |
+| `CHAT_BODY_LIMIT_BYTES` | 2097152 | Chat and relay body limit (2 MiB is what production enforced before; Neuron 7.0.0-alpha.4 sends 15-20 KB per turn). The chat handler's own 1 MiB cap still applies. |
+| `REQUEST_TIMEOUT_MS` | 120000 | The whole request (headers and body) must arrive within this time (Node's own default is 5 minutes; never below the headers timeout plus 1 s). A response is never cut by it: token streams run as long as before. |
+| `MAX_CONNECTIONS` | 2000 | Open sockets per VM instance. |
+| `MODELS_STREAM_PER_IP`, `MODELS_STREAM_MAX` | 4, 500 | Anonymous `/v1/models/stream` connections per address and in all (credentialed streams count in the total only): 429 with `Retry-After`. The status payload is computed once per tick and serialised once for all connections with the same view. |
+| `AUTH_NEGATIVE_CACHE_SECONDS`, `AUTH_NEGATIVE_CACHE_MAX` | 60, 10000 | A session, API key or device code the store has just said does not exist is answered from memory for this long. Not used when `SESSIONS_KV` is bound (KV is eventually consistent). A store outage caches nothing. |
+| `AUTH_REJECTIONS_PER_MINUTE` | 30 | An address that presented this many new rejected credentials in a minute gets 429 on the account routes, the device poll and `/v1/models` with a credential, before any lookup. The chat routes and anonymous model lists are never refused by it. |
+| `MAX_JSON_DEPTH` | 128 | Levels of nested objects and arrays a chat request body may have; deeper is 400 `invalid_request` (a 1 MiB body can nest 100,000 levels, which used to end in 503). Real tool schemas nest a few levels. |
+| `READY_CACHE_SECONDS` | 5 | A "ready" answer of `GET /ready` is remembered this long; a failure never is. |
+
+The edge rules stay the owner's (Cloudflare rate-limit and body-size rules on `/v1/*`, `/auth/*`, `/ready`
+and `/v1/models/stream`); these limits are the second layer behind them.
 
 ### Active model health checks
 
@@ -288,6 +308,17 @@ and apply the missing ones, in order (the ten catalog and app migrations were re
 12. `20261102000000_free_token_window.sql` (Free: 1,000,000 tokens per rolling 5-hour window instead of 500K a day; see below)
 13. `20261104000000_health_probes.sql` (the active health checker's lease, verdict rows and `zerox_probe_take`; see below)
 14. `20261104300000_free_plan_features_lineup.sql` (the Free plan's feature line on the pricing page; no restart needed if applied late)
+15. `20261106000000_pool_fair_share.sql` (per-user fair share of the free pools, security audit F6; see below)
+
+**Fair share of the free pools (`20261106000000_pool_fair_share.sql`).** One user may take at most a
+quarter of a free pool's daily request budget (`rpd`) and of its daily token budget (`tpd`); paid pools
+and pools without a daily budget are not affected. A user over its share gets the new reservation status
+`user_pool_share`: the gateway skips that pool for the request (the next pool of the model serves it), does
+not mark the pool as spent for anyone else, and answers `capacity_exhausted` with `Retry-After` until 00:00
+UTC when every pool refuses. Deploy the gateway that knows the status (both runtimes) **before** pasting
+this migration: an older gateway answers an unknown reservation status with 503 `service_unavailable` for
+that one request. The share is the constant `v_share_pct` (25) inside the function; change it with a new
+migration. Roll back with `migrations/down/20261106000000_pool_fair_share.sql`.
 
 **Free's 5-hour token window (`20261102000000_free_token_window.sql`).** Deploy the gateway that
 knows `user_window_tokens` (both runtimes: the Worker and the EC2 Node server) **before** pasting

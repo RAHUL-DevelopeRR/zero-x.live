@@ -887,18 +887,38 @@ try {
   const site = { ...env, ASSETS: assets };
   const home = await request('/', { bindings: site });
   assert.equal(home.headers.get('strict-transport-security'), 'max-age=31536000; includeSubDomains');
-  const policy = home.headers.get('content-security-policy-report-only');
-  assert.equal(home.headers.get('content-security-policy'), null, 'CSP starts in report-only mode');
-  for (const directive of ["default-src 'self'", "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://checkout.razorpay.com",
-    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://api.fontshare.com https://cdn.fontshare.com",
-    "font-src 'self' data: https://fonts.gstatic.com https://cdn.fontshare.com", "img-src 'self' data: https:",
-    "connect-src 'self' https://*.supabase.co https://api.razorpay.com https://lumberjack.razorpay.com",
-    'frame-src https://api.razorpay.com https://checkout.razorpay.com', "form-action 'self' http://127.0.0.1:*",
-    "frame-ancestors 'none'", "base-uri 'self'"]) assert.ok(policy.split('; ').includes(directive), directive);
-  assert.equal(policy.split('; ').length, 10);
-  const enforced = await request('/', { bindings: { ...site, CSP_ENFORCE: 'true' } });
-  assert.equal(enforced.headers.get('content-security-policy'), policy);
-  assert.equal(enforced.headers.get('content-security-policy-report-only'), null);
+  // The policy is enforced (CSP_ENFORCE=false is the kill switch back to report-only) and has no
+  // 'unsafe-inline' for scripts: inline scripts are allowed by hash (src/csp-hashes.js).
+  assert.equal(home.headers.get('content-security-policy-report-only'), null, 'CSP is enforced');
+  const policy = home.headers.get('content-security-policy');
+  const directives = Object.fromEntries(policy.split('; ').map(part => [part.split(' ')[0], part.split(' ').slice(1)]));
+  assert.deepEqual(Object.keys(directives), ['default-src', 'script-src', 'script-src-attr', 'style-src', 'style-src-attr', 'font-src',
+    'img-src', 'connect-src', 'frame-src', 'object-src', 'form-action', 'frame-ancestors', 'base-uri']);
+  assert.ok(!directives['script-src'].includes("'unsafe-inline'") && !directives['script-src'].includes("'unsafe-eval'"), 'no unsafe-inline for scripts');
+  assert.deepEqual(directives['script-src-attr'], ["'none'"], 'no inline event handlers');
+  assert.ok(directives['script-src'].filter(source => source.startsWith("'sha256-")).length >= 4, 'inline scripts by hash');
+  assert.ok(directives['script-src'].includes('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js'), 'supabase-js by exact URL');
+  assert.ok(!directives['script-src'].includes('https://cdn.jsdelivr.net'), 'not all of jsDelivr');
+  assert.ok(directives['script-src'].includes('https://checkout.razorpay.com'));
+  assert.ok(!directives['style-src'].includes("'unsafe-inline'") && directives['style-src'].some(source => source.startsWith("'sha256-")), 'styles by hash');
+  assert.deepEqual(directives['style-src-attr'], ["'unsafe-inline'"], 'style attributes only');
+  assert.deepEqual(directives['form-action'], ["'self'"], 'no loopback form target outside the CLI sign-in page');
+  assert.deepEqual(directives['frame-src'], ["'none'"], 'no payment frames outside the checkout pages');
+  assert.ok(!directives['img-src'].includes('https:'), 'avatar hosts only');
+  assert.ok(!directives['connect-src'].includes('https://*.supabase.co') || !env.SUPABASE_URL, 'connect-src: the configured Supabase origin, not the wildcard');
+  assert.equal(home.headers.get('permissions-policy'), 'camera=(), microphone=(), geolocation=(), usb=(), serial=(), bluetooth=(), interest-cohort=()');
+  assert.equal(home.headers.get('cross-origin-opener-policy'), 'same-origin-allow-popups');
+  const pricing = await request('/pricing', { bindings: site });
+  const pricingPolicy = Object.fromEntries(pricing.headers.get('content-security-policy').split('; ').map(part => [part.split(' ')[0], part.split(' ').slice(1)]));
+  assert.ok(pricingPolicy['style-src'].includes("'unsafe-inline'"), 'the checkout pages keep inline styles (checkout.js adds its own <style>)');
+  assert.deepEqual(pricingPolicy['frame-src'], ['https://api.razorpay.com', 'https://checkout.razorpay.com']);
+  assert.ok(!pricingPolicy['script-src'].includes("'unsafe-inline'"), 'but never inline scripts');
+  const supabaseSite = await request('/', { bindings: { ...site, SUPABASE_URL: 'https://abcd1234.supabase.co' } });
+  assert.match(supabaseSite.headers.get('content-security-policy'), /connect-src 'self' https:\/\/abcd1234\.supabase\.co /, 'the project origin');
+  assert.ok(!supabaseSite.headers.get('content-security-policy').includes('*.supabase.co'));
+  const killSwitch = await request('/', { bindings: { ...site, CSP_ENFORCE: 'false' } });
+  assert.equal(killSwitch.headers.get('content-security-policy-report-only'), policy, 'CSP_ENFORCE=false is report-only');
+  assert.equal(killSwitch.headers.get('content-security-policy'), null);
   assert.equal((await request('/', { bindings: site, base: 'http://127.0.0.1:8787' })).headers.get('strict-transport-security'), null, 'HSTS only over HTTPS');
   assert.equal((await request('/api/account', { token: 'supabase-token-user-b' })).headers.get('cache-control'), 'no-store');
 

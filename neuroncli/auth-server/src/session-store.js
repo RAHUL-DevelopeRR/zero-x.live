@@ -1,4 +1,5 @@
 import { accountRpc, databaseConfigured } from './account-store.js';
+import { forgetRejected } from './auth-cache.js';
 
 const stores = new WeakMap();
 const encoder = new TextEncoder();
@@ -107,6 +108,8 @@ async function recordTarget(env, key, record, ttlSeconds) {
 
 export async function writeRecord(env, key, record, ttlSeconds) {
   const { target, ttl } = await recordTarget(env, key, record, ttlSeconds);
+  // A token rejected a moment ago and written now is valid (auth-cache.js).
+  await forgetRejected(env, key);
   await recordStore(env).put(target, JSON.stringify(record), { expirationTtl: ttl });
 }
 

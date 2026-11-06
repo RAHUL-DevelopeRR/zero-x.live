@@ -283,6 +283,45 @@ for (const file of allHtml) {
   }
 }
 assert.doesNotMatch(read('zx-tokens.css'), /@import|url\((?!\s*['"]?(?:data:|\/[^/]))/, 'zx-tokens.css loads nothing remote');
+/* ───────────── Content-Security-Policy hashes (audit F14, F15, D1) ───────────── */
+
+// Inline scripts and styles are allowed by sha256, not by 'unsafe-inline': src/csp-hashes.js must list
+// exactly what the pages carry (node build-csp-hashes.mjs rewrites it), no page may use an inline event
+// handler or a javascript: URL (script-src-attr 'none'), and the one third-party script is allowed by URL.
+{
+  const {collectInlineHashes, render} = await import('./build-csp-hashes.mjs');
+  const generated = render(collectInlineHashes());
+  assert.equal(read('neuroncli/auth-server/src/csp-hashes.js').replace(/\r\n/g, '\n'), generated,
+    'src/csp-hashes.js is out of date: run `node build-csp-hashes.mjs` in neuroncli/auth-server');
+  const {INLINE_SCRIPT_HASHES, INLINE_STYLE_HASHES} = await import('./src/csp-hashes.js');
+  assert.ok(INLINE_SCRIPT_HASHES.length >= 4 && INLINE_STYLE_HASHES.length >= 1, 'the pages carry inline scripts and styles');
+  for (const hash of [...INLINE_SCRIPT_HASHES, ...INLINE_STYLE_HASHES]) assert.match(hash, /^sha256-[A-Za-z0-9+/]{43}=$/);
+  const {sitePolicy, SUPABASE_JS_SRC, ADMIN_POLICY} = await import('./src/csp.js');
+  const version = /SUPABASE_JS_VERSION = '([\d.]+)'/.exec(read('zerox-auth.js'))?.[1];
+  assert.ok(version, 'zerox-auth.js pins a supabase-js version');
+  assert.equal(SUPABASE_JS_SRC, `https://cdn.jsdelivr.net/npm/@supabase/supabase-js@${version}/dist/umd/supabase.js`, 'src/csp.js allows the file zerox-auth.js loads');
+  for (const file of allHtml) {
+    const html = read(file);
+    assert.doesNotMatch(html, /\son[a-z]+\s*=\s*["']/i, `${file}: no inline event handler attribute`);
+    assert.doesNotMatch(html, /(?:href|src|action)\s*=\s*["']\s*javascript:/i, `${file}: no javascript: URL`);
+    for (const script of tags(html, 'script')) if (script.src && script.src.includes('supabase-js')) assert.equal(script.src, SUPABASE_JS_SRC, `${file}: the supabase-js URL the policy allows`);
+  }
+  for (const [env, path, host] of [[{}, '/', 'zero-x.live'], [{}, '/pricing', 'zero-x.live'], [{SUPABASE_URL: 'https://abc.supabase.co'}, '/dashboard', 'dashboard.zero-x.live'],
+    [{}, '/neuroncli/login/', 'zero-x.live'], [{}, '/neuroncli/callback/', 'zero-x.live'], [{}, '/device', 'neuron.zero-x.live']]) {
+    const policy = sitePolicy(env, {hostname: host, pathname: path});
+    const parts = policy.split('; ');
+    const script = parts.find(part => part.startsWith('script-src '));
+    assert.ok(!script.includes("'unsafe-inline'") && !script.includes("'unsafe-eval'"), `${path}: script-src has no unsafe-inline or unsafe-eval`);
+    assert.ok(!/(^| )https:( |;|$)/.test(policy), `${path}: no bare https: source`);
+    assert.equal(policy.includes('*.supabase.co'), !env.SUPABASE_URL, `${path}: the Supabase wildcard only without a configured project`);
+    const checkout = ['/pricing', '/dashboard'].includes(path);
+    assert.equal(parts.find(part => part.startsWith('style-src ')).includes("'unsafe-inline'"), checkout, `${path}: inline styles only where the Razorpay checkout runs`);
+    assert.equal(policy.includes('http://127.0.0.1:*'), path === '/neuroncli/login/', `${path}: the loopback form target is the CLI sign-in page's alone`);
+    assert.equal(policy.includes('frame-src https://api.razorpay.com'), checkout, `${path}: payment frames only on the checkout pages`);
+  }
+  assert.ok(!/unsafe-/.test(ADMIN_POLICY), 'the operator policy has no unsafe source');
+}
+
 // Every maker logo the pane draws is vendored, with its licence notice.
 for (const m of read('zx-tokens.css').matchAll(/url\("(\/[^"]+)"\)/g)) assert.ok(isFile(m[1].slice(1)), 'zx-tokens.css: ' + m[1] + ' exists');
 assert.match(read('Assets/makers/NOTICE.txt'), /Simple Icons[\s\S]*CC0 1\.0/, 'maker logos carry their Simple Icons CC0 notice');

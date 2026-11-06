@@ -13,7 +13,7 @@
 // except, with --live, the two real upstreams.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { createHmac, randomBytes } from 'node:crypto';
+import { createHash, createHmac, randomBytes } from 'node:crypto';
 import { once } from 'node:events';
 import { existsSync, readFileSync } from 'node:fs';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -929,14 +929,22 @@ try {
   }
 
   // ── 15. Static website smoke on the same server (assets served, NEURON_API_ONLY unset) ──
-  const csp = Object.fromEntries((await call('/')).headers.get('content-security-policy-report-only').split(';')
-    .map(part => part.trim().split(/\s+/)).map(([name, ...values]) => [name, values]));
-  const allows = (directive, origin) => {
+  // The policy is enforced and differs by page (the checkout pages, the sign-in page), so it is read
+  // from each page's own response. Inline scripts and styles must be allowed by hash (src/csp-hashes.js).
+  const parsePolicy = headers => {
+    assert.equal(headers.get('content-security-policy-report-only'), null, 'the site policy is enforced');
+    return Object.fromEntries(headers.get('content-security-policy').split(';')
+      .map(part => part.trim().split(/\s+/)).map(([name, ...values]) => [name, values]));
+  };
+  const allowsIn = (csp, directive, origin) => {
     const sources = csp[directive] || csp['default-src'] || [];
-    return sources.some(source => source === origin || (source.includes('*.') &&
+    // A source with a path (supabase-js by its exact URL) allows its origin's file; the origin alone is what the scan finds.
+    return sources.some(source => source === origin || source.startsWith(origin + '/') || (source.includes('*.') &&
       new RegExp('^' + source.replace(/[.]/g, '\\.').replace('*', '[^/]+') + '$').test(origin)));
   };
+  const hashOfInline = text => 'sha256-' + createHash('sha256').update(text.split('\r\n').join('\n'), 'utf8').digest('base64');
   const pageChecks = [];
+  let dashboardPolicy = null;
   const externalOrigin = value => { try { const url = new URL(value, base); return url.origin === base ? null : url.origin; } catch { return null; } };
   // Same-origin scripts (and the modules they import) load more at runtime: an https literal
   // that names a script (.js or an npm CDN path) needs script-src; other external literals are
@@ -961,6 +969,9 @@ try {
     assert.equal(page.status, 200, path);
     assert.match(page.headers.get('content-type'), /text\/html/, path);
     const html = page.text;
+    const csp = parsePolicy(page.headers);
+    const allows = (directive, origin) => allowsIn(csp, directive, origin);
+    if (path === '/dashboard') dashboardPolicy = csp;
     const used = { 'script-src': new Set(), 'style-src': new Set(), 'font-src': new Set(), 'frame-src': new Set(), 'connect-src': new Set() };
     for (const match of html.matchAll(/<script\b[^>]*\bsrc="([^"]+)"/g)) {
       const origin = externalOrigin(match[1]);
@@ -984,8 +995,17 @@ try {
     if ([...used['style-src']].includes('https://fonts.googleapis.com')) used['font-src'].add('https://fonts.gstatic.com');
     if ([...used['style-src']].includes('https://api.fontshare.com')) used['font-src'].add('https://cdn.fontshare.com');
     for (const match of html.matchAll(/<iframe\b[^>]*\bsrc="([^"]+)"/g)) { const origin = externalOrigin(match[1]); if (origin) used['frame-src'].add(origin); }
-    if (/<script>(?!\s*<\/script>)/.test(html)) assert.ok(csp['script-src'].includes("'unsafe-inline'"), `${path}: inline scripts`);
-    if (/<style>|\sstyle="/.test(html)) assert.ok(csp['style-src'].includes("'unsafe-inline'"), `${path}: inline styles`);
+    assert.ok(!csp['script-src'].includes("'unsafe-inline'"), `${path}: no unsafe-inline for scripts`);
+    for (const match of html.matchAll(/<script([^>]*)>([\s\S]*?)<\/script>/g)) {
+      if (/src=/.test(match[1]) || /ld\+json/.test(match[1]) || !match[2].trim()) continue;
+      assert.ok(csp['script-src'].includes(`'${hashOfInline(match[2])}'`), `${path}: inline script is allowed by hash`);
+    }
+    for (const match of html.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)) {
+      if (!match[1].trim()) continue;
+      assert.ok(csp['style-src'].includes("'unsafe-inline'") || csp['style-src'].includes(`'${hashOfInline(match[1])}'`), `${path}: inline style is allowed`);
+    }
+    assert.ok(!/\son[a-z]+\s*=\s*["']/.test(html), `${path}: no inline event handlers (script-src-attr 'none')`);
+    if (/\sstyle="/.test(html)) assert.ok(csp['style-src-attr'].includes("'unsafe-inline'"), `${path}: style attributes`);
     for (const [directive, origins] of Object.entries(used)) {
       for (const origin of origins) assert.ok(allows(directive, origin), `${path}: ${directive} must allow ${origin}`);
     }
@@ -993,9 +1013,9 @@ try {
   }
   // Runtime connections: supabase-js (Supabase project), Razorpay Checkout (api + lumberjack).
   for (const origin of ['https://norrtosjwcossxrhhtvd.supabase.co', 'https://api.razorpay.com', 'https://lumberjack.razorpay.com']) {
-    assert.ok(allows('connect-src', origin), `connect-src must allow ${origin}`);
+    assert.ok(allowsIn(dashboardPolicy, 'connect-src', origin), `connect-src must allow ${origin}`);
   }
-  assert.ok(allows('frame-src', 'https://api.razorpay.com') && allows('frame-src', 'https://checkout.razorpay.com'), 'Razorpay frames');
+  assert.ok(allowsIn(dashboardPolicy, 'frame-src', 'https://api.razorpay.com') && allowsIn(dashboardPolicy, 'frame-src', 'https://checkout.razorpay.com'), 'Razorpay frames on the dashboard');
   const redirected = await call('/dashboard.html');
   assert.equal(redirected.status, 301);
   assert.equal(redirected.headers.get('location'), '/dashboard', 'loopback redirects stay local');

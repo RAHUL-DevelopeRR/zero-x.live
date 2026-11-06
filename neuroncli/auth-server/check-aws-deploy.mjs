@@ -140,8 +140,10 @@ for (const command of ['npm ci --ignore-scripts', 'npm run check:production', 'n
   const step = verifyJob.slice(verifyJob.indexOf(marker));
   const deployVersion = /wranglerVersion: '([\d.]+)'/.exec(workerJob)?.[1];
   assert.ok(deployVersion, 'job deploy pins its wrangler version');
-  assert.ok(step.includes(`run: npx --yes wrangler@${deployVersion} deploy --dry-run --outdir "$RUNNER_TEMP/worker-bundle"`),
-    'the dry run uses the wrangler version job deploy uses');
+  const lockedVersion = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')).devDependencies?.wrangler;
+  assert.equal(lockedVersion, deployVersion, 'package.json pins the wrangler version job deploy uses');
+  assert.ok(step.includes('run: npx --no-install wrangler deploy --dry-run --outdir "$RUNNER_TEMP/worker-bundle"'),
+    'the dry run uses the wrangler the lockfile pins, nothing fetched from the registry');
   assert.match(step, /npm_config_ignore_scripts: 'true'/, 'and installs it without scripts');
   assert.ok(!/secrets\./.test(step), 'and needs no secret');
   assert.ok(verifyJob.indexOf(marker) > verifyJob.indexOf('- name: Verify production code'), 'after the checks');
@@ -187,12 +189,16 @@ assert.match(workerJob, /^ {10}command: deploy --var GIT_COMMIT:\$\{\{ steps\.co
 // to behave like it (users' sealed OpenRouter keys, the provider key vault, device approvals,
 // the proxy secret the Worker sends) are required, and the VM's database key is its own secret.
 // A value the Worker got outside GitHub would otherwise leave the VM without it, silently.
-const PARITY_SECRETS = ['SESSION_ENCRYPTION_KEY', 'PROVIDER_KEYS_KEK', 'DEVICE_APPROVAL_SECRET', 'EC2_PROXY_SECRET'];
+// The Worker requires the three keys the gateway must not run without (audit 2026-11-05, section 7
+// item 8); only EC2_PROXY_SECRET is optional on the Worker and required on the VM.
+const WORKER_REQUIRED_KEYS = ['SESSION_ENCRYPTION_KEY', 'DEVICE_APPROVAL_SECRET', 'PROVIDER_KEYS_KEK'];
+const PARITY_SECRETS = ['EC2_PROXY_SECRET'];
 const list = (text, name) => new RegExp(`^\\s*${name}:\\s*(.+)$`, 'm').exec(text)?.[1].trim().split(/\s+/);
 for (const name of [...list(workerJob, 'REQUIRED_SECRETS'), ...list(workerJob, 'OPTIONAL_SECRETS')]) {
   const passed = [...workerJob.matchAll(new RegExp(`^\\s*${name}: \\$\\{\\{ secrets\\.${name} \\}\\}$`, 'gm'))].length;
   assert.equal(passed, 2, `${name} is in both env blocks of the Worker job`);
 }
+assert.ok(WORKER_REQUIRED_KEYS.every(name => list(workerJob, 'REQUIRED_SECRETS').includes(name)), 'the Worker requires the encryption and approval keys');
 assert.ok(PARITY_SECRETS.every(name => list(workerJob, 'OPTIONAL_SECRETS').includes(name)), 'the Worker gets the parity secrets');
 assert.deepEqual(list(ec2Job, 'REQUIRED_SECRETS'), [...list(workerJob, 'REQUIRED_SECRETS'), ...PARITY_SECRETS]);
 // EC2_PROXY_SECRET_ROTATION is the VM's alone: the second proxy secret it accepts during a
@@ -346,7 +352,21 @@ assert.match(timer, /^OnCalendar=\*:0\/10$/m);
 assert.match(timer, /^Persistent=true$/m);
 assert.match(timer, /^Unit=zerox-cron\.service$/m);
 // The tunnel token stays off every command line, process list and journal (deploy reads the journal).
-assert.match(cloudflared, /^ExecStart=\/usr\/bin\/cloudflared .*\brun --token-file \/etc\/cloudflared\/token$/m);
+// cloudflared runs as its own unprivileged user in a sandbox; systemd (root) reads the root-owned token
+// and hands the process a copy under $CREDENTIALS_DIRECTORY (audit 3b: cloudflared ran as root).
+assert.match(cloudflared, /^ExecStart=\/usr\/bin\/cloudflared .*\brun --token-file \$\{CREDENTIALS_DIRECTORY\}\/token$/m);
+assert.match(cloudflared, /^LoadCredential=token:\/etc\/cloudflared\/token$/m);
+assert.match(cloudflared, /^User=cloudflared$/m);
+assert.match(cloudflared, /^Group=cloudflared$/m);
+assert.ok(sandbox(cloudflared).length >= 15 && sandbox(cloudflared).includes('ProtectSystem=strict') && sandbox(cloudflared).includes('NoNewPrivileges=true') &&
+  sandbox(cloudflared).includes('CapabilityBoundingSet='), 'cloudflared is sandboxed');
+assert.ok(!/User=root/.test(cloudflared));
+// Resource caps on the 2 GB VM (audit F16): an instance that leaks is killed at its cap, not the VM.
+for (const [text, name] of [[unit, 'gateway'], [cron, 'cron'], [cloudflared, 'cloudflared']]) {
+  assert.match(text, /^MemoryMax=\d+M$/m, `${name}: MemoryMax`);
+  assert.match(text, /^TasksMax=\d+$/m, `${name}: TasksMax`);
+}
+assert.match(read('deploy/aws/host-setup.sh'), /useradd --system --user-group --no-create-home .* cloudflared/, 'host-setup creates the cloudflared user');
 assert.ok(!/--token(?!-file)/.test(code_(cloudflared)), 'no --token argument');
 assert.match(read('deploy/aws/zerox-sysctl.conf'), /^net\.ipv4\.tcp_migrate_req = 1$/m,
   'connections queued on a stopping instance move to the other one');
@@ -1144,7 +1164,19 @@ try {
     assert.ok(sitemap.includes(`<loc>https://zero-x.live/</loc>\n    <lastmod>${dated}</lastmod>`) && !sitemap.includes('2001-01-01'),
       `the release's sitemap.xml is built, not the committed copy: ${sitemap}`);
     // A tracked working file or key fails the build instead of shipping.
-    const leaks = ['output/plan.txt', 'tmp/notes.txt', 'keys/zerox.pem'];
+    // Working folders and keys that .assetsignore hides (output/, tmp/, *.pem; audit F4) are left out of
+    // the release, tracked or not; the build's own refusal below is the backstop for what it misses.
+    const hidden = ['output/plan.txt', 'tmp/notes.txt', 'keys/zerox.pem'];
+    for (const leak of hidden) {
+      mkdirSync(join(fxRepo, leak, '..'), { recursive: true });
+      writeFileSync(join(fxRepo, leak), 'x');
+    }
+    git('add', '-f', ...hidden);
+    git('commit', '-q', '-m', 'tracked working files');
+    assert.equal(pack().status, 0, 'tracked working files that .assetsignore hides are not shipped');
+    git('rm', '-q', ...hidden);
+    git('commit', '-q', '-m', 'no tracked working files');
+    const leaks = ['id_rsa', 'freeapi.txt', 'notes/credentials.json'];
     for (const leak of leaks) {
       mkdirSync(join(fxRepo, leak, '..'), { recursive: true });
       writeFileSync(join(fxRepo, leak), 'x');

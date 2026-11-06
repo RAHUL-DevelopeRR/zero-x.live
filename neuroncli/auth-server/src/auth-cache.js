@@ -59,6 +59,13 @@ export async function noteRejected(env, token, { address = null } = {}) {
   rejected.set(key, Date.now() + ttlMs);
 }
 
+// A credential that was just written (a session saved under this token) is valid again at once.
+export async function forgetRejected(env, token) {
+  if (typeof token !== 'string' || !token || rejected.size === 0) return;
+  configure(env);
+  rejected.delete(await digest(token));
+}
+
 // Seconds the visitor has to wait once it exceeded the rejections window, or 0.
 export function rejectionsExceeded(env, address) {
   configure(env);
@@ -74,5 +81,8 @@ export function resetAuthCache() {
   settings = null;
   rejections = null;
 }
+
+// The caller's address is rejected outright (429) while it is over its window.
+export const rejectionWait = rejectionsExceeded;
 
 export const authCacheSize = () => rejected.size;
