@@ -36,7 +36,7 @@ async function readBody(c) {
   }
 }
 
-// Calls a search quota function; a database without migration 20261104200000 (or one that is
+// Calls a search quota function; a database without migration 20261105200000 (or one that is
 // down) makes search unavailable rather than unmetered.
 async function quotaRpc(env, name, args) {
   try { return await rpc(env, name, args); }
