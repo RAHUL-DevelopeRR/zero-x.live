@@ -305,10 +305,10 @@ try {
   assert.deepEqual(claudeCalls, ['https://api.anthropic.com/v1/messages?beta=true']);
   const claudeConfig = providerConfiguration(claudeEnv).find(item => item.provider === 'anthropic');
   assert.deepEqual([claudeConfig.configured, claudeConfig.catalog_source, claudeConfig.catalog_models],
-    [true, 'allowlist', ['anthropic/claude-sonnet-5-5', 'anthropic/claude-opus-5-5']]);
+    [true, 'allowlist', ['anthropic/claude-sonnet-5-5', 'anthropic/claude-opus-5-5', 'anthropic/claude-haiku-5-5']]);
   assert.equal(providerConfiguration({}).find(item => item.provider === 'anthropic').configured, false);
   const claudeHealth = (await providerHealth(claudeEnv)).find(item => item.provider === 'anthropic');
-  assert.deepEqual([claudeHealth.status, claudeHealth.model_count, claudeHealth.inference_checked], ['configured', 2, false],
+  assert.deepEqual([claudeHealth.status, claudeHealth.model_count, claudeHealth.inference_checked], ['configured', 3, false],
     'operator health lists the Claude rows without a paid call');
   assert.equal(claudeCalls.length, 1);
 

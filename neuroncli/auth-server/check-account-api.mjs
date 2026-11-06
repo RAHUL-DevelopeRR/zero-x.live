@@ -39,9 +39,10 @@ function fakeDatabase() {
   const sessionIndex = [];
   const calls = [];
   const usage = { series: [], byModel: [], events: [] };
-  const state = { accounts, keys, sessionIndex, calls, usage, policiesV2: [], policyOverrides: {}, fail: new Set(), store: new Map(), onRevokeAll: null };
+  const state = { accounts, keys, sessionIndex, calls, usage, policiesV2: [], policyOverrides: {}, fail: new Set(), store: new Map(), onRevokeAll: null,
+    month: [], capsMissing: false };
   const raise = message => Object.assign(new Error(message), { raise: message });
-  const overview = account => {
+  const overview = (account, p_caps = null) => {
     const policy = { ...b1Policy(account.plan), ...(state.policyOverrides[account.plan] || {}) };
     return [{
     account,
@@ -54,6 +55,11 @@ function fakeDatabase() {
       limit_tokens: policy.window_tokens, tokens: account.window_tokens_used ?? 0,
       remaining_tokens: Math.max(0, policy.window_tokens - (account.window_tokens_used ?? 0)),
       resets_at: account.window_resets_at ?? null } : null,
+    // zerox_account_overview.usage_month (migration 20261106000600): this month's tokens per sponsored family, the limit
+    // from the p_caps the gateway sends.
+    usage_month: state.capsMissing ? undefined : state.month.map(row => ({ ...row, limit_tokens: (p_caps ?? []).find(cap => cap.family === row.family)?.month_tokens ?? null,
+      remaining_tokens: (p_caps ?? []).some(cap => cap.family === row.family)
+        ? Math.max(0, (p_caps.find(cap => cap.family === row.family).month_tokens) - row.tokens) : null })),
   }];
   };
   const rpc = {
@@ -72,7 +78,11 @@ function fakeDatabase() {
     zerox_get_account: ({ p_user_id }) => accounts.has(p_user_id) ? [accounts.get(p_user_id)] : [],
     zerox_plan_policies: () => [{ policies: DEVELOPMENT_PLANS }],
     zerox_plan_policies_v2: () => state.policiesV2,
-    zerox_account_overview: ({ p_user_id }) => accounts.has(p_user_id) ? overview(accounts.get(p_user_id)) : [],
+    zerox_account_overview: ({ p_user_id, p_caps }) => {
+      // A database without the migration has no function taking p_caps (PostgREST: PGRST202).
+      if (p_caps !== undefined && state.capsMissing) throw Object.assign(new Error('missing'), { missing: true });
+      return accounts.has(p_user_id) ? overview(accounts.get(p_user_id), p_caps) : [];
+    },
     zerox_api_key_create: ({ p_user_id, p_name, p_prefix, p_hash }) => {
       // WP-B1 argument checks (zerox_api_key_create).
       if (typeof p_name !== 'string' || p_name.trim().length < 1 || p_name.trim().length > 64) throw raise('invalid_key_name');
@@ -151,6 +161,7 @@ function fakeDatabase() {
     try { return Response.json(rpc[name](args)); }
     catch (error) {
       if (error.raise) return Response.json({ code: 'P0001', message: error.raise }, { status: 400 });
+      if (error.missing) return Response.json({ code: 'PGRST202', message: `Could not find the function ${name}` }, { status: 404 });
       throw error;
     }
   };
@@ -571,6 +582,7 @@ try {
     usage_today: { requests: 7, tokens: 7000, resets_at: `${dayOffset(1)}T00:00:00.000Z` },
     usage_window: { tokens: 6000, limit_tokens: 1000000, remaining_tokens: 994000, window_seconds: 18000,
       resets_at: `${dayOffset(0)}T22:30:00.000Z` },
+    usage_month: [],
     credits: { balance_usd: 1.234567, monthly_grant_usd: 0 },
     subscription: null,
     flags: { suspended: false },
@@ -578,6 +590,21 @@ try {
     policy: { connectors: { allowed: ['catalog:*'], denied: [], required: [], hosted: [], allow_unvetted: true,
       catalog_version: '2026-11-03' } },
   });
+  // Claude Haiku 5.5's monthly allowance (contract section 19.3): the family, its public name, the month's tokens, the limit,
+  // what is left and when it renews; the gateway sends the allowances as p_caps.
+  db.month = [{ family: 'anthropic/claude-haiku-5-5', tokens: 2500000, requests: 40, resets_at: '2026-12-01T00:00:00+00:00' }];
+  account = await json(await request('/api/account', { token: sessionToken }));
+  assert.deepEqual(account.body.usage_month, [{ family: 'anthropic/claude-haiku-5-5', model_name: 'Claude Haiku 5.5', tokens: 2500000,
+    limit_tokens: 10000000, remaining_tokens: 7500000, resets_at: '2026-12-01T00:00:00.000Z' }]);
+  assert.deepEqual(db.calls.filter(call => call.name === 'zerox_account_overview').at(-1).args.p_caps,
+    [{ family: 'anthropic/claude-haiku-5-5', month_tokens: 10000000 }]);
+  // Against a database without the migration /api/account keeps working (no usage_month rows), retried after 10 minutes.
+  db.capsMissing = true;
+  account = await json(await request('/api/account', { token: sessionToken }));
+  assert.equal(account.status, 200);
+  assert.deepEqual(account.body.usage_month, []);
+  db.capsMissing = false;
+  db.month = [];
   Object.assign(db.accounts.get(userA.id), { plan: 'pro', subscription: { status: 'active', current_period_end: '2026-11-16T00:00:00.000Z',
     cancel_at_period_end: false, provider_subscription_id: 'sub_TEST123456' } });
   account = await json(await request('/api/account', { token: sessionToken }));
@@ -701,7 +728,14 @@ try {
   assert.deepEqual(usage.body.by_model.map(row => row.model), ['gemini/gemini-2.5-flash', 'anthropic/claude-sonnet-5-5', 'groq/openai/gpt-oss-20b']);
   assert.equal(usage.body.by_model[0].cost_usd, 1.234572);
   assert.deepEqual(usage.body.by_model[1], { model: 'anthropic/claude-sonnet-5-5', requests: 1, prompt_tokens: 20800, completion_tokens: 800,
-    cost_usd: 0.0265, cache_read_tokens: 16000, cache_write_tokens: 4000 }, 'by model: prompt-cache reads and writes (part of prompt_tokens)');
+    cost_usd: 0.0265, cache_read_tokens: 16000, cache_write_tokens: 4000, sponsored_cost_microusd: 0 }, 'by model: prompt-cache reads and writes (part of prompt_tokens)');
+  // What Zero-X paid for the user's requests on a sponsored model (billed micro-USD); the user is charged nothing.
+  db.usage.byModel.push({ model: 'anthropic/claude-haiku-5-5', requests: 2, prompt_tokens: 3000, completion_tokens: 100, cost_microusd: 0,
+    sponsored_cost_microusd: 1234 });
+  usage = await json(await request('/api/usage', { token: sessionToken }));
+  assert.deepEqual(usage.body.by_model.find(row => row.model === 'anthropic/claude-haiku-5-5'), { model: 'anthropic/claude-haiku-5-5', requests: 2,
+    prompt_tokens: 3000, completion_tokens: 100, cost_usd: 0, cache_read_tokens: 0, cache_write_tokens: 0, sponsored_cost_microusd: 1234 });
+  db.usage.byModel.pop();
   assert.deepEqual([usage.body.by_model[0].cache_read_tokens, usage.body.by_model[0].cache_write_tokens], [0, 0]);
   assert.deepEqual(db.calls.filter(call => call.name === 'zerox_usage_series').at(-1).args, { p_user_id: userA.id, p_from: dayOffset(-29), p_to: today });
   usage = await json(await request(`/api/usage?from=${dayOffset(-91)}&to=${today}`, { token: sessionToken }));
@@ -841,9 +875,11 @@ try {
   assert.deepEqual(fullHealth.body.ec2_proxy, { entries: 0, invalid: [], chat_routed: false, chat_routed_by: [], refusal: null }, 'the proxy switch, off');
   assert.ok(!JSON.stringify(fullHealth.body).includes(SECRET) && !JSON.stringify(fullHealth.body).includes(OPERATOR));
   // One checker per pool (review 2026-11-05): the operator view says which runtime's checker tests.
-  assert.deepEqual(fullHealth.body.health_checker, { hub_test_requests: true, chat_routed_to_node: false }, 'the Worker hub tests');
+  // The Worker also reports whether it reads the Node checker's verdict rows from Postgres (contract section 19.5): none here.
+  const noRows = { source: 'none', rows: 0, read_at: null, missing_migration: false, disabled: false };
+  assert.deepEqual(fullHealth.body.health_checker, { hub_test_requests: true, chat_routed_to_node: false, verdict_rows: noRows }, 'the Worker hub tests');
   assert.deepEqual((await json(await request('/health', { bindings: { ...operatorEnv, EC2_PROXY_PREFIXES: 'zero-x.live/v1/' }, token: OPERATOR })))
-    .body.health_checker, { hub_test_requests: false, chat_routed_to_node: true }, 'chat on Node: the hub sends none');
+    .body.health_checker, { hub_test_requests: false, chat_routed_to_node: true, verdict_rows: noRows }, 'chat on Node: the hub sends none');
   const nodeChecker = (await json(await request('/health', { bindings: { ...operatorEnv, NEURON_RUNTIME: 'node' }, token: OPERATOR }))).body.health_checker;
   assert.equal(nodeChecker.node_probes, 'not_started', 'no Node checker started in this process yet');
   assert.match(nodeChecker.warning, /HEALTH_HUB_PROBES=on/, 'and the operator is told how to keep one checker');

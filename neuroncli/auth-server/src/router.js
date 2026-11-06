@@ -3,6 +3,7 @@ import {
   AUTO_MODEL_ID, familyOf, isFamilyId, loadPlanPolicies, offeredEntries, planPolicy, poolKey, poolVerdicts, poorToolCaller, resolveModelId,
 } from './catalog.js';
 import { providerType } from './catalog-types.js';
+import { sponsoredUnavailable } from './sponsored.js';
 import { BYOK_OFFERS, offerById, servesOwnKeys } from './oiop/offers.js';
 import { DEFAULT_POLICY, describePolicy, policyBlock } from './oiop/policy.js';
 
@@ -162,7 +163,7 @@ export class RoutingEngine {
   // `sharedHealth` the HealthHub rows by pool key and `budgetState` pool-budget.js's view.
   route({ env = {}, requestedModel, needsTools = false, needs = {}, promptTokens, maxTokens, maxTokensExplicit = true,
     tiers = ['free'], country = null, ownedCatalog = null, affinity = null, conversation = null, policy = DEFAULT_POLICY,
-    sharedHealth = null, budgetState = null, now = Date.now() }) {
+    sharedHealth = null, budgetState = null, ledger = true, now = Date.now() }) {
     // `required` is what every model must offer: tools only when the request attaches them. An
     // agentic request (tools attached, or the CLI's x-neuron-route: agentic hint) narrows auto
     // alone (autoEligible): tool-capable models without a poor tool-call record (catalog.js
@@ -207,7 +208,7 @@ export class RoutingEngine {
     const turn = affinity ? hashText(String(affinity)) : this.turn++;
     for (const entry of entries) {
       const requested = !maxTokensExplicit && entry.default_max_tokens > 0 ? entry.default_max_tokens : maxTokens;
-      for (const verdict of rotateKeyPools(poolVerdicts(env, entry, tiers, country), turn)) {
+      for (const verdict of rotateKeyPools(poolVerdicts(env, entry, tiers, country, ledger), turn)) {
         const key = poolKey(entry, verdict.pool);
         const fit = fitMaxTokens(entry, verdict.pool, promptTokens, requested);
         // Ruled out only by the pool's per-minute token budget, not by the context window.
@@ -237,6 +238,12 @@ export class RoutingEngine {
         model: auto ? AUTO_MODEL_ID : family ? familyOf(entries[0]) : entries[0].id, sticky,
         candidates: usable.map(({ entry, pool, key, offer, maxTokens: max }) => ({ entry, pool, key, offer, maxTokens: max })),
       };
+    }
+    // A sponsored pool that fails closed (its migration is missing, src/sponsored.js) is the only thing the
+    // request asked for: say so rather than that the model does not exist.
+    if (evaluated.length && evaluated.every(item => !item.configured) && evaluated.some(item => item.pool.sponsored === true)
+        && sponsoredUnavailable(env, now)) {
+      return failure('service_unavailable', { message: 'This model is temporarily unavailable. Choose another model.' });
     }
     return this.explain(evaluated, auto, now, policy, agentic);
   }

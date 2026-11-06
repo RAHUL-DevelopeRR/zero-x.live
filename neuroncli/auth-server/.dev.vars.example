@@ -87,7 +87,7 @@ CLOUDFLARE_API_TOKEN=               # SECRET, Node only
 GROQ_PAID_API_KEY=                  # SECRET: Groq Developer plan key
 GEMINI_PAID_API_KEY=                # SECRET: billing-linked Gemini project key
 ANTHROPIC_API_KEY=                  # SECRET: Claude Sonnet 5.5 and Opus 5.5 (Pro and Max, billed from credits)
-ANTHROPIC_MODELS=claude-sonnet-5-5,claude-opus-5-5
+ANTHROPIC_MODELS=claude-sonnet-5-5,claude-opus-5-5,claude-haiku-5-5
 
 # ── Hosted behind a flag (docs/PROVIDER_TERMS.md) ──
 # Owner decision (2026-10-19, kept in the 2026-10-29 lineup): the NVIDIA trial key and the

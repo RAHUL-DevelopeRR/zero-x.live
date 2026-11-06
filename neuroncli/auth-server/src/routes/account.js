@@ -1,4 +1,7 @@
 import { rpc, rpcRows } from '../account-store.js';
+import { missingFunction } from '../db/errors.js';
+import { familyMembers, modelIdentity } from '../catalog.js';
+import { sponsoredCaps } from '../catalog-types.js';
 import { ApiError, ALL_CREDENTIALS, bearerToken, invalidSession, withCaller } from '../auth-context.js';
 import { servableHostedIds } from '../connector-accounts.js';
 import { connectorPolicyBlock } from '../connector-policy.js';
@@ -61,10 +64,45 @@ export function credentialExpiresAt(env, caller, token = '') {
   return null;
 }
 
+// zerox_account_overview with the sponsored families' monthly allowances (p_caps, migration
+// 20261106000600), or without them against a database that lacks it (retried after 10 minutes).
+const capsUnavailable = new WeakMap();
+async function overviewRow(env, userId) {
+  const caps = sponsoredCaps();
+  if (caps.length && !((capsUnavailable.get(env) ?? 0) > Date.now())) {
+    try {
+      return await rpc(env, 'zerox_account_overview', { p_user_id: userId, p_caps: caps });
+    } catch (error) {
+      if (!missingFunction(error)) throw error;
+      capsUnavailable.set(env, Date.now() + 10 * 60_000);
+    }
+  }
+  return rpc(env, 'zerox_account_overview', { p_user_id: userId });
+}
+
+// The month's tokens per sponsored family (zerox_account_overview usage_month): the family's
+// public name, the tokens counted this UTC month, the allowance, what is left and when it renews.
+function monthUsage(env, rows) {
+  if (!Array.isArray(rows)) return [];
+  return rows.filter(item => item && typeof item.family === 'string').map(item => {
+    const member = familyMembers(item.family, env)[0];
+    const limit = Number(item.limit_tokens);
+    const known = Number.isSafeInteger(limit) && limit > 0;
+    return {
+      family: item.family,
+      model_name: member ? modelIdentity(member).name : item.family.split('/').pop(),
+      tokens: count(item.tokens),
+      limit_tokens: known ? limit : null,
+      remaining_tokens: known ? count(item.remaining_tokens) : null,
+      resets_at: isoTime(item.resets_at),
+    };
+  });
+}
+
 // Builds the GET /api/account payload from zerox_account_overview (jsonb columns account,
 // policy, credits, subscription, usage_today), filling gaps from the plan catalogue.
 export async function accountPayload(env, caller, { token = '' } = {}) {
-  const row = await rpc(env, 'zerox_account_overview', { p_user_id: caller.user_id });
+  const row = await overviewRow(env, caller.user_id);
   if (!row) throw invalidSession();
   const account = object(row.account) || {};
   const policy = object(row.policy) || {};
@@ -140,6 +178,8 @@ export async function accountPayload(env, caller, { token = '' } = {}) {
       window_seconds: windowSeconds,
       resets_at: isoTime(windowUsage?.resets_at),
     } : null,
+    // This UTC month's tokens on the models with a monthly allowance (contract section 19.3); empty when unused.
+    usage_month: monthUsage(env, row.usage_month),
     credits: {
       balance_usd: microusdToUsd(credits.balance_microusd ?? row.credit_balance_microusd ?? 0),
       monthly_grant_usd: microusdToUsd(credits.monthly_grant_microusd ?? policy.monthly_credit_microusd ?? plan.monthly_credit_microusd),
@@ -183,6 +223,9 @@ const usageRow = row => ({
   cost_microusd: count(row?.cost_microusd),
 });
 const withCost = ({ cost_microusd, ...row }) => ({ ...row, cost_usd: microusdToUsd(cost_microusd) });
+// What Zero-X paid for the user's requests on sponsored (free) models, in billed micro-USD (the marked-up
+// equivalent every pool's spend cap counts); the user is charged nothing for it.
+const sponsoredCost = row => count(row?.sponsored_cost_microusd);
 
 export async function usagePayload(env, userId, range) {
   const args = { p_user_id: userId, p_from: range.from, p_to: range.to };
@@ -210,7 +253,7 @@ export async function usagePayload(env, userId, range) {
   // prompt_tokens; Claude bills them at their own rates).
   const byModel = modelRows.filter(row => typeof row?.model === 'string')
     .map(row => ({ model: row.model, ...withCost(usageRow(row)), cache_read_tokens: count(row.cache_read_tokens),
-      cache_write_tokens: count(row.cache_write_tokens) }))
+      cache_write_tokens: count(row.cache_write_tokens), sponsored_cost_microusd: sponsoredCost(row) }))
     .sort((left, right) => right.requests - left.requests || left.model.localeCompare(right.model));
   return { from: range.from, to: range.to, series, by_model: byModel, totals: withCost(totals) };
 }

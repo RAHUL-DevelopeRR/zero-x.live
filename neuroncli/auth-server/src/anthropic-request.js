@@ -23,15 +23,20 @@ export const BINDING_BETA = 'thinking-binding-controls-2026-08-01';
 // Upstream ids a catalog row may name (the same rule as the catalog's provider type).
 export const UPSTREAM_MODEL = /^claude-[a-z0-9][a-z0-9-]{0,60}$/;
 
-// API behaviour per upstream id. Both 5.5 models: adaptive thinking only (`disabled` and
+// API behaviour per upstream id. Sonnet 5.5 and Opus 5.5: adaptive thinking only (`disabled` and
 // `budget_tokens` are 400s), forced tool_choice is a 400, mid-conversation system messages are
 // supported, thinking blocks are bound to the model and the conversation. Sonnet 5.5 alone
-// accepts {type:'between_tools'} as its lowest thinking setting.
+// accepts {type:'between_tools'} as its lowest thinking setting. Haiku 5.5 takes adaptive thinking
+// (`budget_tokens` is a 400, effort defaults to medium) and turns thinking off with
+// {type:'disabled'}, accepted at effort high or below (`between_tools` is a 400 there); the gateway
+// only ever sends it at effort low. `thinkingOff` names the type that turns thinking off, or null.
 export const CLAUDE_TRAITS = Object.freeze({
   'claude-sonnet-5-5': Object.freeze({ adaptive: true, display: 'summarized', defaultEffort: 'medium',
     thinkingOff: 'between_tools', replay: true, systemMessages: true }),
   'claude-opus-5-5': Object.freeze({ adaptive: true, display: 'summarized', defaultEffort: 'medium',
     thinkingOff: null, replay: true, systemMessages: true }),
+  'claude-haiku-5-5': Object.freeze({ adaptive: true, display: 'summarized', defaultEffort: 'medium',
+    thinkingOff: 'disabled', replay: true, systemMessages: true }),
 });
 // Claude ids without verified traits (operator-approved rows) get fields every Messages model
 // accepts: no thinking, effort, beta, replay or mid-conversation system messages.
@@ -330,12 +335,13 @@ function mapToolChoice(choice, parallel) {
 
 /**
  * Effort and thinking for one request. Effort is always explicit on the 5.5 models (default
- * 'medium'); 'minimal' is 'low'; 'none' is Sonnet's between_tools at 'low', and 'low' on Opus,
- * where thinking cannot be turned off. `disabled` and `budget_tokens` are never produced.
+ * 'medium'); 'minimal' is 'low'; 'none' turns thinking off where the model can (Sonnet's
+ * between_tools, Haiku's disabled), at 'low' either way, and is plain 'low' on Opus, where thinking
+ * cannot be turned off. `budget_tokens` is never produced, and `disabled` only for Haiku 5.5.
  */
 export function claudeEffort(traits, value) {
   if (!traits.adaptive) return { effort: null, thinkingOff: false };
-  if (value === 'none') return { effort: 'low', thinkingOff: traits.thinkingOff === 'between_tools' };
+  if (value === 'none') return { effort: 'low', thinkingOff: typeof traits.thinkingOff === 'string' };
   if (value === 'minimal') return { effort: 'low', thinkingOff: false };
   return { effort: EFFORTS.has(value) ? value : traits.defaultEffort, thinkingOff: false };
 }
@@ -388,7 +394,8 @@ export function toClaudeRequest(entry, payload, { restore = null, metadataUserId
   if (stops.length) body.stop_sequences = stops;
   if (traits.adaptive) {
     if (thinkingOff) {
-      body.thinking = { type: 'between_tools' }; // Sonnet 5.5 only; no other field is allowed with it
+      // Sonnet 5.5: between_tools, with no other field; Haiku 5.5: disabled (accepted at effort low).
+      body.thinking = { type: traits.thinkingOff };
     } else {
       body.thinking = { type: 'adaptive', display: traits.display };
       if (binding) {

@@ -6,6 +6,7 @@
 // backfill so a deployment without a database routes exactly as before.
 import { databaseConfigured, rpcRows } from '../account-store.js';
 import { ANTHROPIC_PAID_OFFER } from '../catalog-claude.js';
+import { SLOT_OFFERS } from '../catalog-types.js';
 
 export const LIFECYCLES = Object.freeze(['discovered', 'analysed', 'pending_approval', 'rejected',
   'awaiting_credentials', 'awaiting_deployment', 'probing', 'active', 'degraded', 'review', 'suspended', 'retired']);
@@ -165,9 +166,11 @@ const BUILTIN_BY_ID = new Map(BUILTIN_OFFERS.map(entry => [entry.id, entry]));
 export const BYOK_OFFERS = Object.freeze({ openrouter: 'openrouter.byok' });
 
 // The offer a catalog pool belongs to: the pool's own `offer` when the catalog names one,
-// otherwise `<provider>.<tier>`.
+// then the offer of the pool's key slot when the slot names one (a sponsored free pool on
+// anthropic.paid keeps that offer), otherwise `<provider>.<tier>`.
 export function offerIdFor(entry, pool) {
-  return pool?.offer || `${entry?.provider}.${pool?.tier}`;
+  return pool?.offer || (pool?.sponsored === true && Object.hasOwn(SLOT_OFFERS, pool.key_slot) ? SLOT_OFFERS[pool.key_slot] : null)
+    || `${entry?.provider}.${pool?.tier}`;
 }
 
 // ── Database rows (60 s cache per env, like loadCatalogDbModels) ──

@@ -120,7 +120,7 @@ them in `zerox_plan_policy.razorpay_plan_id_inr/usd`.
 | `OPENROUTER_HOSTED` + `OPENROUTER_API_KEY` | var + **secret** | unset = `false` (`"true"` in the lineup files) | `true`: the operator key serves the OpenRouter free models in `OPENROUTER_MODELS`, the owner's decision. `false`: users' own keys (BYOK) only, which work regardless. |
 | `OPENROUTER_MODELS` | var | `cohere/north-mini-code:free` (the lineup files too; `minimax/minimax-m3.1-flash:free` left them on 2026-11-04, when OpenRouter no longer listed it and every request answered service_unavailable) | Narrows the OpenRouter models offered, hosted and BYOK alike. |
 | `OPENROUTER_FREE_ONLY`, `OPENROUTER_CALLBACK_URL` | var | —, `https://zero-x.live/neuroncli/callback/` | BYOK discovery filter and PKCE callback. |
-| `GROQ_MODELS`, `GEMINI_MODELS`, `CLOUDFLARE_MODELS`, `NVIDIA_MODELS`, `ANTHROPIC_MODELS` | var | unset (`ANTHROPIC_MODELS`: Sonnet 5.5 and Opus 5.5 in `wrangler.toml`; `GEMINI_MODELS` and `CLOUDFLARE_MODELS`: `""` there) | Can only **narrow** the verified catalog (the approved rows over `src/catalog.js`); unknown ids are ignored and reported. An empty list offers none of the provider's models: the owner lineup of 2026-10-29 switches Gemini and Workers AI off this way, keys and binding unchanged (delete the line to serve them again). `CLOUDFLARE_MODELS` can opt in `@cf/openai/gpt-oss-120b`. `ANTHROPIC_MODELS` keeps the `anthropic.paid` key on the two Claude models even if a catalog row names another. |
+| `GROQ_MODELS`, `GEMINI_MODELS`, `CLOUDFLARE_MODELS`, `NVIDIA_MODELS`, `ANTHROPIC_MODELS` | var | unset (`ANTHROPIC_MODELS`: Sonnet 5.5, Opus 5.5 and Haiku 5.5 in `wrangler.toml`; `GEMINI_MODELS` and `CLOUDFLARE_MODELS`: `""` there) | Can only **narrow** the verified catalog (the approved rows over `src/catalog.js`); unknown ids are ignored and reported. An empty list offers none of the provider's models: the owner lineup of 2026-10-29 switches Gemini and Workers AI off this way, keys and binding unchanged (delete the line to serve them again). `CLOUDFLARE_MODELS` can opt in `@cf/openai/gpt-oss-120b`. `ANTHROPIC_MODELS` keeps the `anthropic.paid` key on the three Claude models even if a catalog row names another. |
 | `TRUST_CF_IPCOUNTRY` | var (Node) | unset | `true` only when the Node origin is reachable exclusively through Cloudflare. Workers use `request.cf.country`. |
 | `ALLOW_UNKNOWN_COUNTRY` | var | unset | Local development only: serve free Gemini when the caller's country is unknown (fails closed otherwise). |
 | `UPSTREAM_TTFB_TIMEOUT_MS` / `UPSTREAM_IDLE_TIMEOUT_MS` | var | `45000` / `90000` | First byte / gap between bytes (SSE keep-alives count). The first data event is due within their sum. |
@@ -249,7 +249,8 @@ check id); bodies, provider messages and keys are never logged or stored.
 | `HEALTH_PROBES` | var | `on` | `off` (also `false`, `0`) is the kill switch: no list checks, slot checks or test requests. Models without recent real traffic then report `unknown`. |
 | `HEALTH_PROBE_TICK_SECONDS` | var | `15` (5-300) | How often each instance renews or asks for the lease and reads the verdicts again. The lease lasts 90 s. |
 | `HEALTH_PROBE_TIMEOUT_SECONDS` | var | `12` (3-60) | Timeout of a chat test request; a tool-call test gets twice as long. |
-| `HEALTH_STALE_SECONDS` | var | `1200` (120-86400) | The floor of every route's stale horizon (above): a verdict nobody confirmed for the longer of this and 1.5 times its route's test interval reads `unknown`. Keep it above the 10-minute list interval. The Worker's `/v1/models` uses it for every route. |
+| `HEALTH_STALE_SECONDS` | var | `1200` (120-86400) | The floor of every route's stale horizon (above): a verdict nobody confirmed for the longer of this and 1.5 times its route's test interval reads `unknown`. Keep it above the 10-minute list interval. The Worker's `/v1/models` uses it for every route until it reads the checker's rows (`HEALTH_PROBES_DB_ROWS`, below). |
+| `HEALTH_PROBES_DB_ROWS` | var | `on` | The Worker (no checker of its own) reads the Node checker's verdict rows (`zerox_pool_health_get`) when it builds `/v1/models`, `/v1/models/status` and `/v1/models/stream`, cached 30 s per isolate (contract section 19.5), so `neuron.zero-x.live` shows the same verdicts, latency and stale horizons as `zero-x.live`. `off` keeps the previous behaviour (HealthHub rows and the isolate's own attempts). Without the RPC it falls back silently, logging once.
 
 It needs migration `20261104000000_health_probes.sql` (below) and the database (`SUPABASE_*`);
 without either, the gateway logs it once at start and runs no checks. The Worker keeps its
@@ -317,6 +318,9 @@ and apply the missing ones, in order (the ten catalog and app migrations were re
 18. `20261106000300_connector_policy.sql` (connector policy per plan, `/api/account` `policy.connectors`; see below)
 19. `20261106000400_connector_accounts.sql` (hosted connector links and their audit log; unused while `HOSTED_CONNECTORS` is off; see below)
 20. `20261106000500_search_quota.sql` (daily web search and research-run counters for `POST /v1/search`; see below)
+21. `20261106000600_sponsored_pools.sql` (Claude Haiku 5.5's monthly allowance and sponsored pools; see below)
+22. `20261106000700_haiku_catalog.sql` (the Haiku catalog row, generated by `scripts/catalog-seed-sql.mjs`)
+23. `20261106000800_plan_features_haiku.sql` (the Haiku line in every plan's features; no restart needed if applied late)
 
 **Billing details (`20261106000100_billing_details.sql`).** Two new tables (`zerox_billing_profiles`,
 `zerox_billing_consents`) and four functions; nothing existing changes, and it does not depend on
@@ -364,6 +368,30 @@ UTC when every pool refuses. Deploy the gateway that knows the status (both runt
 this migration: an older gateway answers an unknown reservation status with 503 `service_unavailable` for
 that one request. The share is the constant `v_share_pct` (25) inside the function; change it with a new
 migration. Roll back with `migrations/down/20261106000000_pool_fair_share.sql`.
+
+**Claude Haiku 5.5 on every plan (migrations 21 to 23, contract section 19).** Deploy the gateway
+**first** (both runtimes): it sends `p_cap` only for the sponsored pool and fails closed against the
+old database (Haiku lists `not_configured`, "Sponsored pools need migration
+20261106000600_sponsored_pools.sql" is logged once), and the old gateway works against the new
+functions (`zerox_reserve_v2` keeps its 8-argument call; `zerox_settle_v2` has the same arguments).
+Then apply 21, 22 and 23 in that order (`node scripts/apply-migrations.mjs --status`, then `--apply`).
+Migration 21 adds the table `zerox_family_month_usage`, the `cap_family`/`cap_month` columns on
+`zerox_reservations`, `sponsored_cost_microusd` on the usage tables, and recreates
+`zerox_reserve_v2` (9 arguments), `zerox_usage_by_model` and `zerox_account_overview` (`p_caps`,
+`usage_month`); `zerox_settle_v2` and `zerox_release_stale_reservations` are replaced in place. 22 lets
+the free tier of `anthropic.paid` carry a price and a spend cap (`zerox_catalog_slot_sponsors`, the
+check `zerox_catalog_revision_pools_free_terms`) and inserts the Haiku row at revision 1. Verify:
+
+- `SELECT pg_get_function_identity_arguments('public.zerox_reserve_v2'::regproc);` lists 9 arguments, the last `p_cap jsonb`;
+- `SELECT count(*) FROM public.zerox_catalog_snapshot() WHERE status = 'active';` returns 19, and one row has `id = 'anthropic/claude-haiku-5-5'`;
+- `SELECT plan, jsonb_array_length(features) FROM public.zerox_plan_policy ORDER BY sort;` returns free 5, pro 6, max 6, ultrawork 6;
+- `SELECT public.zerox_catalog_slot_ok('anthropic', 'free', 'anthropic.paid');` returns true.
+
+Roll back newest first with `migrations/down/20261106000800_plan_features_haiku.sql`,
+`20261106000700_haiku_catalog.sql` and `20261106000600_sponsored_pools.sql` (psql -X -v
+ON_ERROR_STOP=1 -f), or hide the row at once with `CATALOG_SOURCE=code`. The sponsored pool's
+daily spend cap ($5 upstream, `cpd` 6,250,000 billed) is a plain row value raised by catalog
+revision up to the $50 type maximum; `PAID_DAILY_SPEND_CAP_USD` lowers every cap, Haiku's included.
 
 **Free's 5-hour token window (`20261102000000_free_token_window.sql`).** Deploy the gateway that
 knows `user_window_tokens` (both runtimes: the Worker and the EC2 Node server) **before** pasting
@@ -522,9 +550,9 @@ cache arguments. Verify:
 
 - `SELECT pg_get_function_identity_arguments('public.zerox_settle_v2'::regproc);` lists 11 arguments;
 - `SELECT id, lifecycle FROM public.zerox_offers WHERE id = 'anthropic.paid';` returns `active`;
-- `SELECT id, status FROM public.zerox_catalog_snapshot() WHERE status = 'active';` returns 18 rows;
+- `SELECT id, status FROM public.zerox_catalog_snapshot() WHERE status = 'active';` returns 18 rows (19 once migration 16 is applied);
 - `SELECT plan, allowed_tiers, monthly_credit_microusd, jsonb_array_length(features) FROM public.zerox_plan_policy ORDER BY sort;`
-  returns free `{free}` 0 4, pro `{free,paid}` 8000000 5, max `{free,paid}` 35000000 5, ultrawork `{free,paid}` 8000000 5.
+  returns free `{free}` 0 4 (5 after migration 17), pro `{free,paid}` 8000000 5, max `{free,paid}` 35000000 5, ultrawork `{free,paid}` 8000000 5 (one more line each after migration 17).
 
 **Active health checks (`20261104000000_health_probes.sql`).** New tables and functions
 (the tables `zerox_pool_health` and `zerox_health_lease`; the functions `zerox_health_lease`, `zerox_probe_take`,
