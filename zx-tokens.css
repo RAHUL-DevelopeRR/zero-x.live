@@ -384,6 +384,14 @@ a.zx-card:hover { border-color: var(--zx-border-strong); background: var(--zx-pa
 .zx-plan h3 { font-size: 1.125rem; }
 /* Older markup: a Recommended badge in the first paragraph sits in the corner. */
 .zx-plan > div > p:first-child:has(> .zx-badge) { position: absolute; top: var(--zx-s5); right: var(--zx-s5); margin: 0; }
+/* The three plan cards share their rows (heading, price, list, button), so a tagline that wraps to
+   two lines in one card does not push that card's price below the others. */
+@supports (grid-template-rows: subgrid) {
+  #plans .zx-plan { display: grid; grid-template-rows: subgrid; grid-row: span 4; row-gap: var(--zx-s4); }
+  #plans .zx-plan .zx-btn { align-self: end; margin-top: 0; }
+}
+/* Release notes come from GitHub: a long URL or identifier must wrap, not widen the phone page. */
+#changelog-list .zx-card { overflow-wrap: anywhere; }
 .zx-plan + .zx-help, .zx-grid + .zx-help { margin-top: var(--zx-s4); }
 
 /* Badges and status dots */
