@@ -137,7 +137,7 @@ function renderCli(doc, view) {
       row.firstChild.scope = 'row';
       const file = element(doc, 'td');
       file.append(link(doc, entry.url, entry.file));
-      row.append(file, element(doc, 'td', entry.kind === 'tui' ? 'Full-screen UI' : 'CLI'));
+      row.append(file, element(doc, 'td', entry.kind === 'tui' ? 'Full-screen UI' : 'CLI'), element(doc, 'td', entry.size || 'n/a'));
       const checksum = element(doc, 'td');
       checksum.append(element(doc, 'code', entry.sha256));
       row.append(checksum);

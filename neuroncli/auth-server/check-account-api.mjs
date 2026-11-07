@@ -991,6 +991,12 @@ try {
   assert.ok(directives['script-src'].includes('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js'), 'supabase-js by exact URL');
   assert.ok(!directives['script-src'].includes('https://cdn.jsdelivr.net'), 'not all of jsDelivr');
   assert.ok(directives['script-src'].includes('https://checkout.razorpay.com'));
+  // Cloudflare Web Analytics injects its beacon at the edge: exactly that one host, never a wildcard.
+  assert.ok(directives['script-src'].includes('https://static.cloudflareinsights.com'), 'the Cloudflare Web Analytics beacon script');
+  assert.ok(!directives['script-src'].some(source => /cloudflareinsights/.test(source) && source !== 'https://static.cloudflareinsights.com'), 'script-src: only the beacon host');
+  assert.ok(directives['connect-src'].includes('https://cloudflareinsights.com'), 'the beacon reports to cloudflareinsights.com');
+  assert.ok(!directives['connect-src'].some(source => /cloudflareinsights/.test(source) && source !== 'https://cloudflareinsights.com'), 'connect-src: only the reporting host');
+  assert.ok(!policy.includes('*.cloudflare') && !/(^| )https:( |;|$)/.test(policy), 'nothing broader');
   assert.ok(!directives['style-src'].includes("'unsafe-inline'") && directives['style-src'].some(source => source.startsWith("'sha256-")), 'styles by hash');
   assert.deepEqual(directives['style-src-attr'], ["'unsafe-inline'"], 'style attributes only');
   assert.deepEqual(directives['form-action'], ["'self'"], 'no loopback form target outside the CLI sign-in page');

@@ -345,6 +345,8 @@ assert.doesNotMatch(read('zx-tokens.css'), /@import|url\((?!\s*['"]?(?:data:|\/[
     const script = parts.find(part => part.startsWith('script-src '));
     assert.ok(!script.includes("'unsafe-inline'") && !script.includes("'unsafe-eval'"), `${path}: script-src has no unsafe-inline or unsafe-eval`);
     assert.ok(!/(^| )https:( |;|$)/.test(policy), `${path}: no bare https: source`);
+    assert.ok(script.split(' ').includes('https://static.cloudflareinsights.com'), `${path}: the Cloudflare Web Analytics beacon script`);
+    assert.ok(parts.find(part => part.startsWith('connect-src ')).split(' ').includes('https://cloudflareinsights.com'), `${path}: the beacon's reporting endpoint`);
     assert.equal(policy.includes('*.supabase.co'), !env.SUPABASE_URL, `${path}: the Supabase wildcard only without a configured project`);
     const checkout = ['/pricing', '/dashboard'].includes(path);
     assert.equal(parts.find(part => part.startsWith('style-src ')).includes("'unsafe-inline'"), checkout, `${path}: inline styles only where the Razorpay checkout runs`);
@@ -1205,6 +1207,8 @@ assert.equal(checkout.normalizeCurrency('EUR'), 'USD');
     const at = id => html.indexOf(`<section id="${id}"`);
     assert.ok(at('cli') > 0 && at('cli') < at('verify') && at('verify') < at('desktop') && at('desktop') < at('mobile') && at('mobile') < at('more'), 'download.html order: command line, verify, desktop and mobile (coming soon), more');
     assert.ok(html.indexOf('id="cli-binaries"') < at('desktop'), 'available release binaries come before the coming-soon apps');
+    assert.match(html, /<th scope="col">Size<\/th><th scope="col">SHA-256<\/th>/, 'the direct-downloads table has a size column before the checksum');
+    assert.match(read('download.js'), /element\(doc, 'td', entry\.size \|\| 'n\/a'\)/, 'download.js fills the size cell');
   }
   assert.match(html, /<body data-download>/);
   for (const button of tags(html, 'button').filter(b => 'data-copy-target' in b)) assert.ok(ids(html).includes(button['data-copy-target']), 'copy target ' + button['data-copy-target']);
@@ -1244,7 +1248,11 @@ assert.equal(checkout.normalizeCurrency('EUR'), 'USD');
   assert.equal(download.formatBytes(2048), '2 KB');
   assert.equal(download.formatBytes(-1), '');
   assert.equal(download.formatReleaseDate('2026-11-02T09:30:00Z'), 'Nov 2, 2026');
-  assert.equal(download.releaseView(JSON.parse(read('releases/cli/latest.json')), 'cli'), null, 'nothing released yet');
+  const cliView = download.releaseView(JSON.parse(read('releases/cli/latest.json')), 'cli');
+  assert.equal(cliView.version, '7.0.0-alpha.4', 'the CLI release is published');
+  assert.equal(cliView.downloads.length, 10, 'the direct-downloads table has a row per binary');
+  assert.ok(cliView.downloads.every(entry => entry.size && entry.url.startsWith('https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.4/')), 'sizes and per-file links');
+  assert.ok(cliView.checksumsUrl.endsWith('/SHA256SUMS'));
   assert.equal(download.releaseView(JSON.parse(read('releases/desktop/latest.json')), 'desktop'), null);
   const sha = 'ab'.repeat(32);
   const view = download.releaseView({schema_version: 1, product: 'desktop', version: '0.2.0', released_at: '2026-11-02T09:30:00Z',

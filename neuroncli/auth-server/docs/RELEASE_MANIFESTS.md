@@ -25,8 +25,12 @@ Every answer is a manifest that passed `validateReleaseManifest`. A malformed up
 carry `Cache-Control: public, max-age=300`, `Access-Control-Allow-Origin: *` and
 `X-Neuron-Manifest-Source: r2 | assets | built-in`.
 
-The committed copies say `"version": null` until the first release, so clients show no notice and
-`/download` shows "coming soon".
+The committed desktop copy says `"version": null` until the first desktop release, so clients show no notice and
+`/download` shows "coming soon". The committed CLI copy is generated from the GitHub release the site names
+(`src/neuron-release.js`): `node scripts/build-release-manifest.mjs` reads the release's assets and
+`SHA256SUMS` through `gh` (read-only, idempotent), validates the result and writes
+`releases/cli/latest.json`; `--check` fails when the committed file differs. Run it, and commit the file,
+whenever `NEURON_VERSION` moves.
 
 ## Schema (version 1)
 
