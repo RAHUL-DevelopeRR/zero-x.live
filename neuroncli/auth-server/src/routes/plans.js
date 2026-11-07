@@ -112,7 +112,7 @@ export async function v1ModelsPayload(c, session = {}, { routes = wantsRoutes(c)
   });
   // Health is read per route (pool keys belong to routes), then rolled up per family.
   payload.data = routes ? payload.data.map(model => withIdentity(model, env)) : familyModels(payload.data, env);
-  // Last: `status` in the v1.3 words Neuron 7.0.0-alpha.4 reads, `availability` in section 15's.
+  // Last: `status` in the v1.3 words Neuron alpha 4 reads, `availability` in section 15's.
   for (const model of payload.data) withLegacyStatus(model);
   return payload;
 }

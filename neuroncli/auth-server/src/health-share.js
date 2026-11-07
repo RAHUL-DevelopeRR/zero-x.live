@@ -29,7 +29,7 @@ const PUBLIC_STATUS = Object.freeze({ available: 'available', degraded: 'degrade
 // The public statuses in the same order (catalog.js rolls families up with it too).
 export const PUBLIC_RANK = Object.freeze({ available: 0, degraded: 1, unknown: 2, busy: 3, unavailable: 4, blurred: 4 });
 
-// Clients written for contract v1.3 (Neuron 7.0.0-alpha.4, still in use) read `status` and grey a
+// Clients written for contract v1.3 (Neuron alpha 4, still in use) read `status` and grey a
 // model out only when it says `blurred` (gateway_catalog.rs is_blurred); any other word, `unavailable`
 // included, reads as usable. So `status` keeps the v1.3 word and `availability` carries the section
 // 15 statuses (available | degraded | unknown | busy | unavailable), which the website and newer
