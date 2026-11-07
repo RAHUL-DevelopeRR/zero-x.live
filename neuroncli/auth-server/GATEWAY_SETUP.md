@@ -429,7 +429,9 @@ or paste it): Free gets 500,000 tokens a day back. It must run before
 **Web search (`20261106000500_search_quota.sql`, contract section 17).** New tables
 `zerox_search_usage` and `zerox_search_research_runs` and the functions `zerox_search_reserve` and
 `zerox_search_settle` (service_role only); nothing existing changes, so it can be applied before
-or after the deploy. Until it is applied, and while neither `SEARXNG_URL` nor `BRAVE_API_KEY` is
+or after the deploy. The step-by-step switch-on (Brave or a loopback SearXNG on the VM, the read-only
+`scripts/search-preflight.mjs`, a smoke test and an owner checklist) is `docs/SEARCH_SETUP.md`.
+Until it is applied, and while neither `SEARXNG_URL` nor `BRAVE_API_KEY` is
 set, `POST /v1/search` answers 503 `search_unavailable` (never unmetered); `/api/account` gains
 `limits.search` and `limits.colony` either way. Owner steps to switch search on:
 
