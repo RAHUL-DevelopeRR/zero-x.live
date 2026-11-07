@@ -3,7 +3,7 @@ import { cors } from 'hono/cors';
 import { accountRpc, databaseConfigured, rpc } from './account-store.js';
 import { sessionDailyTokenCap, usesLedger } from './capacity.js';
 import { modelCatalog, resolveModelCatalog, providerHealth, providerConfiguration } from './providers.js';
-import { callerCountry, carryCallerCountry, catalogEntries, catalogWarnings, inheritCallerCountry, loadCatalog } from './catalog.js';
+import { callerCountry, catalogEntries, catalogWarnings, inheritCallerCountry, loadCatalog } from './catalog.js';
 import { refreshModelsDevFacts } from './oiop/models-dev.js';
 import { globalHealthTracker } from './provider-health.js';
 import { createChatHandler } from './chat-handler.js';
@@ -24,7 +24,8 @@ import { registerAdminRoutes, runScheduledMaintenance } from './routes/admin.js'
 import { registerBillingRoutes } from './routes/billing.js';
 import { registerKeyRoutes } from './routes/keys.js';
 import { registerPlanRoutes, sharedStatusFrame, v1ModelsPayload, v1ModelStatusPayload } from './routes/plans.js';
-import { bodyLimitFor, bodyTooLargeResponse, clientAddress, declaredBodyOver, isWebhookPath, modelStreamSlots, readBodyWithin } from './request-limits.js';
+import { bodyLimitFor, bodyReadTimeoutMs, bodyTooLargeResponse, clientAddress, declaredBodyOver, isWebhookPath, modelStreamSlots, readBodyWithin } from './request-limits.js';
+import { boundedRequest } from './bounded-request.js';
 import { rejectedRecently } from './auth-cache.js';
 import { ADMIN_POLICY, CROSS_ORIGIN_OPENER_POLICY, PERMISSIONS_POLICY, sitePolicy } from './csp.js';
 import { registerSessionIndex, registerSessionRoutes, sessionClient, unregisterSessionIndex } from './routes/sessions.js';
@@ -321,12 +322,12 @@ app.use('*', async (c, next) => {
   // are read (M1, the Worker reads the body before auth) and hand the route the bytes read.
   const raw = c.req.raw;
   if (raw.body) {
-    const read = await readBodyWithin(raw, limit);
+    const read = await readBodyWithin(raw, limit, { timeoutMs: bodyReadTimeoutMs(c.env) });
+    if (read.timedOut) return errorResponse(c, 408, 'request_timeout', 'The request body was not received in time.');
+    if (read.failed) return errorResponse(c, 400, 'invalid_request', 'The request body could not be read.');
     // The webhook route's contract answers its own 413 code (invalid_request).
     if (read.tooLarge) return isWebhookPath(path) ? errorResponse(c, 413, 'invalid_request', 'Webhook payload too large.') : bodyTooLargeResponse(limit);
-    const bounded = new Request(raw, { body: read.bytes, duplex: 'half' });
-    if (raw.cf) bounded.cf = raw.cf;
-    c.req.raw = carryCallerCountry(raw, bounded);
+    c.req.raw = boundedRequest(raw, read.bytes);
   }
   return next();
 });

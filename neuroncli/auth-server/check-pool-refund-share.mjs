@@ -97,6 +97,37 @@ try {
   }
   ok('a pool with rpd 0 or tpd 0 answers pool_exhausted, not user_pool_share');
 
+  // NULL cases: a refunded attempt with no usage event (event status NULL after the LEFT JOIN), and a settled ok attempt with no usage event.
+  const forceSettled = async (reservationId, outcome) => {
+    await sql("UPDATE public.zerox_reservations SET status = 'settled', outcome = $2, settled_at = now() WHERE id = $1", [reservationId, outcome]);
+    await sql('DELETE FROM public.zerox_usage_events WHERE reservation_id = $1', [reservationId]);
+  };
+  {
+    const model = newModel();
+    const user = await newUser();
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const r = await reserve(user, model, POOL);
+      assert.equal(r.status, 'ok', 'refunded with no usable event status does not count');
+      await forceSettled(r.reservation_id, 'refunded');
+    }
+    assert.equal((await reserve(user, model, POOL)).status, 'ok');
+    const model2 = newModel();
+    const user2 = await newUser();
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const r = await reserve(user2, model2, POOL);
+      assert.equal(r.status, 'ok');
+      await forceSettled(r.reservation_id, null);
+    }
+    assert.equal((await reserve(user2, model2, POOL)).status, 'user_pool_share', 'a settled ok attempt with no usage event still counts');
+  }
+  ok('NULL-safe: refunded with a null event status is free; a settled attempt with no usage event counts');
+
+  for (const pool of [{ cpd: 1000000, rpd: 0 }, { cpd: 1000000, tpd: 0 }]) {
+    const r = await reserve(await newUser(), newModel(), pool);
+    assert.equal(r.status, 'pool_exhausted', `${JSON.stringify(pool)} (cpd > 0) reads pool_exhausted`);
+  }
+  ok('a pool with cpd > 0 and rpd 0 answers pool_exhausted');
+
   for (const text of [up, down]) assert.match(text, /SET LOCAL lock_timeout = '5s'/);
   assert.match(down, /schema_migrations WHERE version = '20261107000100'/);
   await db.exec(up);

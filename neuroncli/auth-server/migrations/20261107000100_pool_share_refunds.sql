@@ -275,7 +275,9 @@ BEGIN
         LEFT JOIN public.zerox_usage_events AS e ON e.reservation_id = r.id
         WHERE r.user_id = p_user_id AND r.pool_day = v_day AND r.model = p_model AND r.tier = p_tier
           AND r.pool_key = v_pool_key AND r.status <> 'released'
-          AND NOT (r.status = 'settled' AND (r.outcome = 'refunded' OR e.status = 'refunded'));
+          AND NOT (r.status = 'settled' AND (coalesce(r.outcome = 'refunded', false) OR coalesce(e.status = 'refunded', false)));
+    -- NULL-safe: a settled attempt with no usage event (the LEFT JOIN finds none) or a null outcome
+    -- is not refunded, so it counts; a bare NOT (... OR NULL) would drop it from the share.
     END IF;
     IF v_share_requests IS NOT NULL AND
        ((v_rpd IS NOT NULL AND v_share_requests >= ceil(v_rpd * v_share_pct / 100.0)) OR

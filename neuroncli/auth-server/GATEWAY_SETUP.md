@@ -166,6 +166,7 @@ positive integer keeps the default. The limits are per process (isolate on the W
 |---|---|---|
 | `BODY_LIMIT_BYTES` | 65536 | Request body limit of every route except the chat routes (`/v1/chat/completions`, `/v1/messages`, the `/auth/azure/*` aliases), the relay (2 MiB) and the Razorpay webhook (256 KiB). Over it: 413 `request_too_large` before any route or database call; on the VM the bytes are counted as they arrive, on the Worker the declared `Content-Length` is checked. |
 | `CHAT_BODY_LIMIT_BYTES` | 2097152 | Chat and relay body limit (2 MiB is what production enforced before; Neuron 7.0.0-alpha.4 sends 15-20 KB per turn). The chat handler's own 1 MiB cap still applies. |
+| `BODY_READ_TIMEOUT_MS` | 30000 | Longest a client may take to deliver a request body the gateway buffers before auth; slower bodies answer 408 request_timeout. |
 | `REQUEST_TIMEOUT_MS` | 120000 | The whole request (headers and body) must arrive within this time (Node's own default is 5 minutes; never below the headers timeout plus 1 s). A response is never cut by it: token streams run as long as before. |
 | `MAX_CONNECTIONS` | 2000 | Open sockets per VM instance. |
 | `MODELS_STREAM_PER_IP`, `MODELS_STREAM_MAX` | 4, 500 | Anonymous `/v1/models/stream` connections per address and in all (credentialed streams count in the total only): 429 with `Retry-After`. The status payload is computed once per tick and serialised once for all connections with the same view. |

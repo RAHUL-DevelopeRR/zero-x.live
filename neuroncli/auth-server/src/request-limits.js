@@ -77,14 +77,23 @@ export function declaredBodyOver(headers, limit) {
  * { bytes: null } when the request has no body, or { tooLarge: true }. Used for bodies sent
  * without a usable Content-Length (chunked) and for a declared length that understates the body.
  */
-export async function readBodyWithin(request, limit) {
+export async function readBodyWithin(request, limit, { timeoutMs = 0 } = {}) {
   if (!request.body) return { bytes: null };
   const reader = request.body.getReader();
   const parts = [];
   let size = 0;
+  let timer;
+  const deadline = timeoutMs > 0 ? new Promise(resolve => { timer = setTimeout(() => resolve({ timedOut: true }), timeoutMs); }) : null;
   try {
     for (;;) {
-      const { done, value } = await reader.read();
+      const step = reader.read();
+      const result = deadline ? await Promise.race([step, deadline]) : await step;
+      if (result.timedOut) {
+        step.catch(() => {});
+        reader.cancel().catch(() => {});
+        return { timedOut: true };
+      }
+      const { done, value } = result;
       if (done) break;
       size += value.byteLength;
       if (size > limit) {
@@ -93,12 +102,21 @@ export async function readBodyWithin(request, limit) {
       }
       parts.push(value);
     }
-  } finally { reader.releaseLock?.(); }
+  } catch {
+    // The connection broke or the stream errored mid-body.
+    return { failed: true };
+  } finally {
+    clearTimeout(timer);
+    try { reader.releaseLock?.(); } catch { /* a read is still pending after a timeout */ }
+  }
   const bytes = new Uint8Array(size);
   let offset = 0;
   for (const part of parts) { bytes.set(part, offset); offset += part.byteLength; }
   return { bytes };
 }
+
+/** Longest a client may take to deliver a body the gateway buffers (BODY_READ_TIMEOUT_MS, default 30 s). */
+export const bodyReadTimeoutMs = env => positiveInt(env?.BODY_READ_TIMEOUT_MS, 30000);
 
 export const newRequestId = () => 'req_' + crypto.randomUUID().replace(/-/g, '');
 
