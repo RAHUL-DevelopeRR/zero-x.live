@@ -9,6 +9,8 @@
 //   is built with them, and a style attribute cannot run script), and on the two pages that open
 //   the Razorpay checkout (pricing and the dashboard) style elements, because checkout.js adds
 //   its own <style> to the page and its text cannot be hashed.
+//   Cloudflare Web Analytics' injected beacon is allowed by its exact origin (script-src) and its
+//   reporting origin (connect-src), nothing wider.
 //   connect-src names the Supabase project's own origin when SUPABASE_URL is set, img-src only the
 //   hosts that serve account avatars, and form-action allows the CLI's loopback callback on the
 //   sign-in page only.
@@ -20,6 +22,11 @@ const STYLE_HOSTS = ['https://fonts.googleapis.com', 'https://api.fontshare.com'
 const FONT_HOSTS = ['https://fonts.gstatic.com', 'https://cdn.fontshare.com'];
 // Where account avatars come from (the Google and GitHub sign-in providers).
 const AVATAR_HOSTS = ['https://lh3.googleusercontent.com', 'https://avatars.githubusercontent.com'];
+// Cloudflare Web Analytics: the zone setting injects https://static.cloudflareinsights.com/beacon.min.js
+// at the edge (no tag in our HTML), and the beacon reports to https://cloudflareinsights.com. Exactly
+// these two origins, one per directive; the beacon has no inline code, so script-src stays hash-based.
+const CF_ANALYTICS_SCRIPT = 'https://static.cloudflareinsights.com';
+const CF_ANALYTICS_CONNECT = 'https://cloudflareinsights.com';
 const RAZORPAY_FRAMES = ['https://api.razorpay.com', 'https://checkout.razorpay.com'];
 
 const hashSource = hash => `'${hash}'`;
@@ -49,13 +56,13 @@ export function sitePolicy(env = {}, { hostname = '', pathname = '' } = {}) {
     : ["'self'", ...INLINE_STYLE_HASHES.map(hashSource), ...STYLE_HOSTS];
   return [
     "default-src 'self'",
-    ['script-src', "'self'", ...INLINE_SCRIPT_HASHES.map(hashSource), SUPABASE_JS_SRC, 'https://checkout.razorpay.com'].join(' '),
+    ['script-src', "'self'", ...INLINE_SCRIPT_HASHES.map(hashSource), SUPABASE_JS_SRC, 'https://checkout.razorpay.com', CF_ANALYTICS_SCRIPT].join(' '),
     "script-src-attr 'none'",
     ['style-src', ...styleSources].join(' '),
     "style-src-attr 'unsafe-inline'",
     ['font-src', "'self'", 'data:', ...FONT_HOSTS].join(' '),
     ['img-src', "'self'", 'data:', ...AVATAR_HOSTS].join(' '),
-    ['connect-src', "'self'", supabaseOrigin(env), 'https://api.razorpay.com', 'https://lumberjack.razorpay.com'].join(' '),
+    ['connect-src', "'self'", supabaseOrigin(env), 'https://api.razorpay.com', 'https://lumberjack.razorpay.com', CF_ANALYTICS_CONNECT].join(' '),
     checkout ? ['frame-src', ...RAZORPAY_FRAMES].join(' ') : "frame-src 'none'",
     "object-src 'none'",
     loginPage ? "form-action 'self' http://127.0.0.1:*" : "form-action 'self'",
