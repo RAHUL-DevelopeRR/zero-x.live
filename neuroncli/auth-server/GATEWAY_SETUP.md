@@ -432,7 +432,9 @@ or paste it): Free gets 500,000 tokens a day back. It must run before
 **Web search (`20261106000500_search_quota.sql`, contract section 17).** New tables
 `zerox_search_usage` and `zerox_search_research_runs` and the functions `zerox_search_reserve` and
 `zerox_search_settle` (service_role only); nothing existing changes, so it can be applied before
-or after the deploy. Until it is applied, and while neither `SEARXNG_URL` nor `BRAVE_API_KEY` is
+or after the deploy. The step-by-step switch-on (Brave or a loopback SearXNG on the VM, the read-only
+`scripts/search-preflight.mjs`, a smoke test and an owner checklist) is `docs/SEARCH_SETUP.md`.
+Until it is applied, and while neither `SEARXNG_URL` nor `BRAVE_API_KEY` is
 set, `POST /v1/search` answers 503 `search_unavailable` (never unmetered); `/api/account` gains
 `limits.search` and `limits.colony` either way. Owner steps to switch search on:
 
@@ -487,6 +489,10 @@ counter for `/mcp/`, shared by every runtime). Nothing uses them while `HOSTED_C
 so it can be pasted before or after any deploy. Verify:
 `SELECT count(*) FROM pg_proc WHERE proname LIKE 'zerox_connector_%';` returns 8. Roll back with `migrations/down/20261106000400_connector_accounts.sql` (switch hosted
 connectors off first; it deletes every link and audit row).
+
+Owner checklist, key script, preflight, per-vendor OAuth apps and rollback: `docs/CONNECTORS_OWNER_CHECKLIST.md`
+(`scripts/connector-kek.mjs`, `scripts/connector-preflight.mjs`; the deploy workflow passes the connector
+secrets to both runtimes).
 
 **Hosted connectors (contract section 18.4; off until every step below is done).** Users link a
 SaaS account on the dashboard (Connectors tab) and Neuron reaches it through
@@ -669,7 +675,8 @@ Work through these in order; nothing in this repository does them for you.
    `refund.processed` and the `payment.dispute.*` events. Test a Pro checkout, a top-up, a refund
    and a cancellation end to end in test mode, then repeat the bootstrap with live keys
    (`--allow-live`) and set `RAZORPAY_KEY_ID` to the `rzp_live_` id. Read "Refunds and disputes"
-   below before taking live payments.
+   below before taking live payments. The step-by-step owner list, with test cards and the CSP checkout test, is
+   `docs/RAZORPAY_OWNER_CHECKLIST.md`.
 4. **Paid upstream capacity.** Create a Groq Developer-plan key and a billing-linked Gemini
    project key and store them as `GROQ_PAID_API_KEY` and `GEMINI_PAID_API_KEY`, and an Anthropic
    API key as `ANTHROPIC_API_KEY` (`gh secret set ANTHROPIC_API_KEY`; set the console spend limit

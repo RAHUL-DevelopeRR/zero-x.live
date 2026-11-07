@@ -7,7 +7,7 @@ import { createHmac, randomBytes } from 'node:crypto';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import app from './src/index.js';
-import { DEVELOPMENT_PLANS } from './src/plan-policy.js';
+import { DEVELOPMENT_PLANS, PLAN_CATALOG } from './src/plan-policy.js';
 import {
   checkoutSignatureMessage, constantTimeEqual, hmacSha256, razorpayBase, toHex, verifyCheckoutSignature, verifySignature, verifyWebhookSignature,
 } from './src/billing/razorpay.js';
@@ -17,6 +17,7 @@ import { join } from 'node:path';
 import { bootstrapPlans, planSql, storePlanIdsInPglite } from './scripts/razorpay-bootstrap.mjs';
 import { B1_CREDIT_REASON, planPolicyRows } from './contract-rows.mjs';
 import { LEGAL_DOCUMENTS } from './src/billing/legal-versions.js';
+import { planFromSubscription } from './src/routes/billing.js';
 
 // zerox_plan_policies_v2 rows as WP-B1 returns them.
 const B1_POLICY_ROWS = await planPolicyRows();
@@ -613,6 +614,26 @@ try {
   const unknownPlan = await webhook(webhookEvent('subscription.activated', { subscription: { id: 'sub_OtherPlan123', plan_id: 'plan_SomethingElse', status: 'active',
     notes: { user_id: other.id } } }), { bindings: webhookOnly });
   assert.deepEqual(unknownPlan.body, { received: true, ignored: true });
+  // Plan-id gating: the Razorpay plan id decides the plan, the gateway's own note is only a fallback, and
+  // anything that is not a paid Zero-X plan entitles nothing.
+  {
+    const catalog = PLAN_CATALOG.map(plan => ({ ...plan, razorpay_plan_id_inr: PLAN_IDS[plan.id]?.INR ?? null, razorpay_plan_id_usd: PLAN_IDS[plan.id]?.USD ?? null }));
+    assert.equal(planFromSubscription(catalog, { plan_id: PLAN_IDS.pro.USD, notes: { plan: 'max' } })?.id, 'pro', 'the plan id wins over a note');
+    assert.equal(planFromSubscription(catalog, { plan_id: PLAN_IDS.max.INR, notes: {} })?.id, 'max', 'both currencies map to the plan');
+    assert.equal(planFromSubscription(catalog, { plan_id: 'plan_SomethingElse', notes: { plan: 'max' } })?.id, 'max', 'the note is the fallback for an unmapped plan id');
+    assert.equal(planFromSubscription(catalog, { plan_id: 'plan_SomethingElse', notes: {} }), null, 'an unmapped plan id without a note is no plan');
+    assert.equal(planFromSubscription(catalog, { plan_id: 'plan_SomethingElse', notes: { plan: 'free' } }), null, 'free is never a paid plan');
+    assert.equal(planFromSubscription(catalog, null), null);
+    assert.equal(planFromSubscription(catalog, { plan_id: null, notes: { plan: 'nope' } }), null);
+  }
+  // Signing: a body altered after signing, a missing header and a prefixed signature are refused.
+  {
+    const body = JSON.stringify(webhookEvent('refund.created', {}));
+    expectError(await webhook(null, { raw: body + ' ', signature: hmac(WEBHOOK_SECRET, body) }), 400, 'invalid_signature');
+    expectError(await webhook(null, { raw: body, signature: `sha256=${hmac(WEBHOOK_SECRET, body)}` }), 400, 'invalid_signature');
+    assert.deepEqual((await webhook(null, { raw: body, signature: hmac(WEBHOOK_SECRET, body).toUpperCase() })).body, { received: true, ignored: true }, 'hex case is not part of the MAC');
+    assert.deepEqual((await webhook(null, { raw: body })).body, { received: true, ignored: true }, 'the exact signed body is accepted');
+  }
   assert.deepEqual((await webhook(webhookEvent('refund.created', {}))).body, { received: true, ignored: true });
   assert.deepEqual((await webhook(webhookEvent('subscription.authenticated', { subscription: { id: 'not-a-sub' } }))).body, { received: true, ignored: true });
 
@@ -902,6 +923,17 @@ try {
   const again = await bootstrapPlans({ env: bootstrapEnv, apply: true });
   assert.ok(again.every(row => row.action === 'existing'));
   assert.equal(rzp.plans.size, 4, 'bootstrap is idempotent');
+  // Live keys need --allow-live (the fake server only knows the test key, so it answers 401 once the guard passes).
+  const liveLike = { ...bootstrapEnv, RAZORPAY_KEY_ID: 'rzp_live_RealKey123' };
+  await assert.rejects(bootstrapPlans({ env: liveLike }), /--allow-live/);
+  await assert.rejects(bootstrapPlans({ env: liveLike, allowLive: true }), /Razorpay request failed \(401/, 'with --allow-live the guard passes and the (fake) server rejects the unknown live key');
+  // Price drift: a plan whose amount no longer matches is not reused, so a changed price is never silently kept.
+  const drifted = [...rzp.plans.values()].find(plan => plan.notes.zerox_plan === 'pro' && plan.item.currency === 'INR');
+  drifted.item.amount += 100;
+  const drift = await bootstrapPlans({ env: bootstrapEnv });
+  assert.equal(drift.find(row => row.plan === 'pro' && row.currency === 'INR').action, 'would_create');
+  assert.equal(drift.filter(row => row.action === 'existing').length, 3);
+  drifted.item.amount -= 100;
   const sql = planSql(applied);
   assert.equal(sql.split('\n').length, 2);
   assert.ok(sql.includes(`razorpay_plan_id_inr = '${applied[0].id}', razorpay_plan_id_usd = '${applied[1].id}' WHERE plan = 'pro';`));
