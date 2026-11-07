@@ -485,6 +485,10 @@ so it can be pasted before or after any deploy. Verify:
 `SELECT count(*) FROM pg_proc WHERE proname LIKE 'zerox_connector_%';` returns 8. Roll back with `migrations/down/20261106000400_connector_accounts.sql` (switch hosted
 connectors off first; it deletes every link and audit row).
 
+Owner checklist, key script, preflight, per-vendor OAuth apps and rollback: `docs/CONNECTORS_OWNER_CHECKLIST.md`
+(`scripts/connector-kek.mjs`, `scripts/connector-preflight.mjs`; the deploy workflow passes the connector
+secrets to both runtimes).
+
 **Hosted connectors (contract section 18.4; off until every step below is done).** Users link a
 SaaS account on the dashboard (Connectors tab) and Neuron reaches it through
 `https://zero-x.live/mcp/<id>`, which proxies to the vendor's official remote MCP server with the
