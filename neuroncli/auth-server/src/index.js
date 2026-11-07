@@ -3,7 +3,7 @@ import { cors } from 'hono/cors';
 import { accountRpc, databaseConfigured, rpc } from './account-store.js';
 import { sessionDailyTokenCap, usesLedger } from './capacity.js';
 import { modelCatalog, resolveModelCatalog, providerHealth, providerConfiguration } from './providers.js';
-import { callerCountry, catalogEntries, catalogWarnings, inheritCallerCountry, loadCatalog } from './catalog.js';
+import { callerCountry, carryCallerCountry, catalogEntries, catalogWarnings, inheritCallerCountry, loadCatalog } from './catalog.js';
 import { refreshModelsDevFacts } from './oiop/models-dev.js';
 import { globalHealthTracker } from './provider-health.js';
 import { createChatHandler } from './chat-handler.js';
@@ -24,7 +24,7 @@ import { registerAdminRoutes, runScheduledMaintenance } from './routes/admin.js'
 import { registerBillingRoutes } from './routes/billing.js';
 import { registerKeyRoutes } from './routes/keys.js';
 import { registerPlanRoutes, sharedStatusFrame, v1ModelsPayload, v1ModelStatusPayload } from './routes/plans.js';
-import { bodyLimitFor, bodyTooLargeResponse, clientAddress, declaredBodyOver, modelStreamSlots } from './request-limits.js';
+import { bodyLimitFor, bodyTooLargeResponse, clientAddress, declaredBodyOver, isWebhookPath, modelStreamSlots, readBodyWithin } from './request-limits.js';
 import { rejectedRecently } from './auth-cache.js';
 import { ADMIN_POLICY, CROSS_ORIGIN_OPENER_POLICY, PERMISSIONS_POLICY, sitePolicy } from './csp.js';
 import { registerSessionIndex, registerSessionRoutes, sessionClient, unregisterSessionIndex } from './routes/sessions.js';
@@ -310,14 +310,24 @@ app.use('*', async (c, next) => {
 // Body limits (audit F16, and the Worker-served JSON routes of 3b): a request whose declared
 // Content-Length is over the route's limit (64 KiB; the chat routes and the relay 2 MiB; the
 // webhook 256 KiB; src/request-limits.js) is refused before any route reads it or any database
-// is called. On Node, server.js has already counted the bytes it read; a Worker body sent without
-// Content-Length is bounded by Cloudflare and then by the Node server when it is forwarded.
+// is called. A body without a usable Content-Length is counted as it is read (both runtimes).
 app.use('*', async (c, next) => {
   if (c.req.method === 'GET' || c.req.method === 'HEAD' || c.req.method === 'OPTIONS') return next();
   const path = routePath(new URL(c.req.url).pathname);
   if (!isApiRoute(path)) return next();
   const limit = bodyLimitFor(path, c.env);
   if (declaredBodyOver(c.req.raw.headers, limit) !== null) return bodyTooLargeResponse(limit);
+  // No usable Content-Length (chunked), or one that understates the body: count the bytes as they
+  // are read (M1, the Worker reads the body before auth) and hand the route the bytes read.
+  const raw = c.req.raw;
+  if (raw.body) {
+    const read = await readBodyWithin(raw, limit);
+    // The webhook route's contract answers its own 413 code (invalid_request).
+    if (read.tooLarge) return isWebhookPath(path) ? errorResponse(c, 413, 'invalid_request', 'Webhook payload too large.') : bodyTooLargeResponse(limit);
+    const bounded = new Request(raw, { body: read.bytes, duplex: 'half' });
+    if (raw.cf) bounded.cf = raw.cf;
+    c.req.raw = carryCallerCountry(raw, bounded);
+  }
   return next();
 });
 
