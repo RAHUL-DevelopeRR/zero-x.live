@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Data and subprocessors | Neuron by Zero-X</title>
+  <meta name="description" content="Where a Neuron request goes, what the Zero-X gateway stores and for how long, which companies receive your data, and how to ask for a copy or deletion.">
+  <meta name="robots" content="index,follow,max-image-preview:large">
+  <link rel="canonical" href="https://zero-x.live/docs/data">
+  <meta name="theme-color" content="#FFFFFF" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#141413" media="(prefers-color-scheme: dark)">
+  <link rel="icon" type="image/png" sizes="32x32" href="/Assets/zerox-favicon-32.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/Assets/zerox-apple-touch-icon.png">
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="Zero-X">
+  <meta property="og:title" content="Neuron data and subprocessors">
+  <meta property="og:description" content="Where your requests go, what Zero-X stores and who receives your data.">
+  <meta property="og:url" content="https://zero-x.live/docs/data">
+  <meta property="og:image" content="https://zero-x.live/Assets/zerox-share.png">
+  <meta property="og:image:alt" content="Zero-X logo">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Neuron data and subprocessors">
+  <meta name="twitter:description" content="Where your requests go, what Zero-X stores and who receives your data.">
+  <meta name="twitter:image" content="https://zero-x.live/Assets/zerox-share.png">
+  <meta name="twitter:image:alt" content="Zero-X logo">
+  <link rel="preload" href="/fonts/aspekta-400.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/fonts/aspekta-500.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/zx-tokens.css">
+  <link rel="stylesheet" href="/content.css">
+  <script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"TechArticle","@id":"https://zero-x.live/docs/data#article","headline":"Data and subprocessors","url":"https://zero-x.live/docs/data","publisher":{"@id":"https://zero-x.live/#organization"},"inLanguage":"en"},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Zero-X","item":"https://zero-x.live/"},{"@type":"ListItem","position":2,"name":"Docs","item":"https://zero-x.live/docs"},{"@type":"ListItem","position":3,"name":"Data and subprocessors","item":"https://zero-x.live/docs/data"}]}]}</script>
+  <script type="module" src="/site-nav.js"></script>
+</head>
+<body>
+  <a class="zx-skip" href="#main">Skip to content</a>
+  <header class="zx-header">
+    <div class="zx-container zx-header__inner">
+      <a class="zx-brand" href="/"><img src="/Assets/zerox-mark.svg" width="28" height="28" alt="">Zero-X</a>
+      <button class="zx-nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" hidden><svg class="zx-icon zx-icon--menu" aria-hidden="true"><use href="/icons.svg#menu"/></svg><svg class="zx-icon zx-icon--close" aria-hidden="true"><use href="/icons.svg#x"/></svg>Menu</button>
+      <nav class="zx-nav" id="site-nav" aria-label="Main">
+        <a href="/neuron-cli">Neuron CLI</a>
+        <a href="/pricing">Pricing</a>
+        <a href="/docs">Docs</a>
+        <a class="zx-btn zx-btn--sm" href="https://dashboard.zero-x.live/"><svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#user"/></svg>Dashboard</a>
+      </nav>
+    </div>
+  </header>
+  <script>(function(h){var b=h&&h.querySelector('.zx-nav-toggle');if(b&&'noModule'in HTMLScriptElement.prototype){h.dataset.nav='closed';b.hidden=false}})(document.querySelector('.zx-header'))</script>
+
+  <main id="main" class="zx-container">
+    <div class="zx-hero">
+      <nav class="zx-breadcrumb" aria-label="Breadcrumb"><a href="/">Zero-X</a> / <a href="/docs">Docs</a> / Data and subprocessors</nav>
+      <h1>Data and subprocessors</h1>
+      <p class="zx-lead">Where a Neuron request goes, what the Zero-X gateway stores and for how long, and which companies receive your data. The <a href="/privacy">privacy policy</a> is the binding statement; this page is the developer's view of the same facts. Last reviewed 3 November 2026.</p>
+    </div>
+    <div class="zx-docs">
+      <nav class="zx-toc" aria-label="On this page">
+        <p class="zx-label">On this page</p>
+        <ol>
+          <li><a href="#flow">Where a request goes</a></li>
+          <li><a href="#stored">What Zero-X stores</a></li>
+          <li><a href="#processors">Who receives your data</a></li>
+          <li><a href="#tokens">What a token is</a></li>
+          <li><a href="#control">Controlling where it goes</a></li>
+          <li><a href="#requests">Your data requests</a></li>
+          <li><a href="#security">Security</a></li>
+          <li><a href="#changes">Changes to this page</a></li>
+        </ol>
+      </nav>
+      <article>
+        <section id="flow" aria-labelledby="flow-title">
+          <h2 id="flow-title">Where a request goes</h2>
+          <p>With the Zero-X gateway (after <code>neuron login</code>) a model request takes this path:</p>
+          <ol>
+            <li><strong>Your computer.</strong> Neuron decides what to include: your message, the conversation so far, and the files or command output it read. You choose the folder, the permission mode and the commands.</li>
+            <li><strong>Cloudflare.</strong> The request reaches <code>zero-x.live/v1</code> over HTTPS. Cloudflare sees it in transit and runs part of the gateway.</li>
+            <li><strong>Our own server</strong>, which may be hosted on Amazon Web Services in Mumbai (only when it serves the request, and the host can change). Cloudflare passes the request over a private tunnel, with the caller's IP address and approximate location.</li>
+            <li><strong>The gateway.</strong> It checks your session, plan and quota, replaces credentials it recognises with placeholders, keeps the text in memory only, and writes usage metadata to the database.</li>
+            <li><strong>Supabase.</strong> Our database holds the account, usage, session (as hashes) and billing records.</li>
+            <li><strong>The model provider.</strong> The one you chose, or the one <code>auto</code> picked among those switched on. The answer comes back the same way.</li>
+          </ol>
+          <p>Other flows:</p>
+          <ul>
+            <li><strong>Payments.</strong> Your browser talks to Razorpay for card, UPI or bank details; Zero-X never receives them. Razorpay tells the gateway the payment ID, amount and status. Razorpay's window is filled in with your name, email address and phone number only.</li>
+            <li><strong>Your own provider key.</strong> Neuron sends requests straight to that provider and Zero-X sees nothing.</li>
+            <li><strong>Phone app (not generally available yet).</strong> Session frames are encrypted between your computer and phone and pass through Zero-X's relay unread and unstored. Notifications go through Expo and Apple or Google, carry a fixed message and the computer's name, and never session content.</li>
+          </ul>
+        </section>
+
+        <section id="stored" aria-labelledby="stored-title">
+          <h2 id="stored-title">What Zero-X stores</h2>
+          <div class="zx-table-wrap">
+            <table class="zx-table">
+              <thead><tr><th scope="col">Record</th><th scope="col">Fields</th><th scope="col">How long</th></tr></thead>
+              <tbody>
+                <tr><th scope="row">Account</th><td>Account ID, email, name, avatar, phone if used, plan</td><td>While the account exists</td></tr>
+                <tr><th scope="row">Usage</th><td>Time, model, provider, pool, status, prompt and completion tokens, credit cost, latency, request ID</td><td>While the account exists</td></tr>
+                <tr><th scope="row">Billing details and agreement records</th><td>Name, country, city, state (India), postal code, optional street address, phone and GSTIN or tax ID, business name; which document versions you agreed to and when</td><td>While the account exists</td></tr>
+                <tr><th scope="row">Credits, subscriptions, payments</th><td>Credit changes, Razorpay IDs, plan, amount, currency, status, invoice link</td><td>While the account exists</td></tr>
+                <tr><th scope="row">Quota reservations</th><td>User ID, request ID, token counts</td><td>30 days after the request ends</td></tr>
+                <tr><th scope="row">Sessions and API keys</th><td>SHA-256 hashes, device name, operating system, version, last use</td><td>Sessions 30 days after last use (90 days at most); keys until revoked</td></tr>
+                <tr><th scope="row">Device sign-in requests</th><td>Device name, operating system, IP address and approximate location</td><td>About a day after the request expires</td></tr>
+                <tr><th scope="row">Prompt and response text</th><td>Not stored</td><td>In memory while the request runs; Gemini continuation tokens up to 6 hours and Claude replies up to 2 hours</td></tr>
+                <tr><th scope="row">Server logs</th><td>Request ID, model, provider, status, error codes, short provider error messages; no prompt text by design</td><td>At most 14 days on our server; Cloudflare keeps its own Worker logs for a few days</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="zx-mt">The full retention table, and what deleting an account removes, are in the <a href="/privacy#retention">privacy policy</a>.</p>
+        </section>
+
+        <section id="processors" aria-labelledby="processors-title">
+          <h2 id="processors-title">Who receives your data</h2>
+          <div class="zx-table-wrap">
+            <table class="zx-table">
+              <thead><tr><th scope="col">Company</th><th scope="col">Role</th><th scope="col">Based in</th><th scope="col">Training and retention, as the company states it</th></tr></thead>
+              <tbody>
+                <tr><th scope="row">Anthropic</th><td>Claude models on Pro and Max</td><td>United States</td><td>API data is not used for training under its commercial terms; deleted after a limited period; flagged requests can be kept longer</td></tr>
+                <tr><th scope="row">Groq</th><td>Groq-hosted models, free and paid</td><td>United States</td><td>Not kept by default, but may be logged up to 30 days for abuse and reliability unless zero data retention is on; training not stated, not confirmed</td></tr>
+                <tr><th scope="row">NVIDIA</th><td>Free models on shared trial endpoints</td><td>United States</td><td>Not confirmed</td></tr>
+                <tr><th scope="row">OpenRouter</th><td>Free OpenRouter models, and your own OpenRouter account</td><td>United States</td><td>The gateway asks for endpoints that do not retain or train; OpenRouter's own logging and each model host's practices not confirmed</td></tr>
+                <tr><th scope="row">Z.ai</th><td>Free GLM Flash models</td><td>Singapore</td><td>Says it does not store API content; training not clearly stated, not confirmed</td></tr>
+                <tr><th scope="row">Google (Gemini API)</th><td>Gemini models, only if switched on (not at the moment)</td><td>United States</td><td>Free tier: may train and human review; paid tier: no</td></tr>
+                <tr><th scope="row">Cloudflare</th><td>Website, API and relay traffic; Workers AI only if switched on (not at the moment)</td><td>Global network</td><td>States it does not train on or retain Workers AI inputs and outputs for standard requests</td></tr>
+                <tr><th scope="row">Amazon Web Services</th><td>Our gateway server, when it is in use</td><td>Mumbai, India</td><td>Server logs at most 14 days; no prompt text by design</td></tr>
+                <tr><th scope="row">Supabase</th><td>Authentication and database</td><td>Not stated here</td><td>Records until the account is deleted, plus backups for a limited time</td></tr>
+                <tr><th scope="row">Razorpay</th><td>Payments</td><td>India</td><td>Keeps its own payment records under its policy and the law</td></tr>
+                <tr><th scope="row">Expo, Apple, Google</th><td>Phone notifications</td><td>Global</td><td>Their own policies; notification text only</td></tr>
+                <tr><th scope="row">Google, GitHub, Microsoft</th><td>Sign-in</td><td>Global</td><td>Only the method you pick</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="zx-mt">Providers can change their terms. "Not confirmed" means we could not confirm the company's position from its public terms, so treat the data as possibly kept, reviewed or used to improve the service. Links to each company's policy are in the <a href="/privacy#processors">privacy policy</a>.</p>
+        </section>
+
+        <section id="tokens" aria-labelledby="tokens-title">
+          <h2 id="tokens-title">What a token is</h2>
+          <p>A token is a piece of text, roughly three-quarters of a word. Zero-X counts the tokens the provider reports: prompt tokens (everything Neuron sent, including history and files) plus completion tokens (what the model wrote). A coding agent resends its context with every step, so a typical Neuron step uses about 25,000 tokens, and the Free plan's 1,000,000 tokens per 5 hours is roughly 40 steps. Use <code>/compact</code> to shrink the prompt. Limits are on the <a href="/pricing">pricing page</a>.</p>
+        </section>
+
+        <section id="control" aria-labelledby="control-title">
+          <h2 id="control-title">Controlling where it goes</h2>
+          <ul>
+            <li><strong>Your own key.</strong> Point Neuron at your provider with <code>OPENAI_API_KEY</code> and <code>OPENAI_BASE_URL</code>; the request never passes through Zero-X.</li>
+            <li><strong>Training filter.</strong> If your client can add request headers, <code>X-Neuron-Allow-Training: false</code> keeps only offers Zero-X has recorded as not training on inputs. Providers whose position is unknown or yes are skipped, so fewer models are available.</li>
+            <li><strong>Trust tiers.</strong> <code>X-Neuron-Trust-Tiers: T0,T1</code> limits which provider tiers may see the prompt.</li>
+            <li><strong>Keep secrets out.</strong> The gateway replaces credentials it recognises with placeholders before a request leaves, but detection can miss one. Neuron asks before it reads <code>.env</code> and credential files; see <a href="/docs/trust#permissions">Security and trust</a>.</li>
+          </ul>
+        </section>
+
+        <section id="requests" aria-labelledby="requests-title">
+          <h2 id="requests-title">Your data requests</h2>
+          <p>Email <a href="mailto:support@zero-x.live">support@zero-x.live</a> from your account address with "Privacy request" in the subject, to get a copy of your account data, correct it or have your account deleted. We act within 30 days, and there is no self-service button yet. When an account is deleted, our database removes the usage, session, key, billing detail and agreement records, and also our own copy of its payment records; Razorpay keeps its own. Complaints go to the grievance officer, Rahul S, at the same address with "Grievance" in the subject; see the <a href="/privacy#grievance">privacy policy</a>.</p>
+        </section>
+
+        <section id="security" aria-labelledby="security-title">
+          <h2 id="security-title">Security</h2>
+          <p>Provider API keys stay on the gateway. Sessions and API keys are stored only as SHA-256 hashes. Traffic uses HTTPS and database access is limited to the gateway's service role. To report a problem, see <a href="/docs/trust#report">Security and trust</a>.</p>
+        </section>
+
+        <section id="changes" aria-labelledby="changes-title">
+          <h2 id="changes-title">Changes to this page</h2>
+          <p>When a provider is added or removed, or a retention period changes, this page and the privacy policy change together, with a new effective date on the policy. 3 November 2026: Z.ai and Amazon Web Services (our own server, when in use) added, Gemini and Workers AI marked as switched off, billing details and agreement records added, retention table extended. 4 November 2026: an optional GSTIN or tax ID added to the billing details.</p>
+        </section>
+      </article>
+    </div>
+  </main>
+
+  <footer class="zx-footer">
+    <div class="zx-container zx-footer__grid">
+      <div>
+        <a class="zx-brand" href="/"><img src="/Assets/zerox-mark.svg" width="28" height="28" alt="">Zero-X</a>
+        <p>Neuron CLI and NeuCockpit. Built in Tamil Nadu, India.</p>
+      </div>
+      <nav aria-label="Product">
+        <h2>Product</h2>
+        <a href="/neuron-cli">Neuron CLI</a>
+        <a href="/download">Download</a>
+        <a href="/changelog">Changelog</a>
+        <a href="/pricing">Pricing</a>
+        <a href="/docs">Docs</a>
+        <a href="/ai-coding-agent">AI coding agent guide</a>
+        <a href="/free-ai-coding-agent">Free AI coding agent</a>
+        <a href="/claude-code-alternative">Neuron compared</a>
+        <a href="https://dashboard.zero-x.live/">Dashboard</a>
+        <a href="https://github.com/RAHUL-DevelopeRR/neuron-v2">GitHub <svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#arrow-up-right"/></svg></a>
+      </nav>
+      <nav aria-label="Company">
+        <h2>Company</h2>
+        <a href="/about">About</a>
+        <a href="/contact">Contact</a>
+        <a href="/docs/trust">Security and trust</a>
+        <a href="https://zero-x.live/neucockpit">NeuCockpit</a>
+      </nav>
+      <nav aria-label="Legal">
+        <h2>Legal</h2>
+        <a href="/terms">Terms of Service</a>
+        <a href="/privacy">Privacy Policy</a>
+        <a href="/refund">Cancellation and refunds</a>
+        <a href="/shipping">Shipping and delivery</a>
+      </nav>
+    </div>
+    <p class="zx-container zx-footer__legal">© 2026 Zero-X · <a href="mailto:support@zero-x.live">support@zero-x.live</a> · <a href="/contact#grievance">Grievance officer</a></p>
+  </footer>
+</body>
+</html>

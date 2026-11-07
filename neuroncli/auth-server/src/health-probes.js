@@ -109,6 +109,9 @@ export const PROBE_SCHEDULES = Object.freeze({
   'nvidia:free': Object.freeze({ chat_minutes: 15, tool_minutes: 180 }),
   'openrouter:free': Object.freeze({ chat_minutes: 480, tool_minutes: 1440, provider_daily_cap: 4 }),
   'zai:free': Object.freeze({ chat_minutes: 15, tool_minutes: 360 }),
+  // Claude Haiku 5.5, a sponsored free pool on the operator's paid Claude key (contract section 19.5): the
+  // paid Claude pools' schedule, 48 chats and 4 tool calls a day, about $0.01 a day in all.
+  'anthropic:free': Object.freeze({ chat_minutes: 30, tool_minutes: 360 }),
   'gemini:free': Object.freeze({ chat_minutes: 1440, tool_minutes: 0 }),
   'cloudflare:free': Object.freeze({ chat_minutes: 60, tool_minutes: 360 }),
   paid: Object.freeze({ chat_minutes: 30, tool_minutes: 360 }),
@@ -233,7 +236,10 @@ export function lowestEffort(entry) {
 // effort low (what reasoning_effort 'none' maps to, src/anthropic-request.js), turns thinking off,
 // so 3 tokens answer. Opus 5.5 cannot turn thinking off: effort low with adaptive thinking is its
 // lowest setting, and thinking counts toward max_tokens, so a 3-token cap can end inside the
-// thinking block. No minimum max_tokens is documented, but its test requests get room for a short
+// thinking block. Haiku 5.5 turns thinking off with {type: 'disabled'} at effort low (what
+// reasoning_effort 'none' maps to), so its test requests take 3 and 160 tokens like Sonnet's; if
+// Anthropic ever rejected that (a 400 is logged as probe_misconfigured), thinkingOff: null in
+// anthropic-request.js CLAUDE_TRAITS gives it Opus's room instead. No minimum max_tokens is documented, but its test requests get room for a short
 // think and the answer: 64 tokens for chat, 512 for the tool call (at Opus 5.5's $20 per million
 // output tokens, at most about $0.06 a day for 48 chats and 4 tool calls).
 export const THINKING_CHAT_MAX_TOKENS = 64;

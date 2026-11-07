@@ -16,7 +16,8 @@ import { modelsDevId, providerInfo } from './oiop/models-dev.js';
 import {
   BILLED_FREE_LIMITS, MODELS_VARS as TYPE_MODELS_VARS, VAULT_KEY_VARS as SLOT_VAULT_KEY_VARS, poolSource, publicIdFor,
 } from './catalog-types.js';
-import { effectiveSpendCapUsd, entryFromSpec } from './catalog-guardrails.js';
+import { effectiveSpendCapUsd, entryFromSpec, sponsoredTermsFor } from './catalog-guardrails.js';
+import { sponsoredUnavailable } from './sponsored.js';
 import { CLAUDE_MODEL_SPECS } from './catalog-claude.js';
 import { catalogSnapshot, loadCatalog, loadCatalogDbModels } from './catalog-db.js';
 import { familyOf, modelIdentity } from './model-families.js';
@@ -243,8 +244,10 @@ const MODELS = [
   ...[
     ['glm-4.7-flash', 'GLM-4.7-Flash (Z.ai, free)', 14, 200000, 65536],
     ['glm-4.5-flash', 'GLM-4.5-Flash (Z.ai, free)', 15, 131072, 65536],
-  ].map(([upstream, name, rank, context, maxOutput]) => ({
-    id: `zai/${upstream}`, display_name: name, provider: 'zai', upstream_model: upstream,
+  // The list positions are explicit (170, 180): they were the array index when the Claude rows were two, and
+  // the seeded catalog rows (migration 20261029000700) hold them; a model added above must not shift them.
+  ].map(([upstream, name, rank, context, maxOutput], index) => ({
+    id: `zai/${upstream}`, display_name: name, provider: 'zai', upstream_model: upstream, position: 170 + index * 10,
     context_window: context, max_output_tokens: maxOutput, supports_tools: true, supports_streaming: true,
     auto_rank: rank, aliases: [upstream], reasoning_efforts: ['none', 'default'],
     reasoning_effort_map: { minimal: 'default', low: 'default', medium: 'default', high: 'default' },
@@ -258,6 +261,27 @@ function freezeEntry(entry) {
     reasoning_effort_map: {}, ...entry, pools: Object.freeze(entry.pools),
     aliases: Object.freeze(entry.aliases || []),
   });
+}
+
+// Models that `auto` never picks for an agentic request (a tool-carrying request, or the CLI's
+// `x-neuron-route: agentic` hint; src/router.js), although they declare tools and still serve
+// when asked for by name. The catalog keeps no per-model tool-call rate (the HealthHub canary
+// records one probe per pool, not a rate over real requests), so this is an explicit list, matched
+// on the upstream model (any provider prefix, any `:variant` suffix) so that catalog rows and a
+// BYOK caller's own OpenRouter models of the same model are covered too. Evidence
+// (2026-11-03, Neuron alpha.3 bug sweep): on Free with `auto`, "build me a todo app in this
+// folder" was served by groq/openai/gpt-oss-120b, which answered with code in chat and called no
+// tool. The rest of the gpt-oss family (gpt-oss-20b on Groq and NVIDIA, gpt-oss-120b on Workers
+// AI) is listed with it: auto would otherwise hand the same request to its smaller sibling. That
+// the siblings behave the same is not separately measured. Remove an entry once a live multi-turn
+// build probe shows the model calling tools.
+export const POOR_TOOL_CALLERS = Object.freeze([
+  // OpenRouter ids carry an optional variant suffix: openai/gpt-oss-120b:free, :nitro.
+  Object.freeze({ upstream: /(^|\/)gpt-oss-\d+b(:[a-z0-9-]+)?$/, reason: 'answers build requests in chat without calling tools' }),
+]);
+
+export function poorToolCaller(entry) {
+  return POOR_TOOL_CALLERS.some(rule => rule.upstream.test(String(entry?.upstream_model ?? '').toLowerCase()));
 }
 
 // position: the list order of /v1/models and of the catalog rows (10, 20, ...).
@@ -470,6 +494,10 @@ export function poolSecret(env, pool) {
 export function poolConfigured(env, entry, pool) {
   if (pool.requires_flag && env?.[pool.requires_flag] !== 'true') return false;
   if (pool.tier === 'paid' && (!pool.price || effectiveSpendCapUsd(env, entry, pool) === null)) return false;
+  // A sponsored free pool (src/catalog-types.js SPONSORED_FREE_MODELS) is priced and capped like a paid one, and
+  // fails closed while the database lacks the monthly-allowance migration (src/sponsored.js).
+  if (pool.tier === 'free' && pool.sponsored === true
+      && (!pool.price || effectiveSpendCapUsd(env, entry, pool) === null || sponsoredUnavailable(env))) return false;
   if (pool.binding === 'cloudflare') return cloudflareBound(env);
   if (pool.key_id) return POOL_SECRETS.has(pool);
   const value = env?.[pool.key_var];
@@ -517,14 +545,16 @@ export function callerCountry(request, env = {}) {
 // Classifies every pool of an entry for a caller: configured, in plan, region allowed. A pool
 // counts as configured only while its OIOP offer may serve other people through the operator's
 // keys (src/oiop/offers.js servesOperatorPools: active or degraded, redistribution permitted).
-export function poolVerdicts(env, entry, tiers, country) {
+// `ledger` is whether the caller's session has an account ledger: a sponsored pool counts its
+// users' monthly tokens there, so a session without one (a development session) is not in plan.
+export function poolVerdicts(env, entry, tiers, country, ledger = true) {
   return entryPools(env, entry).map(pool => {
     const offer = offerForPool(env, entry, pool);
     return {
       pool,
       offer,
       configured: poolConfigured(env, entry, pool) && servesOperatorPools(offer),
-      inPlan: tiers.includes(pool.tier),
+      inPlan: tiers.includes(pool.tier) && (ledger || sponsoredTermsFor(entry, pool)?.requires_ledger !== true),
       region: !geoBlocked(entry, pool, country, env),
     };
   });
@@ -672,10 +702,16 @@ export function listedMaxOutput(maxOutputTokens, window) {
   return Math.min(maxOutputTokens, window, Math.max(MIN_LISTED_OUTPUT_TOKENS, window - AGENT_PROMPT_RESERVE));
 }
 
+// `allowance: { month_tokens }` for a model with a sponsored pool among its pools.
+function allowanceOf(entry, pools) {
+  const terms = (pools.length ? pools : entry.pools).map(pool => sponsoredTermsFor(entry, pool)).find(Boolean);
+  return terms ? { allowance: { month_tokens: terms.user_month_tokens } } : {};
+}
+
 // The caller's data policy (src/oiop/policy.js) removes pools whose offer it rules out; a model
 // whose configured pools are all ruled out is unavailable with reason policy_restricted.
-function describeEntry(env, entry, tiers, country, policy) {
-  const verdicts = poolVerdicts(env, entry, tiers, country);
+function describeEntry(env, entry, tiers, country, policy, ledger = true) {
+  const verdicts = poolVerdicts(env, entry, tiers, country, ledger);
   const permitted = verdicts.map(verdict => ({ ...verdict, configured: verdict.configured && !policyBlock(verdict.offer, policy) }));
   const configured = permitted.filter(verdict => verdict.configured).map(verdict => verdict.pool);
   const window = usableContextWindow(entry, permitted.filter(verdict => verdict.configured && verdict.inPlan && verdict.region)
@@ -707,6 +743,9 @@ function describeEntry(env, entry, tiers, country, policy) {
     available: reason === null,
     unavailable_reason: reason,
     pricing: publicPricing(paid?.price),
+    // The per-user monthly token allowance of a sponsored pool (contract section 19.3), when the
+    // model has one; alpha.4 clients ignore the field.
+    ...allowanceOf(entry, configured),
     // OIOP (contract §12.4): who serves the model, under which offers, and its models.dev id.
     provider: providerInfo(entry.provider, shown.find(verdict => verdict.offer)?.offer),
     offers,
@@ -754,11 +793,11 @@ function describeAuto(models, env) {
 }
 
 // Catalog for a caller's plan, country and data policy; anonymous callers are on the free plan.
-export function listModelsForCaller(env = {}, { plan = 'free', country = null, tiers, policy = DEFAULT_POLICY } = {}) {
+export function listModelsForCaller(env = {}, { plan = 'free', country = null, tiers, policy = DEFAULT_POLICY, ledger = true } = {}) {
   warnIgnoredModels(env);
   const allowed = Array.isArray(tiers) ? tiers : planPolicy(env, plan).tiers;
   const code = normalizeCountry(country);
-  const data = offeredEntries(env).map(entry => describeEntry(env, entry, allowed, code, policy));
+  const data = offeredEntries(env).map(entry => describeEntry(env, entry, allowed, code, policy, ledger));
   return { object: 'list', data: [describeAuto(data, env), ...data] };
 }
 
@@ -840,6 +879,7 @@ function describeFamily(identity, routes) {
     available: usable.length > 0,
     unavailable_reason: usable.length ? null : REASON_ORDER.find(reason => reasons.includes(reason)) ?? 'not_configured',
     pricing: priced?.pricing ?? null,
+    ...(listed.find(model => model.allowance)?.allowance ? { allowance: listed.find(model => model.allowance).allowance } : {}),
     // The family has no single serving provider: the block names the maker.
     provider: { id: identity.maker, name: identity.maker_name, logo_url: null, logo_fallback_url: null },
     offers: familyOffers(listed),

@@ -87,7 +87,7 @@ CLOUDFLARE_API_TOKEN=               # SECRET, Node only
 GROQ_PAID_API_KEY=                  # SECRET: Groq Developer plan key
 GEMINI_PAID_API_KEY=                # SECRET: billing-linked Gemini project key
 ANTHROPIC_API_KEY=                  # SECRET: Claude Sonnet 5.5 and Opus 5.5 (Pro and Max, billed from credits)
-ANTHROPIC_MODELS=claude-sonnet-5-5,claude-opus-5-5
+ANTHROPIC_MODELS=claude-sonnet-5-5,claude-opus-5-5,claude-haiku-5-5
 
 # ── Hosted behind a flag (docs/PROVIDER_TERMS.md) ──
 # Owner decision (2026-10-19, kept in the 2026-10-29 lineup): the NVIDIA trial key and the
@@ -100,6 +100,21 @@ OPENROUTER_API_KEY=                 # SECRET
 OPENROUTER_MODELS=cohere/north-mini-code:free
 OPENROUTER_FREE_ONLY=
 OPENROUTER_CALLBACK_URL=https://zero-x.live/neuroncli/callback/
+
+# ── Hosted connectors (contract sections 14.1 and 14.4) ──
+# true serves /api/connectors/*, the dashboard Connectors tab and /mcp/<id>, and reports each plan's
+# hosted connector ids in /api/account policy.connectors.hosted. false (the default): all of them
+# answer 404 and every plan reports hosted: [].
+HOSTED_CONNECTORS=false
+CONNECTOR_TOKENS_KEK=               # SECRET: 32 random bytes, base64 (openssl rand -base64 32); seals vendor tokens
+# CONNECTORS_CALLBACK_URL= (https://dashboard.zero-x.live/api/connectors/callback; the redirect URI of every vendor OAuth app)
+# CONNECTORS_RETURN_URL= (https://dashboard.zero-x.live/; where the callback sends the browser back)
+# HOSTED_CONNECTORS_BASE_URL= (https://zero-x.live; the origin of /mcp/<id> shown on the dashboard)
+# HOSTED_CONNECTORS_RPM= (120 MCP requests per user per minute)
+# HOSTED_CONNECTORS_MAX_REQUEST_BYTES= (1048576)  HOSTED_CONNECTORS_MAX_RESPONSE_BYTES= (4194304)
+# Per vendor, <ID> = ATLASSIAN, GITHUB, LINEAR, NOTION or SLACK (src/connector-catalog.js):
+# CONNECTOR_<ID>_CLIENT_ID=  CONNECTOR_<ID>_CLIENT_SECRET= (SECRET)  CONNECTOR_<ID>_SCOPES=
+# CONNECTOR_<ID>_MCP_URL=  CONNECTOR_<ID>_AUTHORIZE_URL=  CONNECTOR_<ID>_TOKEN_URL=  CONNECTOR_<ID>_REVOKE_URL=
 
 # ── Optional OpenAI-compatible upstreams ──
 OMNIROUTE_BASE_URL=
@@ -115,3 +130,9 @@ AZURE_OPENAI_ENDPOINT=
 AZURE_API_VERSION=2024-05-01-preview
 AZURE_OPENAI_API_KEY=               # SECRET
 AZURE_MODELS=
+
+# ── Web search (POST /v1/search, docs/PLATFORM_CONTRACT.md section 17) ──
+# Neither set: /v1/search answers 503 search_unavailable. SearXNG is asked first, Brave second.
+# Base URL of a self-hosted SearXNG with the JSON format enabled (settings.yml search.formats).
+SEARXNG_URL=
+BRAVE_API_KEY=                      # SECRET (Brave Search API subscription token)

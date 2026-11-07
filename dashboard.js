@@ -4,9 +4,14 @@ import {
   ApiError, PAYMENT_LOCK_CODES, SUPPORT_EMAIL, apiFetch, clearPaymentLock, describeError, normalizeCurrency, readPaymentLock,
   rememberPaymentLock, safeHttpsUrl, siteUrl, startTopup,
 } from './billing-checkout.js';
+import { collectBillingDetails, purchaseWithDetails } from './billing-details.js';
 import { PLAN_CATALOG, formatCount, formatMoney, formatTokens, normalizeCatalog } from './pricing.js';
 
-export const TABS = ['overview', 'usage', 'keys', 'billing', 'sessions', 'account'];
+export const TABS = ['overview', 'usage', 'keys', 'billing', 'sessions', 'connectors', 'account'];
+// Tabs shown only when the gateway serves them (Connectors: GET /api/connectors answers 404 unless
+// hosted connectors are switched on, docs/PLATFORM_CONTRACT.md section 18.5).
+export const OPTIONAL_TABS = ['connectors'];
+export const TAB_LABELS = { overview: 'Overview', usage: 'Usage', keys: 'API keys', billing: 'Billing', sessions: 'Sessions', connectors: 'Connectors', account: 'Account' };
 export const DEV_TOKEN_KEY = 'zx-dev-token';
 export const EVENTS_PAGE_SIZE = 25;
 export const MAX_ACTIVE_KEYS = 10;
@@ -30,19 +35,55 @@ function titleCase(value) {
   return String(value || '').replace(/[_-]+/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 }
 
-export function parseTab(hash) {
+export function parseTab(hash, tabs = TABS) {
   const id = String(hash || '').replace(/^#/, '').toLowerCase();
-  return TABS.includes(id) ? id : 'overview';
+  return tabs.includes(id) ? id : 'overview';
 }
 
 /** Keyboard navigation for the tablist (WAI-ARIA tabs pattern). */
-export function nextTab(current, key) {
-  const index = Math.max(0, TABS.indexOf(current));
-  if (key === 'ArrowRight') return TABS[(index + 1) % TABS.length];
-  if (key === 'ArrowLeft') return TABS[(index - 1 + TABS.length) % TABS.length];
-  if (key === 'Home') return TABS[0];
-  if (key === 'End') return TABS[TABS.length - 1];
+export function nextTab(current, key, tabs = TABS) {
+  const index = Math.max(0, tabs.indexOf(current));
+  // The drawer lists the tabs top to bottom (a strip on phones), so the vertical arrows work too.
+  if (key === 'ArrowRight' || key === 'ArrowDown') return tabs[(index + 1) % tabs.length];
+  if (key === 'ArrowLeft' || key === 'ArrowUp') return tabs[(index - 1 + tabs.length) % tabs.length];
+  if (key === 'Home') return tabs[0];
+  if (key === 'End') return tabs[tabs.length - 1];
   return null;
+}
+
+const CONNECTOR_STATUS = {
+  connected: ['Connected', 'success'], not_connected: ['Not connected', ''], not_in_plan: ['Pro and Max', 'purple'],
+  unavailable: ['Coming soon', ''],
+};
+/** GET /api/connectors rows, keeping only the fields the table shows. */
+export function normalizeConnectors(data) {
+  const rows = data && Array.isArray(data.connectors) ? data.connectors : [];
+  return rows.filter(row => row && typeof row.id === 'string' && /^[a-z0-9][a-z0-9._-]{0,63}$/.test(row.id)).map(row => ({
+    id: row.id,
+    name: text(row.name, 80) || row.id,
+    publisher: text(row.publisher, 80),
+    status: Object.hasOwn(CONNECTOR_STATUS, row.status) ? row.status : 'unavailable',
+    scopes: Array.isArray(row.scopes) ? row.scopes.filter(scope => typeof scope === 'string').map(scope => scope.slice(0, 64)).slice(0, 20) : [],
+    connected_at: typeof row.connected_at === 'string' ? row.connected_at : null,
+  }));
+}
+
+const CONNECT_REASONS = {
+  denied: 'you cancelled on the provider\u2019s page', expired: 'the link expired, so start again',
+  browser_mismatch: 'it was started in another browser, so start again here', not_in_plan: 'your plan does not include it',
+  token_exchange: 'the provider refused the sign-in', unavailable: 'it is not available right now',
+};
+/** The message for ?connector=<id>&connect=ok|error&reason=<code> after the provider sends the browser back. */
+export function connectResult(search, connectors = []) {
+  let params;
+  try { params = new URLSearchParams(String(search || '')); } catch { return null; }
+  const connect = params.get('connect');
+  if (connect !== 'ok' && connect !== 'error') return null;
+  const id = params.get('connector') || '';
+  const name = (connectors.find(row => row.id === id) || {}).name || 'The connector';
+  if (connect === 'ok') return { tone: 'success', message: name + ' is connected.' };
+  const reason = CONNECT_REASONS[params.get('reason')] || 'something went wrong, so try again';
+  return { tone: 'error', message: name + ' could not be connected: ' + reason + '.' };
 }
 
 /** USD amount (float) → "$7.42"; sub-cent costs keep four decimals ("$0.0012"). */
@@ -356,7 +397,7 @@ export function eventStatusTone(status) {
 
 /* ───────────── Controller ───────────── */
 
-export function createDashboard({ doc = globalThis.document, win = globalThis.window, auth, fetchImpl, now = () => Date.now() } = {}) {
+export function createDashboard({ doc = globalThis.document, win = globalThis.window, auth, fetchImpl, now = () => Date.now(), collectDetails = collectBillingDetails } = {}) {
   const $ = id => doc.getElementById(id);
   const getAuth = () => auth || win.ZeroXAuth || null;
   const host = () => (win.location ? win.location.hostname : '');
@@ -365,7 +406,9 @@ export function createDashboard({ doc = globalThis.document, win = globalThis.wi
     cursors: [null], page: 0, keys: [], sessions: [], billing: null, catalog: PLAN_CATALOG, revisions: {}, gated: false,
     paymentLocked: false, // a payment Razorpay took is not confirmed yet: no further purchases
     paymentLock: null, // the ApiError describing it (payment_unverified or payment_pending)
+    connectorsEnabled: false, connectors: [],
   };
+  const visibleTabs = () => TABS.filter(id => !OPTIONAL_TABS.includes(id) || (id === 'connectors' && state.connectorsEnabled));
   const api = (path, options = {}) => apiFetch(path, { ...options, auth: getAuth(), fetchImpl });
 
   function el(tag, props = {}, ...children) {
@@ -521,6 +564,11 @@ export function createDashboard({ doc = globalThis.document, win = globalThis.wi
     setProgress('ov-requests-bar', usage.requests, requestLimit, formatCount(usage.requests) + ' of ' + (requestLimit !== null ? formatCount(requestLimit) : 'unknown') + ' requests used today');
     setText('ov-requests-detail', requestLimit !== null ? formatCount(Math.max(0, requestLimit - usage.requests)) + ' requests left today' : 'Daily request limit unavailable');
 
+    setText('lim-daily-requests', requestLimit !== null ? formatCount(requestLimit) : '—');
+    setText('lim-daily-tokens', limits.daily_tokens !== null ? formatTokens(limits.daily_tokens) : '—');
+    setText('lim-rpm', limits.rpm !== null ? formatCount(limits.rpm) : '—');
+    setText('lim-concurrency', limits.concurrency !== null ? formatCount(limits.concurrency) : '—');
+
     const win = account.window;
     if (win) {
       // A rolling window (Free): its tokens, not today's, are what a request is checked against.
@@ -566,6 +614,7 @@ export function createDashboard({ doc = globalThis.document, win = globalThis.wi
     setText('acct-email', text(profile.email, 254) || 'Signed in');
     setText('acct-provider', text(profile.providersDisplay, 80) || 'Email');
     setText('dash-subtitle', 'Signed in as ' + (text(profile.email, 254) || name) + '.');
+    setText('crumb-account', text(profile.email, 254) || name);
     const avatar = safeHttpsUrl(profile.imageUrl);
     if (avatar) $('acct-avatar').setAttribute('src', avatar);
   }
@@ -585,40 +634,57 @@ export function createDashboard({ doc = globalThis.document, win = globalThis.wi
 
   /* Usage */
 
-  function metricValue(row) {
-    return state.metric === 'tokens' ? row.prompt_tokens + row.completion_tokens : row.requests;
-  }
+  const METRICS = {
+    requests: { label: 'Requests', unit: 'requests', value: row => row.requests, format: formatCount },
+    tokens: { label: 'Tokens', unit: 'tokens', value: row => row.prompt_tokens + row.completion_tokens, format: formatTokens },
+    spend: { label: 'Spend', unit: 'USD', value: row => row.cost_usd, format: formatUsd },
+  };
 
-  function renderChart() {
-    const usage = state.usage;
-    const container = $('usage-chart');
-    if (!usage || !container) return;
-    const values = usage.days.map(metricValue);
-    const unit = state.metric === 'tokens' ? 'tokens' : 'requests';
-    const format = state.metric === 'tokens' ? formatTokens : formatCount;
+  // One chart per target: the Overview "Daily trend" card and the Usage panel share the series and the metric.
+  function drawChart(container, prefix, usage, metric) {
+    if (!container) return;
+    const values = usage.days.map(metric.value);
     const scale = chartScale(values);
     const total = values.reduce((sum, value) => sum + value, 0);
     let peak = -1;
     values.forEach((value, index) => { if (peak < 0 || value > values[peak]) peak = index; });
     const range = formatShortDay(usage.from) + ' to ' + formatDate(usage.to + 'T00:00:00Z');
-    const summary = usage.days.length + ' days, ' + range + '. Total ' + format(total) + ' ' + unit +
-      (total > 0 ? '. Highest: ' + format(values[peak]) + ' on ' + formatShortDay(usage.days[peak].day) + '.' : '. No usage in this period.');
-    setText('usage-chart-caption', (state.metric === 'tokens' ? 'Tokens' : 'Requests') + ' per day, ' + range);
+    const summary = usage.days.length + ' days, ' + range + '. Total ' + metric.format(total) + ' ' + metric.unit +
+      (total > 0 ? '. Highest: ' + metric.format(values[peak]) + ' on ' + formatShortDay(usage.days[peak].day) + '.' : '. No usage in this period.');
     const chart = svg('svg', {
       viewBox: '0 0 ' + scale.width + ' ' + scale.height, preserveAspectRatio: 'none', role: 'img',
-      'aria-labelledby': 'usage-svg-title usage-svg-desc', focusable: 'false',
+      'aria-labelledby': prefix + '-svg-title ' + prefix + '-svg-desc', focusable: 'false',
     },
-    svg('title', { id: 'usage-svg-title', text: (state.metric === 'tokens' ? 'Tokens' : 'Requests') + ' per day' }),
-    svg('desc', { id: 'usage-svg-desc', text: summary }),
+    svg('title', { id: prefix + '-svg-title', text: metric.label + ' per day' }),
+    svg('desc', { id: prefix + '-svg-desc', text: summary }),
+    ...[0.25, 0.5, 0.75].map(fraction => svg('line', { class: 'zx-grid-line', x1: 0, y1: (scale.height * fraction).toFixed(1), x2: scale.width, y2: (scale.height * fraction).toFixed(1) })),
     svg('line', { class: 'zx-axis', x1: 0, y1: scale.height - 0.5, x2: scale.width, y2: scale.height - 0.5 }),
     ...scale.bars.map((bar, index) => ({ bar, day: usage.days[index].day })).filter(({ bar }) => bar.height > 0).map(({ bar, day }) => svg('rect', {
-      class: 'zx-bar', x: bar.x.toFixed(2), y: bar.y.toFixed(2), width: bar.width.toFixed(2), height: bar.height.toFixed(2), rx: 2,
-    }, svg('title', { text: formatShortDay(day) + ': ' + format(bar.value) + ' ' + unit }))));
-    const axis = el('div', { class: 'zx-row zx-row--between zx-help' },
+      class: 'zx-bar', x: bar.x.toFixed(2), y: bar.y.toFixed(2), width: bar.width.toFixed(2), height: bar.height.toFixed(2), rx: 1,
+    }, svg('title', { text: formatShortDay(day) + ': ' + metric.format(bar.value) + ' ' + metric.unit }))));
+    const axis = el('div', { class: 'zx-chart__axis' },
       el('span', { text: formatShortDay(usage.from) }),
-      el('span', { text: 'Scale max ' + format(scale.max) + ' ' + unit }),
+      el('span', { text: 'Scale max ' + metric.format(scale.max) }),
       el('span', { text: formatShortDay(usage.to) }));
     container.replaceChildren(chart, axis);
+    return {
+      range,
+      peak: total > 0 ? 'Peak ' + metric.format(values[peak]) + ' / ' + formatShortDay(usage.days[peak].day) + ' · Total ' + metric.format(total) : 'No usage in this period',
+    };
+  }
+
+  function renderChart() {
+    const usage = state.usage;
+    if (!usage) return;
+    const metric = METRICS[state.metric] || METRICS.requests;
+    const usageChart = drawChart($('usage-chart'), 'usage', usage, metric);
+    const trendChart = drawChart($('trend-chart'), 'trend', usage, metric);
+    const info = usageChart || trendChart;
+    if (info) {
+      setText('usage-chart-caption', metric.label + ' per day, ' + info.range);
+      setText('usage-chart-peak', info.peak);
+      setText('trend-caption', info.peak + ' · ' + info.range);
+    }
     for (const button of doc.querySelectorAll('[data-metric]')) button.setAttribute('aria-pressed', String(button.dataset.metric === state.metric));
   }
 
@@ -665,7 +731,7 @@ export function createDashboard({ doc = globalThis.document, win = globalThis.wi
     body.replaceChildren(...(events.length ? events.map(event => el('tr', {},
       cell(formatDateTime(event.created_at)),
       el('td', {}, el('code', { text: event.model || '—' })),
-      cell(event.tier ? badge(event.tier, event.tier === 'paid' ? 'purple' : '') : '—'),
+      cell(event.tier ? badge(event.tier, event.tier === 'paid' ? 'tan' : '') : '—'),
       cell(event.status ? badge(event.status, eventStatusTone(event.status)) : '—'),
       tokensCell(event),
       cell(formatUsd(event.cost_usd), 'zx-num'),
@@ -917,7 +983,11 @@ export function createDashboard({ doc = globalThis.document, win = globalThis.wi
     buttons.forEach(button => { button.disabled = true; });
     setAlert('billing-error', '');
     try {
-      await startTopup({ pack, currency: topupCurrency(), auth: getAuth(), fetchImpl, win, doc, onStatus: message => setText('billing-status', message) });
+      const currency = topupCurrency();
+      const onStatus = message => setText('billing-status', message);
+      // Billing details and agreement come first (billing-details.js); Razorpay opens only after them.
+      await purchaseWithDetails({ kind: 'topup', pack: state.catalog.topups.find(item => item.id === pack), currency, auth: getAuth(), fetchImpl, win, doc, now, onStatus },
+        consent => startTopup({ pack, currency, consent, auth: getAuth(), fetchImpl, win, doc, onStatus }), { collect: collectDetails });
       setText('billing-status', 'Payment confirmed. Credits have been added to your balance.');
       toast('Credits added.');
       await Promise.all([loadBilling(), loadAccount()]);
@@ -1027,19 +1097,104 @@ export function createDashboard({ doc = globalThis.document, win = globalThis.wi
     }
   }
 
+  /* Connectors (hosted, shown only when the gateway serves them) */
+
+  function renderConnectors() {
+    const body = $('connectors-list');
+    body.replaceChildren(...(state.connectors.length ? state.connectors.map(row => {
+      const [label, tone] = CONNECTOR_STATUS[row.status];
+      let action = null;
+      if (row.status === 'connected') {
+        action = el('button', { class: 'zx-btn zx-btn--danger zx-btn--sm', type: 'button', text: 'Disconnect',
+          'aria-label': 'Disconnect ' + row.name, 'data-connector': row.id, onclick: () => disconnectConnector(row) });
+      } else if (row.status === 'not_connected') {
+        action = el('button', { class: 'zx-btn zx-btn--sm', type: 'button', text: 'Connect',
+          'aria-label': 'Connect ' + row.name, 'data-connector': row.id, onclick: () => connectConnector(row) });
+      } else if (row.status === 'not_in_plan') {
+        action = el('a', { class: 'zx-btn zx-btn--sm', href: siteUrl('/pricing', host()), text: 'Upgrade' });
+      }
+      return el('tr', {},
+        el('th', { scope: 'row' }, row.name, row.publisher && row.publisher !== row.name ? el('span', { class: 'zx-muted', text: ' \u00b7 ' + row.publisher }) : null),
+        el('td', {}, badge(label, tone)),
+        cell(row.scopes.length ? row.scopes.join(', ') : '\u2014'),
+        cell(row.connected_at ? formatDate(row.connected_at) : '\u2014'),
+        el('td', {}, action));
+    }) : [emptyRow(5, 'No hosted connectors are offered yet.')]));
+  }
+
+  async function loadConnectors() {
+    const current = revision('connectors');
+    setAlert('connectors-error', '');
+    try {
+      const data = await api('/api/connectors');
+      if (!current()) return;
+      state.connectors = normalizeConnectors(data);
+      renderConnectors();
+    } catch (error) {
+      if (current()) handleError(error, 'connectors-error', loadConnectors);
+    }
+  }
+
+  // Shows the tab only when GET /api/connectors answers (404 while hosted connectors are off).
+  async function probeConnectors() {
+    try {
+      state.connectors = normalizeConnectors(await api('/api/connectors'));
+    } catch {
+      return;
+    }
+    state.connectorsEnabled = true;
+    $('tab-connectors').hidden = false;
+    state.loaded.add('connectors');
+    renderConnectors();
+    const result = connectResult(win.location && win.location.search, state.connectors);
+    if (result && result.tone === 'error') setAlert('connectors-error', result.message);
+    else if (result) setText('connectors-status', result.message);
+  }
+
+  async function connectConnector(row) {
+    setAlert('connectors-error', '');
+    try {
+      const data = await api('/api/connectors/' + encodeURIComponent(row.id) + '/connect', { method: 'POST', body: {} });
+      const url = safeHttpsUrl(data && data.authorize_url);
+      if (!url) throw new ApiError('The connection could not start. Try again.', { code: 'invalid_response' });
+      win.location.assign(url);
+    } catch (error) {
+      handleError(error, 'connectors-error');
+    }
+  }
+
+  async function disconnectConnector(row) {
+    const confirmed = await confirmAction({
+      title: 'Disconnect ' + row.name + '?',
+      body: 'Zero-X deletes its access to your ' + row.name + ' account. Neuron stops using it until you connect again.',
+      confirm: 'Disconnect',
+    });
+    if (!confirmed) return;
+    try {
+      await api('/api/connectors/' + encodeURIComponent(row.id), { method: 'DELETE' });
+      toast(row.name + ' disconnected.');
+      await loadConnectors();
+    } catch (error) {
+      handleError(error, 'connectors-error');
+    }
+  }
+
   /* Tabs */
 
   const loaders = {
-    overview: () => (state.account ? Promise.resolve() : loadAccount()),
-    usage: () => Promise.all([loadUsage(), loadEvents(0)]),
+    // The Overview trend card draws from the same 30-day series as Usage, so Usage then only needs the events.
+    overview: () => loadUsage(), // the account itself loads at boot
+    usage: () => Promise.all([state.usage ? null : loadUsage(), loadEvents(0)]),
     keys: loadKeys,
     billing: () => loadBilling(),
     sessions: loadSessions,
+    connectors: loadConnectors,
     account: () => (state.account ? Promise.resolve() : loadAccount()),
   };
 
   async function showTab(tab, { focus = false } = {}) {
     state.tab = tab;
+    setText('crumb-tab', TAB_LABELS[tab]);
     for (const id of TABS) {
       const active = id === tab;
       const button = $('tab-' + id);
@@ -1065,7 +1220,7 @@ export function createDashboard({ doc = globalThis.document, win = globalThis.wi
   function bind() {
     for (const id of TABS) $('tab-' + id).addEventListener('click', () => navigate(id, false));
     $('dash-tabs').addEventListener('keydown', event => {
-      const target = nextTab(state.tab, event.key);
+      const target = nextTab(state.tab, event.key, visibleTabs());
       if (!target) return;
       event.preventDefault();
       navigate(target, true);
@@ -1073,7 +1228,7 @@ export function createDashboard({ doc = globalThis.document, win = globalThis.wi
     win.addEventListener('hashchange', () => {
       // Only tab hashes route; other fragments (the skip link's #main) keep the current tab.
       const id = String(win.location.hash || '').slice(1);
-      if (!state.gated && TABS.includes(id) && id !== state.tab) showTab(id);
+      if (!state.gated && visibleTabs().includes(id) && id !== state.tab) showTab(id);
     });
     $('gate-signin').addEventListener('click', async () => {
       setAlert('gate-error', '');
@@ -1083,12 +1238,12 @@ export function createDashboard({ doc = globalThis.document, win = globalThis.wi
         setAlert('gate-error', (error && error.message) || 'Sign-in could not open. Refresh and try again.');
       }
     });
-    $('ov-refresh').addEventListener('click', loadAccount);
+    $('ov-refresh').addEventListener('click', () => Promise.all([loadAccount(), loadUsage()]));
     $('usage-refresh').addEventListener('click', () => Promise.all([loadUsage(), loadEvents(0)]));
     $('events-older').addEventListener('click', () => loadEvents(state.page + 1));
     $('events-newer').addEventListener('click', () => loadEvents(Math.max(0, state.page - 1)));
     for (const button of doc.querySelectorAll('[data-metric]')) {
-      button.addEventListener('click', () => { state.metric = button.dataset.metric === 'tokens' ? 'tokens' : 'requests'; renderChart(); });
+      button.addEventListener('click', () => { state.metric = METRICS[button.dataset.metric] ? button.dataset.metric : 'requests'; renderChart(); });
     }
     $('key-form').addEventListener('submit', createKey);
     $('key-secret-copy').addEventListener('click', () => copyText($('key-secret-value').textContent, 'API key'));
@@ -1137,14 +1292,14 @@ export function createDashboard({ doc = globalThis.document, win = globalThis.wi
     renderProfile();
     renderTopups();
     await loadAccount();
-    state.loaded.add('overview');
-    state.loaded.add('account');
-    await showTab(parseTab(win.location.hash));
+    state.loaded.add('account'); // Overview still loads the usage series for its trend card
+    await probeConnectors();
+    await showTab(parseTab(win.location.hash, visibleTabs()));
   }
 
   return {
     boot, showTab, loadAccount, loadUsage, loadEvents, loadKeys, createKey, revokeKey, loadBilling,
-    cancelSubscription, buyTopup, revokeSessions, signOut,
+    cancelSubscription, buyTopup, revokeSessions, signOut, loadConnectors,
     get state() { return state; },
   };
 }

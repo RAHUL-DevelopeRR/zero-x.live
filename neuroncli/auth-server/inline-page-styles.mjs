@@ -1,6 +1,8 @@
 import { readFile, writeFile } from 'node:fs/promises';
 
 // Inline the two small stylesheets to avoid first-paint network round trips.
+// The inlined <style> is allowed by its sha256 in the Content-Security-Policy: run
+// `node build-csp-hashes.mjs` after this script (check-pages.mjs fails while src/csp-hashes.js is stale).
 const root = new URL('../../', import.meta.url);
 const css = await Promise.all(['site-fonts.css', 'site.min.css'].map(name => readFile(new URL(name, root), 'utf8')));
 const styles = `<style data-public-styles>\n${css.join('\n')}\n</style>`;

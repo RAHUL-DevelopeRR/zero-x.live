@@ -39,9 +39,10 @@ function fakeDatabase() {
   const sessionIndex = [];
   const calls = [];
   const usage = { series: [], byModel: [], events: [] };
-  const state = { accounts, keys, sessionIndex, calls, usage, policiesV2: [], policyOverrides: {}, fail: new Set(), store: new Map(), onRevokeAll: null };
+  const state = { accounts, keys, sessionIndex, calls, usage, policiesV2: [], policyOverrides: {}, fail: new Set(), store: new Map(), onRevokeAll: null,
+    month: [], capsMissing: false };
   const raise = message => Object.assign(new Error(message), { raise: message });
-  const overview = account => {
+  const overview = (account, p_caps = null) => {
     const policy = { ...b1Policy(account.plan), ...(state.policyOverrides[account.plan] || {}) };
     return [{
     account,
@@ -54,6 +55,11 @@ function fakeDatabase() {
       limit_tokens: policy.window_tokens, tokens: account.window_tokens_used ?? 0,
       remaining_tokens: Math.max(0, policy.window_tokens - (account.window_tokens_used ?? 0)),
       resets_at: account.window_resets_at ?? null } : null,
+    // zerox_account_overview.usage_month (migration 20261106000600): this month's tokens per sponsored family, the limit
+    // from the p_caps the gateway sends.
+    usage_month: state.capsMissing ? undefined : state.month.map(row => ({ ...row, limit_tokens: (p_caps ?? []).find(cap => cap.family === row.family)?.month_tokens ?? null,
+      remaining_tokens: (p_caps ?? []).some(cap => cap.family === row.family)
+        ? Math.max(0, (p_caps.find(cap => cap.family === row.family).month_tokens) - row.tokens) : null })),
   }];
   };
   const rpc = {
@@ -72,7 +78,11 @@ function fakeDatabase() {
     zerox_get_account: ({ p_user_id }) => accounts.has(p_user_id) ? [accounts.get(p_user_id)] : [],
     zerox_plan_policies: () => [{ policies: DEVELOPMENT_PLANS }],
     zerox_plan_policies_v2: () => state.policiesV2,
-    zerox_account_overview: ({ p_user_id }) => accounts.has(p_user_id) ? overview(accounts.get(p_user_id)) : [],
+    zerox_account_overview: ({ p_user_id, p_caps }) => {
+      // A database without the migration has no function taking p_caps (PostgREST: PGRST202).
+      if (p_caps !== undefined && state.capsMissing) throw Object.assign(new Error('missing'), { missing: true });
+      return accounts.has(p_user_id) ? overview(accounts.get(p_user_id), p_caps) : [];
+    },
     zerox_api_key_create: ({ p_user_id, p_name, p_prefix, p_hash }) => {
       // WP-B1 argument checks (zerox_api_key_create).
       if (typeof p_name !== 'string' || p_name.trim().length < 1 || p_name.trim().length > 64) throw raise('invalid_key_name');
@@ -151,6 +161,7 @@ function fakeDatabase() {
     try { return Response.json(rpc[name](args)); }
     catch (error) {
       if (error.raise) return Response.json({ code: 'P0001', message: error.raise }, { status: 400 });
+      if (error.missing) return Response.json({ code: 'PGRST202', message: `Could not find the function ${name}` }, { status: 404 });
       throw error;
     }
   };
@@ -353,7 +364,7 @@ try {
   assert.equal((await request('/api/usage', { token: apiKey })).status, 200, 'nzx_ keys read usage');
   assert.equal((await request('/api/usage/events', { token: apiKey })).status, 200);
   for (const [method, path, body] of [['GET', '/api/keys'], ['POST', '/api/keys', { name: 'x' }], ['DELETE', `/api/keys/${storedKey.id}`],
-    ['POST', '/api/sessions/revoke-all'], ['GET', '/api/sessions'], ['DELETE', `/api/sessions/${'a'.repeat(24)}`], ['GET', '/api/billing'], ['POST', '/api/billing/checkout', { plan: 'pro', currency: 'INR' }],
+    ['POST', '/api/sessions/revoke-all'], ['GET', '/api/sessions'], ['DELETE', `/api/sessions/${'a'.repeat(24)}`], ['GET', '/api/billing'], ['GET', '/api/billing/profile'], ['PUT', '/api/billing/profile', { full_name: 'x' }], ['POST', '/api/billing/checkout', { plan: 'pro', currency: 'INR' }],
     ['POST', '/api/billing/topup', { pack: 'credits_5', currency: 'INR' }], ['POST', '/api/billing/verify', {}], ['POST', '/api/billing/cancel']]) {
     const denied = await json(await request(path, { method, token: apiKey, body }));
     assertOpenAIError(denied, 403, 'api_key_not_allowed');
@@ -566,14 +577,34 @@ try {
       image_url: 'https://img.example.test/a.png' },
     session_expires_at: minted.body.expires_at,
     plan: { id: 'free', name: 'Free' },
-    limits: { daily_requests: 100, daily_tokens: 5000000, rpm: 10, concurrency: 2, window_tokens: 1000000, window_seconds: 18000 },
+    limits: { daily_requests: 100, daily_tokens: 5000000, rpm: 10, concurrency: 2, window_tokens: 1000000, window_seconds: 18000,
+      search: { daily_searches: 40, daily_research_runs: 3 }, colony: { max_workers: 1, max_tokens_per_run: 300000 } },
     usage_today: { requests: 7, tokens: 7000, resets_at: `${dayOffset(1)}T00:00:00.000Z` },
     usage_window: { tokens: 6000, limit_tokens: 1000000, remaining_tokens: 994000, window_seconds: 18000,
       resets_at: `${dayOffset(0)}T22:30:00.000Z` },
+    usage_month: [],
     credits: { balance_usd: 1.234567, monthly_grant_usd: 0 },
     subscription: null,
     flags: { suspended: false },
+    // Contract section 18.1: Free has local connectors only.
+    policy: { connectors: { allowed: ['catalog:*'], denied: [], required: [], hosted: [], allow_unvetted: true,
+      catalog_version: '2026-11-03' } },
   });
+  // Claude Haiku 5.5's monthly allowance (contract section 19.3): the family, its public name, the month's tokens, the limit,
+  // what is left and when it renews; the gateway sends the allowances as p_caps.
+  db.month = [{ family: 'anthropic/claude-haiku-5-5', tokens: 2500000, requests: 40, resets_at: '2026-12-01T00:00:00+00:00' }];
+  account = await json(await request('/api/account', { token: sessionToken }));
+  assert.deepEqual(account.body.usage_month, [{ family: 'anthropic/claude-haiku-5-5', model_name: 'Claude Haiku 5.5', tokens: 2500000,
+    limit_tokens: 10000000, remaining_tokens: 7500000, resets_at: '2026-12-01T00:00:00.000Z' }]);
+  assert.deepEqual(db.calls.filter(call => call.name === 'zerox_account_overview').at(-1).args.p_caps,
+    [{ family: 'anthropic/claude-haiku-5-5', month_tokens: 10000000 }]);
+  // Against a database without the migration /api/account keeps working (no usage_month rows), retried after 10 minutes.
+  db.capsMissing = true;
+  account = await json(await request('/api/account', { token: sessionToken }));
+  assert.equal(account.status, 200);
+  assert.deepEqual(account.body.usage_month, []);
+  db.capsMissing = false;
+  db.month = [];
   Object.assign(db.accounts.get(userA.id), { plan: 'pro', subscription: { status: 'active', current_period_end: '2026-11-16T00:00:00.000Z',
     cancel_at_period_end: false, provider_subscription_id: 'sub_TEST123456' } });
   account = await json(await request('/api/account', { token: sessionToken }));
@@ -587,13 +618,64 @@ try {
   db.policyOverrides.pro = { rpm_limit: 99, concurrency_limit: 9, daily_requests: 2100 };
   account = await json(await request('/api/account', { token: sessionToken }));
   assert.deepEqual(account.body.limits, { daily_requests: 2100, daily_tokens: 10000000, rpm: 99, concurrency: 9,
-    window_tokens: null, window_seconds: null });
+    window_tokens: null, window_seconds: null, search: { daily_searches: 400, daily_research_runs: 30 },
+    colony: { max_workers: 4, max_tokens_per_run: 2000000 } });
   // A plan opts in to a window by its two policy columns.
   db.policyOverrides.pro = { window_tokens: 3000000, window_seconds: 7200 };
   account = await json(await request('/api/account', { token: sessionToken }));
   assert.deepEqual([account.body.limits.window_tokens, account.body.limits.window_seconds], [3000000, 7200]);
   assert.deepEqual(account.body.usage_window, { tokens: 6000, limit_tokens: 3000000, remaining_tokens: 2994000, window_seconds: 7200,
     resets_at: `${dayOffset(0)}T22:30:00.000Z` });
+  // Connector policy (migration 20261104000000, contract section 18.1). Pro's hosted connectors
+  // are seeded but reported only while hosted connectors are switched on.
+  const HOSTED = ['atlassian', 'github', 'linear', 'notion', 'slack'];
+  db.policyOverrides = {};
+  account = await json(await request('/api/account', { token: sessionToken }));
+  assert.deepEqual(account.body.policy, { connectors: { allowed: ['catalog:*'], denied: [], required: [], hosted: [],
+    allow_unvetted: true, catalog_version: '2026-11-03' } }, 'hosted connectors are off by default');
+  // `hosted` lists only what the gateway can serve: switched on, the token key set, and the
+  // vendor's OAuth app configured (client id, every URL, scopes).
+  const vendorEnv = Object.fromEntries(HOSTED.flatMap(id => {
+    const name = id.toUpperCase();
+    return [[`CONNECTOR_${name}_CLIENT_ID`, `client-${id}`], [`CONNECTOR_${name}_AUTHORIZE_URL`, `https://${id}.example.test/authorize`],
+      [`CONNECTOR_${name}_TOKEN_URL`, `https://${id}.example.test/token`], [`CONNECTOR_${name}_SCOPES`, 'read']];
+  }));
+  const kek = Buffer.alloc(32, 7).toString('base64');
+  const hostedEnv = { ...env, HOSTED_CONNECTORS: 'true', CONNECTOR_TOKENS_KEK: kek, ...vendorEnv };
+  account = await json(await request('/api/account', { token: sessionToken, bindings: hostedEnv }));
+  assert.deepEqual(account.body.policy.connectors.hosted, HOSTED, 'Pro gets the hosted connectors once they are on');
+  account = await json(await request('/api/account', { token: sessionToken,
+    bindings: { ...env, HOSTED_CONNECTORS: 'true', CONNECTOR_TOKENS_KEK: kek, CONNECTOR_GITHUB_CLIENT_ID: 'client-github' } }));
+  assert.deepEqual(account.body.policy.connectors.hosted, ['github'], 'only vendors with a configured OAuth app are hosted');
+  account = await json(await request('/api/account', { token: sessionToken, bindings: { ...hostedEnv, CONNECTOR_TOKENS_KEK: '' } }));
+  assert.deepEqual(account.body.policy.connectors.hosted, [], 'nothing is hosted while the gateway cannot serve connectors');
+  db.accounts.get(userA.id).plan = 'free';
+  account = await json(await request('/api/account', { token: sessionToken, bindings: hostedEnv }));
+  assert.deepEqual(account.body.policy.connectors.hosted, [], 'Free never gets hosted connectors');
+  db.accounts.get(userA.id).plan = 'pro';
+  // Operators edit the column by hand: ids are validated, de-duplicated and capped, deny wins over
+  // required and hosted, and a field left out restricts nothing.
+  db.policyOverrides.pro = { connector_policy: { allowed: ['github', 'GitHub', '../x', 'github', 7, 'catalog:*'],
+    denied: ['slack', 'bad id'], required: ['slack', 'codebase-memory'], hosted: ['slack', 'github', 'github'],
+    catalog_version: 'v 1' } };
+  account = await json(await request('/api/account', { token: sessionToken, bindings: hostedEnv }));
+  assert.deepEqual(account.body.policy, { connectors: { allowed: ['github', 'catalog:*'], denied: ['slack'],
+    required: ['codebase-memory'], hosted: ['github'], allow_unvetted: true, catalog_version: '2026-11-03' } });
+  db.policyOverrides.pro = { connector_policy: { allow_unvetted: false, required: Array.from({ length: 150 }, (_, i) => `c${i}`) } };
+  account = await json(await request('/api/account', { token: sessionToken, bindings: hostedEnv }));
+  assert.equal(account.body.policy.connectors.allow_unvetted, false);
+  assert.deepEqual(account.body.policy.connectors.allowed, ['catalog:*'], 'a policy without allowed allows the catalog');
+  assert.equal(account.body.policy.connectors.required.length, 100, 'lists are capped');
+  // No gateway policy: a plan whose policy is null or not an object, and a database without the
+  // column, leave the block out.
+  for (const connector_policy of [null, ['github'], 'not json', undefined]) {
+    db.policyOverrides.pro = { connector_policy };
+    account = await json(await request('/api/account', { token: sessionToken, bindings: hostedEnv }));
+    assert.ok(!('policy' in account.body), `no policy block for ${JSON.stringify(connector_policy)}`);
+  }
+  db.policyOverrides.pro = { connector_policy: JSON.stringify({ hosted: ['github'] }) };
+  account = await json(await request('/api/account', { token: sessionToken, bindings: hostedEnv }));
+  assert.deepEqual(account.body.policy.connectors.hosted, ['github'], 'a policy stored as JSON text is read too');
   db.policyOverrides = {};
   db.accounts.get(userA.id).suspended = true;
   assert.equal((await json(await request('/api/account', { token: sessionToken }))).body.flags.suspended, true);
@@ -646,7 +728,14 @@ try {
   assert.deepEqual(usage.body.by_model.map(row => row.model), ['gemini/gemini-2.5-flash', 'anthropic/claude-sonnet-5-5', 'groq/openai/gpt-oss-20b']);
   assert.equal(usage.body.by_model[0].cost_usd, 1.234572);
   assert.deepEqual(usage.body.by_model[1], { model: 'anthropic/claude-sonnet-5-5', requests: 1, prompt_tokens: 20800, completion_tokens: 800,
-    cost_usd: 0.0265, cache_read_tokens: 16000, cache_write_tokens: 4000 }, 'by model: prompt-cache reads and writes (part of prompt_tokens)');
+    cost_usd: 0.0265, cache_read_tokens: 16000, cache_write_tokens: 4000, sponsored_cost_microusd: 0 }, 'by model: prompt-cache reads and writes (part of prompt_tokens)');
+  // What Zero-X paid for the user's requests on a sponsored model (billed micro-USD); the user is charged nothing.
+  db.usage.byModel.push({ model: 'anthropic/claude-haiku-5-5', requests: 2, prompt_tokens: 3000, completion_tokens: 100, cost_microusd: 0,
+    sponsored_cost_microusd: 1234 });
+  usage = await json(await request('/api/usage', { token: sessionToken }));
+  assert.deepEqual(usage.body.by_model.find(row => row.model === 'anthropic/claude-haiku-5-5'), { model: 'anthropic/claude-haiku-5-5', requests: 2,
+    prompt_tokens: 3000, completion_tokens: 100, cost_usd: 0, cache_read_tokens: 0, cache_write_tokens: 0, sponsored_cost_microusd: 1234 });
+  db.usage.byModel.pop();
   assert.deepEqual([usage.body.by_model[0].cache_read_tokens, usage.body.by_model[0].cache_write_tokens], [0, 0]);
   assert.deepEqual(db.calls.filter(call => call.name === 'zerox_usage_series').at(-1).args, { p_user_id: userA.id, p_from: dayOffset(-29), p_to: today });
   usage = await json(await request(`/api/usage?from=${dayOffset(-91)}&to=${today}`, { token: sessionToken }));
@@ -786,9 +875,11 @@ try {
   assert.deepEqual(fullHealth.body.ec2_proxy, { entries: 0, invalid: [], chat_routed: false, chat_routed_by: [], refusal: null }, 'the proxy switch, off');
   assert.ok(!JSON.stringify(fullHealth.body).includes(SECRET) && !JSON.stringify(fullHealth.body).includes(OPERATOR));
   // One checker per pool (review 2026-11-05): the operator view says which runtime's checker tests.
-  assert.deepEqual(fullHealth.body.health_checker, { hub_test_requests: true, chat_routed_to_node: false }, 'the Worker hub tests');
+  // The Worker also reports whether it reads the Node checker's verdict rows from Postgres (contract section 19.5): none here.
+  const noRows = { source: 'none', rows: 0, read_at: null, missing_migration: false, disabled: false };
+  assert.deepEqual(fullHealth.body.health_checker, { hub_test_requests: true, chat_routed_to_node: false, verdict_rows: noRows }, 'the Worker hub tests');
   assert.deepEqual((await json(await request('/health', { bindings: { ...operatorEnv, EC2_PROXY_PREFIXES: 'zero-x.live/v1/' }, token: OPERATOR })))
-    .body.health_checker, { hub_test_requests: false, chat_routed_to_node: true }, 'chat on Node: the hub sends none');
+    .body.health_checker, { hub_test_requests: false, chat_routed_to_node: true, verdict_rows: noRows }, 'chat on Node: the hub sends none');
   const nodeChecker = (await json(await request('/health', { bindings: { ...operatorEnv, NEURON_RUNTIME: 'node' }, token: OPERATOR }))).body.health_checker;
   assert.equal(nodeChecker.node_probes, 'not_started', 'no Node checker started in this process yet');
   assert.match(nodeChecker.warning, /HEALTH_HUB_PROBES=on/, 'and the operator is told how to keep one checker');
@@ -887,18 +978,38 @@ try {
   const site = { ...env, ASSETS: assets };
   const home = await request('/', { bindings: site });
   assert.equal(home.headers.get('strict-transport-security'), 'max-age=31536000; includeSubDomains');
-  const policy = home.headers.get('content-security-policy-report-only');
-  assert.equal(home.headers.get('content-security-policy'), null, 'CSP starts in report-only mode');
-  for (const directive of ["default-src 'self'", "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://checkout.razorpay.com",
-    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://api.fontshare.com https://cdn.fontshare.com",
-    "font-src 'self' data: https://fonts.gstatic.com https://cdn.fontshare.com", "img-src 'self' data: https:",
-    "connect-src 'self' https://*.supabase.co https://api.razorpay.com https://lumberjack.razorpay.com",
-    'frame-src https://api.razorpay.com https://checkout.razorpay.com', "form-action 'self' http://127.0.0.1:*",
-    "frame-ancestors 'none'", "base-uri 'self'"]) assert.ok(policy.split('; ').includes(directive), directive);
-  assert.equal(policy.split('; ').length, 10);
-  const enforced = await request('/', { bindings: { ...site, CSP_ENFORCE: 'true' } });
-  assert.equal(enforced.headers.get('content-security-policy'), policy);
-  assert.equal(enforced.headers.get('content-security-policy-report-only'), null);
+  // The policy is enforced (CSP_ENFORCE=false is the kill switch back to report-only) and has no
+  // 'unsafe-inline' for scripts: inline scripts are allowed by hash (src/csp-hashes.js).
+  assert.equal(home.headers.get('content-security-policy-report-only'), null, 'CSP is enforced');
+  const policy = home.headers.get('content-security-policy');
+  const directives = Object.fromEntries(policy.split('; ').map(part => [part.split(' ')[0], part.split(' ').slice(1)]));
+  assert.deepEqual(Object.keys(directives), ['default-src', 'script-src', 'script-src-attr', 'style-src', 'style-src-attr', 'font-src',
+    'img-src', 'connect-src', 'frame-src', 'object-src', 'form-action', 'frame-ancestors', 'base-uri']);
+  assert.ok(!directives['script-src'].includes("'unsafe-inline'") && !directives['script-src'].includes("'unsafe-eval'"), 'no unsafe-inline for scripts');
+  assert.deepEqual(directives['script-src-attr'], ["'none'"], 'no inline event handlers');
+  assert.ok(directives['script-src'].filter(source => source.startsWith("'sha256-")).length >= 3, 'inline scripts by hash');
+  assert.ok(directives['script-src'].includes('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js'), 'supabase-js by exact URL');
+  assert.ok(!directives['script-src'].includes('https://cdn.jsdelivr.net'), 'not all of jsDelivr');
+  assert.ok(directives['script-src'].includes('https://checkout.razorpay.com'));
+  assert.ok(!directives['style-src'].includes("'unsafe-inline'") && directives['style-src'].some(source => source.startsWith("'sha256-")), 'styles by hash');
+  assert.deepEqual(directives['style-src-attr'], ["'unsafe-inline'"], 'style attributes only');
+  assert.deepEqual(directives['form-action'], ["'self'"], 'no loopback form target outside the CLI sign-in page');
+  assert.deepEqual(directives['frame-src'], ["'none'"], 'no payment frames outside the checkout pages');
+  assert.ok(!directives['img-src'].includes('https:'), 'avatar hosts only');
+  assert.ok(!directives['connect-src'].includes('https://*.supabase.co') || !env.SUPABASE_URL, 'connect-src: the configured Supabase origin, not the wildcard');
+  assert.equal(home.headers.get('permissions-policy'), 'camera=(), microphone=(), geolocation=(), usb=(), serial=(), bluetooth=(), interest-cohort=()');
+  assert.equal(home.headers.get('cross-origin-opener-policy'), 'same-origin-allow-popups');
+  const pricing = await request('/pricing', { bindings: site });
+  const pricingPolicy = Object.fromEntries(pricing.headers.get('content-security-policy').split('; ').map(part => [part.split(' ')[0], part.split(' ').slice(1)]));
+  assert.ok(pricingPolicy['style-src'].includes("'unsafe-inline'"), 'the checkout pages keep inline styles (checkout.js adds its own <style>)');
+  assert.deepEqual(pricingPolicy['frame-src'], ['https://api.razorpay.com', 'https://checkout.razorpay.com']);
+  assert.ok(!pricingPolicy['script-src'].includes("'unsafe-inline'"), 'but never inline scripts');
+  const supabaseSite = await request('/', { bindings: { ...site, SUPABASE_URL: 'https://abcd1234.supabase.co' } });
+  assert.match(supabaseSite.headers.get('content-security-policy'), /connect-src 'self' https:\/\/abcd1234\.supabase\.co /, 'the project origin');
+  assert.ok(!supabaseSite.headers.get('content-security-policy').includes('*.supabase.co'));
+  const killSwitch = await request('/', { bindings: { ...site, CSP_ENFORCE: 'false' } });
+  assert.equal(killSwitch.headers.get('content-security-policy-report-only'), policy, 'CSP_ENFORCE=false is report-only');
+  assert.equal(killSwitch.headers.get('content-security-policy'), null);
   assert.equal((await request('/', { bindings: site, base: 'http://127.0.0.1:8787' })).headers.get('strict-transport-security'), null, 'HSTS only over HTTPS');
   assert.equal((await request('/api/account', { token: 'supabase-token-user-b' })).headers.get('cache-control'), 'no-store');
 

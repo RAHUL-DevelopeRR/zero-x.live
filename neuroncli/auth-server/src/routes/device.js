@@ -12,6 +12,8 @@
 import { devAuthEnabled, errorResponse, isLoopbackHost } from '../auth-context.js';
 import { databaseConfigured, rpcRows } from '../account-store.js';
 import { sha256Hex } from '../session-store.js';
+import { noteRejected, rejectedRecently, rejectionsExceeded } from '../auth-cache.js';
+import { clientAddress } from '../request-limits.js';
 import { extraWebOrigins, isExtraWebHost } from '../web-hosts.js';
 
 export const DEVICE_GRANT_TYPE = 'urn:ietf:params:oauth:grant-type:device_code';
@@ -298,6 +300,18 @@ export function registerDeviceRoutes(api, deps) {
     if (!DEVICE_CODE_PATTERN.test(body.device_code || '')) {
       return errorResponse(c, 400, 'invalid_grant', 'Unknown device code. Run neuron login again.', { param: 'device_code' });
     }
+    // A code the store has already said is unknown or redeemed is answered from memory (audit F5,
+    // src/auth-cache.js); a visitor over its rejection window is refused before the store is read.
+    const UNKNOWN_CODE = 'This sign-in code was already used or is unknown. Run neuron login again.';
+    if (await rejectedRecently(c.env, body.device_code)) {
+      c.header('Cache-Control', 'no-store');
+      return errorResponse(c, 400, 'invalid_grant', UNKNOWN_CODE);
+    }
+    const wait = rejectionsExceeded(c.env, clientAddress(c));
+    if (wait > 0) {
+      return errorResponse(c, 429, 'rate_limited', 'Too many invalid sign-in codes from this address. Retry shortly.',
+        { retry_after_seconds: wait });
+    }
     let grant;
     try {
       [grant] = await rpcRows(c.env, 'zerox_device_poll', { p_device_code_hash: await sha256Hex(body.device_code) });
@@ -307,7 +321,8 @@ export function registerDeviceRoutes(api, deps) {
     }
     c.header('Cache-Control', 'no-store');
     if (!grant || grant.status === 'redeemed') {
-      return errorResponse(c, 400, 'invalid_grant', 'This sign-in code was already used or is unknown. Run neuron login again.');
+      await noteRejected(c.env, body.device_code, { address: clientAddress(c) });
+      return errorResponse(c, 400, 'invalid_grant', UNKNOWN_CODE);
     }
     if (grant.expired) return errorResponse(c, 400, 'expired_token', 'The sign-in code expired. Run neuron login again.');
     if (grant.status === 'denied') return errorResponse(c, 400, 'access_denied', 'Sign-in was denied in the browser.');

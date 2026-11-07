@@ -11,8 +11,10 @@ import { FailureKind, globalHealthTracker } from './provider-health.js';
 import { hubHealthForRouting, hubHealthRows, publishHealth } from './health-hub-client.js';
 import { readShared } from './health-share.js';
 import { probeRoutingRows } from './health-probes.js';
-import { callerCountry, loadCatalog, loadPlanPolicies, planPolicy, poolSecret, resolveModelId } from './catalog.js';
+import { callerCountry, loadCatalog, loadPlanPolicies, modelIdentity, planPolicy, poolSecret, resolveModelId } from './catalog.js';
+import { noteSponsoredFailure } from './sponsored.js';
 import { touchVaultKey } from './provider-keys.js';
+import { jsonNestingExceeds } from './request-limits.js';
 import { billableUsage, estimateOutputTokens, estimatePromptTokens, reserveCostMicrousd, utf8Bytes } from './pricing.js';
 import { exhaustedBudget, notePoolExhausted, notePoolReserved, poolBudgetState } from './pool-budget.js';
 import { loadOffers, offerIdFor } from './oiop/offers.js';
@@ -79,17 +81,37 @@ export function validateCompletionBody(body) {
   if (isSet(body.stream_options) && (typeof body.stream_options !== 'object' || Array.isArray(body.stream_options))) {
     return 'stream_options must be an object.';
   }
+  if (isSet(body.prompt_cache_key) && (typeof body.prompt_cache_key !== 'string' || !PROMPT_CACHE_KEY.test(body.prompt_cache_key))) {
+    return 'prompt_cache_key must be 1 to 128 letters, digits, dots, underscores, colons or hyphens.';
+  }
   return null;
+}
+
+// prompt_cache_key (contract section 14.3): the client's key for a conversation's prompt cache.
+// The Neuron CLI sends a hash of its session id, never the id itself. Upstreams share one
+// operator account across every caller, so the gateway never forwards the key as sent: it
+// forwards SHA-256('zx-cache:' + caller + NUL + key), 32 hex digits, which stays stable for the
+// conversation, cannot collide with another caller's key and reveals nothing the client sent.
+// providers.js PROVIDER_PARAMS passes it to the upstreams that accept it and drops it for the
+// others. Quota and billing do not change.
+const PROMPT_CACHE_KEY = /^[A-Za-z0-9._:-]{1,128}$/;
+export async function scopedPromptCacheKey(caller, key) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`zx-cache:${caller}\u0000${key}`));
+  return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('').slice(0, 32);
 }
 
 // What the request needs from a model (router.js lacks()). forcedTool: tool_choice "required" or
 // a named function (anything but "auto" and "none") forces a tool call, which auto gives only to
-// models that can be told so (router.js).
+// models that can be told so (router.js). agentic: the client marked the turn as agent work
+// (`x-neuron-route: agentic`, sent by the Neuron CLI on turns that attach tools when the model is
+// "auto"); auto then picks only tool-capable models with a good tool-call record, as it does for
+// any request that attaches tools (router.js, catalog.js POOR_TOOL_CALLERS).
 const IMAGE_PARTS = new Set(['image_url', 'input_image', 'image']);
-export function requestNeeds(body) {
+export function requestNeeds(body, routeHint = null) {
   const tools = Array.isArray(body.tools) && body.tools.length > 0;
   return {
     tools,
+    agentic: tools || (typeof routeHint === 'string' && routeHint.trim().toLowerCase() === 'agentic'),
     vision: body.messages.some(message => Array.isArray(message.content) &&
       message.content.some(part => IMAGE_PARTS.has(part?.type))),
     stream: body.stream === true,
@@ -208,19 +230,26 @@ async function orderBySharedHealth(env, candidates, tracker, sharedHealth = null
     .map(item => item.candidate);
 }
 
-// A paid model whose daily spend cap (p_pool.cpd) is spent for every user until 00:00 UTC.
+// A paid or sponsored model whose daily spend cap (p_pool.cpd) is spent for every user until 00:00 UTC. A sponsored
+// pool also sets daily request and token budgets, so its refusal names them too ('rpd|tpd|cpd'): all reset at 00:00 UTC.
 function spendLimitMessage(exhausted) {
-  if (!exhausted.length || !exhausted.every(row => row.budget === 'cpd')) return undefined;
+  if (exhausted.length && exhausted.every(row => row.budget === 'share')) {
+    return 'You have used your share of the free capacity for these models today. It resets at 00:00 UTC; ' +
+      'try another model, or upgrade for dedicated capacity.';
+  }
+  if (!exhausted.length || !exhausted.every(row => String(row.budget).split('|').includes('cpd'))) return undefined;
   const names = [...new Set(exhausted.map(row => row.model))];
   return `${names.length === 1 ? names[0] : 'This model'} has reached today's spending limit on Zero-X. ` +
     'It resets at 00:00 UTC; choose another model until then.';
 }
 
 // The client-facing error once every candidate failed (contract §3.3).
-function finalError({ failures, exhausted, paidDenied }) {
+function finalError({ failures, exhausted, paidDenied, monthDenied = null }) {
   const paid = paidDenied ? reserveError(paidDenied) : null;
   if (!failures.length) {
     if (paid) return paid;
+    // The caller's own monthly allowance of a sponsored model (contract section 19.3): nothing else could serve.
+    if (monthDenied) return reserveError(monthDenied.row, Date.now(), monthDenied.tokens, monthDenied.name);
     if (exhausted.length) {
       return { code: 'capacity_exhausted', retryAfterSeconds: minimum(exhausted.map(row => row.retry_after_seconds)) ?? 60,
         message: spendLimitMessage(exhausted) };
@@ -256,7 +285,7 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
     const requestId = newRequestId();
     const env = c.env || {};
     const headers = { 'x-request-id': requestId };
-    const fail = (code, options = {}) => errorResponse(code, { ...options, env, requestId, headers });
+    const fail = (code, options = {}) => errorResponse(code, { ...options, env, requestId, headers: { ...headers, ...(options.headers || {}) } });
 
     let valid;
     try {
@@ -272,6 +301,11 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
     if (utf8Bytes(raw) > MAX_BODY_BYTES) return fail('invalid_request', { message: 'Completion request exceeds 1 MiB.' });
     let body = null;
     try { body = JSON.parse(raw); } catch { /* reported as invalid below */ }
+    // Before anything walks or serialises the body (audit 3b): a body nested tens of thousands of
+    // levels deep passes the size limit and used to crash the estimate with a 503.
+    if (jsonNestingExceeds(body, positiveInt(env.MAX_JSON_DEPTH, 128))) {
+      return fail('invalid_request', { message: 'The request body is nested too deeply.' });
+    }
     const invalid = validateCompletionBody(body);
     if (invalid) return fail('invalid_request', { message: invalid });
 
@@ -292,17 +326,19 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
     // caller lets the tracker require timeouts from several callers before parking a shared pool,
     // and keeps one caller on the same vault key of a model (router.js rotateKeyPools).
     const caller = session.user_id || String(token).slice(0, 16);
+    if (isSet(body.prompt_cache_key)) body = { ...body, prompt_cache_key: await scopedPromptCacheKey(caller, body.prompt_cache_key) };
 
     let route;
     try {
       route = router.route({
         env,
         requestedModel: body.model,
-        needs: requestNeeds(body),
+        needs: requestNeeds(body, c.req.header('x-neuron-route')),
         promptTokens,
         maxTokens: requestedMax,
         maxTokensExplicit: isSet(explicitMax),
         tiers: sessionTiers(env, session, policy),
+        ledger,
         country: callerCountry(c.req.raw, env),
         ownedCatalog: isOwnedSession(session) ? await ownedCatalog(env, session) : null,
         affinity: caller,
@@ -611,6 +647,7 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
     const first = candidates[0];
     let firstMiss = null;
     let paidDenied = null;
+    let monthDenied = null; // the first refusal by a sponsored family's monthly allowance
     let pending = null; // reservation of the last failed attempt, settled once its fate is known
     let current = null; // reservation whose attempt is in flight
     let reservations = 0;
@@ -689,11 +726,25 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
               requestId: reservations ? `${requestId}.${reservations}` : requestId, promptTokens, maxTokens: candidate.maxTokens });
             row = await reserveCapacity(env, args);
           } catch (error) {
+            // A sponsored pool needs the p_cap migration: without it the pool is skipped (and reads
+            // not_configured for 10 minutes), never served uncapped; the other candidates carry on.
+            if (args?.p_cap && noteSponsoredFailure(env, error)) {
+              skipModels.add(candidate.entry.id);
+              continue;
+            }
             console.error('Neuron capacity reservation unavailable', { name: error?.name, request_id: requestId });
             stopLeases();
             return fail('service_unavailable');
           }
           if (!accountCanPay(row)) releaseHeld(index);
+          if (row.status === 'user_family_month_tokens') {
+            // Only this family is out for the month: its other candidates are skipped and the rest are tried.
+            const identity = modelIdentity(candidate.entry);
+            monthDenied ??= { row, tokens: args.p_tokens, name: identity.name };
+            for (const other of queue) if (modelIdentity(other.entry).family === identity.family) skipModels.add(other.entry.id);
+            if (candidate === first) firstMiss = row.status;
+            continue;
+          }
           if (row.status !== 'ok') {
             if (TERMINAL_RESERVE_STATUSES.has(row.status) || !RESERVE_ERRORS[row.status]) {
               stopLeases();
@@ -701,6 +752,13 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
               return fail(error.code, error);
             }
             if (candidate === first) firstMiss = row.status;
+            if (row.status === 'user_pool_share') {
+              // This caller has used its fair share of the pool (audit F6). Other users are not
+              // affected, so the pool is not noted as spent; the next candidate is tried.
+              exhausted.push({ ...row, budget: 'share', model: candidate.entry.display_name });
+              if (!paidLeft(index)) releaseHeld(index);
+              continue;
+            }
             if (PAID_DENIED_STATUSES.has(row.status)) {
               paidDenied = row;
               releaseHeld(index);
@@ -739,6 +797,9 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
           current = { reservation, candidate };
           if (row.plan) headers['x-neuron-plan'] = String(row.plan);
           setQuotaHeaders(row.remaining_requests, row.remaining_tokens);
+          if (isSet(row.cap_tokens) && isSet(row.cap_used_tokens)) {
+            headers['x-neuron-quota-month-remaining-tokens'] = String(Math.max(0, Number(row.cap_tokens) - Number(row.cap_used_tokens)));
+          }
         }
         attempts++;
         if (candidate.pool.tier !== 'paid') freeAttempts++;
@@ -792,7 +853,7 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
     // upstream_error; a client error (a slow 400 or 413), a cancellation or a capacity refusal
     // (with its Retry-After) still answers as such.
     const budgetSpent = outOfTime || failures.some(failure => failure.budgetCut);
-    let final = finalError({ failures, exhausted, paidDenied });
+    let final = finalError({ failures, exhausted, paidDenied, monthDenied });
     if (budgetSpent && !aborted && final.code === 'upstream_error') final = { code: 'upstream_timeout' };
     if (aborted || outOfTime) {
       console.warn(aborted ? 'Neuron client disconnected before the first byte' : 'Neuron failover budget spent',

@@ -117,7 +117,9 @@ try {
     '20261028000000_reservation_leases.sql', '20261029000000_session_devices.sql', '20261029000100_push_tokens.sql',
     '20261029000200_provider_keys.sql', '20261029000300_provider_key_budgets.sql', '20261029000400_oiop_offers.sql',
     '20261029000500_credit_programs.sql', '20261029000800_paid_billing_caps.sql', '20261029000900_plan_features_claude.sql',
-    '20261029001000_pool_concurrency.sql', '20261102000000_free_token_window.sql', '20261104000000_health_probes.sql'];
+    '20261029001000_pool_concurrency.sql', '20261102000000_free_token_window.sql', '20261104000000_health_probes.sql',
+    '20261104300000_free_plan_features_lineup.sql', '20261106000300_connector_policy.sql', '20261106000400_connector_accounts.sql',
+    '20261106000600_sponsored_pools.sql'];
   assert.deepEqual(migrations.map(migration => migration.file).filter(file => businessMigrations.includes(file)), businessMigrations);
   assert.equal((await sql('SELECT count(*)::int AS n FROM supabase_migrations.schema_migrations'))[0].n, migrations.length);
   await assert.rejects(rpc(env, 'zerox_does_not_exist', {}), error =>
@@ -208,6 +210,24 @@ try {
   assert.equal(sessionDailyTokenCap(legacy.pro), 10000000, 'a plan without a window keeps daily_tokens');
   await assert.rejects(sql(`INSERT INTO public.zerox_plan_policy (plan, name, daily_tokens, daily_requests, price_usd)
     VALUES ('enterprise', 'Enterprise', 1, 1, 1)`), /zerox_plan_policy_plan_check/);
+  // Connector policy (migrations/20261106000300_connector_policy.sql, contract section 18.1): Free
+  // local connectors only, Pro, Max and ultrawork the hosted SaaS connectors; the account overview
+  // carries it in its policy column.
+  const hostedIds = ['atlassian', 'github', 'linear', 'notion', 'slack'];
+  const connectorPolicyOf = hosted => ({ allowed: ['catalog:*'], denied: [], required: [], hosted, allow_unvetted: true,
+    catalog_version: '2026-11-03' });
+  assert.deepEqual(Object.fromEntries(plans.map(plan => [plan.plan, plan.connector_policy])), { free: connectorPolicyOf([]),
+    pro: connectorPolicyOf(hostedIds), max: connectorPolicyOf(hostedIds), ultrawork: connectorPolicyOf(hostedIds) });
+  const policyUser = await newUser('max');
+  assert.deepEqual((await rpc(env, 'zerox_account_overview', { p_user_id: policyUser })).policy.connector_policy, connectorPolicyOf(hostedIds));
+  await assert.rejects(sql(`UPDATE public.zerox_plan_policy SET connector_policy = '["github"]'::jsonb WHERE plan = 'free'`),
+    /zerox_plan_policy_connector_policy_check/, 'a connector policy is a JSON object or null');
+  // Re-running the migration keeps a policy an operator set.
+  await sql(`UPDATE public.zerox_plan_policy SET connector_policy = '{"denied": ["slack"]}'::jsonb WHERE plan = 'pro'`);
+  await db.exec(migrationScript(await readMigration(migrations.find(migration => migration.file === '20261106000300_connector_policy.sql'))));
+  handle.functions.clear();
+  assert.deepEqual((await rpcRows(env, 'zerox_plan_policies_v2', {})).find(plan => plan.plan === 'pro').connector_policy, { denied: ['slack'] });
+  await sql('UPDATE public.zerox_plan_policy SET connector_policy = $1::jsonb WHERE plan = $2', [JSON.stringify(connectorPolicyOf(hostedIds)), 'pro']);
   ok('plans seeded exactly per contract section 1 (free/pro/max/ultrawork) with features and legacy RPC compatibility');
 
   // ---------------------------------------------------------------- reserve and settle happy path
@@ -263,7 +283,8 @@ try {
   const missing = await reserve(randomUUID());
   assert.deepEqual(missing, { status: 'no_account', reservation_id: null, plan: null, remaining_requests: null,
     remaining_tokens: null, credit_balance_microusd: null, resets_at: null, retry_after_seconds: null,
-    window_tokens: null, window_seconds: null, window_used_tokens: null, window_resets_at: null });
+    window_tokens: null, window_seconds: null, window_used_tokens: null, window_resets_at: null,
+    cap_family: null, cap_tokens: null, cap_used_tokens: null, cap_resets_at: null });
   const suspendedUser = await newUser('pro', { suspended: true, credits: 5000000 });
   const suspended = await reserve(suspendedUser);
   assert.equal(suspended.status, 'suspended');
@@ -687,6 +708,45 @@ try {
   assert.equal((await reserve(poolUsers[2], { p_model: 'pool/unlimited', p_pool: { rpm: null, tpd: null } })).status, 'ok');
   assert.equal((await poolRow('pool/unlimited', 'free', 'day')).requests, 2, 'counters are kept even without limits');
   ok('pool_exhausted for rpm/tpm/rpd/tpd shared across users, retry hints, per-tier pools, unlimited budgets');
+
+  // ---------------------------------------------------------------- fair share of free pools (audit F6)
+  // One user may take at most a quarter of a free pool's daily request (rpd) and token (tpd)
+  // budgets; the refusal is 'user_pool_share', not pool_exhausted: the pool is not spent for others.
+  await clockHeadroom();
+  const [shareHog, shareOther, sharePaid] = [await newUser('max'), await newUser('max'), await newUser('max', { credits: 1000000 })];
+  const sharePool = { rpd: 8 };
+  for (let i = 0; i < 2; i++) assert.equal((await reserve(shareHog, { p_model: 'share/rpd', p_pool: sharePool })).status, 'ok', `request ${i + 1} of the share`);
+  const shareRefused = await reserve(shareHog, { p_model: 'share/rpd', p_pool: sharePool });
+  assert.equal(shareRefused.status, 'user_pool_share', 'a quarter of 8 requests is 2');
+  assert.equal(shareRefused.reservation_id, null);
+  const shareRetry = Math.ceil((Date.parse(nextResets) - Date.now()) / 1000);
+  assert.ok(Math.abs(shareRefused.retry_after_seconds - shareRetry) <= 5, 'retries at UTC midnight');
+  assert.equal((await poolRow('share/rpd', 'free', 'day')).requests, 2, 'a refused request counts nowhere');
+  assert.equal((await reserve(shareOther, { p_model: 'share/rpd', p_pool: sharePool })).status, 'ok', 'another user still has its share of the same pool');
+  assert.equal((await reserve(shareHog, { p_model: 'share/other', p_pool: sharePool })).status, 'ok', 'each pool has its own share');
+  assert.equal((await reserve(shareHog, { p_model: 'share/rpd', p_pool: { rpd: 8, rpm: 100 }, p_pool_key: 'vault:key-b' })).status, 'ok', 'and each pool key');
+  assert.equal((await reserve(sharePaid, { p_model: 'share/paid', p_tier: 'paid', p_cost_microusd: 10, p_pool: { rpd: 4 } })).status, 'ok');
+  assert.equal((await reserve(sharePaid, { p_model: 'share/paid', p_tier: 'paid', p_cost_microusd: 10, p_pool: { rpd: 4 } })).status, 'ok', 'paid pools have no share');
+  // A released (refunded) reservation does not count against the share.
+  const refunded = await reserve(shareOther, { p_model: 'share/rpd', p_pool: sharePool });
+  assert.equal(refunded.status, 'ok');
+  assert.equal((await reserve(shareOther, { p_model: 'share/rpd', p_pool: sharePool })).status, 'user_pool_share');
+  await sql(`UPDATE public.zerox_reservations SET status = 'released' WHERE id = $1`, [refunded.reservation_id]);
+  assert.equal((await reserve(shareOther, { p_model: 'share/rpd', p_pool: sharePool })).status, 'ok', 'released reservations free their share');
+  // Tokens: refused once the user has used a quarter of tpd, never for one large request alone.
+  const tokenPool = { tpd: 4000 };
+  assert.equal((await reserve(shareHog, { p_model: 'share/tpd', p_tokens: 3000, p_pool: tokenPool })).status, 'ok',
+    'a request larger than the whole share is allowed while the share is unused');
+  assert.equal((await reserve(shareHog, { p_model: 'share/tpd', p_tokens: 10, p_pool: tokenPool })).status, 'user_pool_share');
+  assert.equal((await reserve(shareOther, { p_model: 'share/tpd', p_tokens: 500, p_pool: tokenPool })).status, 'ok');
+  // The pool's own budget is still judged first for what is left of it: a full pool says pool_exhausted.
+  const fullPool = { rpd: 2 };
+  const fullUsers = [await newUser('max'), await newUser('max')];
+  assert.equal((await reserve(fullUsers[0], { p_model: 'share/full', p_pool: fullPool })).status, 'ok');
+  assert.equal((await reserve(fullUsers[1], { p_model: 'share/full', p_pool: fullPool })).status, 'ok');
+  assert.equal((await reserve(await newUser('max'), { p_model: 'share/full', p_pool: fullPool })).status, 'pool_exhausted');
+  assert.equal((await reserve(shareHog, { p_model: 'share/unbudgeted', p_pool: { rpm: 5 } })).status, 'ok', 'no daily budget, no share');
+  ok('fair share: a user takes at most a quarter of a free pool per day (user_pool_share, midnight retry), per pool key, not on paid pools, released reservations free it, other users unaffected');
 
   // ---------------------------------------------------------------- Groq free pool: turns per minute
   // E2E finding (2026-10-21): a Groq reservation held the prompt plus max_tokens fitted to the
@@ -1517,8 +1577,8 @@ try {
     { day: utcDay(0), requests: 2, prompt_tokens: 8, completion_tokens: 4, cost_microusd: 2500 },
   ], 'series is zero-filled per UTC day');
   assert.deepEqual(await rpcRows(env, 'zerox_usage_by_model', { p_user_id: statsUser, p_from: utcDay(-3), p_to: utcDay(0) }), [
-    { model: 'm/a', requests: 3, prompt_tokens: 307, cache_read_tokens: 0, cache_write_tokens: 0, completion_tokens: 33, cost_microusd: 0 },
-    { model: 'm/b', requests: 2, prompt_tokens: 51, cache_read_tokens: 0, cache_write_tokens: 0, completion_tokens: 6, cost_microusd: 4000 },
+    { model: 'm/a', requests: 3, prompt_tokens: 307, cache_read_tokens: 0, cache_write_tokens: 0, completion_tokens: 33, cost_microusd: 0, sponsored_cost_microusd: 0 },
+    { model: 'm/b', requests: 2, prompt_tokens: 51, cache_read_tokens: 0, cache_write_tokens: 0, completion_tokens: 6, cost_microusd: 4000, sponsored_cost_microusd: 0 },
   ]);
   assert.deepEqual(await rpcRows(env, 'zerox_usage_by_model', { p_user_id: statsUser, p_from: utcDay(-1), p_to: utcDay(-1) }), []);
   await assert.rejects(rpcRows(env, 'zerox_usage_series', { p_user_id: statsUser, p_from: utcDay(0), p_to: utcDay(-1) }), /invalid_range/);
@@ -1539,8 +1599,9 @@ try {
 
   // ---------------------------------------------------------------- account overview and admin overview
   const statsOverview = await rpc(env, 'zerox_account_overview', { p_user_id: statsUser });
-  assert.deepEqual(Object.keys(statsOverview).sort(), ['account', 'credits', 'policy', 'subscription', 'usage_today', 'usage_window']);
+  assert.deepEqual(Object.keys(statsOverview).sort(), ['account', 'credits', 'policy', 'subscription', 'usage_month', 'usage_today', 'usage_window']);
   assert.equal(statsOverview.usage_window, null, 'no window on Max');
+  assert.deepEqual(statsOverview.usage_month, [], 'no monthly family usage without a sponsored pool');
   assert.equal(statsOverview.account.id, statsUser);
   assert.equal(statsOverview.policy.daily_requests, 10000);
   assert.equal(statsOverview.credits.balance_microusd, 10000000 - 4000);
@@ -1829,7 +1890,9 @@ try {
   // check-catalog-db.mjs).
   const downFiles = (await readdir(join(root, 'migrations/down'))).filter(file => !file.endsWith('.down.sql')).sort();
   assert.deepEqual(downFiles, ['20261028000000_reservation_leases.sql', '20261029001000_pool_concurrency.sql',
-    '20261102000000_free_token_window.sql', '20261104000000_health_probes.sql', '20261104300000_free_plan_features_lineup.sql']);
+    '20261102000000_free_token_window.sql', '20261104000000_health_probes.sql', '20261104300000_free_plan_features_lineup.sql',
+    '20261106000000_pool_fair_share.sql', '20261106000300_connector_policy.sql', '20261106000400_connector_accounts.sql',
+    '20261106000600_sponsored_pools.sql', '20261106000700_haiku_catalog.sql', '20261106000800_plan_features_haiku.sql']);
   for (const file of downFiles) {
     const migration = migrations.find(candidate => candidate.file === file);
     assert.ok(migration, `${file} undoes a migration of the same name`);

@@ -1,11 +1,50 @@
-.zerox-auth::backdrop { background: rgba(10,10,12,.85); }
+/* Sign-in dialog and account menu rendered by zerox-auth.js. Colours come from /zx-tokens.css; the
+   fallbacks after each token are the light palette, for pages that do not load the tokens. */
+.zerox-auth { width: min(440px, calc(100% - 32px)); max-height: calc(100dvh - 32px); overflow: auto; margin: auto; padding: 0; border: 1px solid var(--zx-border-strong, #c9c5c1); border-radius: var(--zx-radius-lg, 16px); background: var(--zx-bg, #fff); color: var(--zx-text, #1b1b1b); font-family: var(--zx-font-body, system-ui, sans-serif); box-shadow: var(--zx-shadow, 0 8px 24px rgba(0, 0, 0, .12)); }
+.zerox-auth::backdrop { background: rgba(20, 20, 19, .55); }
 .zerox-auth [hidden] { display: none !important; }
-.zerox-auth label { display: block; font-size: 14px; color: #a6a6b2; }
-.zerox-auth input { width: 100%; min-height: 44px; margin: 8px 0 12px; padding: 12px; border: 1px solid #777787; border-radius: 8px; background: #0a0a0c; color: white; font-size: 16px; }
-.zerox-auth button { min-height: 44px; padding: 10px 14px; border-radius: 8px; background: #00e5ff; color: #0a0a0c; font-size: 14px; font-weight: 600; cursor: pointer; }
-.zerox-auth button:disabled { opacity: .6; cursor: wait; }
-.zerox-auth .zerox-google-button { display: flex; align-items: center; justify-content: center; gap: 10px; background: #131314 !important; color: #e3e3e3 !important; border: 1px solid #8e918f !important; }
-.zerox-google-icon { width: 28px; height: 28px; padding: 5px; object-fit: contain; background: white; border-radius: 50%; flex: none; }
-.zerox-auth .zerox-github-button { display: flex; align-items: center; justify-content: center; gap: 10px; }
-.zerox-github-icon { width: 28px; height: 28px; object-fit: contain; flex: none; }
-.zerox-auth :focus-visible { outline: 3px solid #00e5ff; outline-offset: 4px; }
+.zerox-auth__panel { position: relative; padding: 24px; }
+.zerox-auth__title { margin: 0; padding-right: 44px; font-size: 1.375rem; font-weight: 500; letter-spacing: -.02em; line-height: 1.25; color: var(--zx-ink, #1b1b1b); }
+.zerox-auth__subtitle { margin: 6px 0 20px; font-size: .875rem; color: var(--zx-muted, #5e5e5e); }
+.zerox-auth__close { position: absolute; top: 12px; right: 12px; display: grid; place-items: center; min-width: 44px; min-height: 44px; border: 0; border-radius: var(--zx-radius-sm, 6px); background: none; color: var(--zx-muted, #5e5e5e); font-size: 1.5rem; line-height: 1; cursor: pointer; }
+.zerox-auth__close:hover { background: var(--zx-panel, #f4f2f0); color: var(--zx-ink, #1b1b1b); }
+.zerox-auth__message { margin: 0 0 16px; padding: 12px 14px; border: 1px solid var(--zx-border-strong, #c9c5c1); border-radius: var(--zx-radius, 8px); background: var(--zx-panel, #f4f2f0); font-size: .8125rem; color: var(--zx-text, #1b1b1b); }
+.zerox-auth__message.is-success { border-color: var(--zx-green, #4b9c6a); background: var(--zx-success-soft, #e9f4ee); }
+.zerox-auth__message.is-error { border-color: var(--zx-red, #dc1e1e); background: var(--zx-danger-soft, #fbeaea); }
+.zerox-auth__providers { display: flex; flex-direction: column; gap: 8px; }
+.zerox-auth__form { margin-top: 20px; }
+.zerox-auth__providers:empty + .zerox-auth__form { margin-top: 0; }
+.zerox-auth__note { margin: 10px 0 0; font-size: .75rem; color: var(--zx-muted, #5e5e5e); }
+.zerox-auth label { display: block; font-size: .875rem; font-weight: 500; color: var(--zx-ink, #1b1b1b); }
+.zerox-auth input { width: 100%; min-height: 44px; margin: 8px 0 12px; padding: 10px 12px; border: 1px solid var(--zx-border-strong, #c9c5c1); border-radius: var(--zx-radius-sm, 6px); background: var(--zx-bg, #fff); color: var(--zx-ink, #1b1b1b); font: 400 16px var(--zx-font-body, system-ui, sans-serif); }
+.zerox-auth input::placeholder { color: var(--zx-faint, #6b6b6b); }
+.zerox-auth input:hover { border-color: var(--zx-faint, #6b6b6b); }
+.zerox-auth button:not(.zerox-auth__close):not(.zerox-provider-button) { width: 100%; min-height: 44px; padding: 10px 14px; border: 1px solid var(--zx-ink-fill, #1b1b1b); border-radius: var(--zx-radius-sm, 6px); background: var(--zx-ink-fill, #1b1b1b); color: var(--zx-on-ink, #fff); font: 500 .875rem var(--zx-font-body, system-ui, sans-serif); cursor: pointer; }
+.zerox-auth button:not(.zerox-auth__close):not(.zerox-provider-button):hover:not(:disabled) { opacity: .86; }
+.zerox-auth button:disabled { opacity: .55; cursor: wait; }
+.zerox-provider-button { display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; min-height: 44px; padding: 10px 14px; border: 1px solid var(--zx-border-strong, #c9c5c1); border-radius: var(--zx-radius-sm, 6px); background: transparent; color: var(--zx-ink, #1b1b1b); font: 500 .875rem var(--zx-font-body, system-ui, sans-serif); cursor: pointer; }
+.zerox-provider-button:hover:not(:disabled) { background: var(--zx-panel, #f4f2f0); border-color: var(--zx-ink, #1b1b1b); }
+.zerox-google-icon { width: 24px; height: 24px; padding: 4px; object-fit: contain; background: #fff; border: 1px solid var(--zx-border, #e1dedb); border-radius: 50%; flex: none; }
+.zerox-github-icon { width: 24px; height: 24px; object-fit: contain; flex: none; filter: invert(1); }
+:root[data-theme="dark"] .zerox-github-icon { filter: none; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .zerox-github-icon { filter: none; } }
+.zerox-auth :focus-visible, .zerox-user :focus-visible { outline: 2px solid var(--zx-accent-text, #1f5fd6); outline-offset: 2px; }
+
+/* Account menu */
+.zerox-user { position: relative; }
+.zerox-user__trigger { display: flex; align-items: center; min-width: 44px; min-height: 44px; padding: 0; border: 0; background: none; color: var(--zx-ink, #1b1b1b); cursor: pointer; }
+.zerox-user__menu { position: absolute; top: 44px; right: 0; z-index: 100; width: 240px; padding: 12px; border: 1px solid var(--zx-border-strong, #c9c5c1); border-radius: var(--zx-radius, 8px); background: var(--zx-bg, #fff); box-shadow: var(--zx-shadow, 0 8px 24px rgba(0, 0, 0, .12)); }
+.zerox-user__menu[hidden] { display: none; }
+.zerox-user__who { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+.zerox-user__text { min-width: 0; }
+.zerox-user__name, .zerox-user__email { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.zerox-user__name { font-size: .875rem; font-weight: 600; color: var(--zx-ink, #1b1b1b); }
+.zerox-user__email { font-size: .75rem; color: var(--zx-muted, #5e5e5e); }
+.zerox-user__signout { width: 100%; min-height: 36px; padding: 8px 12px; border: 1px solid var(--zx-danger, #b01515); border-radius: var(--zx-radius-sm, 6px); background: none; color: var(--zx-danger, #b01515); font: 500 .8125rem var(--zx-font-body, system-ui, sans-serif); cursor: pointer; }
+.zerox-user__signout:hover { background: var(--zx-danger-soft, #fbeaea); }
+.zerox-avatar { display: block; border-radius: var(--zx-radius-sm, 6px); object-fit: cover; background: var(--zx-panel, #f4f2f0); border: 1px solid var(--zx-border, #e1dedb); }
+.zerox-avatar--initials { display: flex; align-items: center; justify-content: center; width: 34px; height: 34px; color: var(--zx-ink, #1b1b1b); font: 500 .75rem var(--zx-font-mono, monospace); letter-spacing: .04em; }
+.zerox-avatar--initials[data-size="40"] { width: 40px; height: 40px; }
+.zerox-auth .zerox-auth__agreement { margin: 20px 0 0; font-size: .8125rem; line-height: 1.5; color: var(--zx-muted, #5e5e5e); }
+.zerox-auth .zerox-auth__agreement a { color: var(--zx-accent-text, #1f5fd6); text-underline-offset: 3px; }
+.zerox-auth .zerox-auth__agreement a:hover { color: var(--zx-ink, #1b1b1b); }

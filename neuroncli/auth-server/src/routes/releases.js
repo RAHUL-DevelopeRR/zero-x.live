@@ -17,6 +17,8 @@ const PLATFORMS = Object.freeze({
 });
 const KINDS = Object.freeze({ cli: ['cli', 'tui'], desktop: ['installer', 'updater'] });
 const DOWNLOAD_HOSTS = ['github.com', 'zero-x.live'];
+// github.com is allowed for this repository only (audit 3b: any github.com repository was accepted).
+const GITHUB_REPOSITORY_PATH = '/rahul-developerr/neuron-v2/';
 const SEMVER = /^(0|[1-9]\d{0,5})\.(0|[1-9]\d{0,5})\.(0|[1-9]\d{0,5})(?:-[0-9A-Za-z.-]{1,32})?$/;
 const SHA256 = /^[0-9a-f]{64}$/;
 const FILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
@@ -28,12 +30,14 @@ const isObject = value => value !== null && typeof value === 'object' && !Array.
 const isIsoTime = value => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(value) &&
   Number.isFinite(Date.parse(value));
 
-// An https URL on an allowed host (GitHub release assets, or zero-x.live), without credentials.
+// An https URL on an allowed host (GitHub release assets of the Neuron repository, or zero-x.live),
+// without credentials.
 export function allowedReleaseUrl(value, hosts = DOWNLOAD_HOSTS) {
   if (typeof value !== 'string' || value.length > 512) return false;
   try {
     const url = new URL(value);
-    return url.protocol === 'https:' && !url.username && !url.password && !url.port && hosts.includes(url.hostname);
+    return url.protocol === 'https:' && !url.username && !url.password && !url.port && hosts.includes(url.hostname) &&
+      (url.hostname !== 'github.com' || url.pathname.toLowerCase().startsWith(GITHUB_REPOSITORY_PATH));
   } catch { return false; }
 }
 

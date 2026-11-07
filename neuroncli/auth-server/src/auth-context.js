@@ -2,6 +2,8 @@ import { provisionDevIdentity, rpc } from './account-store.js';
 import { normalizePlanId } from './plan-policy.js';
 import { sha256Hex, readRecord, deleteRecord, openSession, rearmRecord, sessionExpiry } from './session-store.js';
 import { trackSessionUse } from './session-activity.js';
+import { clientAddress } from './request-limits.js';
+import { noteRejected, rejectedRecently, rejectionsExceeded } from './auth-cache.js';
 
 // ── OpenAI-shaped errors (docs/PLATFORM_CONTRACT.md §3.3) ──
 export class ApiError extends Error {
@@ -245,10 +247,26 @@ async function cachedAccount(env, token, userId, profile, plan, devEmail = null)
   return account;
 }
 
-export async function verifyApiKey(env, token) {
+// Rejected credentials are remembered for a minute (src/auth-cache.js, audit F5), so a flood of bad
+// keys is answered from memory instead of becoming one Postgres RPC each. Only a definite answer
+// from the store is remembered: a store that is down throws and nothing is cached.
+export async function verifyApiKey(env, token, { address = null } = {}) {
   if (!API_KEY_PATTERN.test(token)) return null;
+  if (await rejectedRecently(env, token)) return null;
   const row = await rpc(env, 'zerox_api_key_verify', { p_hash: await sha256Hex(token) });
-  return row?.user_id ? { key_id: row.key_id ?? row.id ?? null, user_id: row.user_id } : null;
+  if (row?.user_id) return { key_id: row.key_id ?? row.id ?? null, user_id: row.user_id };
+  await noteRejected(env, token, { address });
+  return null;
+}
+
+// 429 for a visitor that has had too many credentials rejected this minute; thrown before any
+// credential is looked up. The chat routes never call this: released clients keep working.
+export function assertNotRejectionLimited(c) {
+  const wait = rejectionsExceeded(c.env, clientAddress(c));
+  if (wait > 0) {
+    throw new ApiError(429, 'rate_limited', 'Too many invalid credentials from this address. Retry shortly.',
+      { retry_after_seconds: wait });
+  }
 }
 
 // Work that may finish after the response: the request's waitUntil on Workers, null on Node
@@ -263,12 +281,20 @@ export function backgroundRunner(c) {
 // Loads a CLI session record: hashed key first, raw-key fallback for older sessions.
 // Expired records are removed. Returns the decrypted session or null. A loaded session's use is
 // recorded after the response (last used, sliding expiry: src/session-activity.js).
-export async function loadCliSession(env, token, { waitUntil = null } = {}) {
+export async function loadCliSession(env, token, { waitUntil = null, address = null } = {}) {
   if (!SESSION_TOKEN_PATTERN.test(token)) return null;
+  // Workers KV is eventually consistent: a session just written elsewhere may read as missing for a
+  // moment, so nothing is remembered as rejected when SESSIONS_KV is bound.
+  const remember = !env.SESSIONS_KV;
+  if (remember && await rejectedRecently(env, token)) return null;
   const stored = await readRecord(env, token);
-  if (!stored || typeof stored !== 'object' || !Number.isFinite(stored.created)) return null;
+  if (!stored || typeof stored !== 'object' || !Number.isFinite(stored.created)) {
+    if (remember) await noteRejected(env, token, { address });
+    return null;
+  }
   if (Date.now() >= sessionExpiry(env, stored)) {
     await deleteRecord(env, token);
+    if (remember) await noteRejected(env, token, { address });
     return null;
   }
   try { await rearmRecord(env, token, stored); }
@@ -303,7 +329,7 @@ export const ACCOUNT_OWNER_CREDENTIALS = Object.freeze(['supabase', 'dev']);
 // {kind, user_id, email, name, image_url, plan, suspended, session?, key_id?}.
 // Throws ApiError: 401 invalid_session, 403 api_key_not_allowed or session_not_allowed,
 // 503 when a backend is down.
-export async function resolveCaller(c, { allow = ALL_CREDENTIALS } = {}) {
+export async function resolveCaller(c, { allow = ALL_CREDENTIALS, limitRejections = true } = {}) {
   const env = c.env;
   const token = bearerToken(c);
   if (!token) throw invalidSession();
@@ -323,7 +349,8 @@ export async function resolveCaller(c, { allow = ALL_CREDENTIALS } = {}) {
       throw new ApiError(403, 'api_key_not_allowed',
         'API keys cannot manage keys, sessions or billing. Sign in at https://zero-x.live/dashboard instead.');
     }
-    const key = await database(() => verifyApiKey(env, token));
+    if (limitRejections && !await rejectedRecently(env, token)) assertNotRejectionLimited(c);
+    const key = await database(() => verifyApiKey(env, token, { address: clientAddress(c) }));
     if (!key) throw invalidSession();
     const account = await database(() => rpc(env, 'zerox_get_account', { p_user_id: key.user_id }));
     if (!account) throw invalidSession();
@@ -336,7 +363,8 @@ export async function resolveCaller(c, { allow = ALL_CREDENTIALS } = {}) {
       throw new ApiError(403, 'session_not_allowed',
         'Create API keys from the dashboard at https://zero-x.live/dashboard while signed in on the website.');
     }
-    const session = await database(() => loadCliSession(env, token, { waitUntil: backgroundRunner(c) }));
+    if (limitRejections && !await rejectedRecently(env, token)) assertNotRejectionLimited(c);
+    const session = await database(() => loadCliSession(env, token, { waitUntil: backgroundRunner(c), address: clientAddress(c) }));
     if (!session?.account_backed || typeof session.user_id !== 'string') throw invalidSession();
     const account = await database(() => rpc(env, 'zerox_get_account', { p_user_id: session.user_id }));
     if (!account) throw invalidSession();

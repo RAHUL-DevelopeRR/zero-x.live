@@ -335,7 +335,9 @@ export class HealthHub {
   async getJson(id, url, headers = {}) {
     const started = this.now();
     try {
-      const response = await this.fetch_(url, { headers, signal: AbortSignal.timeout(this.fetchTimeoutMs) });
+      // A redirect is never followed: the request carries a provider key, and a provider that answers
+      // with a redirect is a failed check (audit 3b).
+      const response = await this.fetch_(url, { headers, redirect: 'manual', signal: AbortSignal.timeout(this.fetchTimeoutMs) });
       let bodyError = null;
       const body = response.ok ? await response.json().catch(error => { bodyError = error; return null; }) : null;
       const text = response.ok ? '' : (await response.text().catch(() => '')).slice(0, 16384);

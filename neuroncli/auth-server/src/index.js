@@ -7,14 +7,14 @@ import { callerCountry, catalogEntries, catalogWarnings, inheritCallerCountry, l
 import { refreshModelsDevFacts } from './oiop/models-dev.js';
 import { globalHealthTracker } from './provider-health.js';
 import { createChatHandler } from './chat-handler.js';
-import { loadPlanLimits } from './plan-policy.js';
+import { loadPlanCatalog, loadPlanLimits, PAID_PLAN_IDS } from './plan-policy.js';
 import { isOperator } from './operator-auth.js';
 import {
   persistentSessionStore, readRecord, writeRecord, deleteRecord, sealSession, sessionExpiry, sessionTtlSeconds,
   sessionEncryptionConfigured,
 } from './session-store.js';
 import {
-  ApiError, backgroundRunner, bearerToken, claimsPlan, devAuthEnabled, devEmailFromToken, devRuntimeEnabled, devUserId, errorResponse,
+  ApiError, assertNotRejectionLimited, backgroundRunner, bearerToken, claimsPlan, sendApiError, devAuthEnabled, devEmailFromToken, devRuntimeEnabled, devUserId, errorResponse,
   identityProfileFromUser, INVALID_SESSION, isLoopbackHost, loadCliSession, readIdentityConfig, resolveCaller,
   SERVICE_UNAVAILABLE, SESSION_TOKEN_PATTERN, syncAccount, syncDevAccount, verifySupabaseToken,
 } from './auth-context.js';
@@ -23,7 +23,10 @@ import { registerAccountRoutes } from './routes/account.js';
 import { registerAdminRoutes, runScheduledMaintenance } from './routes/admin.js';
 import { registerBillingRoutes } from './routes/billing.js';
 import { registerKeyRoutes } from './routes/keys.js';
-import { registerPlanRoutes, v1ModelsPayload, v1ModelStatusPayload } from './routes/plans.js';
+import { registerPlanRoutes, sharedStatusFrame, v1ModelsPayload, v1ModelStatusPayload } from './routes/plans.js';
+import { bodyLimitFor, bodyTooLargeResponse, clientAddress, declaredBodyOver, modelStreamSlots } from './request-limits.js';
+import { rejectedRecently } from './auth-cache.js';
+import { ADMIN_POLICY, CROSS_ORIGIN_OPENER_POLICY, PERMISSIONS_POLICY, sitePolicy } from './csp.js';
 import { registerSessionIndex, registerSessionRoutes, sessionClient, unregisterSessionIndex } from './routes/sessions.js';
 import { registerDeviceRoutes } from './routes/device.js';
 import { registerDiscoveryRoutes } from './routes/discovery.js';
@@ -36,6 +39,9 @@ import { registerProviderKeyRoutes } from './routes/provider-keys.js';
 import { registerOfferRoutes } from './routes/offers.js';
 import { registerCatalogAdminRoutes } from './routes/catalog-admin.js';
 import { registerCreditRoutes } from './routes/credits.js';
+import { registerSearchRoutes } from './routes/search.js';
+import { registerConnectorRoutes } from './routes/connectors.js';
+import { registerMcpProxyRoutes } from './mcp-proxy.js';
 import { loadVaultKeys, vaultConfigured } from './provider-keys.js';
 import { accessConfigured, passedAccess } from './access-auth.js';
 import { WORKER_HOSTS, chatRefusal, chatRoutedToEc2, forwardToEc2, proxyStatus, servingRuntime } from './ec2-proxy.js';
@@ -45,6 +51,7 @@ import { extraWebOrigins, isExtraWebHost } from './web-hosts.js';
 export { HealthHub } from './health-hub.js';
 import { hubSendsTestRequests } from './health-hub.js';
 import { probeCheckerState } from './health-probes.js';
+import { dbProbeRowsState } from './probe-rows-db.js';
 import { registerWebhookRoutes } from './routes/webhooks.js';
 
 const SERVICE = 'neuroncli-gateway-worker';
@@ -60,23 +67,10 @@ app.onError((error, c) => {
 
 // Paths are served both at the root and under the legacy /neuroncli/auth-server mount.
 const routePath = pathname => pathname.startsWith(API_MOUNT + '/') ? pathname.slice(API_MOUNT.length) : pathname;
-const isApiRoute = path => ['/auth/', '/api/', '/v1/', '/admin/', '/webhooks/', '/relay/', '/oiop/'].some(prefix => path.startsWith(prefix)) ||
+const isApiRoute = path => ['/auth/', '/api/', '/v1/', '/admin/', '/webhooks/', '/relay/', '/oiop/', '/mcp/'].some(prefix => path.startsWith(prefix)) ||
   path === '/health' || path === '/ready';
 
-// ── Security headers ──
-const CONTENT_SECURITY_POLICY = [
-  "default-src 'self'",
-  "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://checkout.razorpay.com",
-  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://api.fontshare.com https://cdn.fontshare.com",
-  "font-src 'self' data: https://fonts.gstatic.com https://cdn.fontshare.com",
-  "img-src 'self' data: https:",
-  "connect-src 'self' https://*.supabase.co https://api.razorpay.com https://lumberjack.razorpay.com",
-  'frame-src https://api.razorpay.com https://checkout.razorpay.com',
-  "form-action 'self' http://127.0.0.1:*",
-  "frame-ancestors 'none'",
-  "base-uri 'self'",
-].join('; ');
-
+// ── Security headers: the policies are in src/csp.js ──
 // Public, cacheable API answers (everything else under /api/ is no-store).
 const PUBLIC_API_PATHS = ['/api/plans', '/api/changelog.json'];
 
@@ -94,18 +88,8 @@ const ADMIN_PAGE_FILES = Object.freeze({
   '/admin/models/models.js': '/neuroncli/admin/models/models.js',
   '/admin/models/models.css': '/neuroncli/admin/models/models.css',
 });
-// No inline script or style, nothing from another origin except the site fonts.
-const ADMIN_CONTENT_SECURITY_POLICY = [
-  "default-src 'none'",
-  "script-src 'self'",
-  "style-src 'self'",
-  "font-src 'self' https://cdn.fontshare.com https://fonts.gstatic.com",
-  "img-src 'self'",
-  "connect-src 'self'",
-  "form-action 'none'",
-  "frame-ancestors 'none'",
-  "base-uri 'none'",
-].join('; ');
+// The discovery review page, its script and its stylesheet get the same strict policy.
+const ADMIN_EXTRA_PATHS = ['/admin/discovery', '/admin/discovery/', '/admin/discovery/review.js', '/admin/discovery/review.css'];
 
 // A file other than a page (an image, a script, a video, robots.txt, the sitemap): what a shared
 // cache stores by default (Cloudflare caches by file extension, and HTML is not on its list).
@@ -127,14 +111,17 @@ app.use('*', async (c, next) => {
   c.header('X-Frame-Options', 'DENY');
   if (url.protocol === 'https:') c.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
   const testHost = isExtraWebHost(c.env, url.hostname);
-  // The Neuron sign-in pages carry session tokens, so their policy is always enforced; the
-  // rest of the site stays report-only until CSP_ENFORCE=true.
+  // The policy is enforced everywhere (CSP_ENFORCE=false turns the site-wide one back into
+  // Content-Security-Policy-Report-Only, a kill switch for a page the hashes in src/csp-hashes.js
+  // do not cover). The Neuron sign-in pages and the operator pages are always enforced.
   const signInPage = url.pathname.startsWith('/neuroncli/') ||
     ((url.hostname === 'neuron.zero-x.live' || isLoopbackHost(url.host) || testHost) && url.pathname.startsWith('/device'));
-  const adminPage = Object.hasOwn(ADMIN_PAGE_FILES, url.pathname);
-  const enforceCsp = c.env?.CSP_ENFORCE === 'true' || signInPage || adminPage;
+  const adminPage = Object.hasOwn(ADMIN_PAGE_FILES, url.pathname) || ADMIN_EXTRA_PATHS.includes(path);
+  const enforceCsp = c.env?.CSP_ENFORCE !== 'false' || signInPage || adminPage;
   c.header(enforceCsp ? 'Content-Security-Policy' : 'Content-Security-Policy-Report-Only',
-    adminPage ? ADMIN_CONTENT_SECURITY_POLICY : CONTENT_SECURITY_POLICY);
+    adminPage ? ADMIN_POLICY : sitePolicy(c.env, { hostname: url.hostname, pathname: url.pathname }));
+  c.header('Permissions-Policy', PERMISSIONS_POLICY);
+  c.header('Cross-Origin-Opener-Policy', CROSS_ORIGIN_OPENER_POLICY);
   if (adminPage) c.header('Referrer-Policy', 'no-referrer');
   // Every forward from the Worker fetches EC2_PROXY_ORIGIN + path (src/ec2-proxy.js), so in
   // Cloudflare's cache all hosts and schemes share one key per path. What depends on them is
@@ -148,7 +135,7 @@ app.use('*', async (c, next) => {
     c.header('Cache-Control', 'no-store');
     c.header('Referrer-Policy', url.pathname.startsWith('/neuroncli/login/') ? 'origin' : 'no-referrer');
   }
-  if (['/api/', '/admin/', '/webhooks/', '/relay/'].some(prefix => path.startsWith(prefix)) && !PUBLIC_API_PATHS.includes(path)) {
+  if (['/api/', '/admin/', '/webhooks/', '/relay/', '/mcp/'].some(prefix => path.startsWith(prefix)) && !PUBLIC_API_PATHS.includes(path)) {
     c.header('Cache-Control', 'no-store');
   }
   // The dashboard host (and a test host) are never indexed: their pages and APIs say so. Their
@@ -162,7 +149,7 @@ app.use('*', async (c, next) => {
   const strayHost = servingRuntime(c.env) === 'worker' && !WORKER_HOSTS.includes(host) && !isLoopbackHost(url.host) && !testHost;
   if (((url.hostname === 'dashboard.zero-x.live' || testHost || strayHost) && !isStaticFile(url.pathname)) ||
       url.pathname.startsWith('/neuroncli/') || path === '/health' ||
-      ['/auth/', '/api/', '/v1/', '/admin/', '/webhooks/', '/relay/', '/oiop/'].some(prefix => path.startsWith(prefix))) {
+      ['/auth/', '/api/', '/v1/', '/admin/', '/webhooks/', '/relay/', '/oiop/', '/mcp/'].some(prefix => path.startsWith(prefix))) {
     c.header('X-Robots-Tag', 'noindex, nofollow');
   }
 });
@@ -179,7 +166,7 @@ async function notFoundPage(c) {
 
 // Pages served from https://zero-x.live/<page> (clean URLs).
 const SITE_PAGES = ['/about', '/privacy', '/terms', '/find-files-by-content', '/wheres-that-file',
-  '/pricing', '/neuron-cli', '/docs', '/docs/trust', '/download', '/changelog', '/refund', '/contact', '/shipping',
+  '/pricing', '/neuron-cli', '/docs', '/docs/trust', '/docs/data', '/download', '/changelog', '/refund', '/contact', '/shipping',
   '/neucockpit', '/ai-coding-agent', '/free-ai-coding-agent', '/claude-code-alternative'];
 
 // Hostname-based subdomain routing middleware
@@ -205,7 +192,13 @@ app.use('*', async (c, next) => {
   }
 
   // The admin pages' files are only reachable through /admin/keys and /admin/models on the dashboard host.
-  if (path.startsWith('/neuroncli/admin/')) return (await notFoundPage(c)) || c.text('Not Found', 404);
+  // The asset server decodes percent-encoding after this guard (server.js), so /neuroncli/%61dmin/ is
+  // the same folder: the guard looks at the decoded path too (audit 3b, path-ssrf).
+  let decodedPath = path;
+  try { decodedPath = decodeURIComponent(path); } catch { return c.text('Invalid path', 400); }
+  if (path.toLowerCase().startsWith('/neuroncli/admin/') || decodedPath.toLowerCase().startsWith('/neuroncli/admin/')) {
+    return (await notFoundPage(c)) || c.text('Not Found', 404);
+  }
 
   if (c.req.method === 'GET' || c.req.method === 'HEAD') {
     if ((hostname === 'dashboard.zero-x.live' || testHost) && path === '/robots.txt')
@@ -311,6 +304,20 @@ app.use('*', async (c, next) => {
   if (path.startsWith('/relay/') && c.req.header('Upgrade')?.toLowerCase() === 'websocket') return next();
   if (path.startsWith('/auth/') || path.startsWith('/api/') || path.startsWith('/relay/')) return identityCors(c, next);
   if (path.startsWith('/v1/') || path === '/health' || path === '/ready') return openCors(c, next);
+  return next();
+});
+
+// Body limits (audit F16, and the Worker-served JSON routes of 3b): a request whose declared
+// Content-Length is over the route's limit (64 KiB; the chat routes and the relay 2 MiB; the
+// webhook 256 KiB; src/request-limits.js) is refused before any route reads it or any database
+// is called. On Node, server.js has already counted the bytes it read; a Worker body sent without
+// Content-Length is bounded by Cloudflare and then by the Node server when it is forwarded.
+app.use('*', async (c, next) => {
+  if (c.req.method === 'GET' || c.req.method === 'HEAD' || c.req.method === 'OPTIONS') return next();
+  const path = routePath(new URL(c.req.url).pathname);
+  if (!isApiRoute(path)) return next();
+  const limit = bodyLimitFor(path, c.env);
+  if (declaredBodyOver(c.req.raw.headers, limit) !== null) return bodyTooLargeResponse(limit);
   return next();
 });
 
@@ -482,7 +489,7 @@ function newSessionTimes(env) {
 // API keys and dev identities authenticate per request; they have no stored session.
 async function credentialSession(c, token, kind) {
   let caller;
-  try { caller = await resolveCaller(c, { allow: [kind] }); }
+  try { caller = await resolveCaller(c, { allow: [kind], limitRejections: false }); }
   catch (error) {
     if (error instanceof ApiError && error.status < 500) return null;
     throw error;
@@ -506,7 +513,7 @@ async function validateSession(c, { apiKeys = false } = {}) {
   if (token.startsWith('dev_')) return devAuthEnabled(c) ? credentialSession(c, token, 'dev') : null;
   if (!SESSION_TOKEN_PATTERN.test(token)) return null;
 
-  const session = await loadCliSession(c.env, token, { waitUntil: backgroundRunner(c) });
+  const session = await loadCliSession(c.env, token, { waitUntil: backgroundRunner(c), address: clientAddress(c) });
   if (!session) return null;
   if (!session.account_backed) {
     if (session.openrouter_key) session.owned_provider_only = true;
@@ -555,11 +562,6 @@ async function sha256(plain) {
 const PKCE_TTL_SECONDS = 600;
 const PKCE_STARTS_PER_WINDOW = 10;
 const pkceStarts = new Map();
-function clientAddress(c) {
-  // server.js sets x-neuron-client-ip from the socket; Cloudflare sets cf-connecting-ip.
-  const header = c.env?.NEURON_RUNTIME === 'node' ? 'x-neuron-client-ip' : 'cf-connecting-ip';
-  return (c.req.header(header) || 'unknown').slice(0, 64);
-}
 function takePkceStart(address) {
   const now = Date.now();
   const entry = pkceStarts.get(address);
@@ -574,6 +576,19 @@ function takePkceStart(address) {
 }
 
 // ── Routes ──
+
+// Whether every paid plan has its Razorpay plan id stored for each currency (zerox_plan_policy
+// razorpay_plan_id_inr / _usd). Checkout answers billing_plan_missing for a currency that lacks one.
+// {inr, usd, missing: ['pro:USD', ...]}, or null when the catalogue cannot be read.
+async function plansConfigured(env) {
+  try {
+    const { plans } = await loadPlanCatalog(env);
+    const paid = plans.filter(plan => PAID_PLAN_IDS.includes(plan.id));
+    const missing = paid.flatMap(plan => [['INR', plan.razorpay_plan_id_inr], ['USD', plan.razorpay_plan_id_usd]]
+      .filter(([, id]) => !id).map(([currency]) => `${plan.id}:${currency}`));
+    return { inr: !missing.some(entry => entry.endsWith(':INR')), usd: !missing.some(entry => entry.endsWith(':USD')), missing };
+  } catch { return null; }
+}
 
 // 1. Health check: anonymous callers learn only that the service is up, and which commit runs
 // (GIT_COMMIT: deploy.yml's --var on the Worker, the release's REVISION file on EC2), so a deploy
@@ -594,6 +609,7 @@ api.get('/health', async (c) => {
     kv_bound: !!c.env.SESSIONS_KV,
     database_configured: databaseConfigured(c.env),
     billing_configured: razorpayConfigured(c.env),
+    plans_configured: await plansConfigured(c.env),
     webhook_configured: webhookConfigured(c.env),
     session_encryption: sessionEncryptionConfigured(c.env),
     provider_key_vault: vaultConfigured(c.env),
@@ -614,16 +630,27 @@ function healthCheckerStatus(env) {
     return node === 'running' ? { node_probes: node }
       : { node_probes: node, warning: 'The Node checker is not testing the pools; set HEALTH_HUB_PROBES=on on the Worker until it runs' };
   }
-  return { hub_test_requests: hubSendsTestRequests(env), chat_routed_to_node: chatRoutedToEc2(env) };
+  // The Worker has no checker of its own: it reads the Node checker's verdict rows from Postgres
+  // (src/probe-rows-db.js), source 'database' once a read succeeded, else the HealthHub's rows alone.
+  return { hub_test_requests: hubSendsTestRequests(env), chat_routed_to_node: chatRoutedToEc2(env),
+    verdict_rows: dbProbeRowsState(env) };
 }
 
+// A ready answer is remembered for READY_CACHE_SECONDS (5): the probe reads the database, and it is
+// open to anyone (audit F5). A not-ready answer is never remembered, so a deploy sees recovery at once.
+const readyCache = new WeakMap();
 api.get('/ready', async c => {
+  const seconds = Number(c.env?.READY_CACHE_SECONDS ?? 5);
+  const held = readyCache.get(c.env);
+  if (held && held > Date.now()) return c.json({ ready: true });
   await loadPlanLimits(c.env);
   const store = persistentSessionStore(c.env);
   if (!store) return c.json({ ready: false }, 503);
   await store.get('readiness');
   const models = await resolveModelCatalog(c.env);
-  return c.json({ ready: models.some(model => model.tools) }, models.some(model => model.tools) ? 200 : 503);
+  const ready = models.some(model => model.tools);
+  if (ready && seconds > 0) readyCache.set(c.env, Date.now() + seconds * 1000);
+  return c.json({ ready }, ready ? 200 : 503);
 });
 
 // Supabase provider settings are cached for 60 s (10 s after a failed lookup).
@@ -903,6 +930,11 @@ api.post('/auth/azure/chat/completions', chatCompletionsHandler);
 // Anonymous callers get the free plan's view; a bad credential is an error, not anonymous.
 async function modelsCaller(c) {
   if (!c.req.header('Authorization')) return { session: {} };
+  // A visitor with many rejected credentials this minute is refused before any lookup (F5).
+  try {
+    const token = bearerToken(c);
+    if (!token || !await rejectedRecently(c.env, token)) assertNotRejectionLimited(c);
+  } catch (error) { return { response: sendApiError(c, error) }; }
   try {
     const valid = await validateInferenceCredential(c);
     return valid ? { session: valid.session } : { response: invalidSessionResponse(c) };
@@ -938,6 +970,11 @@ const sleep = (ms, signal) => new Promise(resolve => {
 api.get('/v1/models/stream', async (c) => {
   const caller = await modelsCaller(c);
   if (caller.response) return caller.response;
+  const slot = modelStreamSlots(c.env).take(clientAddress(c), { anonymous: !c.req.header('Authorization') });
+  if (!slot.release) {
+    return errorResponse(c, 429, 'rate_limited', 'Too many open model streams. Retry shortly.',
+      { retry_after_seconds: slot.retryAfterSeconds });
+  }
   const intervalMs = Math.max(20, Number(c.env?.MODELS_STREAM_INTERVAL_MS) || 15_000);
   const lifetimeMs = Math.max(intervalMs, Number(c.env?.MODELS_STREAM_LIFETIME_MS) || 600_000);
   const signal = c.req.raw.signal;
@@ -952,10 +989,11 @@ api.get('/v1/models/stream', async (c) => {
         send('retry: 5000\n\n');
         try {
           while (!closed && !signal?.aborted && Date.now() - started < lifetimeMs) {
-            const { etag, body: status } = await v1ModelStatusPayload(c, caller.session);
-            if (etag !== last) {
-              last = etag;
-              send(`id: ${etag}\nevent: catalog.updated\ndata: ${JSON.stringify(status)}\n\n`);
+            // One computation and one serialised frame for every connection with this view.
+            const shared = await sharedStatusFrame(c, caller.session, Math.floor(intervalMs / 2));
+            if (shared.etag !== last) {
+              last = shared.etag;
+              send(shared.frame);
             } else {
               send(': keepalive\n\n');
             }
@@ -964,11 +1002,12 @@ api.get('/v1/models/stream', async (c) => {
         } catch (error) {
           console.warn('Model stream stopped', { name: error?.name });
         } finally {
+          slot.release();
           if (!closed) { closed = true; try { controller.close(); } catch { /* already closed */ } }
         }
       })();
     },
-    cancel() { closed = true; },
+    cancel() { closed = true; slot.release(); },
   });
   return new Response(body, { headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache',
     'X-Accel-Buffering': 'no' } });
@@ -1115,6 +1154,10 @@ registerProviderKeyRoutes(api);
 registerOfferRoutes(api);
 registerCatalogAdminRoutes(api);
 registerCreditRoutes(api);
+registerSearchRoutes(api);
+// Hosted connectors (contract section 18.4): 404 unless HOSTED_CONNECTORS=true.
+registerConnectorRoutes(api);
+registerMcpProxyRoutes(api);
 
 app.route(API_MOUNT, api);
 app.route('/', api);

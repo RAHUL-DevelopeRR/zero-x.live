@@ -7,7 +7,8 @@
   <meta name="description" content="Neuron by Zero-X is an AI coding agent for the terminal. It reads your repository, edits files and runs your tests with your permission. Install the 7.0.0-alpha.4 release with one command on macOS, Linux or Windows and start free on hosted models.">
   <meta name="robots" content="index,follow,max-image-preview:large">
   <link rel="canonical" href="https://zero-x.live/">
-  <meta name="theme-color" content="#0A0A0C">
+  <meta name="theme-color" content="#FFFFFF" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#141413" media="(prefers-color-scheme: dark)">
   <link rel="icon" type="image/png" sizes="32x32" href="/Assets/zerox-favicon-32.png">
   <link rel="apple-touch-icon" sizes="180x180" href="/Assets/zerox-apple-touch-icon.png">
   <meta property="og:type" content="website">
@@ -22,26 +23,34 @@
   <meta name="twitter:description" content="Install with one command and let Neuron read, edit and test your code with your permission. Free to start.">
   <meta name="twitter:image" content="https://zero-x.live/Assets/zerox-share.png">
   <meta name="twitter:image:alt" content="Zero-X logo">
-  <link rel="stylesheet" href="/site-fonts.css">
+  <link rel="preload" href="/fonts/aspekta-400.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/fonts/aspekta-500.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/zx-tokens.css">
   <link rel="stylesheet" href="/home.css">
   <script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"Organization","@id":"https://zero-x.live/#organization","name":"Zero-X","alternateName":["Zero X","ZeroX","zero-x.live"],"url":"https://zero-x.live/","logo":"https://zero-x.live/Assets/zerox-favicon-centered.png","description":"Zero-X builds Neuron, an AI coding agent for the terminal, and NeuCockpit, local AI file search for desktop. Built in Tamil Nadu, India.","sameAs":["https://www.instagram.com/zerox.corporation/","https://github.com/RAHUL-DevelopeRR/neuron-v2"],"contactPoint":{"@type":"ContactPoint","email":"support@zero-x.live","contactType":"customer support"},"knowsAbout":["AI coding agents","AI agents","Large language models","LLM gateways","Developer tools","Command-line tools","Semantic file search"]},{"@type":"WebSite","@id":"https://zero-x.live/#website","name":"Zero-X","alternateName":["Zero X","ZeroX","Neuron by Zero-X"],"url":"https://zero-x.live/","publisher":{"@id":"https://zero-x.live/#organization"}},{"@type":"WebPage","@id":"https://zero-x.live/#webpage","url":"https://zero-x.live/","name":"Zero-X | Neuron, the Free AI Coding Agent for Your Terminal","isPartOf":{"@id":"https://zero-x.live/#website"},"about":{"@id":"https://zero-x.live/#neuron"}},{"@type":"SoftwareApplication","@id":"https://zero-x.live/#neuron","name":"Neuron CLI","applicationCategory":"DeveloperApplication","operatingSystem":"Windows, macOS, Linux","url":"https://zero-x.live/neuron-cli","description":"An AI coding agent for the terminal that reads, edits and tests code in your repository with your permission.","publisher":{"@id":"https://zero-x.live/#organization"},"offers":{"@type":"Offer","name":"Free","price":"0","priceCurrency":"USD","url":"https://zero-x.live/pricing#plan-free"},"softwareVersion":"7.0.0-alpha.4","downloadUrl":"https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/tag/v7.0.0-alpha.4","alternateName":["Neuron","Neuron by Zero-X","Zero-X Neuron"],"applicationSubCategory":"AI coding agent","isAccessibleForFree":true,"license":"https://opensource.org/licenses/MIT","featureList":["Reads, writes and edits files in your repository","Runs shell or PowerShell commands, tests and builds","Permission modes: read-only, workspace-write and danger-full-access","Full-screen terminal UI and a line REPL","MCP servers and subagents","Headless runs for CI with neuron -p","Hosted models through Zero-X or your own OpenAI-compatible API key"]},{"@type":"SoftwareApplication","@id":"https://zero-x.live/#neucockpit","name":"NeuCockpit","applicationCategory":"UtilitiesApplication","operatingSystem":"Windows, macOS, Linux","url":"https://zero-x.live/neucockpit","description":"NeuCockpit local AI file search for desktop: find files by meaning and summarize your own documents.","publisher":{"@id":"https://zero-x.live/#organization"}}]}</script>
   <script type="module" src="/site-nav.js"></script>
   <script type="module" src="/pricing.js"></script>
   <script type="module" src="/home.js"></script>
+  <script type="module" src="/announce.js"></script>
 </head>
 <body data-home>
   <a class="zx-skip" href="#main">Skip to content</a>
+  <div class="zx-announce" role="region" aria-label="Announcement" data-announce="alpha-4">
+    <div class="zx-container zx-announce__inner">
+      <span class="zx-badge zx-badge--ink">New</span>
+      <p>Neuron 7.0.0-alpha.4 adds a status bar under the prompt. <a href="https://github.com/RAHUL-DevelopeRR/neuron-v2/blob/HEAD/CHANGELOG.md">Known limitations <svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#arrow-right"/></svg></a></p>
+      <button class="zx-announce__close" type="button" aria-label="Dismiss announcement" hidden><svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#x"/></svg></button>
+    </div>
+  </div>
   <header class="zx-header">
     <div class="zx-container zx-header__inner">
       <a class="zx-brand" href="/"><img src="/Assets/zerox-mark.svg" width="28" height="28" alt="">Zero-X</a>
-      <button class="zx-nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" hidden><span class="zx-nav-toggle__bars" aria-hidden="true"></span>Menu</button>
+      <button class="zx-nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" hidden><svg class="zx-icon zx-icon--menu" aria-hidden="true"><use href="/icons.svg#menu"/></svg><svg class="zx-icon zx-icon--close" aria-hidden="true"><use href="/icons.svg#x"/></svg>Menu</button>
       <nav class="zx-nav" id="site-nav" aria-label="Main">
         <a href="/neuron-cli">Neuron CLI</a>
-        <a href="#models">Models</a>
         <a href="/pricing">Pricing</a>
         <a href="/docs">Docs</a>
-        <a class="zx-btn zx-btn--sm" href="https://dashboard.zero-x.live/">Dashboard</a>
+        <a class="zx-btn zx-btn--sm" href="https://dashboard.zero-x.live/"><svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#user"/></svg>Dashboard</a>
       </nav>
     </div>
   </header>
@@ -50,9 +59,8 @@
   <main id="main" data-pricing-root>
     <section class="zx-container zx-home-hero" aria-labelledby="home-title">
       <div class="zx-home-hero__copy">
-        <p class="zx-home-release"><span class="zx-badge zx-badge--accent">Alpha 4</span> <span>Neuron 7.0.0-alpha.4 adds a status bar under the prompt. <a href="https://github.com/RAHUL-DevelopeRR/neuron-v2/blob/HEAD/CHANGELOG.md">Known limitations</a></span></p>
         <h1 id="home-title"><span class="zx-eyebrow">Neuron by Zero-X</span> The AI coding agent for your terminal</h1>
-        <p class="zx-lead">Neuron reads your repository, edits files and runs your tests on hosted LLMs, and asks before it does anything you have not allowed.</p>
+        <p class="zx-lead">Neuron reads your repository, edits files and runs your tests on hosted LLMs. It asks before it does anything you have not allowed.</p>
 
         <div class="zx-home-install" data-install-tabs>
           <section class="zx-install" id="install-npm" data-tab-label="npm" aria-labelledby="install-npm-title">
@@ -86,17 +94,12 @@
         <div class="zx-row">
           <a class="zx-btn zx-btn--primary" href="#get-started">Start free</a>
           <a class="zx-btn" href="#models">See live models</a>
-          <a class="zx-btn zx-btn--ghost" href="/docs">Read the docs</a>
+          <a class="zx-btn zx-btn--ghost" href="/docs">Read the docs <svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#arrow-right"/></svg></a>
         </div>
-        <ul class="zx-home-facts" aria-label="At a glance">
-          <li>Free plan: <span data-plan-limit="free:daily_requests">100</span> requests a day and <span data-plan-limit="free:token_phrase">1M tokens every 5 hours</span>, no card needed</li>
-          <li>macOS, Linux and Windows</li>
-          <li>MIT-licensed, source on GitHub</li>
-        </ul>
       </div>
 
       <figure class="zx-term" aria-labelledby="term-caption">
-        <div class="zx-term__bar" aria-hidden="true"><span></span><span></span><span></span><b>~/shop-api</b></div>
+        <div class="zx-term__bar" aria-hidden="true"><span class="zx-label">~/shop-api</span><span class="zx-label">Illustration</span></div>
         <pre class="zx-term__body"><span class="zx-term__prompt">&gt;</span> Add a test for expired tokens and fix whatever fails
 <span class="zx-term__dim">&#9654; Thinking (412 chars hidden)</span>
 <span class="zx-term__tool">Reading</span> src/auth/session.rs
@@ -112,9 +115,29 @@ The expiry check compared with &lt;= instead of &lt;. I fixed it and added <span
       </figure>
     </section>
 
+    <section class="zx-container zx-home-tiles" aria-label="At a glance">
+      <div class="zx-tiles">
+        <div class="zx-tile">
+          <span class="zx-tile__label">Free plan</span>
+          <span class="zx-tile__value"><span data-plan-price="free">$0</span></span>
+          <span class="zx-tile__note">per month, no card needed</span>
+        </div>
+        <div class="zx-tile">
+          <span class="zx-tile__label">Requests a day</span>
+          <span class="zx-tile__value"><span data-plan-limit="free:daily_requests">100</span></span>
+          <span class="zx-tile__note">plus <span data-plan-limit="free:token_phrase">1M tokens every 5 hours</span>, on free models chosen for coding</span>
+        </div>
+        <div class="zx-tile">
+          <span class="zx-tile__label">License</span>
+          <span class="zx-tile__value">MIT</span>
+          <span class="zx-tile__note">Source on GitHub. macOS, Linux and Windows.</span>
+        </div>
+      </div>
+    </section>
+
     <section class="zx-container zx-section" id="models" aria-labelledby="models-title">
-      <div class="zx-home-heading">
-        <p class="zx-eyebrow">Live models</p>
+      <div class="zx-section-head">
+        <p class="zx-label">Live models</p>
         <h2 id="models-title">Models you can use right now</h2>
         <p class="zx-muted">The same list Neuron shows in its model picker, kept live by the Zero-X gateway's health checker through <code>GET /v1/models/status</code>. A model that is slow, busy or down says so, and one nobody has checked lately never claims to be available. Context is what you can send on your plan; hover it for the model's own maximum.</p>
       </div>
@@ -139,8 +162,9 @@ The expiry check compared with &lt;= instead of &lt;. I fixed it and added <span
           <li class="zx-model" data-tone="unknown"><span class="zx-maker" data-maker="cohere" role="img" aria-label="Cohere" title="Cohere"><span aria-hidden="true">C</span></span><span class="zx-model__main"><span class="zx-model__name">North Mini Code</span></span><span class="zx-model__ctx" title="Up to 256K tokens per request on the Free plan.">256K<span class="zx-visually-hidden"> context. Up to 256K tokens per request on the Free plan.</span></span><span class="zx-model__status"><span class="zx-model__dot" aria-hidden="true"></span>Not checked recently</span></li>
           <li class="zx-model" data-tone="unknown"><span class="zx-maker" data-maker="zhipu" role="img" aria-label="Z.ai" title="Z.ai"><span aria-hidden="true">Z</span></span><span class="zx-model__main"><span class="zx-model__name">GLM-4.7 Flash</span></span><span class="zx-model__ctx" title="Up to 200K tokens per request on the Free plan.">200K<span class="zx-visually-hidden"> context. Up to 200K tokens per request on the Free plan.</span></span><span class="zx-model__status"><span class="zx-model__dot" aria-hidden="true"></span>Not checked recently</span></li>
           <li class="zx-model" data-tone="unknown"><span class="zx-maker" data-maker="zhipu" role="img" aria-label="Z.ai" title="Z.ai"><span aria-hidden="true">Z</span></span><span class="zx-model__main"><span class="zx-model__name">GLM-4.5 Flash</span></span><span class="zx-model__ctx" title="Up to 131K tokens per request on the Free plan.">131K<span class="zx-visually-hidden"> context. Up to 131K tokens per request on the Free plan.</span></span><span class="zx-model__status"><span class="zx-model__dot" aria-hidden="true"></span>Not checked recently</span></li>
-          <li class="zx-model" data-tone="unknown"><span class="zx-maker" data-maker="anthropic" data-logo role="img" aria-label="Anthropic" title="Anthropic"></span><span class="zx-model__main"><span class="zx-model__name">Claude Sonnet 5.5</span><span class="zx-badge zx-badge--purple">Pro and Max</span></span><span class="zx-model__ctx" title="Up to 200K tokens per request on Pro and Max.">200K<span class="zx-visually-hidden"> context. Up to 200K tokens per request on Pro and Max.</span></span><span class="zx-model__status"><span class="zx-model__dot" aria-hidden="true"></span>Not checked recently</span></li>
-          <li class="zx-model" data-tone="unknown"><span class="zx-maker" data-maker="anthropic" data-logo role="img" aria-label="Anthropic" title="Anthropic"></span><span class="zx-model__main"><span class="zx-model__name">Claude Opus 5.5</span><span class="zx-badge zx-badge--purple">Pro and Max</span></span><span class="zx-model__ctx" title="Up to 200K tokens per request on Pro and Max.">200K<span class="zx-visually-hidden"> context. Up to 200K tokens per request on Pro and Max.</span></span><span class="zx-model__status"><span class="zx-model__dot" aria-hidden="true"></span>Not checked recently</span></li>
+          <li class="zx-model" data-tone="unknown"><span class="zx-maker" data-maker="anthropic" data-logo role="img" aria-label="Anthropic" title="Anthropic"></span><span class="zx-model__main"><span class="zx-model__name">Claude Sonnet 5.5</span><span class="zx-badge zx-badge--tan">Pro and Max</span></span><span class="zx-model__ctx" title="Up to 200K tokens per request on Pro and Max.">200K<span class="zx-visually-hidden"> context. Up to 200K tokens per request on Pro and Max.</span></span><span class="zx-model__status"><span class="zx-model__dot" aria-hidden="true"></span>Not checked recently</span></li>
+          <li class="zx-model" data-tone="unknown"><span class="zx-maker" data-maker="anthropic" data-logo role="img" aria-label="Anthropic" title="Anthropic"></span><span class="zx-model__main"><span class="zx-model__name">Claude Opus 5.5</span><span class="zx-badge zx-badge--tan">Pro and Max</span></span><span class="zx-model__ctx" title="Up to 200K tokens per request on Pro and Max.">200K<span class="zx-visually-hidden"> context. Up to 200K tokens per request on Pro and Max.</span></span><span class="zx-model__status"><span class="zx-model__dot" aria-hidden="true"></span>Not checked recently</span></li>
+          <li class="zx-model" data-tone="unknown"><span class="zx-maker" data-maker="anthropic" data-logo role="img" aria-label="Anthropic" title="Anthropic"></span><span class="zx-model__main"><span class="zx-model__name">Claude Haiku 5.5</span></span><span class="zx-model__ctx" title="Up to 100K tokens per request on the Free plan.">100K<span class="zx-visually-hidden"> context. Up to 100K tokens per request on the Free plan.</span></span><span class="zx-model__status"><span class="zx-model__dot" aria-hidden="true"></span>Not checked recently</span></li>
         </ul>
         <div class="zx-modelpane__foot">
           <p class="zx-help" id="models-note" role="status" aria-live="polite">Built-in list: nothing here is checked until the live list loads from the Zero-X gateway.</p>
@@ -150,8 +174,10 @@ The expiry check compared with &lt;= instead of &lt;. I fixed it and added <span
     </section>
 
     <section class="zx-container zx-section" id="get-started" aria-labelledby="get-started-title">
-      <p class="zx-eyebrow">Get started</p>
-      <h2 id="get-started-title">From install to first change in three steps</h2>
+      <div class="zx-section-head">
+        <p class="zx-label">Get started</p>
+        <h2 id="get-started-title">From install to first change in three steps</h2>
+      </div>
       <ol class="zx-steps zx-home-steps">
         <li>
           <h3>Install</h3>
@@ -173,24 +199,50 @@ neuron</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-
     </section>
 
     <section class="zx-container zx-section" id="features" aria-labelledby="features-title">
-      <p class="zx-eyebrow">What Neuron does</p>
-      <h2 id="features-title">A senior pair programmer that runs your tools</h2>
-      <div class="zx-grid zx-grid--4 zx-home-features">
-        <article class="zx-card zx-feature"><h3>Repo-aware agent loop</h3><p class="zx-muted">Explores the files that matter, makes a plan, edits code and checks the result with your tests or build before it reports back.</p></article>
-        <article class="zx-card zx-feature"><h3>Real tools</h3><p class="zx-muted">Reads, writes and edits files, searches with glob and grep, runs shell or PowerShell commands, fetches web pages and keeps a task list for long jobs.</p></article>
-        <article class="zx-card zx-feature"><h3>You stay in control</h3><p class="zx-muted">The default mode, <code>workspace-write</code>, edits files in your workspace and runs read-only commands; switch to <code>read-only</code> or <code>danger-full-access</code> with <code>--permission-mode</code>. Anything else needs your approval: allow once, allow for the session, deny, or deny with a note.</p></article>
-        <article class="zx-card zx-feature"><h3>Full-screen terminal UI</h3><p class="zx-muted">On a terminal, <code>neuron</code> opens <code>neuron-tui</code>: streamed replies, tool calls with their output, a permission dialog, a model picker and a footer with model, git state, tokens and context. <code>neuron --continue</code> reopens the latest chat for this folder; <code>neuron --no-tui</code> keeps the line REPL.</p></article>
-        <article class="zx-card zx-feature"><h3>MCP servers and subagents</h3><p class="zx-muted">Plug in Model Context Protocol servers for extra tools, and hand focused jobs like code search or review to subagents with their own context.</p></article>
-        <article class="zx-card zx-feature"><h3>Headless and CI</h3><p class="zx-muted">Run one-shot tasks with <code>neuron -p "…"</code>. Create an API key in the dashboard and set <code>NEURON_TOKEN</code> on servers without a browser.</p></article>
-        <article class="zx-card zx-feature"><h3>Hosted models, no keys to manage</h3><p class="zx-muted">Sign in and Neuron routes through the Zero-X gateway. Model keys stay on the server; Neuron keeps its login in the macOS Keychain or Windows Credential Manager, and on Linux in <code>~/.neuroncli/credentials.json</code>, readable only by you.</p></article>
-        <article class="zx-card zx-feature"><h3>Bring your own key</h3><p class="zx-muted">Prefer your own provider? Set <code>OPENAI_API_KEY</code> and <code>OPENAI_BASE_URL</code> for any OpenAI-compatible endpoint, or connect your own OpenRouter account.</p></article>
+      <div class="zx-section-head">
+        <p class="zx-label">What Neuron does</p>
+        <h2 id="features-title">Reads, edits and tests in your repository</h2>
       </div>
+      <dl class="zx-spec">
+        <div class="zx-spec__row">
+          <dt><svg class="zx-icon" aria-hidden="true"><use href="/icons.svg#git-branch"/></svg><h3>Repo-aware agent loop</h3></dt>
+          <dd>Explores the files that matter, makes a plan, edits code and checks the result with your tests or build before it reports back.</dd>
+        </div>
+        <div class="zx-spec__row">
+          <dt><svg class="zx-icon" aria-hidden="true"><use href="/icons.svg#wrench"/></svg><h3>Real tools</h3></dt>
+          <dd>Reads, writes and edits files, searches with glob and grep, runs shell or PowerShell commands, fetches web pages and keeps a task list for long jobs.</dd>
+        </div>
+        <div class="zx-spec__row">
+          <dt><svg class="zx-icon" aria-hidden="true"><use href="/icons.svg#shield-check"/></svg><h3>You stay in control</h3></dt>
+          <dd>The default mode, <code>workspace-write</code>, edits files in your workspace and runs read-only commands; switch to <code>read-only</code> or <code>danger-full-access</code> with <code>--permission-mode</code>. Anything else needs your approval: allow once, allow for the session, deny, or deny with a note.</dd>
+        </div>
+        <div class="zx-spec__row">
+          <dt><svg class="zx-icon" aria-hidden="true"><use href="/icons.svg#terminal"/></svg><h3>Full-screen terminal UI</h3></dt>
+          <dd>On a terminal, <code>neuron</code> opens <code>neuron-tui</code>: streamed replies, tool calls with their output, a permission dialog, a model picker and a footer with model, git state, tokens and context. <code>neuron --continue</code> reopens the latest chat for this folder; <code>neuron --no-tui</code> keeps the line REPL.</dd>
+        </div>
+        <div class="zx-spec__row">
+          <dt><svg class="zx-icon" aria-hidden="true"><use href="/icons.svg#plug"/></svg><h3>MCP servers and subagents</h3></dt>
+          <dd>Plug in Model Context Protocol servers for extra tools, and hand focused jobs like code search or review to subagents with their own context.</dd>
+        </div>
+        <div class="zx-spec__row">
+          <dt><svg class="zx-icon" aria-hidden="true"><use href="/icons.svg#server"/></svg><h3>Headless and CI</h3></dt>
+          <dd>Run one-shot tasks with <code>neuron -p "…"</code>. Create an API key in the dashboard and set <code>NEURON_TOKEN</code> on servers without a browser.</dd>
+        </div>
+        <div class="zx-spec__row">
+          <dt><svg class="zx-icon" aria-hidden="true"><use href="/icons.svg#lock"/></svg><h3>Hosted models, no keys to manage</h3></dt>
+          <dd>Sign in and Neuron routes through the Zero-X gateway. Model keys stay on the server; Neuron keeps its login in the macOS Keychain or Windows Credential Manager, and on Linux in <code>~/.neuroncli/credentials.json</code>, readable only by you.</dd>
+        </div>
+        <div class="zx-spec__row">
+          <dt><svg class="zx-icon" aria-hidden="true"><use href="/icons.svg#key"/></svg><h3>Bring your own key</h3></dt>
+          <dd>Prefer your own provider? Set <code>OPENAI_API_KEY</code> and <code>OPENAI_BASE_URL</code> for any OpenAI-compatible endpoint, or connect your own account with a supported provider.</dd>
+        </div>
+      </dl>
     </section>
 
     <section class="zx-container zx-section" id="pricing" aria-labelledby="pricing-title">
       <div class="zx-row zx-row--between zx-home-heading">
         <div>
-          <p class="zx-eyebrow">Pricing</p>
+          <p class="zx-label">Pricing</p>
           <h2 id="pricing-title">Start free. Upgrade when you need more.</h2>
         </div>
         <div class="zx-segmented" role="group" aria-label="Show prices in">
@@ -200,19 +252,21 @@ neuron</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-
       </div>
       <div class="zx-grid zx-grid--3">
         <article class="zx-card zx-plan" aria-labelledby="home-plan-free">
-          <div><h3 id="home-plan-free">Free</h3><p class="zx-muted">For trying Neuron on real projects.</p></div>
+          <div><div class="zx-plan__head"><h3 id="home-plan-free">Free</h3></div><p class="zx-muted">For trying Neuron on real projects.</p></div>
           <p class="zx-plan__price"><span data-plan-price="free">$0</span> <small>/ month</small></p>
           <ul data-plan-features="free">
             <li>Free models chosen for coding, with tool use</li>
+            <li>Claude Haiku 5.5 included: 10M tokens a month at no charge</li>
             <li>100 requests per day and 1M tokens every 5 hours</li>
             <li>Best-effort availability</li>
           </ul>
           <a class="zx-btn zx-btn--block" href="#get-started">Install Neuron free</a>
         </article>
         <article class="zx-card zx-card--highlight zx-plan" aria-labelledby="home-plan-pro">
-          <div><p><span class="zx-badge zx-badge--accent">Recommended</span></p><h3 id="home-plan-pro">Pro</h3><p class="zx-muted">For daily work on larger codebases.</p></div>
+          <div><div class="zx-plan__head"><h3 id="home-plan-pro">Pro</h3><span class="zx-badge zx-badge--tan">Recommended</span></div><p class="zx-muted">For daily work on larger codebases.</p></div>
           <p class="zx-plan__price"><span data-plan-price="pro">$10</span> <small>/ month</small></p>
           <ul data-plan-features="pro">
+            <li>Claude Haiku 5.5 included: 10M tokens a month at no charge</li>
             <li>Claude Sonnet 5.5 and Claude Opus 5.5, billed from credits</li>
             <li>2,000 requests and 10M tokens per day</li>
             <li>$8 of credits included every month</li>
@@ -220,9 +274,10 @@ neuron</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-
           <a class="zx-btn zx-btn--primary zx-btn--block" href="/pricing#plan-pro">Choose Pro</a>
         </article>
         <article class="zx-card zx-plan" aria-labelledby="home-plan-max">
-          <div><h3 id="home-plan-max">Max</h3><p class="zx-muted">For heavy agent runs and teams of one.</p></div>
+          <div><div class="zx-plan__head"><h3 id="home-plan-max">Max</h3></div><p class="zx-muted">For heavy agent runs and teams of one.</p></div>
           <p class="zx-plan__price"><span data-plan-price="max">$40</span> <small>/ month</small></p>
           <ul data-plan-features="max">
+            <li>Claude Haiku 5.5 included: 10M tokens a month at no charge</li>
             <li>Claude Sonnet 5.5 and Claude Opus 5.5, billed from credits</li>
             <li>10,000 requests and 50M tokens per day</li>
             <li>$35 of credits included every month</li>
@@ -234,19 +289,21 @@ neuron</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-
     </section>
 
     <section class="zx-container zx-section" id="docs" aria-labelledby="docs-title">
-      <p class="zx-eyebrow">Documentation</p>
-      <h2 id="docs-title">Everything you need to go further</h2>
-      <div class="zx-grid zx-grid--3 zx-home-docs">
-        <a class="zx-card zx-doc-link" href="/docs#quickstart"><h3>Quickstart</h3><p class="zx-muted">Install, sign in and run your first task.</p></a>
-        <a class="zx-card zx-doc-link" href="/docs#cli"><h3>CLI commands</h3><p class="zx-muted">Flags, permission modes and every slash command.</p></a>
-        <a class="zx-card zx-doc-link" href="/docs#configuration"><h3>Configuration</h3><p class="zx-muted">Environment variables, config home and your own provider.</p></a>
-        <a class="zx-card zx-doc-link" href="/docs#api"><h3>OpenAI-compatible API</h3><p class="zx-muted">Call <code>https://zero-x.live/v1</code> from your own tools.</p></a>
-        <a class="zx-card zx-doc-link" href="/docs#limits"><h3>Limits</h3><p class="zx-muted">Daily requests, tokens, rate limits and resets.</p></a>
-        <a class="zx-card zx-doc-link" href="/docs#api-keys"><h3>API keys and billing</h3><p class="zx-muted">Keys for CI and servers, credits and invoices.</p></a>
+      <div class="zx-section-head">
+        <p class="zx-label">Documentation</p>
+        <h2 id="docs-title">Where to go next</h2>
       </div>
+      <ul class="zx-linklist">
+        <li><a href="/docs#quickstart"><span><h3>Quickstart</h3><p class="zx-muted">Install, sign in and run your first task.</p></span><svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#arrow-right"/></svg></a></li>
+        <li><a href="/docs#cli"><span><h3>CLI commands</h3><p class="zx-muted">Flags, permission modes and every slash command.</p></span><svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#arrow-right"/></svg></a></li>
+        <li><a href="/docs#configuration"><span><h3>Configuration</h3><p class="zx-muted">Environment variables, config home and your own provider.</p></span><svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#arrow-right"/></svg></a></li>
+        <li><a href="/docs#api"><span><h3>OpenAI-compatible API</h3><p class="zx-muted">Call <code>https://zero-x.live/v1</code> from your own tools.</p></span><svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#arrow-right"/></svg></a></li>
+        <li><a href="/docs#limits"><span><h3>Limits</h3><p class="zx-muted">Daily requests, tokens, rate limits and resets.</p></span><svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#arrow-right"/></svg></a></li>
+        <li><a href="/docs#api-keys"><span><h3>API keys and billing</h3><p class="zx-muted">Keys for CI and servers, credits and invoices.</p></span><svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#arrow-right"/></svg></a></li>
+      </ul>
     </section>
 
-    <section class="zx-container zx-narrow zx-section" id="faq" aria-labelledby="faq-title">
+    <section class="zx-container zx-section zx-home-faq" id="faq" aria-labelledby="faq-title">
       <h2 id="faq-title">Questions</h2>
       <div class="zx-faq">
         <details>
@@ -281,13 +338,15 @@ neuron</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-
     </section>
 
     <section class="zx-container zx-section" id="products" aria-labelledby="products-title">
-      <p class="zx-eyebrow">More from Zero-X</p>
-      <h2 id="products-title">Other things we build</h2>
+      <div class="zx-section-head">
+        <p class="zx-label">More from Zero-X</p>
+        <h2 id="products-title">Other things we build</h2>
+      </div>
       <div class="zx-grid zx-grid--3">
         <a class="zx-card zx-product" href="https://zero-x.live/neucockpit">
           <span class="zx-row"><img src="/Assets/neucockpit-mark.webp" width="112" height="112" alt="" class="zx-product__mark"><span><span class="zx-product__name">NeuCockpit</span> <span class="zx-badge zx-badge--success">Live</span></span></span>
           <span class="zx-muted">NeuCockpit local AI file search for desktop: find files by what they contain and summarize your own documents on Windows, macOS and Linux.</span>
-          <span class="zx-product__more">NeuCockpit details and downloads</span>
+          <span class="zx-product__more">NeuCockpit details and downloads <svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#arrow-right"/></svg></span>
         </a>
       </div>
     </section>
@@ -298,8 +357,8 @@ neuron</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-
 neuron login</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="cta-install" data-copy-label="Install and sign-in command">Copy</button></div>
       <p class="zx-help">Needs Node.js 22.14 or later. Without Node.js, use pip or the installer for your system from the <a href="/neuron-cli#install">install options</a>, then run <code>neuron login</code>.</p>
       <div class="zx-row">
-        <a class="zx-btn zx-btn--primary" href="/neuron-cli">Explore Neuron CLI</a>
-        <a class="zx-btn" href="https://dashboard.zero-x.live/">Open the dashboard</a>
+        <a class="zx-btn zx-btn--primary" href="/neuron-cli">Explore Neuron CLI <svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#arrow-right"/></svg></a>
+        <a class="zx-btn" href="https://dashboard.zero-x.live/"><svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#user"/></svg>Open the dashboard</a>
       </div>
     </section>
   </main>
@@ -307,24 +366,27 @@ neuron login</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button"
   <footer class="zx-footer">
     <div class="zx-container zx-footer__grid">
       <div>
-        <a class="zx-brand" href="/">Zero-X</a>
+        <a class="zx-brand" href="/"><img src="/Assets/zerox-mark.svg" width="28" height="28" alt="">Zero-X</a>
         <p>Neuron CLI and NeuCockpit. Built in Tamil Nadu, India.</p>
       </div>
       <nav aria-label="Product">
         <h2>Product</h2>
         <a href="/neuron-cli">Neuron CLI</a>
+        <a href="/download">Download</a>
+        <a href="/changelog">Changelog</a>
         <a href="/pricing">Pricing</a>
         <a href="/docs">Docs</a>
         <a href="/ai-coding-agent">AI coding agent guide</a>
         <a href="/free-ai-coding-agent">Free AI coding agent</a>
         <a href="/claude-code-alternative">Neuron compared</a>
         <a href="https://dashboard.zero-x.live/">Dashboard</a>
-        <a href="https://github.com/RAHUL-DevelopeRR/neuron-v2">GitHub</a>
+        <a href="https://github.com/RAHUL-DevelopeRR/neuron-v2">GitHub <svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#arrow-up-right"/></svg></a>
       </nav>
       <nav aria-label="Company">
         <h2>Company</h2>
         <a href="/about">About</a>
         <a href="/contact">Contact</a>
+        <a href="/docs/trust">Security and trust</a>
         <a href="https://zero-x.live/neucockpit">NeuCockpit</a>
       </nav>
       <nav aria-label="Legal">
@@ -335,7 +397,7 @@ neuron login</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button"
         <a href="/shipping">Shipping and delivery</a>
       </nav>
     </div>
-    <p class="zx-container zx-footer__legal">© 2026 Zero-X · <a href="mailto:support@zero-x.live">support@zero-x.live</a></p>
+    <p class="zx-container zx-footer__legal">© 2026 Zero-X · <a href="mailto:support@zero-x.live">support@zero-x.live</a> · <a href="/contact#grievance">Grievance officer</a></p>
   </footer>
 </body>
 </html>

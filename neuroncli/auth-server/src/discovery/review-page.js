@@ -2,15 +2,10 @@
 // GATEWAY_ADMIN_TOKEN (kept in sessionStorage for this tab) and calls /admin/discovery/*.
 // Candidate fields come from the internet, so everything is rendered with textContent, links
 // only for https URLs, opened with noopener and noreferrer.
-export const REVIEW_PAGE = `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="robots" content="noindex, nofollow">
-<title>Provider discovery</title>
-<style>
-:root { --bg: #f7f7f5; --panel: #fff; --text: #1d1d1b; --muted: #6b6b66; --line: #e2e1dc; --accent: #2457d6;
+// The page, its script and its stylesheet are three responses under the strict operator
+// Content-Security-Policy (src/csp.js ADMIN_POLICY: no inline script or style; audit F15).
+export const reviewPage = prefix => REVIEW_PAGE_TEMPLATE.replaceAll('@@PREFIX@@', prefix);
+export const REVIEW_STYLE = `:root { --bg: #f7f7f5; --panel: #fff; --text: #1d1d1b; --muted: #6b6b66; --line: #e2e1dc; --accent: #2457d6;
   --good: #1f7a3d; --warn: #9a5b00; --bad: #b42318; color-scheme: light; }
 @media (prefers-color-scheme: dark) { :root { --bg: #151514; --panel: #1e1e1c; --text: #ecebe6; --muted: #9b9a93;
   --line: #34332f; --accent: #7aa2ff; --good: #5cc37f; --warn: #e0a548; --bad: #ff7a6b; color-scheme: dark; } }
@@ -40,47 +35,10 @@ td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .actions { display: flex; gap: 4px; flex-wrap: wrap; } .actions button { padding: 3px 8px; font-size: 12px; }
 pre { white-space: pre-wrap; word-break: break-word; font-size: 12px; background: var(--bg); padding: 8px; border-radius: 6px; margin: 6px 0 0; max-height: 360px; overflow: auto; }
 #message { min-height: 20px; margin: 8px 0; }
-</style>
-</head>
-<body>
-<main>
-  <h1>Provider discovery</h1>
-  <p class="lead">Candidates found by the daily lists, the weekly OmniRoute diff and the research agent. Nothing here is served until you approve it, a live tool call verifies it, you promote it to a draft catalog row and approve that row on the model catalog page (/admin/models). Signing up to a provider stays manual.</p>
-  <div class="panel row">
-    <label for="token">Admin token</label>
-    <input id="token" type="password" autocomplete="off" placeholder="GATEWAY_ADMIN_TOKEN">
-    <button id="use-token" class="primary">Load</button>
-    <span id="settings" class="muted small"></span>
-  </div>
-  <div class="panel">
-    <div class="row" id="counts"></div>
-    <div class="row" style="margin-top:8px">
-      <input id="provider" type="search" placeholder="Provider id">
-      <input id="search" type="search" placeholder="Search model or provider">
-      <button id="apply">Filter</button>
-      <button id="reject-selected" disabled>Reject selected</button>
-    </div>
-  </div>
-  <div id="message" role="status" aria-live="polite"></div>
-  <div class="table-wrap"><table>
-    <thead><tr><th><input type="checkbox" id="select-all" aria-label="Select all"></th><th>Provider / model</th><th>Context</th>
-      <th>Tools</th><th>Vision</th><th>Status</th><th>Seen</th><th>Source</th><th>Actions</th></tr></thead>
-    <tbody id="rows"></tbody>
-  </table></div>
-  <div class="row" style="margin-top:8px"><button id="prev">Previous</button><span id="page" class="muted small"></span><button id="next">Next</button></div>
-  <h2>Jobs</h2>
-  <div class="row" style="margin-bottom:8px">
-    <button id="run-lists">Run the daily lists now</button>
-    <button id="run-omniroute">Run the OmniRoute diff now</button>
-    <button id="run-research">Run research now</button>
-  </div>
-  <div class="table-wrap"><table>
-    <thead><tr><th>Job</th><th>Last success</th><th>Next run</th><th>Runs</th><th>Spent</th><th>Last result</th></tr></thead>
-    <tbody id="jobs"></tbody>
-  </table></div>
-</main>
-<script>
-(() => {
+.mt8 { margin-top: 8px; }
+.mb8 { margin-bottom: 8px; }
+`;
+export const REVIEW_SCRIPT = `(() => {
   const base = location.pathname.replace(/\\/admin\\/discovery\\/?$/, '');
   const state = { status: 'new', offset: 0, limit: 100, total: 0, selected: new Set(), settings: null };
   const $ = id => document.getElementById(id);
@@ -252,7 +210,56 @@ pre { white-space: pre-wrap; word-break: break-word; font-size: 12px; background
   $('run-research').addEventListener('click', () => run(['research'], 'research'));
   if ($('token').value) load();
 })();
-</script>
+`;
+const REVIEW_PAGE_TEMPLATE = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Provider discovery</title>
+<link rel="stylesheet" href="@@PREFIX@@/admin/discovery/review.css">
+</head>
+<body>
+<main>
+  <h1>Provider discovery</h1>
+  <p class="lead">Candidates found by the daily lists, the weekly OmniRoute diff and the research agent. Nothing here is served until you approve it, a live tool call verifies it, you promote it to a draft catalog row and approve that row on the model catalog page (/admin/models). Signing up to a provider stays manual.</p>
+  <div class="panel row">
+    <label for="token">Admin token</label>
+    <input id="token" type="password" autocomplete="off" placeholder="GATEWAY_ADMIN_TOKEN">
+    <button id="use-token" class="primary">Load</button>
+    <span id="settings" class="muted small"></span>
+  </div>
+  <div class="panel">
+    <div class="row" id="counts"></div>
+    <div class="row mt8">
+      <input id="provider" type="search" placeholder="Provider id">
+      <input id="search" type="search" placeholder="Search model or provider">
+      <button id="apply">Filter</button>
+      <button id="reject-selected" disabled>Reject selected</button>
+    </div>
+  </div>
+  <div id="message" role="status" aria-live="polite"></div>
+  <div class="table-wrap"><table>
+    <thead><tr><th><input type="checkbox" id="select-all" aria-label="Select all"></th><th>Provider / model</th><th>Context</th>
+      <th>Tools</th><th>Vision</th><th>Status</th><th>Seen</th><th>Source</th><th>Actions</th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table></div>
+  <div class="row mt8"><button id="prev">Previous</button><span id="page" class="muted small"></span><button id="next">Next</button></div>
+  <h2>Jobs</h2>
+  <div class="row mb8">
+    <button id="run-lists">Run the daily lists now</button>
+    <button id="run-omniroute">Run the OmniRoute diff now</button>
+    <button id="run-research">Run research now</button>
+  </div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Job</th><th>Last success</th><th>Next run</th><th>Runs</th><th>Spent</th><th>Last result</th></tr></thead>
+    <tbody id="jobs"></tbody>
+  </table></div>
+</main>
+<script src="@@PREFIX@@/admin/discovery/review.js"></script>
 </body>
 </html>
 `;
+
+export const REVIEW_PAGE = reviewPage('');

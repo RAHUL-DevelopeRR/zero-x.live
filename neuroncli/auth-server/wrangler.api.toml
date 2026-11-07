@@ -27,8 +27,11 @@ OPENROUTER_MODELS = "cohere/north-mini-code:free"
 GEMINI_MODELS = ""
 CLOUDFLARE_MODELS = ""
 # With ANTHROPIC_API_KEY set, the anthropic.paid key serves these Claude models only (wrangler.toml).
-ANTHROPIC_MODELS = "claude-sonnet-5-5,claude-opus-5-5"
+ANTHROPIC_MODELS = "claude-sonnet-5-5,claude-opus-5-5,claude-haiku-5-5"
 RAZORPAY_KEY_ID = ""
+# Checkout order summary: uncomment to show "No GST charged". Only after the owner has confirmed with
+# the CA that no GST is charged; until then the checkout says nothing about GST (GATEWAY_SETUP.md).
+# BILLING_NO_GST_NOTICE = "true"
 
 [triggers]
 crons = ["*/10 * * * *"]

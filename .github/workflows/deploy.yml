@@ -10,6 +10,10 @@ name: Deploy to Cloudflare Workers and EC2
 # install scripts (no dependency has one today), and no checkout keeps the token in .git/config:
 # a later step of job deploy holds the Cloudflare token and every runtime secret, and a package
 # script that could write to $GITHUB_ENV (NODE_OPTIONS=--require ...) would reach them.
+# One production deploy at a time (the concurrency group below, never cancelled half way: a
+# cancelled run could leave one runtime on the new commit), and a run whose commit is no longer
+# the head of main refuses to deploy (step "Only the head of main deploys"): an older run approved
+# after a newer push would otherwise roll production back to the older commit.
 on:
   push:
     branches:
@@ -17,6 +21,12 @@ on:
 
 permissions:
   contents: read
+
+# Every run of this workflow shares one group: a second push waits for the running deploy (GitHub
+# keeps only the newest waiting run), and nothing is cancelled once it started.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
 
 jobs:
   verify:
@@ -50,15 +60,18 @@ jobs:
 
       # The Worker bundle, before either deploy job starts: jobs deploy and ec2 run in parallel, so a
       # Worker that does not bundle would leave the VM on the new commit and the Worker on the old
-      # one. --dry-run bundles with the wrangler version job deploy uses and stops before any upload:
-      # no token, no account and no secret. Without install scripts, like every npm ci here (esbuild
-      # finds its binary through its optional platform package).
+      # one. --dry-run bundles with the wrangler the lockfile pins (package.json devDependencies,
+      # the version job deploy uses; check-aws-deploy.mjs keeps the two in step) and stops before
+      # any upload: no token, no account and no secret. Nothing is fetched from the registry here:
+      # npm ci above installed it with its transitive dependencies as locked (--no-install).
+      # Without install scripts, like every npm ci here (esbuild finds its binary through its
+      # optional platform package).
       - name: Bundle the Worker (dry run)
         working-directory: neuroncli/auth-server
         env:
           WRANGLER_SEND_METRICS: 'false'
           npm_config_ignore_scripts: 'true'
-        run: npx --yes wrangler@4.147.0 deploy --dry-run --outdir "$RUNNER_TEMP/worker-bundle"
+        run: npx --no-install wrangler deploy --dry-run --outdir "$RUNNER_TEMP/worker-bundle"
 
   # The Worker. In the environment "production" like job ec2, so the same approval starts both
   # (and, once the runtime secrets live in that environment, it can read them).
@@ -73,6 +86,20 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+
+      # A run deploys only the commit that is the head of main now. Runs wait for the environment's
+      # approval, so an older run approved after a newer push (or re-run later) would otherwise put
+      # the older commit on production. Read with the job's read-only token, before any secret is used.
+      - name: Only the head of main deploys
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          head="$(gh api "repos/$GITHUB_REPOSITORY/branches/$GITHUB_REF_NAME" --jq .commit.sha)"
+          if [ "$head" != "$GITHUB_SHA" ]; then
+            echo "::error::$GITHUB_REF_NAME has moved to $head; this run is for $GITHUB_SHA and does not deploy. Re-run the newest run instead."
+            exit 1
+          fi
+          echo "$GITHUB_REF_NAME is at $GITHUB_SHA"
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
@@ -96,11 +123,14 @@ jobs:
       - name: Database migrations (manual)
         run: echo "::notice title=Database migrations::Migrations are applied manually before merge. This workflow does not run them."
 
-      # Only the database secret is required. Provider keys can live in the provider key vault
-      # (dashboard.zero-x.live/admin/keys, encrypted under PROVIDER_KEYS_KEK) instead of GitHub
-      # secrets; the provider secrets below then only serve as the fallback pool. Every optional
-      # secret that is missing is skipped (its feature stays disabled) instead of failing the
-      # deploy. Only secret names are printed, never values. ANTHROPIC_API_KEY serves Claude
+      # Required: the database secret and the three keys the gateway must not run without
+      # (SESSION_ENCRYPTION_KEY seals users' own OpenRouter keys, PROVIDER_KEYS_KEK the provider
+      # key vault, DEVICE_APPROVAL_SECRET signs device sign-in approvals): a deploy without one
+      # would store keys in the clear or refuse the vault, so it fails here, before anything ships
+      # (security audit 2026-11-05, section 7 item 8). Provider keys can live in the provider key
+      # vault (dashboard.zero-x.live/admin/keys) instead of GitHub secrets; the provider secrets
+      # below then only serve as the fallback pool. Every optional secret that is missing is
+      # skipped (its feature stays disabled) instead of failing the deploy. Only secret names are printed, never values. ANTHROPIC_API_KEY serves Claude
       # Sonnet 5.5 and Opus 5.5 (paid pools, Pro and Max) and the weekly discovery research jobs;
       # GLM_API_KEY serves Z.ai's free GLM-4.7-Flash and GLM-4.5-Flash; EC2_PROXY_SECRET is
       # what the Worker sends with every request it forwards to the VM (without it every path
@@ -108,13 +138,15 @@ jobs:
       # which a workflow pushed on any branch could read (deploy/aws/README.md, "Deploys"). The
       # Worker secret EC2_PROXY_PREFIXES, the forward switch, is not listed on purpose:
       # `wrangler secret put` changes it in seconds and a deploy keeps it.
+      # BRAVE_API_KEY is the web search fallback (POST /v1/search); SEARXNG_URL, the self-hosted
+      # SearXNG on a private network, is job ec2's alone since a Worker cannot reach it.
       # A new secret must be listed in OPTIONAL_SECRETS and in both env blocks to reach the
       # Worker, and in job ec2 to reach the VM (check-aws-deploy.mjs keeps them in step).
       - name: Select configured Worker secrets
         id: worker-secrets
         env:
-          REQUIRED_SECRETS: SUPABASE_SECRET_KEY
-          OPTIONAL_SECRETS: GROQ_API_KEY OPENROUTER_API_KEY GEMINI_API_KEY NVIDIA_API_KEY RAZORPAY_KEY_SECRET RAZORPAY_WEBHOOK_SECRET GATEWAY_ADMIN_TOKEN GROQ_PAID_API_KEY GEMINI_PAID_API_KEY SESSION_ENCRYPTION_KEY DEVICE_APPROVAL_SECRET PROVIDER_KEYS_KEK ANTHROPIC_API_KEY GLM_API_KEY EC2_PROXY_SECRET
+          REQUIRED_SECRETS: SUPABASE_SECRET_KEY SESSION_ENCRYPTION_KEY DEVICE_APPROVAL_SECRET PROVIDER_KEYS_KEK
+          OPTIONAL_SECRETS: GROQ_API_KEY OPENROUTER_API_KEY GEMINI_API_KEY NVIDIA_API_KEY RAZORPAY_KEY_SECRET RAZORPAY_WEBHOOK_SECRET GATEWAY_ADMIN_TOKEN GROQ_PAID_API_KEY GEMINI_PAID_API_KEY ANTHROPIC_API_KEY GLM_API_KEY EC2_PROXY_SECRET BRAVE_API_KEY
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
@@ -131,6 +163,7 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
           EC2_PROXY_SECRET: ${{ secrets.EC2_PROXY_SECRET }}
+          BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
         run: |
           names=""
           for name in $REQUIRED_SECRETS; do
@@ -179,6 +212,7 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
           EC2_PROXY_SECRET: ${{ secrets.EC2_PROXY_SECRET }}
+          BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
 
       # Ask Bing and the other IndexNow engines to recrawl the public pages this push changed.
       # The key file at the site root is public by design. A failed ping never fails the deploy.
@@ -226,23 +260,40 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      # A run deploys only the commit that is the head of main now. Runs wait for the environment's
+      # approval, so an older run approved after a newer push (or re-run later) would otherwise put
+      # the older commit on production. Read with the job's read-only token, before any secret is used.
+      - name: Only the head of main deploys
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          head="$(gh api "repos/$GITHUB_REPOSITORY/branches/$GITHUB_REF_NAME" --jq .commit.sha)"
+          if [ "$head" != "$GITHUB_SHA" ]; then
+            echo "::error::$GITHUB_REF_NAME has moved to $head; this run is for $GITHUB_SHA and does not deploy. Re-run the newest run instead."
+            exit 1
+          fi
+          echo "$GITHUB_REF_NAME is at $GITHUB_SHA"
+
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '22'
 
       # The Worker job's secret set (REQUIRED_SECRETS, OPTIONAL_SECRETS, one env entry per name),
-      # except: the secrets the VM must share with the Worker to behave like it (users' sealed
-      # OpenRouter keys, the provider key vault, device approvals, the proxy secret the Worker
-      # sends) are required here, and SUPABASE_SECRET_KEY comes from SUPABASE_SECRET_KEY_EC2, the
-      # VM's own Supabase key, so either runtime's key can be revoked alone. EC2_PROXY_SECRET_ROTATION
+      # except: EC2_PROXY_SECRET, what the Worker sends with every forwarded request, is required
+      # here too (without it the VM answers 503 on every forwarded path), and SUPABASE_SECRET_KEY
+      # comes from SUPABASE_SECRET_KEY_EC2, the VM's own Supabase key, so either runtime's key can
+      # be revoked alone. The encryption and approval keys are required on both runtimes, as the
+      # Worker job lists them. EC2_PROXY_SECRET_ROTATION
       # is the VM's alone: the second proxy secret it accepts while EC2_PROXY_SECRET is rotated
-      # (deploy/aws/README.md, "Rotating the proxy secret"). EXTRA_WEB_HOSTS is a plain VM-only
+      # (deploy/aws/README.md, "Rotating the proxy secret"). SEARXNG_URL is the VM's alone too: the
+      # self-hosted SearXNG on a private network, which only the VM reaches (an environment secret
+      # so its address stays out of the public repository). EXTRA_WEB_HOSTS is a plain VM-only
       # value from the repository variable. CLOUDFLARE_API_TOKEN, the Worker deploy token, never
       # reaches the VM.
       - name: Build the gateway environment
         env:
-          REQUIRED_SECRETS: SUPABASE_SECRET_KEY SESSION_ENCRYPTION_KEY PROVIDER_KEYS_KEK DEVICE_APPROVAL_SECRET EC2_PROXY_SECRET
-          OPTIONAL_SECRETS: GROQ_API_KEY OPENROUTER_API_KEY GEMINI_API_KEY NVIDIA_API_KEY RAZORPAY_KEY_SECRET RAZORPAY_WEBHOOK_SECRET GATEWAY_ADMIN_TOKEN GROQ_PAID_API_KEY GEMINI_PAID_API_KEY ANTHROPIC_API_KEY GLM_API_KEY EC2_PROXY_SECRET_ROTATION
+          REQUIRED_SECRETS: SUPABASE_SECRET_KEY SESSION_ENCRYPTION_KEY DEVICE_APPROVAL_SECRET PROVIDER_KEYS_KEK EC2_PROXY_SECRET
+          OPTIONAL_SECRETS: GROQ_API_KEY OPENROUTER_API_KEY GEMINI_API_KEY NVIDIA_API_KEY RAZORPAY_KEY_SECRET RAZORPAY_WEBHOOK_SECRET GATEWAY_ADMIN_TOKEN GROQ_PAID_API_KEY GEMINI_PAID_API_KEY ANTHROPIC_API_KEY GLM_API_KEY BRAVE_API_KEY EC2_PROXY_SECRET_ROTATION SEARXNG_URL
           VM_VARS: EXTRA_WEB_HOSTS
           EXTRA_WEB_HOSTS: ${{ vars.EXTRA_WEB_HOSTS }}
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY_EC2 }}
@@ -261,7 +312,9 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
           EC2_PROXY_SECRET: ${{ secrets.EC2_PROXY_SECRET }}
+          BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
           EC2_PROXY_SECRET_ROTATION: ${{ secrets.EC2_PROXY_SECRET_ROTATION }}
+          SEARXNG_URL: ${{ secrets.SEARXNG_URL }}
         run: |
           umask 077
           node deploy/aws/gateway-env.mjs --wrangler neuroncli/auth-server/wrangler.toml --out "$RUNNER_TEMP/gateway.env"

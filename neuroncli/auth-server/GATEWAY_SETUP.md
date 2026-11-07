@@ -64,7 +64,7 @@ provider off.
 | `HEALTH_CANARIES` | var | on | `false` stops HealthHub's canary requests (contract §12.5). |
 | `DISCOVERY_CREDITS` | var | on | With `ANTHROPIC_API_KEY`, the weekly job that finds free cloud and AI credit programs (contract §12.6); `false` turns it off. |
 | `DISCOVERY_RESEARCH` | var | on | With `ANTHROPIC_API_KEY`, the weekly research and credits jobs (Claude with web search, capped by `DISCOVERY_RESEARCH_MAX_USD`); `false` turns both off. |
-| `CSP_ENFORCE` | var | `false` | `true` sends `Content-Security-Policy` instead of `-Report-Only`. |
+| `CSP_ENFORCE` | var | `true` | The Content-Security-Policy is enforced; `false` is the kill switch and sends it as `Content-Security-Policy-Report-Only`. Inline scripts and styles are allowed by sha256 (`src/csp-hashes.js`, rebuilt with `npm run build:csp`), never by `'unsafe-inline'`. |
 | `PRICING_URL` | var | `https://zero-x.live/pricing` | `upgrade_url` in errors (https only). |
 
 ### Moving to the Node server on EC2
@@ -113,11 +113,14 @@ them in `zerox_plan_policy.razorpay_plan_id_inr/usd`.
 | `PAID_DAILY_SPEND_CAP_USD` | var | unset | A number above 0 lowers every paid pool's daily spend cap (upstream USD per UTC day) to at most this value; it can never raise one (contract §13.4). |
 | `CATALOG_SOURCE` | var | unset | Unset: the approved catalog rows when the database is configured, over the code catalog. `code`: kill switch, `src/catalog.js` only (contract §13.1). |
 | `CLOUDFLARE_PAID` | var | unset | `true` adds paid Workers AI pools (Workers Paid accounts only). |
+| `HOSTED_CONNECTORS` | var | unset = `false` | `true`: serves `/api/connectors/*`, the dashboard Connectors tab and `/mcp/<id>` (contract section 18.4), and `/api/account` reports each plan's hosted connector ids (`policy.connectors.hosted`, section 18.1). Unset: every one of those routes answers 404, every plan reports `hosted: []` and clients offer local connectors only. See "Hosted connectors" below before switching it on. |
+| `CONNECTOR_TOKENS_KEK` | **secret** | unset | 32 random bytes, base64 (`openssl rand -base64 32`). Seals the vendor OAuth tokens of linked connector accounts (`src/connector-vault.js`). Never reuse `PROVIDER_KEYS_KEK`. Losing it loses every link (users connect again). Without it hosted connectors answer 503. |
+| `CONNECTOR_<ID>_*` | var + **secret** | unset | Per hosted connector (`ATLASSIAN`, `GITHUB`, `LINEAR`, `NOTION`, `SLACK`): `CLIENT_ID`, `CLIENT_SECRET` (secret), `SCOPES`, and overrides `MCP_URL`, `AUTHORIZE_URL`, `TOKEN_URL`, `REVOKE_URL` (https only). A connector is offered only when its client id and every URL are known (`src/connector-catalog.js` lists the defaults and what is missing). |
 | `NVIDIA_HOSTED` + `NVIDIA_API_KEY` | var + **secret** | unset = `false` (`"true"` in the lineup files) | `true`: the NVIDIA trial key serves users' free models, the owner's decision (2026-10-19, kept in the 2026-10-29 lineup; trial terms in [docs/PROVIDER_TERMS.md](docs/PROVIDER_TERMS.md)). `false`: NVIDIA is not offered. |
 | `OPENROUTER_HOSTED` + `OPENROUTER_API_KEY` | var + **secret** | unset = `false` (`"true"` in the lineup files) | `true`: the operator key serves the OpenRouter free models in `OPENROUTER_MODELS`, the owner's decision. `false`: users' own keys (BYOK) only, which work regardless. |
 | `OPENROUTER_MODELS` | var | `cohere/north-mini-code:free` (the lineup files too; `minimax/minimax-m3.1-flash:free` left them on 2026-11-04, when OpenRouter no longer listed it and every request answered service_unavailable) | Narrows the OpenRouter models offered, hosted and BYOK alike. |
 | `OPENROUTER_FREE_ONLY`, `OPENROUTER_CALLBACK_URL` | var | —, `https://zero-x.live/neuroncli/callback/` | BYOK discovery filter and PKCE callback. |
-| `GROQ_MODELS`, `GEMINI_MODELS`, `CLOUDFLARE_MODELS`, `NVIDIA_MODELS`, `ANTHROPIC_MODELS` | var | unset (`ANTHROPIC_MODELS`: Sonnet 5.5 and Opus 5.5 in `wrangler.toml`; `GEMINI_MODELS` and `CLOUDFLARE_MODELS`: `""` there) | Can only **narrow** the verified catalog (the approved rows over `src/catalog.js`); unknown ids are ignored and reported. An empty list offers none of the provider's models: the owner lineup of 2026-10-29 switches Gemini and Workers AI off this way, keys and binding unchanged (delete the line to serve them again). `CLOUDFLARE_MODELS` can opt in `@cf/openai/gpt-oss-120b`. `ANTHROPIC_MODELS` keeps the `anthropic.paid` key on the two Claude models even if a catalog row names another. |
+| `GROQ_MODELS`, `GEMINI_MODELS`, `CLOUDFLARE_MODELS`, `NVIDIA_MODELS`, `ANTHROPIC_MODELS` | var | unset (`ANTHROPIC_MODELS`: Sonnet 5.5, Opus 5.5 and Haiku 5.5 in `wrangler.toml`; `GEMINI_MODELS` and `CLOUDFLARE_MODELS`: `""` there) | Can only **narrow** the verified catalog (the approved rows over `src/catalog.js`); unknown ids are ignored and reported. An empty list offers none of the provider's models: the owner lineup of 2026-10-29 switches Gemini and Workers AI off this way, keys and binding unchanged (delete the line to serve them again). `CLOUDFLARE_MODELS` can opt in `@cf/openai/gpt-oss-120b`. `ANTHROPIC_MODELS` keeps the `anthropic.paid` key on the three Claude models even if a catalog row names another. |
 | `TRUST_CF_IPCOUNTRY` | var (Node) | unset | `true` only when the Node origin is reachable exclusively through Cloudflare. Workers use `request.cf.country`. |
 | `ALLOW_UNKNOWN_COUNTRY` | var | unset | Local development only: serve free Gemini when the caller's country is unknown (fails closed otherwise). |
 | `UPSTREAM_TTFB_TIMEOUT_MS` / `UPSTREAM_IDLE_TIMEOUT_MS` | var | `45000` / `90000` | First byte / gap between bytes (SSE keep-alives count). The first data event is due within their sum. |
@@ -153,6 +156,26 @@ No new variables control request shaping or 429 handling; both are always on:
 No longer read: `*_TOOL_MODELS` (tool support comes from the catalog), `MAX_REQUESTS_PER_SESSION`,
 `OPENROUTER_CLIENT_ID`. Test-only: `E2E_*` (read by `e2e-upstream-shim.mjs`), `PGLITE_ENTRY`
 (`check-session-store.mjs`, `check-quota.mjs`).
+
+### Gateway limits
+
+Security audit 2026-11-05 (F2, F5, F16). Every limit is a variable with a default; a value that is not a
+positive integer keeps the default. The limits are per process (isolate on the Worker, instance on the VM).
+
+| Variable | Default | What |
+|---|---|---|
+| `BODY_LIMIT_BYTES` | 65536 | Request body limit of every route except the chat routes (`/v1/chat/completions`, `/v1/messages`, the `/auth/azure/*` aliases), the relay (2 MiB) and the Razorpay webhook (256 KiB). Over it: 413 `request_too_large` before any route or database call; on the VM the bytes are counted as they arrive, on the Worker the declared `Content-Length` is checked. |
+| `CHAT_BODY_LIMIT_BYTES` | 2097152 | Chat and relay body limit (2 MiB is what production enforced before; Neuron 7.0.0-alpha.4 sends 15-20 KB per turn). The chat handler's own 1 MiB cap still applies. |
+| `REQUEST_TIMEOUT_MS` | 120000 | The whole request (headers and body) must arrive within this time (Node's own default is 5 minutes; never below the headers timeout plus 1 s). A response is never cut by it: token streams run as long as before. |
+| `MAX_CONNECTIONS` | 2000 | Open sockets per VM instance. |
+| `MODELS_STREAM_PER_IP`, `MODELS_STREAM_MAX` | 4, 500 | Anonymous `/v1/models/stream` connections per address and in all (credentialed streams count in the total only): 429 with `Retry-After`. The status payload is computed once per tick and serialised once for all connections with the same view. |
+| `AUTH_NEGATIVE_CACHE_SECONDS`, `AUTH_NEGATIVE_CACHE_MAX` | 60, 10000 | A session, API key or device code the store has just said does not exist is answered from memory for this long. Not used when `SESSIONS_KV` is bound (KV is eventually consistent). A store outage caches nothing. |
+| `AUTH_REJECTIONS_PER_MINUTE` | 30 | An address that presented this many new rejected credentials in a minute gets 429 on the account routes, the device poll and `/v1/models` with a credential, before any lookup. The chat routes and anonymous model lists are never refused by it. |
+| `MAX_JSON_DEPTH` | 128 | Levels of nested objects and arrays a chat request body may have; deeper is 400 `invalid_request` (a 1 MiB body can nest 100,000 levels, which used to end in 503). Real tool schemas nest a few levels. |
+| `READY_CACHE_SECONDS` | 5 | A "ready" answer of `GET /ready` is remembered this long; a failure never is. |
+
+The edge rules stay the owner's (Cloudflare rate-limit and body-size rules on `/v1/*`, `/auth/*`, `/ready`
+and `/v1/models/stream`); these limits are the second layer behind them.
 
 ### Active model health checks
 
@@ -226,7 +249,8 @@ check id); bodies, provider messages and keys are never logged or stored.
 | `HEALTH_PROBES` | var | `on` | `off` (also `false`, `0`) is the kill switch: no list checks, slot checks or test requests. Models without recent real traffic then report `unknown`. |
 | `HEALTH_PROBE_TICK_SECONDS` | var | `15` (5-300) | How often each instance renews or asks for the lease and reads the verdicts again. The lease lasts 90 s. |
 | `HEALTH_PROBE_TIMEOUT_SECONDS` | var | `12` (3-60) | Timeout of a chat test request; a tool-call test gets twice as long. |
-| `HEALTH_STALE_SECONDS` | var | `1200` (120-86400) | The floor of every route's stale horizon (above): a verdict nobody confirmed for the longer of this and 1.5 times its route's test interval reads `unknown`. Keep it above the 10-minute list interval. The Worker's `/v1/models` uses it for every route. |
+| `HEALTH_STALE_SECONDS` | var | `1200` (120-86400) | The floor of every route's stale horizon (above): a verdict nobody confirmed for the longer of this and 1.5 times its route's test interval reads `unknown`. Keep it above the 10-minute list interval. The Worker's `/v1/models` uses it for every route until it reads the checker's rows (`HEALTH_PROBES_DB_ROWS`, below). |
+| `HEALTH_PROBES_DB_ROWS` | var | `on` | The Worker (no checker of its own) reads the Node checker's verdict rows (`zerox_pool_health_get`) when it builds `/v1/models`, `/v1/models/status` and `/v1/models/stream`, cached 30 s per isolate (contract section 19.5), so `neuron.zero-x.live` shows the same verdicts, latency and stale horizons as `zero-x.live`. `off` keeps the previous behaviour (HealthHub rows and the isolate's own attempts). Without the RPC it falls back silently, logging once.
 
 It needs migration `20261104000000_health_probes.sql` (below) and the database (`SUPABASE_*`);
 without either, the gateway logs it once at start and runs no checks. The Worker keeps its
@@ -288,6 +312,86 @@ and apply the missing ones, in order (the ten catalog and app migrations were re
 12. `20261102000000_free_token_window.sql` (Free: 1,000,000 tokens per rolling 5-hour window instead of 500K a day; see below)
 13. `20261104000000_health_probes.sql` (the active health checker's lease, verdict rows and `zerox_probe_take`; see below)
 14. `20261104300000_free_plan_features_lineup.sql` (the Free plan's feature line on the pricing page; no restart needed if applied late)
+15. `20261106000000_pool_fair_share.sql` (per-user fair share of the free pools, security audit F6; see below)
+16. `20261106000100_billing_details.sql` (billing profiles and consent records; see below)
+17. `20261106000200_billing_tax_id.sql` (an optional `tax_id` on `zerox_billing_profiles` with its CHECK, and the two profile functions returning it; applies after `20261106000100`; see below)
+18. `20261106000300_connector_policy.sql` (connector policy per plan, `/api/account` `policy.connectors`; see below)
+19. `20261106000400_connector_accounts.sql` (hosted connector links and their audit log; unused while `HOSTED_CONNECTORS` is off; see below)
+20. `20261106000500_search_quota.sql` (daily web search and research-run counters for `POST /v1/search`; see below)
+21. `20261106000600_sponsored_pools.sql` (Claude Haiku 5.5's monthly allowance and sponsored pools; see below)
+22. `20261106000700_haiku_catalog.sql` (the Haiku catalog row, generated by `scripts/catalog-seed-sql.mjs`)
+23. `20261106000800_plan_features_haiku.sql` (the Haiku line in every plan's features; no restart needed if applied late)
+
+**Billing details (`20261106000100_billing_details.sql`).** Two new tables (`zerox_billing_profiles`,
+`zerox_billing_consents`) and four functions; nothing existing changes, and it does not depend on
+`20261029000900_plan_features_claude.sql`. **Apply this migration before deploying the gateway
+that knows it**: that gateway answers checkout and top-up with 503 `service_unavailable` until the
+functions exist. (An older gateway keeps working against the new database. The old site script, which
+sends no `consent`, gets 409 `billing_profile_required` from the new gateway until the page is
+reloaded.) After the deploy:
+
+- the operator `/health` shows `plans_configured` `{inr: true, usd: true, missing: []}` once every paid
+  plan has its Razorpay plan id for both currencies (a `missing` entry such as `pro:USD` is what makes
+  checkout answer 503 `billing_plan_missing`; store the ids with the SQL `scripts/razorpay-bootstrap.mjs`
+  prints);
+- `BILLING_NO_GST_NOTICE` (a `[vars]` entry in `wrangler.toml` and `wrangler.api.toml`, commented out
+  by default) turns on the line "No GST charged" in the checkout order summary. Leave it off until the
+  owner has confirmed with the CA that no GST is charged; the checkout says nothing about GST before.
+
+Verify: `SELECT count(*) FROM pg_proc WHERE proname LIKE 'zerox_billing_%' AND proname IN
+('zerox_billing_profile_get', 'zerox_billing_profile_upsert', 'zerox_billing_record_consents',
+'zerox_billing_consents_latest');` returns 4. Roll back with
+`migrations/down/20261106000100_billing_details.down.sql` (psql -X -v ON_ERROR_STOP=1 -f, or paste
+it); that deletes every saved profile and consent record. If `20261106000200_billing_tax_id.sql` is
+applied, run its down script first.
+
+**Optional tax id (`20261106000200_billing_tax_id.sql`).** Adds the nullable column
+`zerox_billing_profiles.tax_id` with the CHECK `zerox_billing_profiles_tax_id_check` (a GSTIN shape
+for India, 2 to 20 of `[A-Z0-9-]` elsewhere) and replaces `zerox_billing_profile_get` /
+`zerox_billing_profile_upsert` so they return and save it (same SECURITY INVOKER, pinned search_path
+and service_role-only grants). Existing profiles keep everything and get `NULL`. **Apply it before
+deploying the gateway that knows it**: until then a buyer who types a tax id gets 503
+`service_unavailable` on saving (the old upsert refuses the unknown key); a buyer who leaves it empty
+is not affected, because the gateway then leaves the key out. The privacy policy changes with it
+(version `2026-11-04`), so every buyer is asked to agree again at their next checkout. Contract §16.6.
+Verify: `SELECT column_name FROM information_schema.columns WHERE table_name = 'zerox_billing_profiles'
+AND column_name = 'tax_id';` returns one row. Roll back with
+`migrations/down/20261106000200_billing_tax_id.down.sql`; that deletes every saved tax id and keeps
+every other billing detail and consent record.
+
+**Fair share of the free pools (`20261106000000_pool_fair_share.sql`).** One user may take at most a
+quarter of a free pool's daily request budget (`rpd`) and of its daily token budget (`tpd`); paid pools
+and pools without a daily budget are not affected. A user over its share gets the new reservation status
+`user_pool_share`: the gateway skips that pool for the request (the next pool of the model serves it), does
+not mark the pool as spent for anyone else, and answers `capacity_exhausted` with `Retry-After` until 00:00
+UTC when every pool refuses. Deploy the gateway that knows the status (both runtimes) **before** pasting
+this migration: an older gateway answers an unknown reservation status with 503 `service_unavailable` for
+that one request. The share is the constant `v_share_pct` (25) inside the function; change it with a new
+migration. Roll back with `migrations/down/20261106000000_pool_fair_share.sql`.
+
+**Claude Haiku 5.5 on every plan (migrations 21 to 23, contract section 19).** Deploy the gateway
+**first** (both runtimes): it sends `p_cap` only for the sponsored pool and fails closed against the
+old database (Haiku lists `not_configured`, "Sponsored pools need migration
+20261106000600_sponsored_pools.sql" is logged once), and the old gateway works against the new
+functions (`zerox_reserve_v2` keeps its 8-argument call; `zerox_settle_v2` has the same arguments).
+Then apply 21, 22 and 23 in that order (`node scripts/apply-migrations.mjs --status`, then `--apply`).
+Migration 21 adds the table `zerox_family_month_usage`, the `cap_family`/`cap_month` columns on
+`zerox_reservations`, `sponsored_cost_microusd` on the usage tables, and recreates
+`zerox_reserve_v2` (9 arguments), `zerox_usage_by_model` and `zerox_account_overview` (`p_caps`,
+`usage_month`); `zerox_settle_v2` and `zerox_release_stale_reservations` are replaced in place. 22 lets
+the free tier of `anthropic.paid` carry a price and a spend cap (`zerox_catalog_slot_sponsors`, the
+check `zerox_catalog_revision_pools_free_terms`) and inserts the Haiku row at revision 1. Verify:
+
+- `SELECT pg_get_function_identity_arguments('public.zerox_reserve_v2'::regproc);` lists 9 arguments, the last `p_cap jsonb`;
+- `SELECT count(*) FROM public.zerox_catalog_snapshot() WHERE status = 'active';` returns 19, and one row has `id = 'anthropic/claude-haiku-5-5'`;
+- `SELECT plan, jsonb_array_length(features) FROM public.zerox_plan_policy ORDER BY sort;` returns free 5, pro 6, max 6, ultrawork 6;
+- `SELECT public.zerox_catalog_slot_ok('anthropic', 'free', 'anthropic.paid');` returns true.
+
+Roll back newest first with `migrations/down/20261106000800_plan_features_haiku.sql`,
+`20261106000700_haiku_catalog.sql` and `20261106000600_sponsored_pools.sql` (psql -X -v
+ON_ERROR_STOP=1 -f), or hide the row at once with `CATALOG_SOURCE=code`. The sponsored pool's
+daily spend cap ($5 upstream, `cpd` 6,250,000 billed) is a plain row value raised by catalog
+revision up to the $50 type maximum; `PAID_DAILY_SPEND_CAP_USD` lowers every cap, Haiku's included.
 
 **Free's 5-hour token window (`20261102000000_free_token_window.sql`).** Deploy the gateway that
 knows `user_window_tokens` (both runtimes: the Worker and the EC2 Node server) **before** pasting
@@ -322,6 +426,121 @@ Roll back with `migrations/down/20261102000000_free_token_window.sql` (psql -X -
 or paste it): Free gets 500,000 tokens a day back. It must run before
 `down/20261029001000_pool_concurrency.sql` if both are rolled back.
 
+**Web search (`20261106000500_search_quota.sql`, contract section 17).** New tables
+`zerox_search_usage` and `zerox_search_research_runs` and the functions `zerox_search_reserve` and
+`zerox_search_settle` (service_role only); nothing existing changes, so it can be applied before
+or after the deploy. Until it is applied, and while neither `SEARXNG_URL` nor `BRAVE_API_KEY` is
+set, `POST /v1/search` answers 503 `search_unavailable` (never unmetered); `/api/account` gains
+`limits.search` and `limits.colony` either way. Owner steps to switch search on:
+
+Both values reach the runtimes only through `.github/workflows/deploy.yml` (already wired): job
+ec2 rewrites `/etc/zerox/gateway.env` on every deploy, so a hand edit on the VM is gone at the next
+deploy. Add them as secrets of the GitHub environment "production", never of the repository, and
+never to `wrangler.toml` `[vars]` (`gateway-env.mjs` refuses a name that is both).
+
+1. Run SearXNG on its own host (not the gateway VM), with `search.formats: [html, json]` in its
+   `settings.yml`, its own `server.secret_key`, the limiter on, and reachable from the VM only
+   (private network, security group or tunnel). Add the environment secret `SEARXNG_URL` with its
+   base URL (`/search` is appended). It is VM-only (job ec2): a Worker cannot reach a private
+   host, so SearXNG answers only the searches the Worker forwards, which needs
+   `EC2_PROXY_PREFIXES` to cover `/v1/` (deploy/aws/CUTOVER.md). With forwarding off (the
+   rollback), the Worker serves search with Brave alone, or answers 503 `search_unavailable`
+   without a Brave key; it never waits on an unreachable SearXNG. Do not also set `SEARXNG_URL`
+   as a Worker secret: the Worker would wait up to 8 s on the unreachable host before every fallback.
+2. Optionally create a Brave Search API key (paid per query beyond the free allowance) and add the
+   environment secret `BRAVE_API_KEY`. The workflow binds it to the Worker and writes it to the
+   VM. Before forwarding covers `/v1/`, Brave is the only backend search can use, so set it
+   if search should work on the Worker.
+3. Apply the migration, then verify with
+   `SELECT proname FROM pg_proc WHERE proname LIKE 'zerox_search%';` (two rows).
+4. Deploy (the workflow picks both secrets up; an unset one is skipped with a warning), then
+   check `POST /v1/search` answers 200 with `provider` `searxng` through the forward and
+   `brave` otherwise.
+
+Roll back with `migrations/down/20261106000500_search_quota.down.sql` (drops the counters).
+**Connector policy (`20261106000300_connector_policy.sql`).** Adds
+`zerox_plan_policy.connector_policy jsonb` (contract section 18.1) and recreates
+`zerox_plan_policies_v2` with that column (same arguments and grants). Free gets local connectors
+only; Pro, Max and ultrawork get the hosted connector ids, which `/api/account` reports only while
+`HOSTED_CONNECTORS=true`. A plan whose policy is already set keeps it, so the file is safe to
+re-run. The gateway works on either side of it (without the column, `/api/account` has no
+`policy` block), so it can be pasted before or after the deploy. Verify:
+
+- `SELECT plan, connector_policy->'hosted' FROM public.zerox_plan_policy ORDER BY sort;` returns free
+  `[]` and the five hosted ids for pro, max and ultrawork.
+
+Edit a plan's policy with `UPDATE public.zerox_plan_policy SET connector_policy = '{...}'::jsonb
+WHERE plan = 'pro';` (ids are connector catalog ids; `"catalog:*"` in `allowed` allows the whole
+catalog). Roll back with `migrations/down/20261106000300_connector_policy.sql`; it must run before
+`down/20261102000000_free_token_window.sql` if both are rolled back.
+
+**Connector accounts (`20261106000400_connector_accounts.sql`).** New tables only:
+`zerox_connector_accounts` (one row per linked vendor account; `enc_refresh_token` is the sealed
+token envelope, never readable without `CONNECTOR_TOKENS_KEK`; disconnecting, or the vendor
+refusing the link, deletes the row, so no token is kept after its link ends),
+`zerox_connector_audit` (metadata of each `/mcp/<id>` call, purged after 30 days by the scheduled
+maintenance while hosted connectors are on) and `zerox_connector_rate` (one per-user request
+counter for `/mcp/`, shared by every runtime). Nothing uses them while `HOSTED_CONNECTORS` is off,
+so it can be pasted before or after any deploy. Verify:
+`SELECT count(*) FROM pg_proc WHERE proname LIKE 'zerox_connector_%';` returns 8. Roll back with `migrations/down/20261106000400_connector_accounts.sql` (switch hosted
+connectors off first; it deletes every link and audit row).
+
+**Hosted connectors (contract section 18.4; off until every step below is done).** Users link a
+SaaS account on the dashboard (Connectors tab) and Neuron reaches it through
+`https://zero-x.live/mcp/<id>`, which proxies to the vendor's official remote MCP server with the
+user's stored token (`src/routes/connectors.js`, `src/mcp-proxy.js`). Owner steps before
+`HOSTED_CONNECTORS=true` on production:
+
+1. Staging first: a test host (`EXTRA_WEB_HOSTS`, e.g. `staging.zero-x.live`) on its own database
+   with the migrations above, `HOSTED_CONNECTORS=true` there only, and test OAuth apps. Set
+   `CONNECTORS_CALLBACK_URL`, `CONNECTORS_RETURN_URL` and `HOSTED_CONNECTORS_BASE_URL` to the
+   staging origin. Production keeps the flag unset until staging passes the acceptance run (link
+   GitHub, `neuron` shows it ready with no local secret, disconnect turns it to needs_connect, a
+   Free account sees no hosted connector, a destructive tool asks before it runs).
+2. `CONNECTOR_TOKENS_KEK` as a secret on every runtime that serves `/mcp/` and `/api/connectors`
+   (Worker and EC2), the same value on both.
+3. One OAuth app per vendor, owned by the Zero-X organisation, redirect URI
+   `https://dashboard.zero-x.live/api/connectors/callback` (or the staging one), then
+   `CONNECTOR_<ID>_CLIENT_ID` / `CONNECTOR_<ID>_CLIENT_SECRET`:
+   - GitHub: an OAuth app (or a GitHub App with user tokens, which adds refresh tokens). Scopes
+     default to `repo read:org`; narrow them if the toolsets you allow need less. Confirm on
+     staging that the remote server `https://api.githubcopilot.com/mcp/` accepts the app's user
+     token for the toolsets you want.
+   - Linear: an OAuth application (Linear settings, API); default scopes `read,write`.
+   - Slack: a Slack app with user scopes for the MCP tools you allow (set `CONNECTOR_SLACK_SCOPES`,
+     there is no default). Slack allows MCP only for Marketplace-published or internal apps, so a
+     public alpha needs the Marketplace listing first.
+   - Notion: register a client with the authorization server that `https://mcp.notion.com/mcp`
+     advertises (its protected-resource metadata), then set `CONNECTOR_NOTION_AUTHORIZE_URL`,
+     `CONNECTOR_NOTION_TOKEN_URL` and the client id.
+   - Atlassian: the MCP URL defaults to `https://mcp.atlassian.com/v2/mcp`, which the
+     atlassian/atlassian-mcp-server README recommended on 2026-11-04. Register an OAuth 2.1 client
+     with the authorization server that endpoint advertises, then set
+     `CONNECTOR_ATLASSIAN_AUTHORIZE_URL`, `_TOKEN_URL`, `_SCOPES` and the client id. Delete tools
+     (`delete_jira`) are off by default on Atlassian's side; the gateway asks before any it allows.
+   - Check each vendor's tools/list on staging against `src/connector-catalog.js`: Atlassian's map
+     follows its published tool list, Notion's names come from third-party listings, and Linear
+     publishes no tool names (name rules only).
+   Set `CONNECTOR_<ID>_REVOKE_URL` where the vendor offers RFC 7009 revocation, so Disconnect also
+   revokes the refresh token (then the access token) at the vendor; without it Disconnect deletes
+   the stored tokens but the vendor's grant stays until the user removes the app there.
+   `/api/account` reports a connector as hosted only once its OAuth app is configured, so vendors
+   can be switched on one at a time.
+4. Decide where `/mcp/` runs. Both runtimes serve it; on the Worker a long tool call counts
+   against the request limits, on EC2 it does not. If EC2 should serve it, add `/mcp/` to
+   `EC2_PROXY_PREFIXES`.
+5. Legal and privacy text before launch: the privacy policy must say that Zero-X stores linked
+   accounts' OAuth tokens (encrypted, deleted when the user disconnects, when the vendor refuses
+   the link, or with the account; revoked at the vendor where it supports revocation), which
+   vendors receive the user's requests, that call metadata (tool name, time, sizes, a hash of the
+   arguments, never their content) is kept 30 days, and how to disconnect. The terms should
+   cover acting on the user's behalf in third-party services. Each vendor's developer terms apply
+   to its app (Slack's Marketplace rules, GitHub's OAuth app terms, Atlassian and Notion app
+   terms, Linear's API terms).
+6. Gateway-served connector catalog updates for the CLI need an ed25519 signing key held by the
+   owner; by the owner decision the CLI (neuron-v2) rejects every remote update until its public
+   key constant is set. This gateway does not serve catalog updates yet.
+
 `DATABASE_URL=… node scripts/apply-migrations.mjs --status`, then `--apply`; or run each file in the
 Supabase SQL editor followed by
 `INSERT INTO supabase_migrations.schema_migrations (version, name) VALUES ('<version>', '<name>') ON CONFLICT DO NOTHING;`.
@@ -331,9 +550,9 @@ cache arguments. Verify:
 
 - `SELECT pg_get_function_identity_arguments('public.zerox_settle_v2'::regproc);` lists 11 arguments;
 - `SELECT id, lifecycle FROM public.zerox_offers WHERE id = 'anthropic.paid';` returns `active`;
-- `SELECT id, status FROM public.zerox_catalog_snapshot() WHERE status = 'active';` returns 18 rows;
+- `SELECT id, status FROM public.zerox_catalog_snapshot() WHERE status = 'active';` returns 18 rows (19 once migration 16 is applied);
 - `SELECT plan, allowed_tiers, monthly_credit_microusd, jsonb_array_length(features) FROM public.zerox_plan_policy ORDER BY sort;`
-  returns free `{free}` 0 4, pro `{free,paid}` 8000000 5, max `{free,paid}` 35000000 5, ultrawork `{free,paid}` 8000000 5.
+  returns free `{free}` 0 4 (5 after migration 17), pro `{free,paid}` 8000000 5, max `{free,paid}` 35000000 5, ultrawork `{free,paid}` 8000000 5 (one more line each after migration 17).
 
 **Active health checks (`20261104000000_health_probes.sql`).** New tables and functions
 (the tables `zerox_pool_health` and `zerox_health_lease`; the functions `zerox_health_lease`, `zerox_probe_take`,

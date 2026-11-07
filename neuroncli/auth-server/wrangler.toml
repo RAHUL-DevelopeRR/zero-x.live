@@ -67,13 +67,14 @@ GEMINI_MODELS = ""
 CLOUDFLARE_MODELS = ""
 # Z.ai's free GLM-4.7-Flash and GLM-4.5-Flash use the Worker secret GLM_API_KEY (deploy.yml pushes
 # it from the GitHub secret); without it they list as not_configured. ZAI_MODELS would narrow them.
-# Claude Sonnet 5.5 and Claude Opus 5.5 (paid pools, Pro and Max, billed from credits) use the
-# Worker secret ANTHROPIC_API_KEY, which deploy.yml pushes from the GitHub secret; without it they
+# Claude Sonnet 5.5 and Claude Opus 5.5 (paid pools, Pro and Max, billed from credits) and Claude
+# Haiku 5.5 (a sponsored free pool on every plan, 10M tokens a month per user, docs/PLATFORM_CONTRACT.md
+# section 19) use the Worker secret ANTHROPIC_API_KEY, which deploy.yml pushes from the GitHub secret; without it they
 # list as not_configured. The same key enables the weekly discovery research and credits jobs;
 # DISCOVERY_RESEARCH = "false" turns those off. ANTHROPIC_MODELS narrows the Claude models offered
 # like the other *_MODELS: a second gate beside the list prices in src/list-prices.js, so the
-# anthropic.paid key serves these two only, whatever catalog rows say. The base URL is pinned in code.
-ANTHROPIC_MODELS = "claude-sonnet-5-5,claude-opus-5-5"
+# anthropic.paid key serves these three only, whatever catalog rows say. The base URL is pinned in code.
+ANTHROPIC_MODELS = "claude-sonnet-5-5,claude-opus-5-5,claude-haiku-5-5"
 # DISCOVERY_RESEARCH = "false"
 # Model catalog source (src/catalog-db.js). Unset: the approved database rows when the database is
 # configured (cached 45 s per isolate; a database outage keeps the last catalog that loaded, else
@@ -83,8 +84,12 @@ ANTHROPIC_MODELS = "claude-sonnet-5-5,claude-opus-5-5"
 # Public Razorpay key id (rzp_live_...). RAZORPAY_KEY_SECRET and RAZORPAY_WEBHOOK_SECRET are
 # Worker secrets; billing answers 503 billing_not_configured until all three are set.
 RAZORPAY_KEY_ID = "rzp_live_TK43zZbnvcWZa8"
-# Set to "true" once Content-Security-Policy-Report-Only shows no violations.
-CSP_ENFORCE = "false"
+# The Content-Security-Policy is enforced (inline scripts and styles by sha256, src/csp.js). "false" is the
+# kill switch: the same policy as Content-Security-Policy-Report-Only.
+CSP_ENFORCE = "true"
+# Checkout order summary: uncomment to show "No GST charged". Only after the owner has confirmed with
+# the CA that no GST is charged; until then the checkout says nothing about GST (GATEWAY_SETUP.md).
+# BILLING_NO_GST_NOTICE = "true"
 # Cloudflare Access application on dashboard.zero-x.live/admin (provider key vault and model
 # catalog pages, GATEWAY_SETUP.md step 5). With both set, the pages, /admin/providers/keys and
 # /admin/catalog/* also verify the Access JWT. The vault itself needs the Worker secret

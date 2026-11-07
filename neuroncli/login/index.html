@@ -7,23 +7,31 @@
   <meta name="robots" content="noindex">
   <title>Connect Neuron | Zero-X</title>
   <link rel="icon" href="../../Assets/zerox-favicon-32.png">
-  <link rel="stylesheet" href="/site-fonts.css">
+  <meta name="theme-color" content="#FFFFFF" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#141413" media="(prefers-color-scheme: dark)">
+  <link rel="preload" href="/fonts/aspekta-400.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/fonts/aspekta-500.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/zx-tokens.css">
-  <style>
-    body{display:grid;place-items:center;padding:16px}.card{width:min(480px,100%);padding:32px 24px;text-align:center;border:1px solid var(--zx-border);border-radius:var(--zx-radius-lg);background:var(--zx-surface)}h1{font-size:1.75rem}p{color:var(--zx-muted);overflow-wrap:anywhere}#account{color:var(--zx-heading);font-weight:600}button{min-height:44px;padding:12px 24px;border:0;border-radius:999px;background:var(--zx-accent);color:var(--zx-on-accent);font:600 1rem var(--zx-font-body);cursor:pointer}button:hover{background:var(--zx-accent-h)}button:disabled{opacity:.6;cursor:wait}button:focus-visible{outline:none;box-shadow:var(--zx-focus)}
-  </style>
+  <link rel="stylesheet" href="/auth-pages.css">
   <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js" integrity="sha384-Rj26LVGvoeRVR6+mwQmFfcR3QOBEwT+ZmuCWpuiqeTzJpCs0ER4ITAWGb4Hiy3Ok" crossorigin="anonymous"></script>
   <script defer src="../../zerox-auth.js"></script>
   <script defer src="./login.js"></script>
 </head>
-<body>
-  <main class="card">
-    <h1>Connect Neuron</h1>
-    <p id="message" role="status" aria-live="polite">Checking your sign-in…</p>
-    <p id="account"></p>
-    <button id="connect" type="button" hidden>Connect this account</button>
-    <p>This page only completes sign-in for older Neuron builds that open a local callback. Neuron 7.0.0-alpha.4 signs in with a device code: run <code>neuron login</code> and approve the code at <a href="https://neuron.zero-x.live/device">neuron.zero-x.live/device</a>.</p>
-    <a href="../../dashboard.html">Open account dashboard</a>
+<body class="ap">
+  <header class="ap-top"><a class="zx-brand" href="https://zero-x.live/"><img src="/Assets/zerox-mark.svg" width="28" height="28" alt="">Zero-X</a></header>
+  <main class="ap-main" id="main">
+    <div class="ap-card">
+      <p class="zx-label">Neuron CLI</p>
+      <h1>Connect Neuron</h1>
+      <p id="message" role="status" aria-live="polite">Checking your sign-in…</p>
+      <p id="account"></p>
+      <button id="connect" class="zx-btn zx-btn--primary" type="button" hidden>Connect this account</button>
+      <div class="ap-help">
+        <p>By continuing you agree to the <a href="https://zero-x.live/terms">Terms of Service</a> and the <a href="https://zero-x.live/privacy">Privacy Policy</a>, and confirm you are 18 or older.</p>
+        <p>This page only completes sign-in for older Neuron builds that open a local callback. Neuron 7.0.0-alpha.4 signs in with a device code: run <code>neuron login</code> and approve the code at <a href="https://neuron.zero-x.live/device">neuron.zero-x.live/device</a>.</p>
+        <p><a href="../../dashboard.html">Open account dashboard</a></p>
+      </div>
+    </div>
   </main>
 </body>
 </html>

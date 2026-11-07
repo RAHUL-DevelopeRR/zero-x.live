@@ -56,6 +56,7 @@ for (const [label, product, change, message] of [
   ['unreleased with downloads', 'cli', m => { m.version = null; m.released_at = null; }, /downloads must be empty/],
   ['http link', 'cli', m => { m.downloads[0].url = m.downloads[0].url.replace('https:', 'http:'); }, /downloads\[0\]\.url/],
   ['foreign host', 'cli', m => { m.downloads[0].url = 'https://evil.example/neuron-windows-x64.exe'; }, /downloads\[0\]\.url/],
+  ['another github.com repository', 'cli', m => { m.downloads[0].url = 'https://github.com/someone-else/neuron-v2/releases/download/v6.3.0/neuron-windows-x64.exe'; }, /downloads\[0\]\.url/],
   ['credentials in URL', 'cli', m => { m.downloads[0].url = 'https://user:pw@github.com/neuron-windows-x64.exe'; }, /downloads\[0\]\.url/],
   ['file mismatch', 'cli', m => { m.downloads[0].file = 'neuron.exe'; }, /must end with the file name/],
   ['path in file', 'cli', m => { m.downloads[0].file = '../neuron.exe'; }, /plain file name/],

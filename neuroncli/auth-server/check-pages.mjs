@@ -10,11 +10,11 @@ const root = new URL('../../', import.meta.url);
 const read = file => readFileSync(new URL(file, root), 'utf8');
 const isFile = file => existsSync(new URL(file, root)) && statSync(new URL(file, root)).isFile();
 
-const PUBLIC_PAGES = ['index.html', 'pricing.html', 'neuron-cli.html', 'docs.html', 'ai-coding-agent.html', 'free-ai-coding-agent.html', 'claude-code-alternative.html', 'docs/trust.html', 'download.html', 'changelog.html', 'refund.html', 'contact.html', 'shipping.html', 'privacy.html', 'terms.html'];
+const PUBLIC_PAGES = ['index.html', 'pricing.html', 'neuron-cli.html', 'docs.html', 'ai-coding-agent.html', 'free-ai-coding-agent.html', 'claude-code-alternative.html', 'docs/trust.html', 'docs/data.html', 'download.html', 'changelog.html', 'refund.html', 'contact.html', 'shipping.html', 'privacy.html', 'terms.html'];
 const PRIVATE_PAGES = ['dashboard.html', '404.html', 'neuroncli/index.html'];
-const SITE_SCRIPTS = ['dashboard.js', 'pricing.js', 'billing-checkout.js', 'home.js', 'download.js', 'changelog.js', 'site-nav.js'];
+const SITE_SCRIPTS = ['dashboard.js', 'pricing.js', 'billing-checkout.js', 'home.js', 'download.js', 'billing-details.js', 'changelog.js', 'site-nav.js', 'announce.js'];
 const RELEASE_MANIFESTS = ['releases/cli/latest.json', 'releases/desktop/latest.json'];
-const SITE_FILES = [...PUBLIC_PAGES, ...PRIVATE_PAGES, ...SITE_SCRIPTS, ...RELEASE_MANIFESTS, 'zx-tokens.css', 'home.css', 'zerox-auth.js', 'neuroncli/login/index.html', 'neuroncli/callback/index.html'];
+const SITE_FILES = [...PUBLIC_PAGES, ...PRIVATE_PAGES, ...SITE_SCRIPTS, ...RELEASE_MANIFESTS, 'zx-tokens.css', 'home.css', 'content.css', 'zerox-auth.js', 'neuroncli/login/index.html', 'neuroncli/callback/index.html'];
 const BASES = {'dashboard.html': 'https://dashboard.zero-x.live/', '404.html': 'https://zero-x.live/404', 'neuroncli/index.html': 'https://zero-x.live/neuroncli/'};
 const CSP = {
   script: ['https://cdn.jsdelivr.net', 'https://checkout.razorpay.com'],
@@ -86,6 +86,12 @@ for (const file of [...PUBLIC_PAGES, ...PRIVATE_PAGES]) {
     assert.deepEqual([toggle.type, toggle['aria-expanded'], toggle['aria-controls'], 'hidden' in toggle], ['button', 'false', 'site-nav', true],
       file + ': the menu button is a hidden disclosure button for #site-nav');
     assert.ok(tags(body, 'nav').some(a => a.id === 'site-nav' && a['aria-label'] === 'Main'), file + ': the main nav is #site-nav');
+    // The same links on every page: no page-only anchor (the home page once had a Models link the others lacked).
+    const navHtml = (/<nav class="zx-nav" id="site-nav"[^>]*>([\s\S]*?)<\/nav>/.exec(body) || [])[1] || '';
+    for (const link of tags(navHtml, 'a')) assert.doesNotMatch(link.href || '', /^#/, file + ': the header nav has no page-only anchor links');
+    if (/<main[^>]*class="[^"]*\bzx-legal\b/.test(body)) {
+      assert.ok(tags(html, 'link').some(a => a.rel === 'stylesheet' && a.href === '/content.css'), file + ': a reading page loads content.css');
+    }
     assert.match(body, /<button class="zx-nav-toggle"[^>]*>[\s\S]*?Menu<\/button>\s*<nav class="zx-nav" id="site-nav"/, file + ': the button has a visible name and sits before the nav');
     assert.ok(tags(html, 'script').some(a => a.type === 'module' && a.src === '/site-nav.js'), file + ': loads /site-nav.js');
     // Review 2026-11-05: menu mode before first paint (no wrapped header that then jumps 96 px):
@@ -123,6 +129,14 @@ for (const file of [...PUBLIC_PAGES, ...PRIVATE_PAGES]) {
   }
 }
 
+// aria-current="page" marks the link to this very page, never another one (a footer copied from a
+// sibling page once marked Privacy Policy as current on three pages). Every site page is checked.
+for (const file of [...PUBLIC_PAGES, 'about.html', 'neucockpit.html', 'find-files-by-content.html', 'wheres-that-file.html', 'start.html']) {
+  for (const link of tags(stripScripts(read(file)), 'a').filter(a => a['aria-current'] === 'page' && a.href)) {
+    const own = file === 'index.html' ? '/' : '/' + file.replace(/\.html$/, '');
+    assert.equal(link.href.replace(/#.*$/, ''), own, file + ': aria-current marks ' + link.href + ', not this page');
+  }
+}
 assert.ok(!seoPages.some(page => PRIVATE_PAGES.includes(page.file)), 'Private pages must stay out of seo-pages.json');
 for (const file of PUBLIC_PAGES) assert.ok(seoPages.some(page => page.file === file), file + ' is listed in seo-pages.json');
 assert.match(read('neuroncli/index.html'), /<meta http-equiv="refresh" content="0; url=\/neuron-cli">/, 'Old /neuroncli/ page points to /neuron-cli');
@@ -194,6 +208,24 @@ for (const file of ['index.html', 'neuron-cli.html', 'docs.html', 'ai-coding-age
   assert.match(html, /<code id="qs-login">neuron login<\/code>/);
   assert.match(html, /https:\/\/zero-x\.live\/v1/);
   assert.doesNotMatch(read('dashboard.js'), /alert\(|confirm\(/, 'No alert()/confirm() dialogs');
+}
+
+/* The billing details step (billing-details.js) sits in front of every purchase: no payment starts without it */
+{
+  for (const file of ['pricing.js', 'dashboard.js']) {
+    const source = read(file);
+    assert.match(source, /from '\.\/billing-details\.js'/, file + ' imports the billing details step');
+    assert.match(source, /purchaseWithDetails\(/, file + ' runs purchases through it');
+    assert.doesNotMatch(source, /await start(?:Subscription|Topup)\(/, file + ': a purchase starts only inside purchaseWithDetails, after the details step');
+  }
+  assert.doesNotMatch(read('billing-details.js'), /startSubscription|startTopup|loadRazorpay|runCheckout/, 'the step never starts a payment');
+  // The dialog and its form controls are built by the script (labels, autocomplete, errors: check-dashboard.mjs), so the pages carry no copy of it.
+  for (const file of ['pricing.html', 'dashboard.html']) assert.doesNotMatch(read(file), /bd-form|bd-title|billing-details/, file + ': no markup of the step');
+  assert.ok(read('zx-tokens.css').includes('.zx-dialog--billing'), 'the dialog styles ship with the shared tokens');
+  // In the two-column layout the long-hint fields (address lines, tax id, phone) span the full width.
+  const wide = read('zx-tokens.css').match(/@media \(min-width: 560px\) \{ \.zx-form-grid \{[^}]*\}([^{]*)\{ grid-column: 1 \/ -1; \}/);
+  assert.ok(wide, 'the details form has a two-column rule with full-width fields');
+  for (const id of ['bd-address-line1-field', 'bd-address-line2-field', 'bd-tax-id-field', 'bd-phone-field']) assert.ok(wide[1].includes('#' + id), id + ' spans both columns');
 }
 
 /* ───────────── Links resolve to files or routes ───────────── */
@@ -283,6 +315,45 @@ for (const file of allHtml) {
   }
 }
 assert.doesNotMatch(read('zx-tokens.css'), /@import|url\((?!\s*['"]?(?:data:|\/[^/]))/, 'zx-tokens.css loads nothing remote');
+/* ───────────── Content-Security-Policy hashes (audit F14, F15, D1) ───────────── */
+
+// Inline scripts and styles are allowed by sha256, not by 'unsafe-inline': src/csp-hashes.js must list
+// exactly what the pages carry (node build-csp-hashes.mjs rewrites it), no page may use an inline event
+// handler or a javascript: URL (script-src-attr 'none'), and the one third-party script is allowed by URL.
+{
+  const {collectInlineHashes, render} = await import('./build-csp-hashes.mjs');
+  const generated = render(collectInlineHashes());
+  assert.equal(read('neuroncli/auth-server/src/csp-hashes.js').replace(/\r\n/g, '\n'), generated,
+    'src/csp-hashes.js is out of date: run `node build-csp-hashes.mjs` in neuroncli/auth-server');
+  const {INLINE_SCRIPT_HASHES, INLINE_STYLE_HASHES} = await import('./src/csp-hashes.js');
+  assert.ok(INLINE_SCRIPT_HASHES.length >= 3 && INLINE_STYLE_HASHES.length >= 1, 'the pages carry inline scripts and styles');
+  for (const hash of [...INLINE_SCRIPT_HASHES, ...INLINE_STYLE_HASHES]) assert.match(hash, /^sha256-[A-Za-z0-9+/]{43}=$/);
+  const {sitePolicy, SUPABASE_JS_SRC, ADMIN_POLICY} = await import('./src/csp.js');
+  const version = /SUPABASE_JS_VERSION = '([\d.]+)'/.exec(read('zerox-auth.js'))?.[1];
+  assert.ok(version, 'zerox-auth.js pins a supabase-js version');
+  assert.equal(SUPABASE_JS_SRC, `https://cdn.jsdelivr.net/npm/@supabase/supabase-js@${version}/dist/umd/supabase.js`, 'src/csp.js allows the file zerox-auth.js loads');
+  for (const file of allHtml) {
+    const html = read(file);
+    assert.doesNotMatch(html, /\son[a-z]+\s*=\s*["']/i, `${file}: no inline event handler attribute`);
+    assert.doesNotMatch(html, /(?:href|src|action)\s*=\s*["']\s*javascript:/i, `${file}: no javascript: URL`);
+    for (const script of tags(html, 'script')) if (script.src && script.src.includes('supabase-js')) assert.equal(script.src, SUPABASE_JS_SRC, `${file}: the supabase-js URL the policy allows`);
+  }
+  for (const [env, path, host] of [[{}, '/', 'zero-x.live'], [{}, '/pricing', 'zero-x.live'], [{SUPABASE_URL: 'https://abc.supabase.co'}, '/dashboard', 'dashboard.zero-x.live'],
+    [{}, '/neuroncli/login/', 'zero-x.live'], [{}, '/neuroncli/callback/', 'zero-x.live'], [{}, '/device', 'neuron.zero-x.live']]) {
+    const policy = sitePolicy(env, {hostname: host, pathname: path});
+    const parts = policy.split('; ');
+    const script = parts.find(part => part.startsWith('script-src '));
+    assert.ok(!script.includes("'unsafe-inline'") && !script.includes("'unsafe-eval'"), `${path}: script-src has no unsafe-inline or unsafe-eval`);
+    assert.ok(!/(^| )https:( |;|$)/.test(policy), `${path}: no bare https: source`);
+    assert.equal(policy.includes('*.supabase.co'), !env.SUPABASE_URL, `${path}: the Supabase wildcard only without a configured project`);
+    const checkout = ['/pricing', '/dashboard'].includes(path);
+    assert.equal(parts.find(part => part.startsWith('style-src ')).includes("'unsafe-inline'"), checkout, `${path}: inline styles only where the Razorpay checkout runs`);
+    assert.equal(policy.includes('http://127.0.0.1:*'), path === '/neuroncli/login/', `${path}: the loopback form target is the CLI sign-in page's alone`);
+    assert.equal(policy.includes('frame-src https://api.razorpay.com'), checkout, `${path}: payment frames only on the checkout pages`);
+  }
+  assert.ok(!/unsafe-/.test(ADMIN_POLICY), 'the operator policy has no unsafe source');
+}
+
 // Every maker logo the pane draws is vendored, with its licence notice.
 for (const m of read('zx-tokens.css').matchAll(/url\("(\/[^"]+)"\)/g)) assert.ok(isFile(m[1].slice(1)), 'zx-tokens.css: ' + m[1] + ' exists');
 assert.match(read('Assets/makers/NOTICE.txt'), /Simple Icons[\s\S]*CC0 1\.0/, 'maker logos carry their Simple Icons CC0 notice');
@@ -295,14 +366,124 @@ for (const file of [...SITE_SCRIPTS, 'zerox-auth.js']) {
 }
 assert.match(read('zerox-auth.js'), /SUPABASE_JS_VERSION = '\d+\.\d+\.\d+'/, 'zerox-auth pins supabase-js');
 assert.match(read('zerox-auth.js'), /SUPABASE_JS_INTEGRITY = 'sha384-[A-Za-z0-9+/]{64}'/);
+
+/* ───────────── Design system: fonts, icons, tokens, no AI-slop patterns ───────────── */
+
+// Pages that use the design system (the legacy product pages keep their own styles for now).
+const LEGACY_PAGES = [];
+const GUIDE_PAGES = ['find-files-by-content.html', 'wheres-that-file.html', 'neucockpit.html'];
+const DESIGN_PAGES = [...PUBLIC_PAGES, ...PRIVATE_PAGES, ...GUIDE_PAGES].filter(f => f !== 'neuroncli/index.html' && !LEGACY_PAGES.includes(f));
+const plainText = file => stripScripts(read(file)).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+
+// Aspekta and JetBrains Mono are self-hosted (SIL OFL, licences next to the files); nothing is loaded from a font CDN.
+{
+  const css = read('zx-tokens.css');
+  const faces = [...css.matchAll(/@font-face \{ font-family: '([^']+)'; font-weight: (\d+); font-style: normal; font-display: swap; src: url\('(\/fonts\/[^']+\.woff2)'\)/g)];
+  assert.deepEqual(faces.map(m => m[1] + ' ' + m[2]), ['Aspekta 400', 'Aspekta 450', 'Aspekta 500', 'Aspekta 600', 'JetBrains Mono 400', 'JetBrains Mono 500', 'JetBrains Mono 700'], 'the font faces the design uses');
+  for (const m of faces) assert.ok(isFile(m[3].slice(1)), 'font file ' + m[3]);
+  assert.match(css, /font-family: 'Aspekta Fallback'; src: local\('Arial'\)[^}]*size-adjust/, 'a size-adjusted fallback for Aspekta');
+  assert.match(css, /font-family: 'JetBrains Mono Fallback'; src: local\('Courier New'\)[^}]*size-adjust/, 'a size-adjusted fallback for JetBrains Mono');
+  assert.match(read('fonts/OFL-Aspekta.txt'), /SIL OPEN FONT LICENSE Version 1\.1/, 'Aspekta licence text ships with the font');
+  assert.match(read('fonts/OFL-JetBrains-Mono.txt'), /SIL Open Font License, Version 1\.1/, 'JetBrains Mono licence text ships with the font');
+  const firstPaint = ['aspekta-400', 'aspekta-450', 'aspekta-500', 'aspekta-600', 'jetbrains-mono-400', 'jetbrains-mono-500']
+    .reduce((sum, name) => sum + statSync(new URL(`fonts/${name}.woff2`, root)).size, 0);
+  assert.ok(firstPaint < 150 * 1024, `fonts used for first paint are ${firstPaint} bytes (under 150 KB)`);
+}
+// Every page that uses the design system preloads the two faces used above the fold and links no font CDN.
+for (const file of [...DESIGN_PAGES, 'neuroncli/login/index.html', 'neuroncli/callback/index.html', 'neuroncli/device/index.html', 'neuroncli/admin/keys/index.html', 'neuroncli/admin/models/index.html']) {
+  const html = read(file);
+  const preloads = tags(html, 'link').filter(a => a.rel === 'preload');
+  assert.deepEqual(preloads.map(a => a.href), ['/fonts/aspekta-400.woff2', '/fonts/aspekta-500.woff2'], file + ': preloads the two faces used above the fold');
+  for (const link of preloads) assert.deepEqual([link.as, link.type, 'crossorigin' in link], ['font', 'font/woff2', true], file + ': font preload attributes');
+  assert.doesNotMatch(html, /site-fonts\.css|fontshare|fonts\.googleapis|fonts\.gstatic/, file + ': no hotlinked fonts');
+  assert.deepEqual(tags(html, 'meta').filter(a => a.name === 'theme-color').map(a => a.media), ['(prefers-color-scheme: light)', '(prefers-color-scheme: dark)'], file + ': theme colour for both schemes');
+}
+// One icon sprite, same origin, Lucide: every <use> resolves to a symbol in it.
+{
+  const sprite = read('icons.svg');
+  const symbols = new Set([...sprite.matchAll(/<symbol id="([\w-]+)" viewBox="0 0 24 24">/g)].map(m => m[1]));
+  assert.ok(symbols.size >= 60, 'the sprite has the icons the site needs');
+  for (const name of ['home', 'chat', 'lock', 'bar-chart', 'timer', 'check-circle', 'list', 'globe', 'box', 'user', 'credit-card', 'scroll', 'settings', 'arrow-right', 'x', 'menu',
+    'terminal', 'download', 'external-link', 'copy', 'check', 'search', 'book', 'shield', 'key']) assert.ok(symbols.has(name), 'sprite icon ' + name);
+  assert.match(sprite, /ISC License[\s\S]*Permission to use, copy, modify/, 'the sprite carries the Lucide ISC licence');
+  assert.doesNotMatch(sprite.replace(/<!--[\s\S]*?-->/, ''), /<(?:script|image|foreignObject|style)\b|\son[a-z]+=|href=/i, 'the sprite is plain vector paths');
+  for (const file of allHtml) {
+    for (const m of read(file).matchAll(/<use href="([^"]+)"/g)) {
+      assert.match(m[1], /^\/icons\.svg#[\w-]+$/, `${file}: icons come from the same-origin sprite (${m[1]})`);
+      assert.ok(symbols.has(m[1].split('#')[1]), `${file}: ${m[1]} exists in the sprite`);
+    }
+  }
+  assert.match(read('zx-tokens.css'), /\.zx-icon \{[^}]*stroke-width: 1\.5; stroke-linecap: round; stroke-linejoin: round;/, '.zx-icon: 1.5px stroke, round caps and joins');
+}
+// Anti-slop rules for the shared stylesheets: no gradients, glass, violet, stacked shadows; purple survives only as a legacy alias.
+for (const file of ['zx-tokens.css', 'home.css', 'content.css']) {
+  const css = read(file).replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.doesNotMatch(css, /gradient\(/i, file + ': no gradients');
+  assert.doesNotMatch(css, /backdrop-filter|filter:\s*blur/i, file + ': no glass or blur');
+  assert.doesNotMatch(css, /violet|#(?:7C4DFF|A58AFF|5B3FD0)/i, file + ': no violet');
+  assert.doesNotMatch(css.replace(/--zx-purple(?:-soft)?: [^;]+;|\.zx-badge--purple|var\(--zx-purple(?:-soft)?\)/g, ''), /purple/i, file + ': purple only survives as a legacy alias for the tan accent');
+  assert.doesNotMatch(css, /box-shadow:[^;{}]*\),\s*[^;{}]*\)/i, file + ': no stacked drop shadows');
+}
+{
+  const css = read('zx-tokens.css');
+  for (const token of ['bg', 'panel', 'surface-strong', 'border', 'ink', 'muted', 'accent', 'tan', 'green', 'amber', 'red', 'slate', 'radius', 'font-body', 'font-mono']) {
+    assert.ok(new RegExp('--zx-' + token + ':').test(css), 'token --zx-' + token);
+  }
+  // Light is the default; dark follows the system and data-theme.
+  assert.match(css, /@media \(prefers-color-scheme: dark\) \{\s*:root:not\(\[data-theme="light"\]\) \{/, 'dark through prefers-color-scheme unless data-theme="light"');
+  const light = css.match(/\n:root \{([\s\S]*?)\n\}/)[1];
+  const dark = css.match(/:root\[data-theme="dark"\] \{([\s\S]*?)\n\}/)[1];
+  assert.match(light, /--zx-bg: #FFFFFF;/, 'the default theme is light');
+  assert.match(light, /--zx-ink: #1B1B1B;/, 'ink');
+  assert.match(dark, /--zx-bg: #141413;/, 'dark paper');
+  assert.match(dark, /--zx-ink: #ECEBE8;/, 'dark ink');
+  // The media-query dark block and the data-theme block carry the same values.
+  const media = css.match(/:root:not\(\[data-theme="light"\]\) \{([\s\S]*?)\n  \}/)[1];
+  const values = block => Object.fromEntries([...block.matchAll(/(--zx-[\w-]+): ([^;]+);/g)].map(m => [m[1], m[2].trim()]));
+  const darkValues = values(dark);
+  const mediaValues = values(media);
+  for (const key of Object.keys(mediaValues)) assert.equal(darkValues[key], mediaValues[key], 'dark tokens agree: ' + key);
+  for (const key of Object.keys(darkValues).filter(k => k !== 'color-scheme')) assert.ok(key in mediaValues, 'dark tokens agree: ' + key);
+  // WCAG 4.5:1 for the text tokens on the surfaces they sit on, in both themes.
+  const lum = hex => { const [r, g, b] = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16) / 255).map(v => v <= .03928 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4); return .2126 * r + .7152 * g + .0722 * b; };
+  const ratio = (a, b) => { const [hi, lo] = [lum(a), lum(b)].sort((m, n) => n - m); return (hi + .05) / (lo + .05); };
+  for (const [name, block] of Object.entries({ light, dark })) {
+    const v = key => { const m = block.match(new RegExp('--zx-' + key + ': (#[0-9A-Fa-f]{6})')); assert.ok(m, `${name}: --zx-${key}`); return m[1]; };
+    for (const textToken of ['ink', 'muted', 'faint', 'accent-text', 'success', 'warning', 'danger', 'info', 'tan-text']) {
+      for (const surface of ['bg', 'panel']) assert.ok(ratio(v(textToken), v(surface)) >= 4.5, `${name}: --zx-${textToken} on --zx-${surface} is ${ratio(v(textToken), v(surface)).toFixed(2)}:1 (needs 4.5)`);
+    }
+    assert.ok(ratio(v('on-ink'), v('ink-fill')) >= 4.5, name + ': primary button label');
+    assert.ok(ratio(v('ink'), v('surface-strong')) >= 4.5 && ratio(v('muted'), v('surface-strong')) >= 4.5, name + ': text on the active pill');
+  }
+}
+for (const file of DESIGN_PAGES) assert.doesNotMatch(plainText(file), /supercharge|unlock the|seamless|revolutionary|next-gen|game-chang/i, file + ': no generic filler words');
+// The shared footer is the same on every page: three link groups and the brand, the current page marked.
+for (const file of DESIGN_PAGES) {
+  const footer = read(file).match(/<footer class="zx-footer">[\s\S]*?<\/footer>/)[0];
+  assert.deepEqual([...footer.matchAll(/<nav aria-label="([^"]+)"/g)].map(m => m[1]), ['Product', 'Company', 'Legal'], file + ': footer groups');
+  for (const path of ['/neuron-cli', '/pricing', '/docs', '/about', '/contact', '/terms', '/privacy', '/refund', '/shipping', '/download', '/changelog']) {
+    assert.ok(footer.includes(`href="${path}"`) || footer.includes(`href="https://zero-x.live${path}"`), `${file}: footer links ${path}`);
+  }
+  assert.match(footer, /<a class="zx-brand" href="[^"]+"[^>]*><img src="\/Assets\/zerox-mark\.svg" width="28" height="28" alt="">Zero-X<\/a>/, file + ': footer brand');
+  assert.match(read(file), /<button class="zx-nav-toggle"[^>]*><svg class="zx-icon zx-icon--menu"[^>]*><use href="\/icons\.svg#menu"\/><\/svg><svg class="zx-icon zx-icon--close"[^>]*><use href="\/icons\.svg#x"\/><\/svg>Menu<\/button>/, file + ': Menu button icons');
+}
+// The announcement bar on the homepage: a region, a pill, one line with an arrow link, a close button that stays hidden until announce.js runs.
+{
+  const html = read('index.html');
+  const bar = html.match(/<div class="zx-announce"[\s\S]*?<\/div>\s*<\/div>/)[0];
+  assert.match(bar, /role="region" aria-label="Announcement" data-announce="[\w-]+"/, 'announcement region');
+  assert.match(bar, /<span class="zx-badge zx-badge--ink">New<\/span>/, 'announcement pill');
+  assert.match(bar, /<button class="zx-announce__close" type="button" aria-label="Dismiss announcement" hidden>/, 'announcement close button is hidden without the script');
+  assert.ok(tags(html, 'script').some(a => a.type === 'module' && a.src === '/announce.js'), 'index loads announce.js');
+}
 assert.match(read('zerox-auth.js'), /getAccessToken: getAccessToken/);
 
 /* .assetsignore must not hide the new public files */
 {
   const patterns = read('.assetsignore').split(/\r?\n/).map(line => line.trim()).filter(line => line && !line.startsWith('#'));
   const toRegex = pattern => new RegExp('^' + pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*\*\//g, '(?:.*/)?').replace(/\*/g, '[^/]*') + (pattern.endsWith('/') ? '' : '$'));
-  for (const file of [...PUBLIC_PAGES, ...PRIVATE_PAGES, ...SITE_SCRIPTS, ...RELEASE_MANIFESTS, 'zx-tokens.css', 'site-fonts.css', 'home.css',
-    'neucockpit.html', 'favicon.ico', 'Assets/zerox-share.png']) {
+  for (const file of [...PUBLIC_PAGES, ...PRIVATE_PAGES, ...SITE_SCRIPTS, ...RELEASE_MANIFESTS, 'zx-tokens.css', 'site-fonts.css', 'home.css', 'content.css',
+    'neucockpit.html', 'favicon.ico', 'Assets/zerox-share.png', 'icons.svg', 'announce.js', 'fonts/aspekta-400.woff2', 'fonts/aspekta-500.woff2', 'fonts/jetbrains-mono-400.woff2', 'fonts/OFL-Aspekta.txt', 'fonts/OFL-JetBrains-Mono.txt']) {
     assert.ok(isFile(file), `${file} exists`);
     assert.ok(!patterns.some(pattern => toRegex(pattern).test(file)), `${file} is excluded from the Worker assets`);
   }
@@ -361,20 +542,31 @@ const ADDRESS = '6/2, N. Pugalur, Karur 639113, Tamil Nadu, India';
   assert.match(text('terms.html'), /at least 18 years old/);
 
   // Claude on Pro and Max (Anthropic as a processor, credit holds, daily spend limits).
-  for (const file of ['privacy.html', 'terms.html']) assert.match(text(file), /Effective date: 25 October 2026\. Replaces the (?:policy|terms) dated 24 October 2026/, file + ' effective date');
+  assert.match(text('terms.html'), /Effective date: 3 November 2026\. Replaces the terms dated 25 October 2026/, 'terms.html effective date');
+  // 4 November 2026: the optional GSTIN or tax ID (legal-versions.js privacy is 2026-11-04 with it, so buyers agree again).
+  assert.match(text('privacy.html'), /Effective date: 4 November 2026\. Replaces the policy dated 3 November 2026\. This version adds the optional GSTIN or tax ID/, 'privacy.html effective date');
   const anthropicRow = read('privacy.html').match(/<tr><th scope="row"><a href="https:\/\/www\.anthropic\.com\/legal\/privacy">Anthropic<\/a><\/th>([\s\S]*?)<\/tr>/);
   assert.ok(anthropicRow, 'privacy: Anthropic is listed as a processor');
-  assert.match(anthropicRow[1], /does not use these prompts or responses to train its models/);
+  assert.match(anthropicRow[1], /not used to train its models/);
   assert.doesNotMatch(anthropicRow[1], /\d+[ -]days?/, 'privacy: no Anthropic retention period until it is confirmed in docs/PROVIDER_TERMS.md');
-  assert.match(privacy, /On Pro and Max, requests to Claude Sonnet 5\.5 or Claude Opus 5\.5 go to Anthropic/);
+  assert.match(privacy, /Requests to Claude Haiku 5\.5, which every plan includes, go to Anthropic, and so do requests to Claude Sonnet 5\.5 or Claude Opus 5\.5 on Pro and Max/);
+  assert.match(anthropicRow[1], /Claude Haiku 5\.5 on every plan and the paid models on Pro and Max/, 'privacy: Haiku on the Free plan reaches Anthropic');
   assert.match(privacy, /read from or written to Anthropic's prompt cache/);
-  assert.match(text('terms.html'), /including Anthropic, Groq, Google, Cloudflare, NVIDIA and OpenRouter;/);
+  assert.match(text('terms.html'), /including Anthropic, Groq, Google, Cloudflare, NVIDIA, OpenRouter and Z\.ai;/);
   assert.match(text('terms.html'), /paid-capacity models, including Claude Sonnet 5\.5 and Claude Opus 5\.5/);
   assert.match(text('terms.html'), /we hold the most it could cost[\s\S]*daily spending limit shared by all users/);
   const pricingPage = text('pricing.html');
   assert.match(pricingPage, /Claude Sonnet 5\.5 \$2\.50 \$0\.25 \$3\.125 \$12\.50/, 'pricing: Sonnet 5.5 at list price plus 25%');
   assert.match(pricingPage, /Claude Opus 5\.5 \$5\.00 \$0\.25 \$6\.25 \$25\.00/, 'pricing: Opus 5.5 at list price plus 25%');
-  assert.match(pricingPage, /Anthropic \(Claude Sonnet 5\.5 and Claude Opus 5\.5\)/, 'pricing: the provider FAQ names Anthropic');
+  assert.match(pricingPage, /Anthropic \(Claude Haiku 5\.5 on every plan, Claude Sonnet 5\.5 and Claude Opus 5\.5 on Pro and Max\)/, 'pricing: the provider FAQ names Anthropic');
+  // Claude Haiku 5.5 on every plan (contract section 19): the copy says what it is and how it is limited, and names no provider.
+  assert.match(pricingPage, /Every plan includes Claude Haiku 5\.5 at no charge, up to 10M tokens a month per account/);
+  assert.match(pricingPage, /Claude Haiku 5\.5 on every plan Pick it with \/model claude-haiku-5-5 ; auto stays on the free models\. It costs no credits\./);
+  assert.match(pricingPage, /renews on the first of each month \(UTC\)[\s\S]*insufficient_quota[\s\S]*every other model keeps working/);
+  assert.match(pricingPage, /Models Free models and Claude Haiku 5\.5 Free models, Claude Haiku 5\.5, Claude Sonnet 5\.5 and Claude Opus 5\.5/);
+  const haikuCopy = pricingPage.slice(pricingPage.indexOf('Claude Haiku 5.5 on every plan Pick it'), pricingPage.indexOf('Claude prices billed from credits'));
+  assert.ok(haikuCopy.length > 100 && !/anthropic|groq|nvidia|openrouter|z\.ai/i.test(haikuCopy), 'pricing: the Haiku block names no provider');
+  for (const file of ['index.html', 'neuron-cli.html']) assert.match(text(file), /Claude Haiku 5\.5 100K context/, file + ': the built-in model list has Haiku');
   // The price table shows exactly what the gateway bills (src/catalog.js: list price x MARKUP).
   const { catalogEntry } = await import('./src/catalog.js');
   const dollars = micro => `$${(micro / 1e6).toFixed(Math.max(2, String(micro / 1e6).split('.')[1]?.length ?? 0))}`;
@@ -385,6 +577,88 @@ const ADDRESS = '6/2, N. Pugalur, Karur 639113, Tamil Nadu, India';
     assert.ok(pricingPage.includes(`${name} ${row}`), `pricing: ${name} row equals the gateway's billed rates (${row})`);
   }
   assert.match(text('docs.html'), /and for Claude cache_read_per_mtok_usd and cache_write_per_mtok_usd/, 'docs: the Claude cache price fields');
+
+  // Legal rewrite of 2026-11-03: every provider the gateway can serve is named, what the text says about
+  // Gemini and Workers AI follows the deploy configuration, and nothing promises what the schema does not do.
+  const { BUILTIN_OFFERS } = await import('./src/oiop/offers.js');
+  const providerNames = { anthropic: 'Anthropic', groq: 'Groq', nvidia: 'NVIDIA API Catalog', openrouter: 'OpenRouter', zai: 'Z.ai', gemini: 'Google Gemini API', cloudflare: 'Cloudflare Workers AI' };
+  for (const provider of new Set(BUILTIN_OFFERS.map(offer => offer.provider))) {
+    assert.ok(providerNames[provider], 'a provider the gateway can serve has a name in the legal text check: ' + provider);
+    assert.ok(privacy.includes(providerNames[provider]), 'privacy names provider ' + provider);
+  }
+  const wrangler = read('neuroncli/auth-server/wrangler.toml');
+  for (const [variable, phrase] of [['GEMINI_MODELS', 'Gemini models, only while Gemini is switched on (it is not at the moment)'], ['CLOUDFLARE_MODELS', 'Workers AI models, only while Workers AI is switched on (it is not at the moment)']]) {
+    const off = new RegExp('^' + variable + ' = ""', 'm').test(wrangler);
+    assert.equal(privacy.includes(phrase), off, 'privacy says ' + variable + (off ? ' is switched off' : ' is on') + ' (wrangler.toml; change both together)');
+  }
+  assert.match(privacy, /Amazon Web Services/);
+  // Statements the system cannot back up stay out of the public text (review of 2026-11-03): the consent record is
+  // described as the code writes it, the production host is hedged, no notice or receipt is promised on a third
+  // party's behalf, and the static Free-plan line and model lists follow what is switched on.
+  assert.doesNotMatch(text('privacy.html'), /Each time you start a payment/);
+  assert.match(text('privacy.html'), /no new record is made for it/);
+  assert.match(text('privacy.html'), /may also run on a server we operate on Amazon Web Services/);
+  assert.match(text('privacy.html'), /A record is made when the payment window is prepared, not when the payment goes through/);
+  for (const file of ['terms.html', 'pricing.html', 'docs.html', 'refund.html']) {
+    assert.doesNotMatch(text(file), /Razorpay (also )?emails (you )?a receipt|(bank or Razorpay|Razorpay or your bank) will notify/, file + ' promises no receipt or notice from Razorpay');
+  }
+  assert.match(text('terms.html'), /Razorpay may email you a receipt for a payment/);
+  const switchedOff = variable => new RegExp('^' + variable + ' = ""', 'm').test(wrangler);
+  if (switchedOff('GEMINI_MODELS') && switchedOff('CLOUDFLARE_MODELS')) {
+    for (const file of ['pricing.html', 'pricing.js', 'neuroncli/auth-server/src/plan-policy.js']) {
+      assert.ok(!read(file).includes('Free models from Groq, Google Gemini'), file + ': the Free plan line names only providers that are switched on');
+    }
+    for (const file of ['index.html', 'neuron-cli.html']) {
+      assert.ok(!/gemini\/gemini-|@cf\//.test(read(file)), file + ': the static model list has no Gemini or Workers AI row while they are switched off');
+    }
+  }
+  assert.match(privacy, /Microsoft/);
+  assert.match(privacy, /Expo/);
+  assert.match(privacy, /text message to your phone number/);
+  for (const id of ['billing-details', 'deletion', 'transfers', 'cookies', 'security', 'changes']) assert.ok(read('privacy.html').includes(`id="${id}"`), 'privacy: section ' + id);
+  // What really happens: the database removes payment records with the account, so the text must not promise otherwise.
+  assert.match(privacy, /our own copies of its credit ledger, subscription and payment records/);
+  assert.match(privacy, /Razorpay keeps its own record of every payment/);
+  assert.doesNotMatch(privacy, /even after account deletion/);
+  assert.match(privacy, /grievance officer: Rahul S, founder of Zero-X, at support@zero-x\.live/);
+  assert.doesNotMatch(privacy, /We do not ask for a tax or GST number/, 'the tax id is asked for (optionally) since 4 November 2026');
+  assert.match(privacy, /You can also give a GSTIN or tax ID; it is optional, and if you give one we keep it with these details and use it only for billing records\. It is not sent to Razorpay\./);
+  assert.match(privacy, /We never ask for card, UPI or bank details/);
+  assert.match(text('docs/data.html'), /optional street address, phone and GSTIN or tax ID, business name/);
+  assert.match(privacy, /Razorpay's payment window is filled in with your name \(the first 50 characters\), email address and phone number only/);
+  assert.match(contact, /Grievance officer Zero-X is a small business founded and run by Rahul S/);
+  assert.ok(read('contact.html').includes('id="grievance"'));
+  for (const file of PUBLIC_PAGES) assert.ok(read(file).match(/<footer[\s\S]*<\/footer>/)[0].includes('Grievance officer'), file + ': footer names the grievance officer');
+  assert.match(text('terms.html'), /Prices are the full amount you pay: no GST is charged on them/);
+  assert.match(text('terms.html'), /currently 1,000,000 tokens, with a daily cap on requests, currently 100/);
+  assert.match(text('terms.html'), /Neuron 7\.0\.0-alpha\.4 and parts of the services are pre-release/);
+  assert.match(text('terms.html'), /cancel at any time from the Billing tab/);
+  assert.match(text('terms.html'), /danger-full-access mode it runs any command without asking/);
+  for (const id of ['alpha', 'agent']) assert.ok(terms.includes(`id="${id}"`), 'terms: section ' + id);
+  assert.match(text('refund.html'), /When a payment is refunded in full, the subscription is cancelled at once/);
+  assert.match(text('refund.html'), /taken back in proportion/);
+  assert.match(text('refund.html'), /Razorpay may retry it/);
+  assert.match(text('refund.html'), /5 to 7 business days/);
+  assert.match(pricingPage, /No GST is charged, so the price shown is the price you pay/);
+  assert.match(pricingPage, /Pro and Max renew every month at the price shown until you cancel/);
+  assert.match(pricingPage, /How far does 1M tokens go\?/);
+  // The owner's rule (2026-11-04): the pricing page does not name the providers behind the free models; the
+  // privacy policy and docs/data.html, which disclose who receives requests, still do.
+  assert.doesNotMatch(pricingPage, /Groq|NVIDIA|Z\.ai|Gemini|Workers AI|free models on OpenRouter|OpenRouter, free/, 'pricing names no upstream provider of the free models');
+  assert.ok(read('pricing.html').includes('href="/privacy#processors"'), 'pricing links the privacy policy table of providers');
+  for (const file of ['pricing.html', 'pricing.js', 'neuroncli/auth-server/src/plan-policy.js']) {
+    assert.ok(read(file).includes('Free models chosen for coding, with tool use'), file + ': the Free plan line names no provider');
+  }
+  assert.match(read('zerox-auth.js'), /By continuing you agree to the <a href="https:\/\/zero-x\.live\/terms"[^>]*>Terms of Service<\/a> and the <a href="https:\/\/zero-x\.live\/privacy"[^>]*>Privacy Policy<\/a>, and confirm you are 18 or older/);
+  assert.match(text('neuroncli/device/index.html'), /By continuing you agree to the Terms of Service and the Privacy Policy ?, and confirm you are 18 or older/);
+  const data = text('docs/data.html');
+  for (const word of ['Anthropic', 'Groq', 'NVIDIA', 'OpenRouter', 'Z.ai', 'Cloudflare', 'Amazon Web Services', 'Supabase', 'Razorpay', 'Expo']) assert.ok(data.includes(word), 'docs/data.html names ' + word);
+  for (const id of ['flow', 'stored', 'processors', 'tokens', 'control', 'requests', 'security', 'changes']) assert.ok(ids(read('docs/data.html')).includes(id), 'docs/data.html #' + id);
+  assert.match(data, /At most 14 days on our server/);
+  assert.ok(ids(read('docs.html')).includes('data'), 'docs.html has a data section');
+  assert.match(read('docs.html'), /href="\/docs\/data"/);
+  const llmsText = read('llms.txt');
+  for (const link of ['/privacy', '/terms', '/refund', '/shipping', '/docs/trust', '/docs/data']) assert.ok(llmsText.includes('(https://zero-x.live' + link + ')'), 'llms.txt links ' + link);
   assert.match(text('dashboard.html'), /Credits pay for Claude Sonnet 5\.5, Claude Opus 5\.5 and other paid capacity/);
 }
 
@@ -694,7 +968,7 @@ assert.equal(checkout.normalizeCurrency('EUR'), 'USD');
   assert.equal(sub.key, 'rzp_live_AbCdEf123456');
   assert.equal(sub.subscription_id, 'sub_ABC123456');
   assert.equal(sub.order_id, undefined);
-  assert.deepEqual(sub.theme, {color: '#00E5FF'});
+  assert.deepEqual(sub.theme, {color: '#3B82F6'});
   assert.deepEqual(sub.notes, {plan: 'pro', user_id: 'u1'});
   assert.equal(sub.handler, handlers.onPayment);
   assert.equal(sub.modal.ondismiss, handlers.onDismiss);
@@ -927,6 +1201,11 @@ assert.equal(checkout.normalizeCurrency('EUR'), 'USD');
     assert.ok(card.includes('data-status') && card.includes('data-links') && /data-your-os hidden/.test(card), 'download.html desktop card ' + os);
   }
   assert.match(text('download.html'), /Mobile app Coming soon/);
+  {
+    const at = id => html.indexOf(`<section id="${id}"`);
+    assert.ok(at('cli') > 0 && at('cli') < at('verify') && at('verify') < at('desktop') && at('desktop') < at('mobile') && at('mobile') < at('more'), 'download.html order: command line, verify, desktop and mobile (coming soon), more');
+    assert.ok(html.indexOf('id="cli-binaries"') < at('desktop'), 'available release binaries come before the coming-soon apps');
+  }
   assert.match(html, /<body data-download>/);
   for (const button of tags(html, 'button').filter(b => 'data-copy-target' in b)) assert.ok(ids(html).includes(button['data-copy-target']), 'copy target ' + button['data-copy-target']);
 
@@ -941,8 +1220,9 @@ assert.equal(checkout.normalizeCurrency('EUR'), 'USD');
   assert.ok(ids(read('privacy.html')).includes('gateway-logging'), 'privacy: gateway logging paragraph');
   assert.match(privacy, /The gateway stores usage metadata only/);
   assert.match(privacy, /never written to our database or logs/);
-  assert.match(privacy, /Prompt and response text: not stored/);
-  assert.match(privacy, /Operational logs: [^.]*never prompt or response text[^.]*\. Kept for at most 7 days/);
+  assert.match(privacy, /Prompt and response text Not stored In memory/);
+  assert.match(privacy, /Operational logs Request ID[^.]*never keys At most 14 days on our server/);
+  assert.doesNotMatch(privacy, /at most 7 days/i, 'privacy: the server journal keeps 14 days (deploy/aws/gateway-vm.yaml MaxRetentionSec)');
 }
 
 {

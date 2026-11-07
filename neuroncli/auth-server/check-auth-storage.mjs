@@ -76,4 +76,39 @@ for (const fail of [false, true]) {
   assert.deepEqual(button.childNodes, [icon, text]);
   assert.equal(button.disabled, false);
 }
+// Cookie scope and flags (audit D2, F12): the session cookie is shared only between the canonical
+// sign-in hosts, is Secure and SameSite=Lax on https, lasts 14 days, and a test or preview host
+// (aws.zero-x.live, a workers.dev address) gets a host-only cookie that never reaches the others.
+async function sessionCookieWrite(hostname, protocol = 'https:') {
+  const writes = [];
+  let saved;
+  const scopedDocument = { currentScript: { src: `${protocol}//${hostname}/zerox-auth.js` }, createElement: () => ({}), head: { appendChild() {} },
+    get cookie() { return ''; }, set cookie(value) { writes.push(value); } };
+  const scopedWindow = {
+    location: { hostname, protocol, origin: `${protocol}//${hostname}`, pathname: '/' },
+    supabase: { createClient(_url, _key, options) { saved = options.auth.storage; return { auth: { onAuthStateChange() {}, getSession: async () => ({ data: { session: null }, error: null }) } }; } },
+  };
+  vm.runInNewContext(source, { document: scopedDocument, window: scopedWindow, URL, console, setTimeout,
+    fetch: async () => ({ ok: true, json: async () => ({ configured: true, providers: [] }) }) });
+  await scopedWindow.ZeroXAuth.init();
+  saved.setItem('zerox-supabase-auth', JSON.stringify({ access_token: 'a', refresh_token: 'r' }));
+  return writes.find(write => !write.includes('Max-Age=0') && write.startsWith('zerox-supabase-auth'));
+}
+for (const host of ['zero-x.live', 'www.zero-x.live', 'dashboard.zero-x.live', 'neuron.zero-x.live']) {
+  const write = await sessionCookieWrite(host);
+  assert.ok(write, host);
+  assert.match(write, /; Domain=\.zero-x\.live(;|$)/, `${host}: shared between the sign-in hosts`);
+  assert.match(write, /; Secure(;|$)/, `${host}: Secure`);
+  assert.match(write, /; SameSite=Lax(;|$)/, `${host}: SameSite=Lax`);
+  assert.match(write, /; Path=\/(;|$)/);
+  assert.match(write, /; Max-Age=1209600$/, `${host}: 14 days`);
+}
+for (const host of ['aws.zero-x.live', 'zero-x-callback-api.rahul.workers.dev', 'evil.zero-x.live.example.com', 'staging.zero-x.live']) {
+  const write = await sessionCookieWrite(host);
+  assert.ok(write, host);
+  assert.doesNotMatch(write, /Domain=/, `${host}: a host-only cookie`);
+  assert.match(write, /; Secure(;|$)/, `${host}: Secure`);
+}
+assert.doesNotMatch(await sessionCookieWrite('127.0.0.1', 'http:'), /Secure|Domain=/, 'local development over http: host-only, not Secure');
+
 console.log('PASS: session cookies, provider options, SDK lock-safe subscribers, expired user cleanup, session errors, and button restoration');

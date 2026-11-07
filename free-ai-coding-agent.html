@@ -7,7 +7,8 @@
   <meta name="description" content="Neuron is a free, open-source AI coding agent for the terminal. Use free hosted LLMs with daily limits or your own API key, on macOS, Linux and Windows. What is free, what is not, and how to start.">
   <meta name="robots" content="index,follow,max-image-preview:large">
   <link rel="canonical" href="https://zero-x.live/free-ai-coding-agent">
-  <meta name="theme-color" content="#0A0A0C">
+  <meta name="theme-color" content="#FFFFFF" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#141413" media="(prefers-color-scheme: dark)">
   <link rel="icon" type="image/png" sizes="32x32" href="/Assets/zerox-favicon-32.png">
   <link rel="apple-touch-icon" sizes="180x180" href="/Assets/zerox-apple-touch-icon.png">
   <meta property="og:type" content="article">
@@ -22,8 +23,10 @@
   <meta name="twitter:description" content="Neuron is open source and starts free on hosted LLMs. What is free, what is not, and how to install it.">
   <meta name="twitter:image" content="https://zero-x.live/Assets/zerox-share.png">
   <meta name="twitter:image:alt" content="Zero-X logo">
-  <link rel="stylesheet" href="/site-fonts.css">
+  <link rel="preload" href="/fonts/aspekta-400.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/fonts/aspekta-500.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/zx-tokens.css">
+  <link rel="stylesheet" href="/content.css">
   <script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"TechArticle","@id":"https://zero-x.live/free-ai-coding-agent#article","headline":"A free AI coding agent for your terminal","description":"What is free in Neuron, the open-source AI coding agent by Zero-X: the MIT-licensed CLI, the Free plan on hosted LLMs, and using your own API key.","datePublished":"2026-11-05","dateModified":"2026-11-05","author":{"@id":"https://zero-x.live/#organization"},"publisher":{"@id":"https://zero-x.live/#organization"},"mainEntityOfPage":"https://zero-x.live/free-ai-coding-agent","isPartOf":{"@id":"https://zero-x.live/#website"},"about":[{"@type":"Thing","name":"AI coding agent"},{"@id":"https://zero-x.live/#neuron"}],"image":"https://zero-x.live/Assets/zerox-share.png"},{"@type":"FAQPage","@id":"https://zero-x.live/free-ai-coding-agent#faq","mainEntity":[{"@type":"Question","name":"Do I need a credit card to use Neuron for free?","acceptedAnswer":{"@type":"Answer","text":"No. Install Neuron, run neuron login and sign in. The Free plan needs no payment details."}},{"@type":"Question","name":"Which models are free?","acceptedAnswer":{"@type":"Answer","text":"Open-weight models chosen for coding with tool use, such as GPT-OSS and Qwen. The current list, with each model's usable context window and live status, is on the Zero-X homepage. Claude models are on Pro and Max only."}},{"@type":"Question","name":"Can I use a local model?","acceptedAnswer":{"@type":"Answer","text":"Neuron talks to any OpenAI-compatible endpoint set with OPENAI_BASE_URL and OPENAI_API_KEY, so a local server that offers that API can work. The model must support tool calls for Neuron to edit files and run commands."}},{"@type":"Question","name":"Is my code used to train models?","acceptedAnswer":{"@type":"Answer","text":"The files and messages Neuron includes in a request go to the company serving the model. Free tiers of some of these services may use prompts to improve their models. The Zero-X gateway records usage metadata and is not designed to store prompt or response text. The privacy policy names every company that can receive a request."}}]},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Zero-X","item":"https://zero-x.live/"},{"@type":"ListItem","position":2,"name":"Free AI coding agent","item":"https://zero-x.live/free-ai-coding-agent"}]}]}</script>
   <script type="module" src="/site-nav.js"></script>
 </head>
@@ -32,12 +35,12 @@
   <header class="zx-header">
     <div class="zx-container zx-header__inner">
       <a class="zx-brand" href="/"><img src="/Assets/zerox-mark.svg" width="28" height="28" alt="">Zero-X</a>
-      <button class="zx-nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" hidden><span class="zx-nav-toggle__bars" aria-hidden="true"></span>Menu</button>
+      <button class="zx-nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" hidden><svg class="zx-icon zx-icon--menu" aria-hidden="true"><use href="/icons.svg#menu"/></svg><svg class="zx-icon zx-icon--close" aria-hidden="true"><use href="/icons.svg#x"/></svg>Menu</button>
       <nav class="zx-nav" id="site-nav" aria-label="Main">
         <a href="/neuron-cli">Neuron CLI</a>
         <a href="/pricing">Pricing</a>
         <a href="/docs">Docs</a>
-        <a class="zx-btn zx-btn--sm" href="https://dashboard.zero-x.live/">Dashboard</a>
+        <a class="zx-btn zx-btn--sm" href="https://dashboard.zero-x.live/"><svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#user"/></svg>Dashboard</a>
       </nav>
     </div>
   </header>
@@ -63,7 +66,7 @@
     <ul>
       <li><strong>Best-effort availability.</strong> A free model can be busy or rate-limited. The <a href="/#models">model list on the homepage</a> shows which models the gateway's health checker last found working, and <code>auto</code> skips models that are busy or failing.</li>
       <li><strong>Smaller usable context.</strong> Some free models accept fewer tokens per request than their full context window. The homepage lists the context each model can actually take on your plan.</li>
-      <li><strong>No Claude models.</strong> Claude Sonnet 5.5 and Claude Opus 5.5 are on <a href="/pricing">Pro and Max</a>, billed from the credits those plans include.</li>
+      <li><strong>Claude Haiku 5.5, with an allowance.</strong> It is included on the Free plan, up to 10M tokens a month; choose it with <code>/model claude-haiku-5-5</code>. Claude Sonnet 5.5 and Claude Opus 5.5 are on <a href="/pricing">Pro and Max</a>, billed from the credits those plans include.</li>
       <li><strong>Alpha software.</strong> Neuron 7.0.0-alpha.4 is an alpha. Expect rough edges and read the <a href="https://github.com/RAHUL-DevelopeRR/neuron-v2/blob/HEAD/CHANGELOG.md">known limitations</a>. The binaries are not code-signed (Windows) or notarized (macOS).</li>
     </ul>
 
@@ -120,23 +123,27 @@ neuron</code></pre></div>
   <footer class="zx-footer">
     <div class="zx-container zx-footer__grid">
       <div>
-        <a class="zx-brand" href="/">Zero-X</a>
+        <a class="zx-brand" href="/"><img src="/Assets/zerox-mark.svg" width="28" height="28" alt="">Zero-X</a>
         <p>Neuron CLI and NeuCockpit. Built in Tamil Nadu, India.</p>
       </div>
       <nav aria-label="Product">
         <h2>Product</h2>
         <a href="/neuron-cli">Neuron CLI</a>
+        <a href="/download">Download</a>
+        <a href="/changelog">Changelog</a>
         <a href="/pricing">Pricing</a>
         <a href="/docs">Docs</a>
         <a href="/ai-coding-agent">AI coding agent guide</a>
         <a href="/free-ai-coding-agent" aria-current="page">Free AI coding agent</a>
         <a href="/claude-code-alternative">Neuron compared</a>
         <a href="https://dashboard.zero-x.live/">Dashboard</a>
+        <a href="https://github.com/RAHUL-DevelopeRR/neuron-v2">GitHub <svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#arrow-up-right"/></svg></a>
       </nav>
       <nav aria-label="Company">
         <h2>Company</h2>
         <a href="/about">About</a>
         <a href="/contact">Contact</a>
+        <a href="/docs/trust">Security and trust</a>
         <a href="https://zero-x.live/neucockpit">NeuCockpit</a>
       </nav>
       <nav aria-label="Legal">
@@ -147,7 +154,7 @@ neuron</code></pre></div>
         <a href="/shipping">Shipping and delivery</a>
       </nav>
     </div>
-    <p class="zx-container zx-footer__legal">© 2026 Zero-X · <a href="mailto:support@zero-x.live">support@zero-x.live</a></p>
+    <p class="zx-container zx-footer__legal">© 2026 Zero-X · <a href="mailto:support@zero-x.live">support@zero-x.live</a> · <a href="/contact#grievance">Grievance officer</a></p>
   </footer>
 </body>
 </html>

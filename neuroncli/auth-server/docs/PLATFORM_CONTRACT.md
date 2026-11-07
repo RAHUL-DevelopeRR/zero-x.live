@@ -1,6 +1,6 @@
 # Neuron × Zero-X platform contract
 
-Status: v1.10 (2026-11-04; amendments v1.1 to v1.10 in sections 6 to 15). This document is the source of truth shared by the Neuron CLI
+Status: v1.11 (2026-11-06; amendments v1.1 to v1.11 in sections 6 to 19). This document is the source of truth shared by the Neuron CLI
 (`RAHUL-DevelopeRR/neuron-v2`) and the Zero-X gateway + website
 (`RAHUL-DevelopeRR/zero-x.live`, `neuroncli/auth-server`). A copy lives in both repos;
 change both together.
@@ -62,7 +62,7 @@ window.
 
 Credits are stored in micro-USD (`1 USD = 1_000_000`). Paid-pool usage is billed at the
 catalog price (upstream cost × 1.25 markup). Free-pool usage costs 0 credits but counts
-toward daily request/token caps (on Free: the daily request cap and the 5-hour token window). Top-up packs: `credits_5` ($5 credit, $5 / ₹449),
+toward daily request/token caps (on Free: the daily request cap and the 5-hour token window). Claude Haiku 5.5 is the one free-tier model with a price: a sponsored pool (section 16), also free of credits, with a monthly token allowance per user. Top-up packs: `credits_5` ($5 credit, $5 / ₹449),
 `credits_20` ($20 credit, $20 / ₹1,749).
 
 ## 2. Model catalog (gateway `src/catalog.js`, data-driven rows since v1.8: section 13.1)
@@ -95,7 +95,8 @@ price and a daily spend cap (section 13.4); Claude prices add `cache_read_microu
 A pool is usable only when its key/binding is configured and `hosted` is not disabled.
 Routing for plan tiers `T`: prefer a usable `free` pool with remaining budget; otherwise a
 usable `paid` pool if `paid ∈ T` and the user has credits. `model: "auto"` picks the best
-tool-capable model whose context window fits the estimated request.
+tool-capable model whose context window fits the estimated request; for an agentic request it
+leaves out models with a poor tool-call record (section 18.2).
 
 Verified free catalog (live probe 2026-10-16): `groq/openai/gpt-oss-120b`,
 `groq/openai/gpt-oss-20b`, `groq/qwen/qwen3.8-27b` (Groq free org: 30 rpm, 1K rpd,
@@ -172,7 +173,9 @@ credential (never an `nzx_` key). Session tokens are stored hashed (SHA-256) in 
   usage_today:{requests, tokens, resets_at}, usage_window:null|{tokens, limit_tokens, remaining_tokens,
   window_seconds, resets_at}, credits:{balance_usd, monthly_grant_usd},
   subscription:null|{status, current_period_end, cancel_at_period_end},
-  flags:{suspended}}` (`display_name`, `initials` and `session_expires_at`: §9.1)
+  flags:{suspended}, policy?:{connectors:{allowed, denied, required, hosted, allow_unvetted,
+  catalog_version}}}` (`display_name`, `initials` and `session_expires_at`: §9.1; `policy`: §18.1,
+  left out when the plan has no gateway policy)
 - `GET /api/usage?from=YYYY-MM-DD&to=YYYY-MM-DD` (max 92 days, default last 30) →
   `{from, to, series:[{day, requests, prompt_tokens, completion_tokens, cost_usd}],
   by_model:[{model, requests, prompt_tokens, completion_tokens, cost_usd}], totals:{requests,
@@ -193,7 +196,8 @@ credential (never an `nzx_` key). Session tokens are stored hashed (SHA-256) in 
   'subscription'|'topup', amount_minor, currency, status, created_at, invoice_url}]}`
 - `POST /api/billing/checkout {plan:'pro'|'max', currency:'INR'|'USD'}` → `{provider:
   'razorpay', key_id, subscription_id, name, description, prefill:{email,name}, notes}`
-  (409 `already_subscribed`, 503 `billing_not_configured`)
+  (409 `already_subscribed`, 503 `billing_not_configured`; section 16 adds the billing details
+  gate, `consent`, `billing_plan_missing` and the phone in `prefill`)
 - `POST /api/billing/topup {pack, currency}` → `{provider, key_id, order_id, amount_minor,
   currency, name, description, prefill}`
 - `POST /api/billing/verify {razorpay_payment_id, razorpay_signature,
@@ -245,7 +249,7 @@ All called through `rpc(env, name, args)` / `rpcRows(env, name, args)` in
 | `zerox_settle_v2` | `p_reservation_id uuid, p_prompt_tokens bigint, p_completion_tokens bigint, p_cost_microusd bigint, p_status text ('ok','error','refunded','failed_upstream'), p_latency_ms int, p_provider text, p_upstream_model text, p_error_code text, p_cache_read_tokens bigint = 0, p_cache_write_tokens bigint = 0` (cache tokens are part of `p_prompt_tokens`, section 13.4) | `{status:'settled'|'already_settled'|'not_found', credit_balance_microusd}`; reconciles the pool bucket stored on the reservation (model, tier, pool key) |
 | `zerox_renew_reservation` | `p_reservation_id uuid, p_lease_seconds int` (1-3600) | `boolean`: the lease now runs at least `p_lease_seconds` from now; `false` once the reservation is settled or released (section 8.5) |
 | `zerox_release_stale_reservations` | — | `{released}` |
-| `zerox_plan_policies_v2` | — | one row per plan: `plan, name, price_usd, price_usd_cents, price_inr_paise, daily_requests, daily_tokens, rpm_limit, concurrency_limit, allowed_tiers text[], monthly_credit_microusd, features, sort, public, highlighted, razorpay_plan_id_inr, razorpay_plan_id_usd, window_tokens, window_seconds` |
+| `zerox_plan_policies_v2` | — | one row per plan: `plan, name, price_usd, price_usd_cents, price_inr_paise, daily_requests, daily_tokens, rpm_limit, concurrency_limit, allowed_tiers text[], monthly_credit_microusd, features, sort, public, highlighted, razorpay_plan_id_inr, razorpay_plan_id_usd, window_tokens, window_seconds, connector_policy jsonb` (null = no connector policy, §14.1) |
 | `zerox_account_overview` | `p_user_id` | account + policy + credits + subscription + today usage + `usage_window` (`{window_seconds, limit_tokens, tokens, remaining_tokens, resets_at}` or null) (jsonb columns) |
 | `zerox_window_usage` | `p_user_id uuid, p_window_seconds int, p_now timestamptz = now()` | rows `{created_at, tokens}`: the user's reservations in the window and the tokens each counts |
 | `zerox_usage_series` | `p_user_id, p_from date, p_to date` | rows `{day, requests, prompt_tokens, completion_tokens, cost_microusd}` |
@@ -1121,7 +1125,7 @@ The statuses (`availability`):
 - `unavailable` (`status`: `blurred`): failing (two failures in a row, or three users' upstream failures
   in ten minutes with no success), delisted by its provider, its key rejected or its quota spent; grey it out until `available_again_at` when there is one.
 
-A family (section 14.3) takes the best status of the routes the caller can use, in the order
+A family (section 18.3) takes the best status of the routes the caller can use, in the order
 `available` > `degraded` > `unknown` > `busy` > `unavailable` (a busy route is skipped by routing,
 an unknown one is tried), and that route's `available_again_at`, `checked_at`, `latency_ms`,
 `last_success_at` and `last_failure_class`. `auto` takes its best candidate's.
@@ -1219,3 +1223,512 @@ model's own error (no verdict, not a misconfigured test).
 | `zerox_pool_health_put` | `(p_rows jsonb)` → rows written (at most 500; rows not written for 7 days are deleted). A row carries `verdict_at` (the last request-level verdict), `checked_at` (when the state in `status` was observed) and `listed_at` (the last model list that showed it). |
 | `zerox_pool_health_get` | `(p_since_seconds int)` → the rows written within that time. |
 
+## 16. v1.11 amendments (billing details, 2026-11-03)
+
+Migration `20261106000100_billing_details.sql`; code `src/billing/profile.js`,
+`src/billing/legal-versions.js`, `src/routes/billing-profile.js`; browser `billing-details.js`.
+
+### 16.1 Profile (`GET`/`PUT /api/billing/profile`, interactive credentials only)
+
+What a buyer gives Zero-X before Razorpay opens. Card, UPI and bank details are never collected
+here (they go into Razorpay's own window). The 2026-11-03 version had no tax id field because
+Zero-X is not registered for GST; 16.6 adds an optional one (`tax_id`), kept for the buyer's own
+records only.
+
+- `GET` → `{profile: null | {customer_type: 'individual'|'business', full_name, business_name,
+  country (ISO 3166-1 alpha-2), state, city, postal_code, address_line1, address_line2, phone
+  (E.164), tax_id (16.6)}, complete, missing: [field…], documents: {terms|privacy|refund|auto_renewal: {version:
+  'YYYY-MM-DD', path}}, accepted: {document: {version, accepted_at, current}}, tax:
+  {no_gst_notice}, options: {countries: [{code, name}] (India first), states: {IN: [{code,
+  name}]}, no_postal: [country…]}}`. `tax.no_gst_notice` is `BILLING_NO_GST_NOTICE=true`
+  (default off): the owner turns it on only once it is confirmed that no GST is charged; the
+  browser then shows "No GST charged" in the order summary, and the order summary says nothing
+  about GST before. (The tax id field's label and note, 16.6, are shown either way.)
+- `PUT {customer_type?, full_name, business_name?, country, state?, city, postal_code?,
+  address_line1?, address_line2?, tax_id?, phone?}` replaces the profile (absent optional fields are
+  cleared) → `{profile, complete: true, missing: []}`. Required: `full_name`, `country`, `city`,
+  `state` (a state or union territory of India, by code or name), `postal_code` (not in countries
+  without postal codes; per-country shape for common countries), and for `business`:
+  `business_name` and `address_line1`. The street address is optional for an individual. Unknown
+  fields are refused. A refusal is 400 `invalid_request` with `param` (the first field in form
+  order) and `fields` (`{field: message}`).
+
+### 16.2 Checkout gate
+
+`POST /api/billing/checkout` and `/topup` accept `consent: {document: version}` (the versions the
+buyer was shown) and refuse, before anything is created at Razorpay:
+
+- 409 `billing_profile_required` `{missing}`: no saved profile, or one that no longer meets the
+  rules;
+- 409 `consent_required` `{missing, documents}`: for each document the purchase needs (a
+  subscription: terms, privacy, auto_renewal, refund; a top-up: terms, privacy, refund) the current
+  version must be in `consent`, or, for terms, privacy and refund only, already agreed to at the
+  current version (`accepted`). `auto_renewal` is about this purchase and is always required in the
+  request. Versions are in `src/billing/legal-versions.js` and equal the "Effective date" of
+  `terms.html`, `privacy.html` and `refund.html` (a test fails otherwise).
+
+The agreements made in the request are appended to `zerox_billing_consents` (document, version,
+context, accepted_at; append-only) when a payable subscription or order is handed out. Razorpay
+Checkout is prefilled with `{email, name (at most 50 characters), contact?}` only; Razorpay `notes`
+stay `{user_id, plan}` / `{user_id, pack}` (they are copied back into `zerox_payments.raw`), and no
+address, state, business name or tax id is sent to Razorpay at all.
+
+### 16.3 Errors and health
+
+- 503 `billing_plan_missing`: the keys are set but the plan's Razorpay plan id for that currency is
+  not stored (`zerox_plan_policy.razorpay_plan_id_inr` / `_usd`); distinct from
+  `billing_not_configured` (keys missing). The gateway logs `Razorpay plan id missing` with the plan
+  and currency.
+- Operator `GET /health` adds `plans_configured: {inr, usd, missing: ['pro:USD', …]} | null`
+  (every paid plan has an id for the currency; `null` when the catalogue cannot be read).
+
+### 16.4 First month's credits
+
+`POST /api/billing/verify` grants the plan's monthly credits when the first payment of a
+subscription is `captured` (ledger `ref` = the Razorpay payment id, reason `subscription_<plan>`),
+instead of waiting for `subscription.charged`. The webhook for the same payment, and a second
+verify, grant nothing more (`zerox_credit_grant` is idempotent on `ref`); an `authorized` payment
+is granted by the webhook once captured.
+
+### 16.5 RPCs
+
+`zerox_billing_profile_get(user)`, `zerox_billing_profile_upsert(user, jsonb)` (both return
+`tax_id` since 20261106000200, 16.6), `zerox_billing_record_consents(user, context, jsonb)`,
+`zerox_billing_consents_latest(user)`.
+Profiles and consents are deleted with their account (`ON DELETE CASCADE`), like the payment
+records (which means deleting an account also deletes its payment records; see the open items in
+the release notes).
+
+### 16.6 Optional tax id (2026-11-04)
+
+Migration `20261106000200_billing_tax_id.sql` (down script in `migrations/down/`); owner decision
+of 2026-11-04. Zero-X is still not registered for GST: the tax id is kept with the buyer's billing
+details for Zero-X's billing records only (the purpose the privacy policy gives). No GST is charged
+and no GST invoice is issued, and the tax id is never sent to Razorpay (not in the prefill, not in
+`notes`, which hold only ids), so it is not on Razorpay's receipt either.
+
+- `profile.tax_id`: `null` or the stored value. `PUT` accepts an optional `tax_id` for individuals
+  and businesses alike; absent, `null` or blank clears it (the `PUT` replaces the profile). The
+  gateway leaves the key out of the RPC call when there is none, so a profile without one still
+  saves on a database without this migration.
+- Normalised: control and invisible characters dropped, spaces removed, upper case. What is typed
+  may be at most 40 characters ("GSTIN or tax ID must be at most 40 characters.").
+- `country` `IN`: a GSTIN. 15 characters ("A GSTIN has 15 letters and digits."), the shape
+  `^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$` ("Enter a valid GSTIN: a 2 digit state code,
+  the 10 character PAN, then 3 more characters."), the GSTN's mod-36 check character as the 15th
+  ("This GSTIN's last character does not match the rest. Check it for a typo."), and, when the
+  state is one from the list, its first two digits equal that state's GST state code
+  (`GST_STATE_CODES` in `src/billing/profile.js`; Dadra and Nagar Haveli and Daman and Diu accepts
+  26 and the pre-2020 25): "This GSTIN starts with 29, but the GST state code of Tamil Nadu is 33.
+  Check the GSTIN or the state."
+- Any other country: a VAT or tax id of 2 to 20 letters, digits or hyphens that starts and ends with
+  a letter or digit ("Enter a VAT or tax ID of 2 to 20 letters, digits or hyphens.").
+- A refusal is the usual 400 `invalid_request` with `param: 'tax_id'` and `fields.tax_id`. A stored
+  tax id that fails today's rule makes the profile incomplete (`missing: ['tax_id']`, 409
+  `billing_profile_required` at checkout).
+- The database CHECK `zerox_billing_profiles_tax_id_check` is the last line: 2 to 20 characters of
+  `[A-Z0-9-]` (no leading or trailing hyphen) and, for `IN`, the GSTIN shape; it does not repeat
+  the check character or the state match.
+- Browser (`billing-details.js`): an optional field labelled "GSTIN (optional)" in India and "VAT or
+  tax ID (optional)" elsewhere, full width after the address lines, with the note "Optional. Zero-X
+  keeps it with your billing details for its billing records; it is not sent to Razorpay and does
+  not appear on Razorpay's receipt. Zero-X is not registered for GST, so no GST is charged and no
+  GST invoice is issued." The input has `autocapitalize="characters"`, `autocorrect="off"` and
+  `spellcheck="false"`, and the error summary names it with the same country-specific label. The
+  browser checks the same rule with the same messages before saving (`check-billing-profile.mjs`
+  compares the two for every country, customer type and Indian state).
+- The privacy policy names the optional GSTIN or tax ID; its version (`legal-versions.js`) is
+  `2026-11-04`, so every buyer agrees to it again at their next checkout.
+## 17. v1.11 amendments (web search and colony budgets, 2026-11-05)
+
+### 17.1 `POST /v1/search`
+
+`Authorization: Bearer <ses_ session, nzx_ key or website token>`; JSON body (at most 8 KB):
+
+| field | type | |
+|---|---|---|
+| `query` | string, 1-400 characters after trimming | required |
+| `count` | integer 1-10 | default 8 |
+| `purpose` | `"search"` or `"research"` | default `"search"` |
+| `freshness` | `"day"`, `"week"`, `"month"` or `"year"` | optional |
+
+A search with `purpose: "research"` must send `x-neuron-research-run: <run id>` (8-128 of
+`A-Z a-z 0-9 . _ : -`); the header is ignored on plain searches.
+
+`200`: `{"results": [{"title", "url", "snippet", "published"?}], "provider": "searxng" | "brave",
+"cached": bool, "quota": {"remaining", "limit", "resets_at", "research": {"remaining", "limit"}}}`.
+`quota` counts searches per UTC day (`resets_at` is the next 00:00 UTC); `research` is additive.
+`published` is an ISO 8601 time when the backend gives one. Results are http(s) URLs only,
+de-duplicated, with HTML removed from titles (300 characters) and snippets (600).
+
+Errors are flat JSON, `{"error": code, "message", "request_id", ...}`:
+
+- `400 invalid_request` with `param` (`query`, `count`, `purpose`, `freshness` or
+  `x-neuron-research-run`);
+- `401 invalid_session`: sign in again;
+- `403 account_suspended`;
+- `429 search_quota_exhausted` with `resets_at`, `exhausted` (`"searches"` or `"research_runs"`)
+  and `Retry-After` (`quota` appears only in a `200`, always as the object above);
+- `503 search_unavailable`: no backend configured (the default until the operator sets
+  `SEARXNG_URL` or `BRAVE_API_KEY`), every backend failed, or the quota database (migration
+  `20261106000500_search_quota.sql`) is missing or down. Search is never served unmetered.
+
+**Backends.** A self-hosted SearXNG (`SEARXNG_URL`, its JSON API: `categories=general`,
+`safesearch=1`, `time_range` from `freshness`) is asked first; the Brave Search API
+(`BRAVE_API_KEY`, `freshness` as `pd`/`pw`/`pm`/`py`) is the fallback when SearXNG fails,
+times out (8 s), answers non-JSON or answers no results. An empty answer from every backend is a
+`200` with `results: []`.
+
+**Cache.** Answers are cached in the gateway's memory (per Node process or Worker isolate) for 10
+minutes, keyed by sha256 of the user id, `freshness` and the normalized query (NFKC, lower case,
+single spaces), at most 1000 entries. The cache is per user, so `"cached": true` (or a faster
+answer) only ever reflects the caller's own earlier search, never another user's. Empty answers
+are not cached. A cached answer says `"cached": true` and still counts as a search.
+
+**Quotas** (per UTC day, enforced in Postgres by `zerox_search_reserve` before any backend call):
+
+| plan | searches | research runs |
+|---|---|---|
+| Free | 40 | 3 |
+| Pro | 400 | 30 |
+| Max | 2000 | 150 |
+
+A research run is a distinct `x-neuron-research-run` id of the day: the first search of a new run
+takes one research run (and one search); later searches of that run take one search each. A run
+opened today keeps working after the research runs are used up. A search no backend answered is
+given back (`zerox_search_settle` with `failed`), with the run it opened.
+
+**Metering is metadata only.** `zerox_search_usage` keeps per-user daily counters (`searches`,
+`research_runs`, `cache_hits`, `searxng_calls`, `brave_calls`) and `zerox_search_research_runs`
+the sha256 of today's run ids. No query text, result or raw run id is stored or logged; the query
+leaves the gateway only to the backend, and the in-memory cache forgets it after 10 minutes. A
+user's run hashes from earlier days and counters older than 92 days are deleted by their next
+search.
+
+**Runtimes.** Both the Worker and the Node server serve the route; with `EC2_PROXY_PREFIXES`
+covering `/v1/`, the Worker forwards it to the VM like the other `/v1` routes.
+
+### 17.2 `GET /api/account` limits
+
+`limits` gains two objects, from the plan (static, src/search.js):
+
+- `search`: `{"daily_searches", "daily_research_runs"}`: Free 40/3, Pro 400/30, Max 2000/150;
+- `colony`: `{"max_workers", "max_tokens_per_run"}` for Neuron's multi-agent mode, enforced by the
+  CLI: Free 1 / 300,000, Pro 4 / 2,000,000, Max 8 / 6,000,000.
+
+### 17.3 RPCs
+
+- `zerox_search_reserve(p_user_id uuid, p_daily_searches int, p_daily_research_runs int,
+  p_run_hash text DEFAULT NULL)` → `(status, day, searches, research_runs, run_added, resets_at)`;
+  `status` is `ok`, `search_quota_exhausted` or `research_quota_exhausted` (nothing taken).
+- `zerox_search_settle(p_user_id uuid, p_day date, p_outcome text, p_run_hash text DEFAULT NULL,
+  p_run_added boolean DEFAULT false)` → `(searches, research_runs)`; `p_outcome` is `searxng`,
+  `brave`, `cached` or `failed` (gives the search, and the run when `p_run_added`, back).
+
+## 18. v1.11 amendments (connectors, agentic routing, prompt cache key, 2026-11-03)
+
+The neuron-v2 copy (`docs/GATEWAY_CONTRACT.md`) records the same changes as its v1.3 amendment;
+the CLI and the gateway implement exactly what follows. Code: `src/connector-policy.js`,
+`src/routes/account.js` (18.1), `src/router.js` and `src/catalog.js` `POOR_TOOL_CALLERS` (18.2),
+`src/chat-handler.js` and `src/providers.js` `PROVIDER_PARAMS` (18.2, 18.3); migration
+`20261106000300_connector_policy.sql` (down script in `migrations/down/`); checks
+`check-account-api.mjs`, `check-business-db.mjs`, `check-routing-v2.mjs`.
+
+### 18.1 Connector policy (`GET /api/account` `policy.connectors`)
+
+Connectors are MCP servers. There are no organisations yet, so gateway policy is per plan
+(`zerox_plan_policy.connector_policy jsonb`); machine policy is the CLI's `managed-settings.json`.
+
+```json
+"policy": {"connectors": {"allowed": ["catalog:*"], "denied": [], "required": [],
+  "hosted": [], "allow_unvetted": true, "catalog_version": "2026-11-03"}}
+```
+
+- `allowed`: connector catalog ids, or `"catalog:*"` for every entry of the catalog. `denied`: ids
+  the CLI must not start; deny wins over `allowed`, `required` and `hosted`. `required`: ids the
+  CLI starts with managed scope (also in one-shot runs) and the user cannot disable. `hosted`: ids
+  the plan may use through the hosted endpoint (section 18.4). `allow_unvetted`: whether servers
+  that are not in the catalog may run. `catalog_version`: the catalog version the ids were written
+  against.
+- A missing `policy` block (or `policy` without `connectors`) means no gateway policy: the CLI
+  applies its managed and user settings only. The gateway leaves it out when the plan's column is
+  null or not a JSON object, and against a database without the migration.
+- The gateway validates the stored value: ids are `^[a-z0-9][a-z0-9._-]{0,63}$` (others are
+  dropped), lists are de-duplicated and capped at 100, a denied id is removed from `required` and
+  `hosted`, a missing `allowed` is `["catalog:*"]`, a missing `allow_unvetted` is `true`, and a
+  missing or malformed `catalog_version` is the gateway's (`2026-11-03`). A policy only restricts
+  what it says.
+- `hosted` is reported only while the gateway serves hosted connectors (`HOSTED_CONNECTORS=true`,
+  off by default); otherwise it is `[]` whatever the plan allows. Even then it lists only the
+  plan's ids the gateway can serve now: a catalog entry whose vendor OAuth app is configured
+  (client id, every URL, scopes), with the database and `CONNECTOR_TOKENS_KEK` in place. An id the
+  plan grants but the operator has not configured is left out, so a client never sets up a
+  connector that could only answer 503.
+- Seed (migration `20261106000300_connector_policy.sql`, kept if an operator already set a
+  policy): every plan `allowed: ["catalog:*"]`, `denied: []`, `required: []`,
+  `allow_unvetted: true`, `catalog_version: "2026-11-03"`; Free `hosted: []` (local connectors
+  only); Pro, Max and ultrawork `hosted: ["atlassian", "github", "linear", "notion", "slack"]`
+  (vendors with an official remote MCP server). The ids must equal the CLI catalog's ids. Not yet
+  checked: the CLI's compiled-in catalog (`assets/mcp-catalog.json`) is on no neuron-v2 branch as
+  of 2026-11-04, so these five ids are provisional. When it lands, compare them and fix either
+  side (a new migration, or an operator update of `connector_policy`). Nothing depends on them
+  yet: `hosted` is reported only with `HOSTED_CONNECTORS=true`.
+- CLI behaviour (neuron-v2): the block is cached with its expiry; offline or when the gateway
+  cannot be reached, the CLI uses the last cached policy and warns (fail open), unless managed
+  settings set `mcpPolicy.failClosed: true`.
+
+
+### 18.2 Agentic routing hint (`x-neuron-route: agentic`)
+
+- The Neuron CLI sends `x-neuron-route: agentic` on turns that attach tools when the model is
+  `auto`. The gateway treats a request as agentic when it carries that header (any case, trimmed)
+  or attaches at least one tool, whoever the client is.
+- For an agentic request `auto` considers only catalog models with `capabilities.tools = true`
+  and leaves out models with a poor tool-call record, including as fallbacks. The catalog keeps no
+  per-model tool-call rate, so the record is an explicit list in `src/catalog.js`
+  (`POOR_TOOL_CALLERS`, matched on the upstream model with any provider prefix and any
+  OpenRouter `:variant` suffix such as `:free`): today the gpt-oss family
+  (`groq/openai/gpt-oss-120b`, `groq/openai/gpt-oss-20b`, `nvidia/openai/gpt-oss-20b`,
+  `@cf/openai/gpt-oss-120b`, and catalog rows or BYOK OpenRouter models of the same models), after
+  `groq/openai/gpt-oss-120b` answered a build request in chat without calling a tool (2026-11-03).
+  The same rule applies to `auto` on a BYOK session's own OpenRouter models; when only listed
+  models could serve, it answers 400 `invalid_request` ("None of your OpenRouter models reliably
+  calls tools; choose a model by name.").
+- The header only narrows `auto`. A model asked for by id is served as before, agentic or not: the
+  header alone never makes it need tools (only attached tools do). A request without tools and
+  without the header routes as before.
+- When no other tool-capable model is configured, the request answers 503 `service_unavailable`
+  ("No model that reliably calls tools is configured on this gateway; choose a model by name.").
+
+### 18.3 `prompt_cache_key` (`POST /v1/chat/completions`)
+
+- The CLI may send `prompt_cache_key` in an OpenAI-compatible chat body: a hash of its session
+  id, never the raw id. The gateway accepts 1 to 128 characters of `[A-Za-z0-9._:-]` (otherwise
+  400 `invalid_request`).
+- The gateway never forwards the key as sent. It forwards `SHA-256("zx-cache:" + caller + NUL +
+  key)` (the first 32 hex digits; caller = the account id, or the session for sessions without
+  an account), which is stable for the conversation and cannot collide with or reveal another
+  caller's key on the shared upstream account.
+- It goes only to upstreams that accept the field: OpenRouter (its sticky routing key, which
+  keeps the conversation on the provider that holds its prompt cache). It is stripped for Groq,
+  Gemini (its OpenAI-compatible endpoint answers 400 to unknown fields), NVIDIA, Workers AI, Z.ai
+  and Claude (whose adapter caches with its own `cache_control` blocks).
+- Quota accounting is unchanged: cached input tokens count like other prompt tokens.
+
+### 18.4 Hosted connector endpoint (implemented; off unless `HOSTED_CONNECTORS=true`)
+
+Code: `src/mcp-proxy.js`, `src/routes/connectors.js`, `src/connector-accounts.js`,
+`src/connector-catalog.js`, `src/connector-vault.js`; migration
+`20261106000400_connector_accounts.sql` (down script in `migrations/down/`); check
+`check-connectors.mjs`. With `HOSTED_CONNECTORS` unset every route below answers 404.
+
+- `https://zero-x.live/mcp/<connector_id>`: Streamable HTTP (MCP 2025-06-18), `Authorization:
+  Bearer <ses_ session token or nzx_ key>`. Served only for ids in the caller's
+  `policy.connectors.hosted` (and allowed, not denied). Methods: `POST` (one JSON-RPC message;
+  batches answer 400), `GET` (the server-to-client stream; needs a session) and `DELETE` (ends the
+  session). The answer is `application/json` or `text/event-stream`, as the vendor sends it.
+- `401` (`{"error":"invalid_session"}`, `WWW-Authenticate: Bearer`) = sign in again. `403` with
+  `{"error":"needs_connect","connect_url":"https://zero-x.live/dashboard#connectors"}` = the user
+  has not linked that connector, or the vendor no longer accepts the link: it refused the refresh
+  grant (`invalid_grant` and the like), the token expired without a refresh token, or a freshly
+  refreshed token was refused too (the gateway then deletes the link). A token endpoint that
+  cannot be reached or answers 5xx (or an operator error such as `invalid_client`) is
+  `502 upstream_unreachable` and keeps the link. Other answers, all
+  `{"error": <code>, "message": ...}`: `403 not_in_plan` (the plan does not include the
+  connector; `upgrade_url`), `403 account_suspended`, `404 not_found` (unknown connector),
+  `404 session_not_found` (initialize again), `413 request_too_large` (over 1 MiB),
+  `429 rate_limited` (`Retry-After`; 120 requests per user per minute, counted in the database
+  so the Worker, the EC2 server and every isolate share one budget), `502 upstream_error` /
+  `upstream_unreachable`, `503 connector_not_configured` or `connectors_unavailable`.
+- Sessions: the client sees `Mcp-Session-Id: zxs_<43 characters>`, which the gateway maps to the
+  vendor's session id, the user and the connector (24 hours). Another user's id answers 404.
+- A call to a destructive-tier tool must carry `x-neuron-confirmed: 1`, which the CLI sends only
+  after the user approved that call in its permission prompt; without it the proxy answers HTTP
+  200 with JSON-RPC error `-32010` (`data.reason: "confirmation_required"`, `data.tool`,
+  `data.tier`). The header is not passed to the vendor. Tools the catalog marks `blocked` answer
+  `-32011` and are left out of `tools/list`. An answer over the size cap (4 MiB) ends with
+  `-32012` for the pending request. The gateway forwards the JSON-RPC message it checked
+  (re-serialized), never the raw request body.
+- A tool's tier is the gateway catalog's (an explicit per-vendor map from the vendor's published
+  tool list where there is one, else name rules on the name split into words without the vendor
+  prefix, so `deleteConfluencePage` and `notion-delete-page` are destructive), made stricter, never
+  looser, by the vendor's own annotations: an explicit `destructiveHint: true` makes it
+  destructive, an explicit `readOnlyHint: false` takes it out of `read`. `tools/list` answers
+  carry that tier: `annotations.readOnlyHint` (read), `annotations.destructiveHint`
+  (destructive), `annotations.openWorldHint: true`, and `_meta["live.zero-x/tier"]` = `read`,
+  `write`, `external` or `destructive`. Tiers the vendor made stricter are remembered per user
+  and connector (seven days) and applied to `tools/call`, so a call is checked against the tier
+  the client was shown; a tool whose stricter tier cannot be stored is left out of the list.
+- Every message the proxy handles writes one audit row with metadata only (method, tool, tier,
+  decision, status, duration, byte counts, sha256 of the tool arguments), kept 30 days; no
+  argument or result text is stored. Vendor tokens never reach a client or a log.
+- Neuron settings name a hosted connector with server `type: "zerox"`. The managed-proxy type
+  string the CLI inherited stays only as a silent parse alias and appears in no docs or UI.
+
+### 18.5 Connector accounts (`/api/connectors`, website and CLI sessions; not API keys)
+
+- `GET /api/connectors` → `{catalog_version, connect_url, connectors: [{id, name, publisher,
+  source, endpoint, status, in_plan, configured, scopes, connected_at}]}`; `status` is
+  `connected`, `not_connected`, `not_in_plan` or `unavailable` (the operator has not configured
+  the vendor's OAuth app). No token is ever returned.
+- `POST /api/connectors/<id>/connect` → `{authorize_url, expires_in: 600}` and an HttpOnly
+  `zx_connect` cookie; the browser goes to `authorize_url` (OAuth 2.0 code flow with PKCE S256
+  and a single-use `state`). For a vendor whose MCP server is an MCP 2025-06-18 authorization
+  server (Notion, Atlassian) the authorize URL, the code exchange and every refresh grant carry
+  `resource=<the MCP server URL>` (RFC 8707). Linking again replaces the previous link.
+  `403 not_in_plan`, `503 connector_not_configured`.
+- `GET /api/connectors/callback` (the vendor's redirect) → `303` to the dashboard with
+  `?connector=<id>&connect=ok#connectors`, or `connect=error&reason=` `invalid_state`, `expired`,
+  `browser_mismatch` (no matching cookie: the flow was started in another browser), `denied`,
+  `vendor_error`, `invalid_code`, `not_in_plan`, `token_exchange` or `unavailable`.
+- `DELETE /api/connectors/<id>` → `{status: "disconnected", connector}`; `404` when not connected.
+  Where the operator set `CONNECTOR_<ID>_REVOKE_URL` the stored refresh token
+  (`token_type_hint=refresh_token`), then the access token, are revoked at the vendor (RFC 7009,
+  best effort); the link's row and its sealed tokens are then deleted, not kept. The CLI sees
+  `needs_connect` on its next call.
+
+## 19. v1.11 amendments (Claude Haiku 5.5 on every plan, sponsored pools, checker verdicts on the Worker, 2026-11-06)
+
+Code: `src/catalog-types.js` (`SPONSORED_FREE_MODELS`, `KEY_SLOTS.anthropic.paid.sponsors`, the
+anthropic free slot, `SLOT_OFFERS`, `sponsoredCaps`), `src/list-prices.js`, `src/catalog-claude.js`,
+`src/catalog-guardrails.js`, `src/capacity.js`, `src/chat-handler.js`, `src/sponsored.js` (new),
+`src/router.js`, `src/catalog.js`, `src/anthropic-request.js` (Haiku traits), `src/health-probes.js`
+(schedule), `src/probe-rows-db.js` (new), `src/routes/plans.js`, `src/routes/account.js`,
+`src/routes/admin.js`, `src/plan-policy.js`; migrations `20261106000600_sponsored_pools.sql`,
+`20261106000700_haiku_catalog.sql` (generated by `scripts/catalog-seed-sql.mjs`),
+`20261106000800_plan_features_haiku.sql` (down scripts in `migrations/down/`); checks
+`check-sponsored-cap.mjs`, `check-probe-rows-db.mjs` and the extended `check-catalog-db.mjs`,
+`check-anthropic-adapter.mjs`, `check-health-probes.mjs`, `check-routing-v2.mjs`,
+`check-e2e-local.mjs`, `check-account-api.mjs`, `check-billing-caps.mjs`, `check-pages.mjs`.
+
+### 19.1 Sponsored pools
+
+A sponsored pool is a `free`-tier pool on a key slot the operator pays for (`anthropic.paid`;
+`KEY_SLOTS` marks such slots `sponsors: true`). Users pay nothing; the pool carries the upstream
+list price so Zero-X's own cost is recorded and capped. Reviewed code bounds it: only a
+(provider type, upstream model) in `SPONSORED_FREE_MODELS` may have one, its price must equal the
+list price exactly (cache rates and the long-context rate included), every limit (rpm, rpd, tpm,
+tpd) must be set and at most the code ceiling, it needs a daily spend cap at most the type maximum,
+and it carries the family's per-user monthly token allowance (`user_month_tokens`) and
+`requires_ledger`. Guardrail reasons: `sponsored_not_listed`, `sponsored_price_required`,
+`price_mismatch_list`, `cache_price_missing`, `cap_missing`, `cap_above_max`,
+`free_limits_required`, `free_limits_above_max`; `free_pool_priced` applies only to free pools on
+slots that do not sponsor. A sponsored pool keeps the offer of its slot (`anthropic.paid`), whose
+data-policy facts it reports. In the database the table check that kept every free pool unpriced
+and uncapped (`zerox_catalog_revision_pools_free_terms`) makes an exception for slots named by
+`zerox_catalog_slot_sponsors`; which models may use it is decided by the code guardrails, which
+every proposal passes first.
+
+Billing: a sponsored reservation holds its worst case in the pool's day bucket
+(`zerox_reserve_v2` `p_cost_microusd`, counted against `p_pool.cpd` whatever the tier) but never
+in credits; settlement charges the user 0 and records the sponsored cost on
+`zerox_usage_events.sponsored_cost_microusd`, `zerox_usage_daily.sponsored_cost_microusd`, the
+month row and the pool's day bucket (`cost_today_microusd` on `/admin/overview`, with
+`spend_cap_microusd` and `sponsored: true`). The recorded figure is billed micro-USD, the
+marked-up equivalent every pool's cap counts (list price x `MARKUP`, 1.25), not the raw upstream
+bill. Refunds return the hold; `failed_upstream` keeps the sponsored cost and refunds the user as
+in 13.4. A spent cap answers `pool_exhausted`: blurred until 00:00 UTC, and `capacity_exhausted`
+"has reached today's spending limit on Zero-X" when it is the only candidate (the budget is named
+`rpd|tpd|cpd`, all of which reset at 00:00 UTC). Sessions without an account ledger cannot use a
+sponsored pool (`upgrade_required`; an anonymous `/v1/models` caller is shown the Free view).
+
+### 19.2 Claude Haiku 5.5 (`anthropic/claude-haiku-5-5`)
+
+- One route, one sponsored pool: provider type `anthropic`, key slot `anthropic.paid`, upstream
+  `claude-haiku-5-5`, alias `claude-haiku-5-5`, on every plan at no charge to the user.
+  `context_window` 100,000 (so every request is on the lower rate card), `max_output_tokens` 32,000,
+  `default_max_tokens` 16,000, tools and vision, `auto_rank` null (`auto` never picks it; a user
+  selects it by name or family id), list position 165 (after Opus 5.5). `/v1/models` lists it with
+  `tiers: ["free"]`, `pricing: null` and `allowance: {month_tokens: 10000000}` (a field alpha.4
+  ignores). Pool limits: rpm 50, rpd 10,000, tpm 400,000, tpd 60,000,000 (the rpm and tpm are
+  unverified against the key's Anthropic tier: lower them by revision if the workspace's limits are
+  under them).
+- Prices (list, upstream): $0.10 / $0.50 per MTok for prompts of 100K tokens or fewer, $0.50 /
+  $2.50 above, cache reads $0.01, 5-minute cache writes $0.125, 1-hour $0.20. Recorded cost is list
+  price x 1.25, like every pool; the user is charged nothing. Daily spend cap $5 (upstream;
+  `cpd` 6,250,000 billed micro-USD), a plain row value the operator raises by revision up to the
+  type maximum ($50). Worst case per user: 10M tokens a month is about $1.60 at an 85/15
+  input/output split, $5 if all output.
+- `reasoning_effort`: `none | low | medium | high` (`minimal` -> `low`); `none` sends
+  `thinking: {"type": "disabled"}` at effort low (accepted at effort high or below, with no
+  `block_binding`, beta or replay); absent or `default` = `medium` with adaptive thinking. No
+  `budget_tokens`, no sampling parameters, no prefill (all 400 upstream); a forced `tool_choice` is
+  sent as `auto` with an instruction as for the other Claude models. Refusals and usage as in 13.3
+  (Haiku has no server-side refusal fallback); thinking replay only with thinking on.
+
+### 19.3 Monthly family allowance
+
+- Every user may use at most `user_month_tokens` (Haiku: 10,000,000) tokens per calendar month
+  (UTC) on a sponsored family: prompt tokens (plain input, cache writes and cache reads at their
+  token count) plus completion tokens, summed over every route of the family. It is checked and
+  held atomically in `zerox_reserve_v2` (`p_cap` `{family, month_tokens}`, table
+  `zerox_family_month_usage` keyed by user, family and month), after the plan's daily and window
+  checks and before rpm, concurrency, credits and the pool budgets: a request must pass all of
+  them. A reservation holds its reserved tokens (prompt + min(max_tokens, 1024)); settlement
+  corrects the month row to the settled tokens (a refund counts 0); a released reservation keeps
+  its hold until a late settle corrects it, as the daily and window counters do.
+- Refusal: status `user_family_month_tokens` -> 429 `insufficient_quota` with `resets_at` and
+  `Retry-After` = the first of the next month 00:00 UTC and no `upgrade_url`. Headers
+  `x-neuron-quota-family`, `x-neuron-quota-month-limit-tokens`, `x-neuron-quota-month-used-tokens`,
+  `x-neuron-quota-month-resets-at`. The message names the figures: "You've used your 10,000,000
+  Claude Haiku 5.5 tokens for November; the allowance renews on Dec 1, 00:00 UTC. Other models keep
+  working." / "This request needs N tokens but only R of your 10,000,000 Claude Haiku 5.5 tokens
+  for November are left; the allowance renews on Dec 1, 00:00 UTC. Choose another model until
+  then."; a request larger than the whole allowance carries no `resets_at` or `Retry-After`.
+  The refusal is per family: the chat handler skips the family's other candidates and tries the
+  rest, failing with it only when nothing else could serve (with the current catalog the Haiku family
+  has one route and `auto` never picks it, so a Haiku request fails with it directly); every other
+  model keeps working. A successful sponsored completion adds
+  `x-neuron-quota-month-remaining-tokens`.
+- `zerox_reserve_v2` keeps its 8-argument call (`p_cap` defaults to null; old gateways are
+  unaffected) and gains `cap_family`, `cap_tokens`, `cap_used_tokens`, `cap_resets_at`. A gateway
+  that sends `p_cap` to a database without the migration gets no function (PostgREST `PGRST202`,
+  Postgres `42883`) and fails closed: the pool is `not_configured` in that isolate for 10 minutes,
+  logged once, a direct Haiku request answers 503 `service_unavailable`, and nothing is served
+  uncapped.
+- `GET /api/account` adds `usage_month: [{family, model_name, tokens, limit_tokens,
+  remaining_tokens, resets_at}]` (empty when unused; the gateway passes the allowances as
+  `zerox_account_overview(p_user_id, p_caps)` and retries without `p_caps` against a database that
+  lacks the migration); `zerox_usage_by_model` and `/api/usage` `by_model` rows add
+  `sponsored_cost_microusd`.
+- Released clients: Neuron 7.0.0-alpha.4 shows the 429 as it shows the window refusal (message
+  and reset time); the new fields and headers are ignored. Whether alpha.4 sleeps the whole
+  `Retry-After` of an `insufficient_quota` was not re-read for this change.
+
+### 19.4 Plans
+
+Tiers, limits, prices and credits are unchanged (section 1). The feature strings
+(`zerox_plan_policy.features`, `/api/plans`, the site fallback, the pricing page) add "Claude
+Haiku 5.5 included: 10M tokens a month at no charge" to every plan (second line of Free, first line
+of Pro, Max and ultrawork).
+
+### 19.5 Health
+
+- The Worker (`neuron.zero-x.live`) reads the checker's verdict rows (`zerox_pool_health_get`,
+  the rows the Node prober writes, section 15.4) when it builds `/v1/models`, `/v1/models/status`
+  and `/v1/models/stream`: per isolate, cached for `poll_interval_seconds` (30 s), the last rows
+  kept for 10 minutes when a read fails, with the per-route stale horizons of 15.2 computed from
+  the catalog (once rows exist; with none the horizon is `HEALTH_STALE_SECONDS`). The freshest
+  observation still wins, so the isolate's own attempts and the HealthHub flip a model at once.
+  Without the RPC (migration missing), without a database or with `HEALTH_PROBES_DB_ROWS=off`, the
+  Worker answers as before (HealthHub and its own attempts). Both hosts therefore show the same
+  verdicts, latency and `stale_after_seconds`. The operator's `/health` on the Worker adds
+  `health_checker.verdict_rows` (`source`, `rows`, `read_at`, `missing_migration`, `disabled`).
+- Why the two hosts differed (2026-11-06): a family's `context_window` is the largest window among
+  the routes that can serve now (section 14), so it follows the routes' health. The Node server
+  knew from the checker which routes were out; the Worker saw only the HealthHub's list checks and
+  listed a larger window (GPT-OSS 20B: 131,072 against 8,000), and `unknown` and no latency for
+  Claude and GLM. Reading the same rows makes the hosts agree.
+- Haiku test requests: thinking disabled at effort low, 3 output tokens for the chat test, 160 for
+  the tool call (`tool_choice: 'auto'`), every 30 minutes / 6 hours like the paid Claude pools,
+  horizon 2,700 s; not counted against the pool's spend cap (under $0.01 a day).
+
+### 19.6 RPCs
+
+| RPC | change |
+|---|---|
+| `zerox_reserve_v2` | `+ p_cap jsonb = null` (`{family, month_tokens}`); result `+ cap_family, cap_tokens, cap_used_tokens, cap_resets_at`; status `+ user_family_month_tokens`; `cpd` applies to any tier |
+| `zerox_settle_v2` | same arguments; pool cost for any tier, user charge paid only, sponsored cost recorded, month row corrected |
+| `zerox_account_overview` | `+ p_caps jsonb = null` (array of `{family, month_tokens}`); `+ usage_month jsonb` |
+| `zerox_usage_by_model` | `+ sponsored_cost_microusd` |
+| `zerox_release_stale_reservations` | also deletes month rows older than 13 months |

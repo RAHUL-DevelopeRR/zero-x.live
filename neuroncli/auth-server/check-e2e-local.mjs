@@ -13,7 +13,7 @@
 // except, with --live, the two real upstreams.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { createHmac, randomBytes } from 'node:crypto';
+import { createHash, createHmac, randomBytes } from 'node:crypto';
 import { once } from 'node:events';
 import { existsSync, readFileSync } from 'node:fs';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -289,6 +289,12 @@ const tools = [{ type: 'function', function: { name: 'read_file', description: '
 const CREDITS_EMAIL = 'e2e.credits@example.test';
 const CREDITS_START = 300000; // $0.30
 const creditsUserId = await devUserId(CREDITS_EMAIL);
+// Claude Haiku 5.5, a sponsored free model on every plan (contract section 19): a Free account whose month already holds
+// all but 10 of its 10M tokens (step 14c), and the family and allowance the rows are checked against.
+const HAIKU_CAP_EMAIL = 'e2e.haikucap@example.test';
+const haikuCapUserId = await devUserId(HAIKU_CAP_EMAIL);
+const HAIKU_FAMILY = 'anthropic/claude-haiku-5-5';
+const HAIKU_MONTH_TOKENS = 10_000_000;
 
 let failed = null;
 try {
@@ -312,6 +318,11 @@ try {
   await handle.db.query('SELECT * FROM public.zerox_sync_account($1, $2::jsonb)', [creditsUserId, JSON.stringify({ email: CREDITS_EMAIL, name: 'e2e.credits' })]);
   await handle.db.query(`UPDATE public.zerox_accounts SET plan = 'pro', plan_source = 'manual', credit_balance_microusd = $2
     WHERE clerk_id = $1`, [creditsUserId, CREDITS_START]);
+  // Month fixture (step 14c): 10 tokens left of the Haiku allowance this UTC month.
+  await handle.db.query('INSERT INTO auth.users (id, email) VALUES ($1, $2) ON CONFLICT DO NOTHING', [haikuCapUserId, HAIKU_CAP_EMAIL]);
+  await handle.db.query('SELECT * FROM public.zerox_sync_account($1, $2::jsonb)', [haikuCapUserId, JSON.stringify({ email: HAIKU_CAP_EMAIL, name: 'e2e.haikucap' })]);
+  await handle.db.query(`INSERT INTO public.zerox_family_month_usage (user_id, family, month, tokens)
+    VALUES ($1, $2, date_trunc('month', now() AT TIME ZONE 'UTC')::date, $3)`, [haikuCapUserId, HAIKU_FAMILY, HAIKU_MONTH_TOKENS - 10]);
   await closeAllPglite();
   step('database prepared', `${handle.applied.length} migrations applied in a fresh PGlite directory; scripts/razorpay-bootstrap.mjs created 4 plans on the fake Razorpay and their ids were stored`);
 
@@ -359,12 +370,14 @@ try {
     'created', 'display_name', 'facts', 'family', 'id', 'last_failure_class', 'last_success_at', 'latency_ms', 'maker', 'maker_name',
     'max_output_tokens', 'model_name', 'models_dev_id', 'native_context_window', 'object', 'offers', 'owned_by', 'pricing',
     'provider', 'reasoning_efforts', 'stale_after_seconds', 'status', 'tiers', 'unavailable_reason'];
+  // A model with a monthly allowance (Claude Haiku 5.5) also lists it: { month_tokens }.
+  const keysOf = model => (model.id === HAIKU_FAMILY ? [...modelKeys, 'allowance'].sort() : modelKeys);
   const models = async token => {
     const listed = await call('/v1/models', { token });
     assert.equal(listed.status, 200);
     assert.equal(listed.body.object, 'list');
     assert.equal(listed.body.data[0].id, 'auto');
-    for (const model of listed.body.data) assert.deepEqual(Object.keys(model).sort(), modelKeys, model.id);
+    for (const model of listed.body.data) assert.deepEqual(Object.keys(model).sort(), keysOf(model), model.id);
     return Object.fromEntries(listed.body.data.map(model => [model.id, model]));
   };
   const anonymous = await models();
@@ -452,7 +465,8 @@ try {
   assert.equal(account.user.id, userId);
   assert.equal(account.plan.id, 'free');
   assert.deepEqual(account.limits, { daily_requests: 100, daily_tokens: 5000000, rpm: 10, concurrency: 2,
-    window_tokens: 50000, window_seconds: 18000 });
+    window_tokens: 50000, window_seconds: 18000, search: { daily_searches: 40, daily_research_runs: 3 },
+    colony: { max_workers: 1, max_tokens_per_run: 300000 } });
   assert.equal(account.usage_today.requests, 1);
   assert.equal(account.usage_today.tokens, settled.prompt_tokens + settled.completion_tokens);
   assert.equal(account.usage_today.resets_at, nextUtcMidnight());
@@ -622,13 +636,34 @@ try {
   }
 
   // ── 8. Pro checkout → signed verify → plan pro ──
-  const checkout = await call('/api/billing/checkout', { method: 'POST', token: ses, body: { plan: 'pro', currency: 'INR' } });
+  // Billing details first: checkout refuses a buyer without a saved profile and the current documents' agreement.
+  const detailsBefore = await call('/api/billing/profile', { token: ses });
+  assert.equal(detailsBefore.status, 200, redact(detailsBefore.text));
+  assert.deepEqual([detailsBefore.body.profile, detailsBefore.body.complete, detailsBefore.body.tax], [null, false, { no_gst_notice: false }]);
+  const consent = Object.fromEntries(Object.entries(detailsBefore.body.documents).map(([name, document]) => [name, document.version]));
+  const requestsBeforeGate = rzp.requests.length;
+  expectError(await call('/api/billing/checkout', { method: 'POST', token: ses, body: { plan: 'pro', currency: 'INR', consent } }), 409, 'billing_profile_required');
+  const savedDetails = await call('/api/billing/profile', { method: 'PUT', token: ses, body: { full_name: 'E2E Buyer', country: 'IN', state: 'Tamil Nadu',
+    city: 'Karur', postal_code: '639113', phone: '9876543210', tax_id: '33abcde 1234f1z7' } });
+  assert.equal(savedDetails.status, 200, redact(savedDetails.text));
+  assert.deepEqual([savedDetails.body.profile.state, savedDetails.body.profile.phone, savedDetails.body.profile.tax_id, savedDetails.body.complete],
+    ['TN', '+919876543210', '33ABCDE1234F1Z7', true], 'the optional GSTIN is normalised and stored (20261106000200)');
+  assert.deepEqual((await call('/api/billing/profile', { token: ses })).body.profile, savedDetails.body.profile, 'the profile is stored and read back');
+  const needsAgreement = expectError(await call('/api/billing/checkout', { method: 'POST', token: ses, body: { plan: 'pro', currency: 'INR' } }), 409, 'consent_required');
+  assert.deepEqual(needsAgreement.missing, ['terms', 'privacy', 'auto_renewal', 'refund']);
+  assert.equal(rzp.requests.length, requestsBeforeGate, 'nothing reaches Razorpay without details and agreement');
+  const checkout = await call('/api/billing/checkout', { method: 'POST', token: ses, body: { plan: 'pro', currency: 'INR', consent } });
   assert.equal(checkout.status, 200, redact(checkout.text));
+  assert.deepEqual(checkout.body.prefill, { email: checkout.body.prefill.email, name: 'E2E Buyer', contact: '+919876543210' }, 'Razorpay is prefilled with name, e-mail and phone only');
+  assert.equal(Object.keys(rzp.subscriptions.get(checkout.body.subscription_id).notes).sort().join(), 'plan,user_id', 'only ids in Razorpay notes');
+  assert.ok(!JSON.stringify(rzp.requests).includes('1234F1Z7') && !JSON.stringify(checkout.body).includes('1234F1Z7'), 'the GSTIN never reaches Razorpay');
+  const agreed = (await call('/api/billing/profile', { token: ses })).body.accepted;
+  assert.deepEqual(Object.entries(agreed).map(([name, entry]) => [name, entry.version, entry.current]).sort(), Object.entries(consent).map(([name, version]) => [name, version, true]).sort(), 'the agreements are recorded');
   assert.equal(checkout.body.provider, 'razorpay');
   assert.equal(checkout.body.key_id, RAZORPAY_KEY_ID);
   const subscriptionId = checkout.body.subscription_id;
   // A second tab reuses the unpaid checkout instead of creating a second subscription (review P2).
-  const secondTab = await call('/api/billing/checkout', { method: 'POST', token: ses, body: { plan: 'pro', currency: 'INR' } });
+  const secondTab = await call('/api/billing/checkout', { method: 'POST', token: ses, body: { plan: 'pro', currency: 'INR', consent: { auto_renewal: consent.auto_renewal } } });
   assert.equal(secondTab.status, 200, redact(secondTab.text));
   assert.equal(secondTab.body.subscription_id, subscriptionId, 'one payable subscription per account');
   assert.equal(rzp.requests.filter(entry => entry.method === 'POST' && entry.path === '/v1/subscriptions').length, 1);
@@ -644,10 +679,11 @@ try {
   assert.equal(verified.body.status, 'ok');
   assert.equal(verified.body.account.plan.id, 'pro');
   account = (await call('/api/account', { token: ses })).body;
+  assert.equal(account.credits.balance_usd, 8, "the first month's credits are granted at verify, before any webhook");
   assert.equal(account.plan.id, 'pro');
   assert.equal(account.subscription.status, 'active');
   assert.equal((await models(ses))['google/gemini-2.5-pro'].available, true, 'Pro unlocks the paid pool');
-  expectError(await call('/api/billing/checkout', { method: 'POST', token: ses, body: { plan: 'max', currency: 'USD' } }), 409, 'already_subscribed');
+  expectError(await call('/api/billing/checkout', { method: 'POST', token: ses, body: { plan: 'max', currency: 'USD', consent } }), 409, 'already_subscribed');
   step('Pro checkout -> verify', `subscription ${subscriptionId} (a second tab reuses it), bad signature -> 400, signed verify -> plan pro; gemini-2.5-pro now available; another checkout -> 409 already_subscribed`);
 
   // ── 9. subscription.charged grants the monthly credits exactly once ──
@@ -664,7 +700,7 @@ try {
   assert.deepEqual((await webhook(charged, 'evt_e2eCharged1')).body, { received: true, duplicate: true });
   assert.deepEqual((await webhook(charged, 'evt_e2eCharged2')).body, { received: true }, 'a new delivery id is processed');
   assert.equal((await call('/api/account', { token: ses })).body.credits.balance_usd, 8, 'credits are granted once per payment');
-  step('webhook subscription.charged', 'forged signature -> 400; valid HMAC -> $8 granted; replay -> duplicate; new event id for the same payment -> no second grant');
+  step('webhook subscription.charged', 'forged signature -> 400; valid HMAC for the payment verify already granted -> still $8; replay -> duplicate; new event id for the same payment -> no second grant');
 
   // ── 9b. A second subscription paid in parallel is cancelled at once and refunded (review P2) ──
   const proInrPlan = plans.find(row => row.plan === 'pro' && row.currency === 'INR').id;
@@ -710,6 +746,7 @@ try {
   step('paid-pool request', `gemini/gemini-2.5-pro on the paid key cost ${cost} micro-USD; balance ${account.credits.balance_usd} USD`);
 
   // ── 11. Top-up order → verify → credits ──
+  // Terms, privacy and refund were agreed to at the subscription checkout: no new agreement is needed (one click).
   const topup = await call('/api/billing/topup', { method: 'POST', token: ses, body: { pack: 'credits_5', currency: 'INR' } });
   assert.equal(topup.status, 200, redact(topup.text));
   assert.equal(topup.body.amount_minor, 44900);
@@ -910,6 +947,76 @@ try {
   }
   step('provider key vault', `/admin/keys served with an enforced CSP and no inline script; rejected key -> 422; ••••0001 added, served ${pong.model} first and shows last_used_at; disabled -> the Worker secret serves`);
 
+  // ── 14c. Claude Haiku 5.5: a sponsored free model on every plan, 10M tokens a month, never charged ──
+  {
+    const haikuMessages = [{ role: 'user', content: 'Reply with pong.' }];
+    const haikuPrice = catalogEntry(HAIKU_FAMILY).pools[0].price;
+    const haikuCost = costMicrousd(haikuPrice, 20800, 800, { cache_read_tokens: 16000, cache_write_tokens: 4000 });
+    // The list (anonymous = the Free view, and a Free session): available to everyone, free, with its allowance.
+    const haikuSession = (await call('/auth/cli/session', { method: 'POST', token: devToken('e2e.haiku@example.test'), body: {} })).body.session_token;
+    const haikuViews = [await models(), await models(haikuSession)];
+    for (const view of haikuViews) {
+      const haiku = view[HAIKU_FAMILY];
+      assert.deepEqual([haiku.available, haiku.tiers, haiku.pricing, haiku.maker, haiku.display_name, haiku.allowance],
+        [true, ['free'], null, 'anthropic', 'Claude Haiku 5.5', { month_tokens: HAIKU_MONTH_TOKENS }]);
+      assert.ok(['available', 'degraded', 'busy', 'blurred', 'unknown'].includes(haiku.status), 'the v1.3 status words alpha.4 reads');
+      // Neuron 7.0.0-alpha.4's preflight: ~4K first turn plus max_tokens (min(max_output_tokens, 32000)) within the window.
+      assert.deepEqual([haiku.max_output_tokens, haiku.context_window], [32000, 100000]);
+      assert.ok(4100 + Math.min(haiku.max_output_tokens, 32000) <= haiku.context_window);
+    }
+    // A Free account: streamed through the native adapter on the operator's Claude key, thinking adaptive at effort medium.
+    const free = await call('/v1/chat/completions', { method: 'POST', token: haikuSession,
+      body: { model: 'claude-haiku-5-5', messages: haikuMessages, stream: true, temperature: 0.4 } });
+    assert.equal(free.status, 200, redact(free.text).slice(0, 400));
+    assert.deepEqual([free.headers.get('x-neuron-model'), free.headers.get('x-oiop-offer'), free.headers.get('x-neuron-plan')],
+      [HAIKU_FAMILY, 'anthropic.paid', 'free']);
+    const remaining = Number(free.headers.get('x-neuron-quota-month-remaining-tokens'));
+    assert.ok(remaining > 0 && remaining < HAIKU_MONTH_TOKENS, 'the allowance left is reported: ' + remaining);
+    const sentToHaiku = upstream.calls.at(-1);
+    assert.deepEqual([sentToHaiku.provider, sentToHaiku.key, sentToHaiku.body.model, sentToHaiku.body.max_tokens],
+      ['anthropic', 'e2e-anthropic-paid', 'claude-haiku-5-5', 16000]);
+    assert.deepEqual([sentToHaiku.body.thinking?.type, sentToHaiku.body.output_config?.effort], ['adaptive', 'medium']);
+    assert.ok(!('temperature' in sentToHaiku.body) && !JSON.stringify(sentToHaiku.body).includes('budget_tokens'), 'no sampling parameter, no thinking budget');
+    const event = (await call('/api/usage/events?limit=1', { token: haikuSession })).body.events[0];
+    assert.deepEqual([event.model, event.tier, event.prompt_tokens, event.completion_tokens, event.cost_usd], [HAIKU_FAMILY, 'free', 20800, 800, 0],
+      'the user is charged nothing');
+    const haikuAccount = (await call('/api/account', { token: haikuSession })).body;
+    assert.deepEqual(haikuAccount.usage_month.map(row => [row.family, row.model_name, row.tokens, row.limit_tokens, row.remaining_tokens]),
+      [[HAIKU_FAMILY, 'Claude Haiku 5.5', 21600, HAIKU_MONTH_TOKENS, HAIKU_MONTH_TOKENS - 21600]], '/api/account counts the month');
+    assert.equal(haikuAccount.credits.balance_usd, 0);
+    const haikuUsage = (await call('/api/usage', { token: haikuSession })).body.by_model.find(row => row.model === HAIKU_FAMILY);
+    assert.deepEqual([haikuUsage.cost_usd, haikuUsage.sponsored_cost_microusd], [0, haikuCost], 'what Zero-X paid is recorded');
+    // A Pro account with credits uses it for nothing too: the balance does not move.
+    const proBefore = Math.round((await call('/api/account', { token: poor })).body.credits.balance_usd * 1e6);
+    assert.ok(proBefore > 0 && proBefore < 8000000, 'the credits account of step 11d: ' + proBefore);
+    const pro = await call('/v1/chat/completions', { method: 'POST', token: poor, body: { model: HAIKU_FAMILY, messages: haikuMessages, stream: true } });
+    assert.equal(pro.status, 200, redact(pro.text).slice(0, 400));
+    assert.equal(Math.round((await call('/api/account', { token: poor })).body.credits.balance_usd * 1e6), proBefore, 'a Pro balance is never charged for Haiku');
+    // The operator sees the pool's spend against its $5 daily cap (6.25M billed micro-USD), both requests.
+    const haikuPool = (await call('/admin/overview', { token: ADMIN })).body.pools.find(pool => pool.model === HAIKU_FAMILY && pool.tier === 'free');
+    assert.deepEqual([haikuPool.requests_today, haikuPool.cost_today_microusd, haikuPool.spend_cap_microusd, haikuPool.sponsored],
+      [2, 2 * haikuCost, 6_250_000, true]);
+    // 10 tokens left in the month: 429 insufficient_quota with the renewal time, no upgrade_url, every other model keeps working.
+    const capSession = (await call('/auth/cli/session', { method: 'POST', token: devToken(HAIKU_CAP_EMAIL), body: {} })).body.session_token;
+    const callsBefore = upstream.calls.length;
+    const refused = await call('/v1/chat/completions', { method: 'POST', token: capSession, body: { model: HAIKU_FAMILY, messages: haikuMessages } });
+    assert.equal(refused.status, 429);
+    const firstOfNextMonth = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth() + 1, 1));
+    // What an alpha.4-shaped client reads: code, message, retry_after_seconds, resets_at, and nothing else it cannot parse.
+    assert.deepEqual(Object.keys(refused.body.error).sort(), ['code', 'message', 'param', 'request_id', 'resets_at', 'retry_after_seconds', 'type']);
+    assert.deepEqual([refused.body.error.code, refused.body.error.type, refused.body.error.resets_at], ['insufficient_quota', 'insufficient_quota', firstOfNextMonth.toISOString()]);
+    assert.match(refused.body.error.message, /^This request needs [\d,]+ tokens but only 10 of your 10,000,000 Claude Haiku 5\.5 tokens for [A-Z][a-z]+ are left; the allowance renews on [A-Z][a-z]{2} 1, 00:00 UTC\. Choose another model until then\.$/);
+    assert.ok(!/anthropic|groq|nvidia/i.test(refused.body.error.message), 'no provider in the message');
+    assert.ok(Math.abs(Number(refused.headers.get('retry-after')) - (firstOfNextMonth.getTime() - Date.now()) / 1000) < 5);
+    assert.deepEqual([refused.headers.get('x-neuron-quota-family'), refused.headers.get('x-neuron-quota-month-limit-tokens'),
+      refused.headers.get('x-neuron-quota-month-used-tokens'), refused.headers.get('x-neuron-quota-month-resets-at')],
+    [HAIKU_FAMILY, String(HAIKU_MONTH_TOKENS), String(HAIKU_MONTH_TOKENS - 10), firstOfNextMonth.toISOString().replace('.000Z', 'Z')]);
+    assert.equal(upstream.calls.length, callsBefore, 'no upstream call for a refused request');
+    const other = await call('/v1/chat/completions', { method: 'POST', token: capSession, body: { model: 'groq/openai/gpt-oss-120b', messages: haikuMessages, max_tokens: 64 } });
+    assert.equal(other.status, 200, redact(other.text).slice(0, 300));
+    step('Claude Haiku 5.5 (sponsored)', `listed on every plan (free, no pricing, allowance 10M a month); a Free request settled with the user charged 0 and ${haikuCost} micro-USD recorded as sponsored, the month counted on /api/account, a Pro balance unmoved, the pool's spend against its $10 cap on /admin/overview; with 10 tokens left: 429 insufficient_quota with the renewal time and no upgrade_url, and another model still serves`);
+  }
+
   if (LIVE) {
     // One more real call: a streamed Groq tool call, to check its deltas too.
     const fresh = await call('/auth/cli/session', { method: 'POST', token: dev, body: {} });
@@ -929,14 +1036,22 @@ try {
   }
 
   // ── 15. Static website smoke on the same server (assets served, NEURON_API_ONLY unset) ──
-  const csp = Object.fromEntries((await call('/')).headers.get('content-security-policy-report-only').split(';')
-    .map(part => part.trim().split(/\s+/)).map(([name, ...values]) => [name, values]));
-  const allows = (directive, origin) => {
+  // The policy is enforced and differs by page (the checkout pages, the sign-in page), so it is read
+  // from each page's own response. Inline scripts and styles must be allowed by hash (src/csp-hashes.js).
+  const parsePolicy = headers => {
+    assert.equal(headers.get('content-security-policy-report-only'), null, 'the site policy is enforced');
+    return Object.fromEntries(headers.get('content-security-policy').split(';')
+      .map(part => part.trim().split(/\s+/)).map(([name, ...values]) => [name, values]));
+  };
+  const allowsIn = (csp, directive, origin) => {
     const sources = csp[directive] || csp['default-src'] || [];
-    return sources.some(source => source === origin || (source.includes('*.') &&
+    // A source with a path (supabase-js by its exact URL) allows its origin's file; the origin alone is what the scan finds.
+    return sources.some(source => source === origin || source.startsWith(origin + '/') || (source.includes('*.') &&
       new RegExp('^' + source.replace(/[.]/g, '\\.').replace('*', '[^/]+') + '$').test(origin)));
   };
+  const hashOfInline = text => 'sha256-' + createHash('sha256').update(text.split('\r\n').join('\n'), 'utf8').digest('base64');
   const pageChecks = [];
+  let dashboardPolicy = null;
   const externalOrigin = value => { try { const url = new URL(value, base); return url.origin === base ? null : url.origin; } catch { return null; } };
   // Same-origin scripts (and the modules they import) load more at runtime: an https literal
   // that names a script (.js or an npm CDN path) needs script-src; other external literals are
@@ -961,6 +1076,9 @@ try {
     assert.equal(page.status, 200, path);
     assert.match(page.headers.get('content-type'), /text\/html/, path);
     const html = page.text;
+    const csp = parsePolicy(page.headers);
+    const allows = (directive, origin) => allowsIn(csp, directive, origin);
+    if (path === '/dashboard') dashboardPolicy = csp;
     const used = { 'script-src': new Set(), 'style-src': new Set(), 'font-src': new Set(), 'frame-src': new Set(), 'connect-src': new Set() };
     for (const match of html.matchAll(/<script\b[^>]*\bsrc="([^"]+)"/g)) {
       const origin = externalOrigin(match[1]);
@@ -984,8 +1102,17 @@ try {
     if ([...used['style-src']].includes('https://fonts.googleapis.com')) used['font-src'].add('https://fonts.gstatic.com');
     if ([...used['style-src']].includes('https://api.fontshare.com')) used['font-src'].add('https://cdn.fontshare.com');
     for (const match of html.matchAll(/<iframe\b[^>]*\bsrc="([^"]+)"/g)) { const origin = externalOrigin(match[1]); if (origin) used['frame-src'].add(origin); }
-    if (/<script>(?!\s*<\/script>)/.test(html)) assert.ok(csp['script-src'].includes("'unsafe-inline'"), `${path}: inline scripts`);
-    if (/<style>|\sstyle="/.test(html)) assert.ok(csp['style-src'].includes("'unsafe-inline'"), `${path}: inline styles`);
+    assert.ok(!csp['script-src'].includes("'unsafe-inline'"), `${path}: no unsafe-inline for scripts`);
+    for (const match of html.matchAll(/<script([^>]*)>([\s\S]*?)<\/script>/g)) {
+      if (/src=/.test(match[1]) || /ld\+json/.test(match[1]) || !match[2].trim()) continue;
+      assert.ok(csp['script-src'].includes(`'${hashOfInline(match[2])}'`), `${path}: inline script is allowed by hash`);
+    }
+    for (const match of html.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)) {
+      if (!match[1].trim()) continue;
+      assert.ok(csp['style-src'].includes("'unsafe-inline'") || csp['style-src'].includes(`'${hashOfInline(match[1])}'`), `${path}: inline style is allowed`);
+    }
+    assert.ok(!/\son[a-z]+\s*=\s*["']/.test(html), `${path}: no inline event handlers (script-src-attr 'none')`);
+    if (/\sstyle="/.test(html)) assert.ok(csp['style-src-attr'].includes("'unsafe-inline'"), `${path}: style attributes`);
     for (const [directive, origins] of Object.entries(used)) {
       for (const origin of origins) assert.ok(allows(directive, origin), `${path}: ${directive} must allow ${origin}`);
     }
@@ -993,9 +1120,9 @@ try {
   }
   // Runtime connections: supabase-js (Supabase project), Razorpay Checkout (api + lumberjack).
   for (const origin of ['https://norrtosjwcossxrhhtvd.supabase.co', 'https://api.razorpay.com', 'https://lumberjack.razorpay.com']) {
-    assert.ok(allows('connect-src', origin), `connect-src must allow ${origin}`);
+    assert.ok(allowsIn(dashboardPolicy, 'connect-src', origin), `connect-src must allow ${origin}`);
   }
-  assert.ok(allows('frame-src', 'https://api.razorpay.com') && allows('frame-src', 'https://checkout.razorpay.com'), 'Razorpay frames');
+  assert.ok(allowsIn(dashboardPolicy, 'frame-src', 'https://api.razorpay.com') && allowsIn(dashboardPolicy, 'frame-src', 'https://checkout.razorpay.com'), 'Razorpay frames on the dashboard');
   const redirected = await call('/dashboard.html');
   assert.equal(redirected.status, 301);
   assert.equal(redirected.headers.get('location'), '/dashboard', 'loopback redirects stay local');
@@ -1022,6 +1149,15 @@ try {
   const [held] = (await ledgerDb.query(`SELECT count(*) FILTER (WHERE status = 'active')::int AS active,
       coalesce(sum(cost_microusd), 0)::bigint AS charged FROM public.zerox_reservations WHERE user_id = $1`, [creditsUserId])).rows;
   assert.deepEqual([held.active, Number(held.charged)], [0, 106000], 'every hold settled to its real cost');
+  // Claude Haiku 5.5: the month rows hold exactly the settled tokens, and nothing was charged or ledgered for them.
+  const monthRows = (await ledgerDb.query(`SELECT u.user_id, u.tokens::bigint AS tokens, u.requests::int AS requests,
+      u.sponsored_cost_microusd::bigint AS sponsored FROM public.zerox_family_month_usage AS u WHERE u.family = $1`, [HAIKU_FAMILY])).rows;
+  assert.deepEqual(monthRows.filter(row => row.user_id !== haikuCapUserId).map(row => [Number(row.tokens), row.requests]).sort(), [[21600, 1], [21600, 1]],
+    'one Free and one Pro request, each 21,600 settled tokens');
+  assert.deepEqual(monthRows.filter(row => row.user_id === haikuCapUserId).map(row => [Number(row.tokens), row.requests]), [[HAIKU_MONTH_TOKENS - 10, 0]],
+    'a refused request holds nothing in the month');
+  assert.equal((await ledgerDb.query(`SELECT count(*)::int AS n FROM public.zerox_credit_ledger AS l JOIN public.zerox_reservations AS r
+    ON l.ref = 'usage:' || r.id::text WHERE r.model = $1`, [HAIKU_FAMILY])).rows[0].n, 0, 'no ledger row for Haiku');
   await closeAllPglite();
   step('credit ledger', `${ledger.length} usage:<reservation id> rows (-53,000 micro-USD each, balance ${CREDITS_START} -> ${CREDITS_START - 106000}); the two refused requests left no reservation`);
 } catch (error) {

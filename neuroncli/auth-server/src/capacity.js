@@ -5,7 +5,7 @@
 import { databaseConfigured, rpc } from './account-store.js';
 import { poolKey } from './catalog.js';
 import { billableUsage, costMicrousd, estimateOutputTokens, reserveCostMicrousd } from './pricing.js';
-import { billedDailyCapMicrousd } from './catalog-guardrails.js';
+import { billedDailyCapMicrousd, sponsoredTermsFor } from './catalog-guardrails.js';
 import { providerType } from './catalog-types.js';
 
 export function usesLedger(env, session) {
@@ -25,13 +25,19 @@ export const RESERVE_ERRORS = Object.freeze({
   user_daily_requests: 'insufficient_quota',
   user_daily_tokens: 'insufficient_quota',
   user_window_tokens: 'insufficient_quota',
+  user_family_month_tokens: 'insufficient_quota',
   user_rpm: 'rate_limited',
   user_concurrency: 'rate_limited',
   insufficient_credits: 'insufficient_credits',
   pool_exhausted: 'capacity_exhausted',
+  // This user has used its fair share of a free pool (migration 20261106000000, audit F6): the pool
+  // is not exhausted for anyone else, so it is skipped for this request without being remembered.
+  user_pool_share: 'capacity_exhausted',
 });
 
-// Statuses about the caller rather than the pool: failover cannot help.
+// Statuses about the caller rather than the pool: failover cannot help. user_family_month_tokens is
+// about the caller too, but only about one model family: the chat handler skips that family's other
+// candidates and carries on (contract section 19.3), so it is not in this set.
 export const TERMINAL_RESERVE_STATUSES = new Set(['no_account', 'suspended', 'user_daily_requests',
   'user_daily_tokens', 'user_window_tokens', 'user_rpm', 'user_concurrency']);
 // Statuses that rule out every paid pool for the rest of the request.
@@ -71,6 +77,44 @@ export function formatWindowTime(value, now = Date.now()) {
 }
 
 const tokenCount = value => Number(value).toLocaleString('en-US');
+
+// "Dec 1, 00:00 UTC" for the first of a month; "November" for the month before it.
+export function formatMonthReset(value) {
+  const at = new Date(value);
+  if (Number.isNaN(at.getTime())) return null;
+  return `${at.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })}, 00:00 UTC`;
+}
+export function monthName(resetsAt, now = Date.now()) {
+  const at = Date.parse(resetsAt || '');
+  const inMonth = Number.isFinite(at) ? new Date(at - 1) : new Date(now);
+  return inMonth.toLocaleDateString('en-US', { month: 'long', timeZone: 'UTC' });
+}
+
+// The message for user_family_month_tokens (zerox_reserve_v2 cap_* columns, migration
+// 20261106000600), from the month's count (cap_used_tokens, without the refused request) and the
+// request's reserved tokens:
+// - used up: "You've used your 10,000,000 Claude Haiku 5.5 tokens for November; the allowance renews on Dec 1, 00:00 UTC.
+//   Other models keep working."
+// - not enough left: "This request needs 48,200 tokens but only 12,000 of your 10,000,000 Claude Haiku 5.5 tokens for
+//   November are left; the allowance renews on Dec 1, 00:00 UTC. Choose another model until then."
+// - larger than the whole allowance: no time is given, since waiting never makes it fit.
+export function monthQuotaMessage(row, name = 'this model', tokens = null, now = Date.now()) {
+  const limit = Number(row?.cap_tokens);
+  const label = `${name} tokens`;
+  if (!Number.isSafeInteger(limit) || limit < 1) return `You have used this month's allowance of ${label}. Other models keep working.`;
+  const needed = Number(tokens);
+  if (Number.isSafeInteger(needed) && needed > limit) {
+    return `This request needs ${tokenCount(needed)} tokens, more than the ${tokenCount(limit)} ${label} your plan allows a month, so it cannot run on this model.`;
+  }
+  const month = monthName(row?.cap_resets_at ?? row?.resets_at, now);
+  const renews = formatMonthReset(row?.cap_resets_at ?? row?.resets_at);
+  const used = Number(row?.cap_used_tokens);
+  const left = Number.isSafeInteger(used) && used >= 0 ? limit - used : 0;
+  const when = renews ? `the allowance renews on ${renews}` : 'the allowance renews next month';
+  if (left <= 0) return `You've used your ${tokenCount(limit)} ${label} for ${month}; ${when}. Other models keep working.`;
+  const need = Number.isSafeInteger(needed) && needed > 0 ? `This request needs ${tokenCount(needed)} tokens but only` : 'This request needs more than the';
+  return `${need} ${tokenCount(left)} of your ${tokenCount(limit)} ${label} for ${month} are left; ${when}. Choose another model until then.`;
+}
 
 // Whether a refused request is larger than the plan's whole window, so it can never fit.
 export function exceedsWindow(row, tokens) {
@@ -138,9 +182,12 @@ export function reservedTokens(promptTokens, maxTokens) {
 export function reservationArgs({ env = {}, session, requestId, entry, pool, promptTokens, maxTokens }) {
   const { limits } = pool;
   const paid = pool.tier === 'paid';
+  // A sponsored pool (free tier, operator-paid key slot; catalog-types.js SPONSORED_FREE_MODELS) is priced
+  // and capped like a paid one and carries its family's monthly allowance (p_cap), but the user is never charged.
+  const sponsored = sponsoredTermsFor(entry, pool);
   let budget = limits ? { rpm: limits.rpm ?? null, rpd: limits.rpd ?? null,
     tpm: limits.tpm ?? null, tpd: limits.tpd ?? null } : null;
-  if (paid) {
+  if (paid || sponsored) {
     const cpd = billedDailyCapMicrousd(env, entry, pool);
     if (!pool.price || cpd === null) throw Object.assign(new Error('paid_pool_unpriced'), { name: 'PaidPoolUnpriced' });
     budget = { ...(budget ?? { rpm: null, rpd: null, tpm: null, tpd: null }), cpd };
@@ -153,9 +200,11 @@ export function reservationArgs({ env = {}, session, requestId, entry, pool, pro
     p_model: entry.id,
     p_tier: pool.tier,
     p_tokens: reservedTokens(promptTokens, maxTokens),
-    p_cost_microusd: paid ? reserveCostMicrousd(pool.price, promptTokens, maxTokens) : 0,
+    p_cost_microusd: paid || sponsored ? reserveCostMicrousd(pool.price, promptTokens, maxTokens) : 0,
     p_pool: budget,
     ...(pool.key_id ? { p_pool_key: poolKey(entry, pool) } : {}),
+    // Only sponsored pools send p_cap, so every other reservation keeps the 8-argument call.
+    ...(sponsored ? { p_cap: { family: sponsored.family, month_tokens: sponsored.user_month_tokens } } : {}),
   };
 }
 
@@ -166,11 +215,27 @@ export async function reserveCapacity(env, args) {
 }
 
 // Error code and details for a non-ok reservation status (unknown statuses fail closed). tokens
-// is the refused reservation's p_tokens, for the window message.
-export function reserveError(row, now = Date.now(), tokens = null) {
+// is the refused reservation's p_tokens, for the window and month messages; modelName names the
+// family in the month message (never a provider).
+export function reserveError(row, now = Date.now(), tokens = null, modelName = undefined) {
   const status = row?.status;
   const code = RESERVE_ERRORS[status] || 'service_unavailable';
   const retry = Number(row?.retry_after_seconds);
+  if (status === 'user_family_month_tokens') {
+    const message = monthQuotaMessage(row, modelName, tokens, now);
+    const limit = Number(row?.cap_tokens);
+    const headers = {};
+    if (row?.cap_family) headers['x-neuron-quota-family'] = String(row.cap_family);
+    if (Number.isSafeInteger(limit)) headers['x-neuron-quota-month-limit-tokens'] = String(limit);
+    if (Number.isSafeInteger(Number(row?.cap_used_tokens))) headers['x-neuron-quota-month-used-tokens'] = String(Number(row.cap_used_tokens));
+    const resetsAt = row?.cap_resets_at ?? row?.resets_at ?? null;
+    // Upgrading does not raise the allowance: no upgrade_url. Larger than the whole allowance: no time makes it fit.
+    if (Number.isSafeInteger(limit) && Number(tokens) > limit) return { code, message, upgrade: false, headers, resetsAt: null, retryAfterSeconds: undefined };
+    if (resetsAt) headers['x-neuron-quota-month-resets-at'] = new Date(resetsAt).toISOString().replace('.000Z', 'Z');
+    const until = Math.ceil((Date.parse(resetsAt || '') - now) / 1000);
+    return { code, message, upgrade: false, headers, resetsAt,
+      retryAfterSeconds: retry > 0 ? retry : until > 0 ? until : undefined };
+  }
   if (status === 'user_window_tokens') {
     const message = windowQuotaMessage(row, now, tokens);
     // Larger than the whole window: no time makes it fit, so no resets_at or Retry-After.
@@ -205,7 +270,8 @@ export function settlementArgs({ reservationId, entry, pool, usage, promptEstima
     p_reservation_id: reservationId,
     p_prompt_tokens: prompt,
     p_completion_tokens: completion,
-    p_cost_microusd: billed && pool.tier === 'paid' ? costMicrousd(pool.price, prompt, completion, billed) : 0,
+    p_cost_microusd: billed && (pool.tier === 'paid' || pool.sponsored === true) && pool.price
+      ? costMicrousd(pool.price, prompt, completion, billed) : 0,
     p_status: status,
     p_latency_ms: Math.max(0, Math.round(latencyMs)),
     p_provider: entry.provider,

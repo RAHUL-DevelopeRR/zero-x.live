@@ -74,7 +74,8 @@ const functionRows = name => sql(`SELECT p.pronargs, p.pronargdefaults, pg_get_f
 const columnsOf = async table => (await sql(`SELECT column_name FROM information_schema.columns
   WHERE table_schema = 'public' AND table_name = $1 ORDER BY column_name`, [table])).map(row => row.column_name);
 
-const PLAN_FEATURES = {
+// The seeded lines, as 20261029000900 and 20261104300000 leave them (no Haiku line).
+const BASE_FEATURES = {
   free: ['Free models chosen for coding, with tool use',
     '100 requests per day and 1M tokens every 5 hours', '10 requests per minute, 2 at once', 'Every Neuron feature, the same on all plans'],
   pro: ['Claude Sonnet 5.5 and Claude Opus 5.5, billed from credits', '$8 of credits included every month',
@@ -84,7 +85,18 @@ const PLAN_FEATURES = {
     'Free models with higher limits: 10,000 requests and 50M tokens per day', '60 requests per minute, 8 at once',
     'Every Neuron feature, the same on all plans'],
 };
+BASE_FEATURES.ultrawork = BASE_FEATURES.pro;
+// With 20261106000800_plan_features_haiku.sql: the Haiku line is second on Free and first on the paid plans.
+const HAIKU_LINE = 'Claude Haiku 5.5 included: 10M tokens a month at no charge';
+const PLAN_FEATURES = {
+  free: [BASE_FEATURES.free[0], HAIKU_LINE, ...BASE_FEATURES.free.slice(1)],
+  pro: [HAIKU_LINE, ...BASE_FEATURES.pro],
+  max: [HAIKU_LINE, ...BASE_FEATURES.max],
+};
 PLAN_FEATURES.ultrawork = PLAN_FEATURES.pro;
+const SPONSORED = '20261106000600_sponsored_pools.sql';
+const HAIKU_CATALOG = '20261106000700_haiku_catalog.sql';
+const HAIKU_PLANS = '20261106000800_plan_features_haiku.sql';
 
 let baseline;
 try {
@@ -93,13 +105,15 @@ try {
   assert.ok(files.indexOf(CAPS) > files.indexOf('20261029000500_credit_programs.sql') && files.indexOf(PLANS) === files.indexOf(CAPS) + 1,
     'the billing migrations come after the OIOP credit programs, caps before plans');
   assert.ok(handle.applied.includes('20261029000800') && handle.applied.includes('20261029000900'));
+  assert.ok(files.indexOf(LINEUP) > files.indexOf(PLANS), 'the Free line is rewritten after the plan features are seeded');
   const settleFns = await functionRows('zerox_settle_v2');
   assert.equal(settleFns.length, 1, 'one zerox_settle_v2, so PostgREST never has to choose between overloads');
   assert.equal(settleFns[0].pronargs, 11);
   assert.equal(settleFns[0].pronargdefaults, 2);
   assert.match(settleFns[0].args, /p_error_code text, p_cache_read_tokens bigint, p_cache_write_tokens bigint$/);
   const reserveFns = await functionRows('zerox_reserve_v2');
-  assert.deepEqual(reserveFns.map(row => [row.pronargs, row.pronargdefaults]), [[8, 1]], 'zerox_reserve_v2 keeps its 8-argument signature');
+  assert.deepEqual(reserveFns.map(row => [row.pronargs, row.pronargdefaults]), [[9, 2]],
+    'one zerox_reserve_v2: 9 arguments with p_cap defaulted (20261106000600), so the 8-argument call of the deployed gateway still resolves');
   assert.ok((await columnsOf('zerox_pool_usage')).includes('cost_microusd'));
   for (const table of ['zerox_reservations', 'zerox_usage_events', 'zerox_usage_daily']) {
     const columns = await columnsOf(table);
@@ -126,8 +140,11 @@ try {
   assert.equal((await dayBucket(capModel)).requests, 1);
   assert.equal((await account(spender)).daily_requests, before.daily_requests, 'a refused reservation is not counted against the user');
   assert.equal((await onCap(other, 60000)).status, 'pool_exhausted', 'the cap is shared by every user of the pool');
-  assert.equal((await reserve(other, { p_model: capModel, p_tier: 'free', p_pool: { cpd: 0 } })).status, 'ok',
-    'cpd applies to the paid tier only');
+  // cpd applies to any tier since 20261106000600 (sponsored free pools); the deployed gateway sends it for paid pools only.
+  assert.equal((await reserve(other, { p_model: capModel, p_tier: 'free', p_pool: { cpd: 0 } })).status, 'pool_exhausted',
+    'a free reservation against cpd 0 is refused');
+  assert.equal((await reserve(other, { p_model: capModel, p_tier: 'free', p_pool: { rpm: null } })).status, 'ok',
+    'a free pool without cpd (every free pool of the deployed gateway) is unaffected');
   // Settlement moves the bucket from the hold to the settled cost.
   assert.deepEqual(await settle(first.reservation_id, { p_prompt_tokens: 20000, p_completion_tokens: 800, p_cost_microusd: 20000,
     p_cache_read_tokens: 16000, p_cache_write_tokens: 4000 }), { status: 'settled', credit_balance_microusd: 10000000 - 20000 });
@@ -236,7 +253,7 @@ try {
     [5, 23200, 16060, 4040, 26500 + 3750 + 5625 + 300 + 200]);
   assert.deepEqual(await rpcRows(env, 'zerox_usage_by_model', { p_user_id: cacheUser, p_from: utcDay(0), p_to: utcDay(0) }), [
     { model: cacheModel, requests: 5, prompt_tokens: 23200, cache_read_tokens: 16060, cache_write_tokens: 4040,
-      completion_tokens: 800 + 100 + 50 + 5 + 5, cost_microusd: 36375 }]);
+      completion_tokens: 800 + 100 + 50 + 5 + 5, cost_microusd: 36375, sponsored_cost_microusd: 0 }]);
   await assert.rejects(rpc(env, 'zerox_settle_v2', { p_reservation_id: turn.reservation_id, p_cache_tokens: 1 }), /Could not find the function/);
   ok('cache-aware settlement: 11-argument call stores cache reads and writes on the reservation, event, rollup and usage by model; the 9-argument call (named and positional) and nulls record 0; cache > prompt is invalid_settlement; refunded failed_upstream records no tokens for the user');
 
@@ -325,11 +342,21 @@ try {
   const freeUser = await newUser('free', { credits: 5000000 });
   assert.equal((await reserve(freeUser, { p_model: capModel, p_tier: 'paid', p_cost_microusd: 1000 })).status, 'upgrade_required',
     'credits alone do not open paid pools on Free');
+  // The Haiku line goes away again with its down script (the PLANS statements below rewrite every plan's features).
+  await db.exec(await readFile(join(root, 'migrations', 'down', HAIKU_PLANS), 'utf8'));
+  assert.deepEqual(Object.fromEntries((await rpcRows(env, 'zerox_plan_policies_v2', {})).map(plan => [plan.plan, plan.features])), BASE_FEATURES,
+    'the features down script removes exactly the Haiku line');
+  await db.exec(await migrationSql(HAIKU_PLANS));
+  await db.exec(await migrationSql(HAIKU_PLANS));
+  assert.deepEqual(Object.fromEntries((await rpcRows(env, 'zerox_plan_policies_v2', {})).map(plan => [plan.plan, plan.features])), PLAN_FEATURES,
+    'applied again (twice) the line is back once, in place');
+  await db.exec(await readFile(join(root, 'migrations', 'down', HAIKU_PLANS), 'utf8'));
   // Re-running the plans migration repairs drifted tiers and leaves the rest alone.
   await sql("UPDATE public.zerox_plan_policy SET allowed_tiers = ARRAY['free'] WHERE plan = 'max'");
   await sql("UPDATE public.zerox_plan_policy SET allowed_tiers = ARRAY['free', 'paid'] WHERE plan = 'free'");
   const stamp = (await sql("SELECT updated_at FROM public.zerox_plan_policy WHERE plan = 'pro'"))[0].updated_at;
   await db.exec(await migrationSql(PLANS));
+  await db.exec(await migrationSql(LINEUP)); // the plans file seeds the old Free provider line; this file replaces it
   assert.deepEqual((await sql('SELECT plan, allowed_tiers FROM public.zerox_plan_policy ORDER BY sort')).map(row => [row.plan, row.allowed_tiers]),
     [['free', ['free']], ['pro', ['free', 'paid']], ['max', ['free', 'paid']], ['ultrawork', ['free', 'paid']]]);
   assert.equal((await sql("SELECT updated_at FROM public.zerox_plan_policy WHERE plan = 'pro'"))[0].updated_at.getTime(), stamp.getTime(),
@@ -340,8 +367,9 @@ try {
   // Baseline: every migration except the two under test, on a fresh PGlite.
   const scratch = await mkdtemp(join(tmpdir(), 'zerox-billing-caps-'));
   baseline = { scratch, db: null };
-  // Rolled back newest first: what the migrations before CAPS left (20261102000000 and
-  // 20261029001000, which replace zerox_reserve_v2 after PLANS, are rolled back first below).
+  // Rolled back newest first: what the migrations before CAPS left (20261104000000, which
+  // recreates zerox_plan_policies_v2, then 20261102000000 and 20261029001000, which replace
+  // zerox_reserve_v2 after PLANS, are rolled back first below).
   for (const migration of await listMigrations()) {
     if (migration.file < CAPS) await copyFile(migration.path, join(scratch, migration.file));
   }
@@ -363,7 +391,11 @@ try {
       has_function_privilege('anon', p.oid, 'EXECUTE') AS anon, has_function_privilege('authenticated', p.oid, 'EXECUTE') AS auth,
       has_function_privilege('service_role', p.oid, 'EXECUTE') AS service
     FROM pg_proc AS p JOIN pg_namespace AS n ON n.oid = p.pronamespace WHERE n.nspname = 'public' AND p.proname = ANY($1) ORDER BY 1, 2`, [names])).rows;
+  await db.exec(await readFile(join(root, 'migrations', 'down', '20261106000300_connector_policy.sql'), 'utf8'));
   // 20261104300000 only rewrites a Free feature line; its down script brings the line PLANS wrote back.
+  // Newest first: the Haiku migrations (the plan line is already out), then the lineup.
+  await db.exec(await readFile(join(root, 'migrations', 'down', HAIKU_CATALOG), 'utf8'));
+  await db.exec(await readFile(join(root, 'migrations', 'down', SPONSORED), 'utf8'));
   await db.exec(await readFile(join(root, 'migrations', 'down', LINEUP), 'utf8'));
   assert.equal((await features(db)).find(row => row.plan === 'free').features[0],
     'Free models from Groq, Google Gemini, Cloudflare Workers AI, NVIDIA and OpenRouter', 'the lineup down script restores the line PLANS wrote');
@@ -391,18 +423,18 @@ try {
   }
   handle.functions.clear();
   assert.equal((await functionRows('zerox_settle_v2')).length, 1);
-  // The lineup migration replaces only lines it knows (here 20261103000100's, from the billing branch)
+  // The lineup migration replaces only lines it knows (here the earlier draft's, from the billing branch)
   // and leaves an operator's own wording alone.
   const freeFeatures = async () => (await sql("SELECT features FROM public.zerox_plan_policy WHERE plan = 'free'"))[0].features;
   await sql(`UPDATE public.zerox_plan_policy SET features = jsonb_set(features, '{0}', to_jsonb('Free models from Groq, NVIDIA, OpenRouter and Z.ai'::text)) WHERE plan = 'free'`);
   await db.exec(await migrationSql(LINEUP));
-  assert.deepEqual(await freeFeatures(), PLAN_FEATURES.free, 'the billing branch line is replaced too');
+  assert.deepEqual(await freeFeatures(), BASE_FEATURES.free, 'the billing branch line is replaced too');
   await sql(`UPDATE public.zerox_plan_policy SET features = jsonb_set(features, '{0}', to_jsonb('Our own words'::text)) WHERE plan = 'free'`);
   await db.exec(await migrationSql(LINEUP));
   assert.equal((await freeFeatures())[0], 'Our own words', 'an operator-edited line is left alone');
   await db.exec(await migrationSql(PLANS));
   await db.exec(await migrationSql(LINEUP));
-  assert.deepEqual(Object.fromEntries((await rpcRows(env, 'zerox_plan_policies_v2', {})).map(plan => [plan.plan, plan.features])), PLAN_FEATURES);
+  assert.deepEqual(Object.fromEntries((await rpcRows(env, 'zerox_plan_policies_v2', {})).map(plan => [plan.plan, plan.features])), BASE_FEATURES);
   for (const row of await privileges(db, touched)) {
     assert.deepEqual([row.anon, row.auth, row.service], [false, false, true], `${row.proname}(${row.args}) is service_role only`);
   }
@@ -411,6 +443,10 @@ try {
   assert.equal((await reserve(reverted, { p_tier: 'paid', p_cost_microusd: 1000, p_model: `${capModel}-again`, p_pool: { cpd: 1500 } })).status, 'pool_exhausted');
   await settle(again.reservation_id, { p_prompt_tokens: 100, p_cache_read_tokens: 90, p_cost_microusd: 400 });
   assert.equal((await eventFor(again.reservation_id)).cache_read_tokens, 90);
+  for (const plan of Object.values(PLAN_FEATURES)) {
+    assert.doesNotMatch(plan.join(' '), /Groq|NVIDIA|OpenRouter|Z\.ai|Gemini|Workers AI/, 'plan features name no upstream provider');
+  }
+  await db.exec(`UPDATE public.zerox_plan_policy SET features = '${JSON.stringify(PLAN_FEATURES.free).replaceAll("'", "''")}'::jsonb WHERE plan = 'free'`);
   ok('down scripts restore the previous functions, columns, features and grants exactly; the up migrations re-apply cleanly twice');
 
   console.log(`PASS: ${passed.length} billing-cap checks`);

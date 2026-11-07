@@ -7,7 +7,8 @@
   <meta name="description" content="How to cancel a Zero-X Pro or Max subscription, what happens to your access and credits, and when Zero-X refunds subscription and credit payments.">
   <meta name="robots" content="index,follow,max-image-preview:large">
   <link rel="canonical" href="https://zero-x.live/refund">
-  <meta name="theme-color" content="#0A0A0C">
+  <meta name="theme-color" content="#FFFFFF" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#141413" media="(prefers-color-scheme: dark)">
   <link rel="icon" type="image/png" sizes="32x32" href="/Assets/zerox-favicon-32.png">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="Zero-X">
@@ -21,8 +22,10 @@
   <meta name="twitter:description" content="Cancel any time; access continues until the end of the paid period.">
   <meta name="twitter:image" content="https://zero-x.live/Assets/zerox-share.png">
   <meta name="twitter:image:alt" content="Zero-X logo">
-  <link rel="stylesheet" href="/site-fonts.css">
+  <link rel="preload" href="/fonts/aspekta-400.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/fonts/aspekta-500.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/zx-tokens.css">
+  <link rel="stylesheet" href="/content.css">
   <script type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Zero-X","item":"https://zero-x.live/"},{"@type":"ListItem","position":2,"name":"Cancellation and Refund Policy","item":"https://zero-x.live/refund"}]}</script>
   <script type="module" src="/site-nav.js"></script>
 </head>
@@ -31,12 +34,12 @@
   <header class="zx-header">
     <div class="zx-container zx-header__inner">
       <a class="zx-brand" href="/"><img src="/Assets/zerox-mark.svg" width="28" height="28" alt="">Zero-X</a>
-      <button class="zx-nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" hidden><span class="zx-nav-toggle__bars" aria-hidden="true"></span>Menu</button>
+      <button class="zx-nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" hidden><svg class="zx-icon zx-icon--menu" aria-hidden="true"><use href="/icons.svg#menu"/></svg><svg class="zx-icon zx-icon--close" aria-hidden="true"><use href="/icons.svg#x"/></svg>Menu</button>
       <nav class="zx-nav" id="site-nav" aria-label="Main">
         <a href="/neuron-cli">Neuron CLI</a>
         <a href="/pricing">Pricing</a>
         <a href="/docs">Docs</a>
-        <a class="zx-btn zx-btn--sm" href="https://dashboard.zero-x.live/">Dashboard</a>
+        <a class="zx-btn zx-btn--sm" href="https://dashboard.zero-x.live/"><svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#user"/></svg>Dashboard</a>
       </nav>
     </div>
   </header>
@@ -45,20 +48,21 @@
   <main id="main" class="zx-container zx-legal zx-section--tight">
     <nav class="zx-breadcrumb" aria-label="Breadcrumb"><a href="/">Zero-X</a> / Cancellation and Refund Policy</nav>
     <h1>Cancellation and Refund Policy</h1>
-    <p class="zx-updated">Effective date: 24 October 2026. Replaces the draft dated 16 October 2026.</p>
+    <p class="zx-updated">Effective date: 3 November 2026. Replaces the policy dated 24 October 2026. This version says what a refund does to your plan and credits, what happens when a renewal fails, and how refunds reach you.</p>
 
     <p>This policy applies to Zero-X Pro and Max subscriptions and to credit top-up packs bought on zero-x.live. Payments are processed by Razorpay. The Free plan has no charges.</p>
 
     <h2 id="cancellation">Cancelling a subscription</h2>
     <ul>
       <li>You can cancel at any time from the Billing tab of the <a href="https://dashboard.zero-x.live/#billing">dashboard</a>, or by emailing <a href="mailto:support@zero-x.live">support@zero-x.live</a> from your account address.</li>
-      <li>Cancellation stops future renewals. Your plan and its daily limits stay active until the end of the billing period you already paid for, and then the account moves to the Free plan.</li>
+      <li>Cancellation stops future renewals. Your plan and its daily limits stay active until the end of the billing period you already paid for, and then the account moves to the Free plan. Razorpay does not charge you again after that period.</li>
+      <li>Your bank may notify you before each recurring charge and lets you cancel the recurring payment with it. Cancelling with your bank does not tell us, so please also cancel here so your account matches.</li>
       <li>We do not charge cancellation fees. Cancelling does not by itself refund the current period; see below.</li>
     </ul>
 
     <h2 id="refunds">Refunds</h2>
     <h3>New subscriptions</h3>
-    <p>If you are not satisfied with a new Pro or Max subscription, you can ask for a full refund of your first payment within 7 days of that payment, as long as the subscription has not been used for paid-capacity requests (requests billed from credits). We cancel the subscription when we issue the refund.</p>
+    <p>If you are not satisfied with a new Pro or Max subscription, you can ask for a full refund of your first payment within 7 days of that payment, as long as the subscription has not been used for paid-capacity requests (requests billed from credits). When a payment is refunded in full, the subscription is cancelled at once, your account moves to the Free plan and the credits that payment included are taken back. If only part of a payment is refunded, the credits it included are taken back in proportion and the plan continues.</p>
     <h3>Renewals</h3>
     <p>Renewal payments are not refundable once the new period has started, except where the law requires it or a charge was made in error. Cancel before the renewal date to avoid the next charge.</p>
     <h3>Credits</h3>
@@ -67,6 +71,8 @@
       <li>An unused top-up pack can be refunded within 7 days of purchase if none of its credits have been used.</li>
       <li>Included monthly credits are part of the subscription and are not refunded separately. Credits have no cash value and cannot be transferred.</li>
     </ul>
+    <h3>Failed renewals</h3>
+    <p>If a renewal payment fails, Razorpay may retry it. Your plan can stay active for up to 3 days after the end of the period you paid for while the payment is retried. If it is still unpaid after that, the subscription ends and the account moves to the Free plan.</p>
     <h3>Failed, duplicate or incorrect charges</h3>
     <p>If you were charged twice, charged after cancelling, or charged an amount different from the price shown at checkout, we refund the incorrect amount in full.</p>
     <h3>Accounts suspended for abuse</h3>
@@ -77,6 +83,7 @@
       <li>Email <a href="mailto:support@zero-x.live">support@zero-x.live</a> from the address on your Zero-X account.</li>
       <li>Include the Razorpay payment ID (it starts with <code>pay_</code> and appears in your receipt and in the dashboard) and the reason for the request.</li>
       <li>We reply within 2 business days. Approved refunds are sent through Razorpay to the original payment method. Razorpay usually takes 5 to 7 business days to credit it, depending on your bank.</li>
+      <li>Refunds are made in the currency you paid in. We cannot refund any currency conversion or card fee your bank added.</li>
     </ol>
 
     <h2 id="contact">Contact</h2>
@@ -86,23 +93,27 @@
   <footer class="zx-footer">
     <div class="zx-container zx-footer__grid">
       <div>
-        <a class="zx-brand" href="/">Zero-X</a>
+        <a class="zx-brand" href="/"><img src="/Assets/zerox-mark.svg" width="28" height="28" alt="">Zero-X</a>
         <p>Neuron CLI and NeuCockpit. Built in Tamil Nadu, India.</p>
       </div>
       <nav aria-label="Product">
         <h2>Product</h2>
         <a href="/neuron-cli">Neuron CLI</a>
+        <a href="/download">Download</a>
+        <a href="/changelog">Changelog</a>
         <a href="/pricing">Pricing</a>
         <a href="/docs">Docs</a>
         <a href="/ai-coding-agent">AI coding agent guide</a>
         <a href="/free-ai-coding-agent">Free AI coding agent</a>
         <a href="/claude-code-alternative">Neuron compared</a>
         <a href="https://dashboard.zero-x.live/">Dashboard</a>
+        <a href="https://github.com/RAHUL-DevelopeRR/neuron-v2">GitHub <svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#arrow-up-right"/></svg></a>
       </nav>
       <nav aria-label="Company">
         <h2>Company</h2>
         <a href="/about">About</a>
         <a href="/contact">Contact</a>
+        <a href="/docs/trust">Security and trust</a>
         <a href="https://zero-x.live/neucockpit">NeuCockpit</a>
       </nav>
       <nav aria-label="Legal">
@@ -113,7 +124,7 @@
         <a href="/shipping">Shipping and delivery</a>
       </nav>
     </div>
-    <p class="zx-container zx-footer__legal">© 2026 Zero-X · <a href="mailto:support@zero-x.live">support@zero-x.live</a></p>
+    <p class="zx-container zx-footer__legal">© 2026 Zero-X · <a href="mailto:support@zero-x.live">support@zero-x.live</a> · <a href="/contact#grievance">Grievance officer</a></p>
   </footer>
 </body>
 </html>

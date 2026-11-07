@@ -5,10 +5,11 @@ import {
 } from '../catalog.js';
 import { catalogStatus } from '../catalog-db.js';
 import { isOwnedSession, listModelsForSession } from '../providers.js';
-import { sessionTiers } from '../capacity.js';
+import { sessionTiers, usesLedger } from '../capacity.js';
 import { withHealth, withLegacyStatus } from '../health-share.js';
 import { hubHealthRows } from '../health-hub-client.js';
-import { healthStaleMs, probeHealthRows, probeStaleMsFor } from '../health-probes.js';
+import { healthStaleMs, probeHealthRows, probeStaleMsFor, routeStaleMap } from '../health-probes.js';
+import { dbProbeRows } from '../probe-rows-db.js';
 import { globalHealthTracker } from '../provider-health.js';
 import { poolBudgetState } from '../pool-budget.js';
 import { loadOffers } from '../oiop/offers.js';
@@ -69,7 +70,11 @@ export async function v1ModelsPayload(c, session = {}, { routes = wantsRoutes(c)
     modelsDevFacts(env)]);
   const policy = planPolicy(env, plan, policies);
   const tiers = sessionTiers(env, session, policy);
-  const payload = listModelsForCaller(env, { plan, country, tiers, policy: callerPolicy(c.req.raw.headers) });
+  // Sponsored pools count their users' monthly tokens in the account ledger, so a session without one
+  // (a development session) lists them as upgrade_required; an anonymous caller is shown the Free plan's view.
+  const anonymous = !session || Object.keys(session).length === 0;
+  const payload = listModelsForCaller(env, { plan, country, tiers, policy: callerPolicy(c.req.raw.headers),
+    ledger: anonymous || usesLedger(env, session) });
   // models.dev facts (refreshed daily by the cron; null until then or for models it lacks).
   for (const model of payload.data) model.facts = model.id === AUTO_MODEL_ID ? null : facts[model.id] ?? null;
   // Runtime health: the pools behind each model (one per provider key) in the tiers listed for
@@ -85,15 +90,24 @@ export async function v1ModelsPayload(c, session = {}, { routes = wantsRoutes(c)
     const usable = listed.filter(pool => tiers.includes(pool.tier));
     return (usable.length ? usable : listed).map(pool => poolKey(entry, pool));
   };
+  // The checker's rows: its own cache on the Node gateway; on the Worker (which runs no checker) the
+  // same rows from Postgres, cached per isolate (src/probe-rows-db.js), so both hosts show the same
+  // verdicts, latency and stale horizons. Without the RPC the Worker answers as before.
+  const probeRows = probeHealthRows() ?? await dbProbeRows(env);
+  const floorMs = healthStaleMs(env);
+  // Per route (1.5 times the route's own test interval, at least HEALTH_STALE_SECONDS): a Groq free
+  // verdict tested hourly stays current for 90 minutes. The Node gateway's checker has its own map; a
+  // runtime that reads the checker's rows from Postgres computes the same one from the catalog. With no
+  // checker rows (none written yet, migration missing, switched off) the horizon is HEALTH_STALE_SECONDS for
+  // every route, as before.
+  const staleMap = probeRows?.size > 0 && !probeHealthRows() ? routeStaleMap(env) : null;
   await withHealth(env, payload, poolKeysFor, {
     tracker: globalHealthTracker, autoId: AUTO_MODEL_ID,
     isAutoCandidate: model => catalogEntry(model.id, env)?.auto_rank != null,
     readRows: keys => hubHealthRows(env, keys),
-    probeRows: probeHealthRows(),
-    staleMs: healthStaleMs(env),
-    // Per route on the Node gateway (1.5 times the route's own test interval, at least
-    // HEALTH_STALE_SECONDS): a Groq free verdict tested hourly stays current for 90 minutes.
-    staleMsFor: probeStaleMsFor(),
+    probeRows,
+    staleMs: floorMs,
+    staleMsFor: probeStaleMsFor() ?? (staleMap ? key => staleMap.get(key) ?? floorMs : null),
     budgetState: poolBudgetState,
   });
   // Health is read per route (pool keys belong to routes), then rolled up per family.
@@ -137,4 +151,35 @@ export async function v1ModelStatusPayload(c, session = {}, options = {}) {
   const checked = models.data.map(model => model.checked_at).filter(Boolean).sort().at(-1) ?? null;
   return { etag, body: { object: 'list', checked_at: checked, poll_interval_seconds: 30,
     stale_after_seconds: floorSeconds, catalog_version: catalogVersion, data } };
+}
+
+// One status payload and one serialised SSE frame per view per tick (security audit 2026-11-05, F2):
+// /v1/models/stream used to recompute the payload (catalog, health merge, SHA-256) once per open
+// connection every 15 s. Callers with the same view (plan, ledger, country, routes flag, caller
+// policy) now share one computation for `ttlMs`, shorter than the stream interval, so a change is
+// still seen on the next tick. A caller on its own OpenRouter key lists its own models and is never
+// shared. At most 64 views are kept per isolate.
+const sharedFrames = new Map();
+const SHARED_VIEWS_MAX = 64;
+
+export function resetSharedStatusFrames() { sharedFrames.clear(); }
+
+export async function sharedStatusFrame(c, session = {}, ttlMs = 5000) {
+  const env = c.env || {};
+  const build = async () => {
+    const { etag, body } = await v1ModelStatusPayload(c, session);
+    return { etag, body, frame: `id: ${etag}\nevent: catalog.updated\ndata: ${JSON.stringify(body)}\n\n` };
+  };
+  if (isOwnedSession(session)) return build();
+  const view = JSON.stringify([session?.plan || 'free', usesLedger(env, session), callerCountry(c.req.raw, env), wantsRoutes(c),
+    callerPolicy(c.req.raw.headers)]);
+  const now = Date.now();
+  const held = sharedFrames.get(view);
+  if (held && now - held.at < ttlMs) return held.promise;
+  const promise = build();
+  if (sharedFrames.size >= SHARED_VIEWS_MAX) sharedFrames.delete(sharedFrames.keys().next().value);
+  sharedFrames.set(view, { at: now, promise });
+  // A failed build is not kept for the next tick.
+  promise.catch(() => { if (sharedFrames.get(view)?.promise === promise) sharedFrames.delete(view); });
+  return promise;
 }

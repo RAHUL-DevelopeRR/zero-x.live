@@ -3,73 +3,29 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Connecting OpenRouter | Zero-X</title>
+    <title>Connecting your account | Zero-X</title>
     <link rel="icon" type="image/png" sizes="32x32" href="../../Assets/zerox-favicon-32.png">
     <meta name="referrer" content="no-referrer">
-    <link rel="stylesheet" href="/site-fonts.css">
+    <meta name="theme-color" content="#FFFFFF" media="(prefers-color-scheme: light)">
+    <meta name="theme-color" content="#141413" media="(prefers-color-scheme: dark)">
+    <link rel="preload" href="/fonts/aspekta-400.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="preload" href="/fonts/aspekta-500.woff2" as="font" type="font/woff2" crossorigin>
     <link rel="stylesheet" href="/zx-tokens.css">
-    <style>
-        body { display: flex; justify-content: center; align-items: center; padding: 16px; }
-        .card {
-            text-align: center; padding: 40px 24px;
-            background: var(--zx-surface);
-            border: 1px solid var(--zx-border);
-            border-radius: var(--zx-radius-lg);
-            max-width: 480px; width: 100%;
-        }
-        .spinner {
-            width: 36px; height: 36px; margin: 0 auto 20px;
-            border: 2px solid var(--zx-accent-soft);
-            border-top: 2px solid var(--zx-accent);
-            border-radius: 50%;
-            animation: spin 0.8s linear infinite;
-        }
-        @keyframes spin { to { transform: rotate(360deg); } }
-        h1 { font-size: 1.6rem; margin-bottom: 8px; }
-        p { color: var(--zx-muted); line-height: 1.7; overflow-wrap: anywhere; }
-        .success-icon, .error-icon {
-            width: 48px; height: 48px; margin: 0 auto 20px; border-radius: 50%;
-            display: flex; align-items: center; justify-content: center; font-size: 24px;
-        }
-        .success-icon { background: var(--zx-success-soft); color: var(--zx-success); }
-        .error-icon { background: var(--zx-danger-soft); color: var(--zx-danger); }
-        .provider-badge {
-            display: inline-block; margin: 8px auto 16px; padding: 4px 14px; border-radius: 999px;
-            font-size: 0.78em; font-weight: 600; letter-spacing: 0.03em; text-transform: uppercase;
-        }
-        .provider-azure { background: var(--zx-accent-soft); color: var(--zx-accent-text); border: 1px solid var(--zx-accent); }
-        .provider-openrouter { background: var(--zx-purple-soft); color: var(--zx-purple); border: 1px solid var(--zx-purple); }
-        .code-box {
-            background: var(--zx-code-bg); border: 1px solid var(--zx-border);
-            border-radius: var(--zx-radius-sm); padding: 14px 16px; margin: 16px 0;
-            font-family: var(--zx-font-mono); font-size: 0.82em; word-break: break-all;
-            color: var(--zx-heading); user-select: all;
-        }
-        .btn {
-            display: inline-flex; align-items: center; justify-content: center; min-height: 44px;
-            margin-top: 16px; padding: 10px 24px; background: var(--zx-accent); color: var(--zx-on-accent);
-            border: none; border-radius: 999px; font: 600 0.95rem var(--zx-font-body); cursor: pointer; text-decoration: none;
-        }
-        .btn:hover { background: var(--zx-accent-h); }
-        .btn:focus-visible { outline: none; box-shadow: var(--zx-focus); }
-        .meta { color: var(--zx-faint); font-size: 0.78em; margin-top: 16px; }
-        .steps { text-align: left; margin: 16px 0; padding-left: 20px; }
-        .steps li { color: var(--zx-muted); font-size: 0.88em; margin-bottom: 6px; }
-        .steps li.done { color: var(--zx-success); }
-        .steps li.active { color: var(--zx-accent-text); }
-    </style>
+    <link rel="stylesheet" href="/auth-pages.css">
 </head>
-<body>
-    <div class="card" id="card">
-        <div class="spinner" id="spinner"></div>
-        <h1 id="title">Authenticating...</h1>
-        <div id="badge"></div>
-        <p id="message">Finishing your OpenRouter connection...</p>
-        <div id="steps"></div>
-        <div class="code-box" id="session" hidden></div>
-        <button class="btn" id="copy-session" type="button" hidden>Copy gateway token</button>
-        <p class="meta" id="meta">zero-x.live</p>
-    </div>
+<body class="ap">
+    <header class="ap-top"><a class="zx-brand" href="https://zero-x.live/"><img src="/Assets/zerox-mark.svg" width="28" height="28" alt="">Zero-X</a></header>
+    <main class="ap-main" id="main">
+        <div class="ap-card" id="card">
+            <p class="ap-status is-working" id="spinner" role="status">Working</p>
+            <h1 id="title">Authenticating...</h1>
+            <p id="message">Finishing your connection...</p>
+            <div id="steps"></div>
+            <div class="ap-session" id="session" hidden></div>
+            <button class="zx-btn zx-btn--primary" id="copy-session" type="button" hidden>Copy gateway token</button>
+            <p class="ap-meta" id="meta">zero-x.live</p>
+        </div>
+    </main>
 
     <script>
         const AUTH_SERVER = '/neuroncli/auth-server';
@@ -84,8 +40,8 @@
         const spinner = document.getElementById('spinner');
         message.style.whiteSpace = 'pre-line';
         function finish(success, text) {
-            spinner.className = success ? 'success-icon' : 'error-icon';
-            spinner.textContent = success ? '✓' : '✗';
+            spinner.className = 'ap-status zx-badge ' + (success ? 'zx-badge--success' : 'zx-badge--danger');
+            spinner.textContent = success ? 'Done' : 'Failed';
             title.textContent = success ? 'Authentication Complete' : 'Authentication Failed';
             message.textContent = text;
         }
@@ -104,7 +60,7 @@
                         try { await navigator.clipboard.writeText(result.session_token); copy.textContent = 'Copied'; }
                         catch { copy.textContent = 'Select and copy the token above'; }
                     });
-                    finish(true, 'Your OpenRouter connection is ready. This is a gateway token. To sign in to Neuron, run neuron login in your terminal.');
+                    finish(true, 'Your connection is ready. This is a gateway token. To sign in to Neuron, run neuron login in your terminal.');
                 } else if (provider === 'azure' && token) {
                     const response = await fetch(AUTH_SERVER + '/auth/session', {
                         headers: {Authorization: 'Bearer ' + token}, signal: AbortSignal.timeout(15000)
@@ -113,7 +69,7 @@
                     await response.json();
                     finish(true, 'Your gateway session was verified. To sign in to Neuron, run neuron login in your terminal.');
                 } else {
-                    finish(false, 'This page only completes an OpenRouter connection started from Zero-X. To sign in to Neuron, run neuron login and approve the code at https://neuron.zero-x.live/device.');
+                    finish(false, 'This page only completes a provider connection started from Zero-X. To sign in to Neuron, run neuron login and approve the code at https://neuron.zero-x.live/device.');
                 }
             } catch (error) {
                 finish(false, error.name === 'TimeoutError' ? 'Authentication timed out. Restart authentication in your terminal.' : error.message);

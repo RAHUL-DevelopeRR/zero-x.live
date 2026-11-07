@@ -46,6 +46,11 @@ KillSignal=SIGTERM
 TimeoutStopSec=120
 TimeoutStartSec=30
 LimitNOFILE=65536
+# Resource caps on the 2 GB VM: an instance that leaks is killed (and restarted) at 768M, so
+# both instances during a deploy swap leave the system and cloudflared their memory; a
+# runaway fork or thread storm stops at 256 tasks (Node runs a handful of threads).
+MemoryMax=768M
+TasksMax=256
 
 # Sandboxing. Node needs none of these privileges. Not set: MemoryDenyWriteExecute (V8's JIT
 # needs writable executable memory) and ProcSubset=pid (os.cpus() and os.totalmem() read /proc).

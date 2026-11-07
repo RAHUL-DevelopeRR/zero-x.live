@@ -24,6 +24,12 @@ export const LIST_PRICES = Object.freeze({
   // writes cost 1.25x input for the 5-minute TTL and 2x for the 1-hour TTL. No long-context rate.
   'anthropic:claude-sonnet-5-5': row({ input: 2, output: 10, cache_read: 0.20, cache_write: 2.50, cache_write_1h: 4 }),
   'anthropic:claude-opus-5-5': row({ input: 4, output: 20, cache_read: 0.20, cache_write: 5, cache_write_1h: 8 }),
+  // Claude Haiku 5.5 (sponsored free pool, catalog-types.js SPONSORED_FREE_MODELS): $0.10 / $0.50 per
+  // MTok for prompts up to 100K tokens, $0.50 / $2.50 above (claude-api shared/models.md); cache reads
+  // 0.1x input, 5-minute writes 1.25x, 1-hour writes 2x. The catalog row's window stays at 100,000, so
+  // the long rate is never reached.
+  'anthropic:claude-haiku-5-5': row({ input: 0.10, output: 0.50, cache_read: 0.01, cache_write: 0.125, cache_write_1h: 0.20,
+    long_context: { threshold: 100000, input: 0.50, output: 2.50 } }),
   // Not listed: Claude's server-side refusal fallback targets. The adapter never sends
   // `fallbacks`, so they are never billed, and a list price here would let a catalog row serve them.
   // The existing paid pools of src/catalog.js (same numbers as its priceFromCost calls).

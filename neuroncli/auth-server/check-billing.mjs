@@ -1,5 +1,6 @@
-// WP-B3: Razorpay billing (docs/PLATFORM_CONTRACT.md §3.5) against a fake Razorpay HTTP server and a
-// stubbed PostgREST: signatures, checkout, top-ups, verify, cancel, webhooks and plan bootstrap.
+// WP-B3: Razorpay billing (docs/PLATFORM_CONTRACT.md §3.5, §16) against a fake Razorpay HTTP server and a
+// stubbed PostgREST: signatures, checkout, top-ups, verify, cancel, webhooks, plan bootstrap and the
+// billing details step (profile routes, the details and agreement gate, consent records).
 // Run: node check-billing.mjs
 import assert from 'node:assert/strict';
 import { createHmac, randomBytes } from 'node:crypto';
@@ -10,8 +11,12 @@ import { DEVELOPMENT_PLANS } from './src/plan-policy.js';
 import {
   checkoutSignatureMessage, constantTimeEqual, hmacSha256, razorpayBase, toHex, verifyCheckoutSignature, verifySignature, verifyWebhookSignature,
 } from './src/billing/razorpay.js';
-import { bootstrapPlans, planSql } from './scripts/razorpay-bootstrap.mjs';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { bootstrapPlans, planSql, storePlanIdsInPglite } from './scripts/razorpay-bootstrap.mjs';
 import { B1_CREDIT_REASON, planPolicyRows } from './contract-rows.mjs';
+import { LEGAL_DOCUMENTS } from './src/billing/legal-versions.js';
 
 // zerox_plan_policies_v2 rows as WP-B1 returns them.
 const B1_POLICY_ROWS = await planPolicyRows();
@@ -165,7 +170,8 @@ function payOrder(orderId, { amount, currency, status = 'captured' } = {}) {
 }
 
 // ── 3. Stubbed PostgREST with billing semantics from contract §4 ──
-const db = { accounts: new Map(), subscriptions: new Map(), payments: new Map(), grants: new Map(), claims: new Map(), calls: [], fail: new Set(), policiesV2: [] };
+const db = { accounts: new Map(), subscriptions: new Map(), payments: new Map(), grants: new Map(), claims: new Map(), calls: [], fail: new Set(), policiesV2: [],
+  profiles: new Map(), consents: [] };
 const policyRows = withIds => B1_POLICY_ROWS.map(row => ({ ...row,
   ...(withIds && PLAN_IDS[row.plan] ? { razorpay_plan_id_inr: PLAN_IDS[row.plan].INR, razorpay_plan_id_usd: PLAN_IDS[row.plan].USD } : {}),
 }));
@@ -309,6 +315,36 @@ const rpc = {
   zerox_webhook_release: ({ p_event_id }) => { db.claims.delete(p_event_id); return []; },
   zerox_subscription_by_provider_id: ({ p_provider_subscription_id }) => db.subscriptions.has(p_provider_subscription_id)
     ? [db.subscriptions.get(p_provider_subscription_id)] : [],
+  // 20261106000100_billing_details.sql and 20261106000200_billing_tax_id.sql: profile and consent RPCs (the CHECKs live in the
+  // SQL; check-billing-details-db.mjs).
+  zerox_billing_profile_get: ({ p_user_id }) => db.profiles.has(p_user_id) ? [db.profiles.get(p_user_id)] : [],
+  zerox_billing_profile_upsert: ({ p_user_id, p_profile }) => {
+    if (!db.accounts.has(p_user_id)) throw raise('account_not_found');
+    db.profileKeys = Object.keys(p_profile);
+    const keys = ['customer_type', 'full_name', 'business_name', 'country', 'state', 'city', 'postal_code', 'address_line1', 'address_line2', 'phone_e164', 'tax_id'];
+    if (Object.keys(p_profile).some(key => !keys.includes(key))) throw raise('invalid_billing_profile: unknown field');
+    const existing = db.profiles.get(p_user_id);
+    const row = { ...Object.fromEntries(keys.map(key => [key, p_profile[key] ?? null])), customer_type: p_profile.customer_type ?? 'individual',
+      created_at: existing?.created_at ?? new Date().toISOString(), updated_at: new Date().toISOString() };
+    db.profiles.set(p_user_id, row);
+    return [row];
+  },
+  zerox_billing_record_consents: ({ p_user_id, p_context, p_consents }) => {
+    if (!['subscription', 'topup'].includes(p_context)) throw raise('invalid_consent: context');
+    const entries = Object.entries(p_consents).sort(([left], [right]) => left.localeCompare(right));
+    for (const [document, version] of entries) {
+      if (!['terms', 'privacy', 'refund', 'auto_renewal'].includes(document) || !/^\d{4}-\d{2}-\d{2}$/.test(version)) throw raise('invalid_consent');
+    }
+    for (const [document, version] of entries) {
+      db.consents.push({ user_id: p_user_id, document, version, context: p_context, accepted_at: new Date().toISOString(), id: db.consents.length + 1 });
+    }
+    return [{ recorded: entries.length }];
+  },
+  zerox_billing_consents_latest: ({ p_user_id }) => {
+    const latest = new Map();
+    for (const row of db.consents.filter(entry => entry.user_id === p_user_id)) latest.set(row.document, row);
+    return [...latest.values()].sort((left, right) => left.document.localeCompare(right.document));
+  },
 };
 
 const identities = new Map();
@@ -346,7 +382,20 @@ identities.set('billing-token-third', third);
 identities.set('billing-token-dup', dup);
 const baseEnv = { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_test', SUPABASE_SECRET_KEY: SECRET, SESSIONS_KV: { get: async () => null, put: async () => {}, delete: async () => {} } };
 const billingEnv = { ...baseEnv, RAZORPAY_KEY_ID: KEY_ID, RAZORPAY_KEY_SECRET: KEY_SECRET, RAZORPAY_WEBHOOK_SECRET: WEBHOOK_SECRET, RAZORPAY_API_BASE };
-const call = async (path, { method = 'POST', token = 'billing-token-buyer', body, bindings = billingEnv } = {}) => {
+// Checkout and top-up need a saved billing profile and the current documents' agreement. Unless a
+// test says otherwise (details: false, consent: false) the helper saves a profile for the caller
+// straight into the stub and attaches the agreement, so the older checks below keep testing what
+// they test; section 5b exercises the gates themselves.
+const CURRENT_DOCUMENTS = { terms: LEGAL_DOCUMENTS.terms.version, privacy: LEGAL_DOCUMENTS.privacy.version, refund: LEGAL_DOCUMENTS.refund.version,
+  auto_renewal: LEGAL_DOCUMENTS.auto_renewal.version };
+const DEFAULT_PROFILE = { customer_type: 'individual', full_name: 'Buyer One', business_name: null, country: 'IN', state: 'TN', city: 'Karur',
+  postal_code: '639113', address_line1: '12 Secret Street', address_line2: null, phone_e164: '+919876543210' };
+const call = async (path, { method = 'POST', token = 'billing-token-buyer', body, bindings = billingEnv, details = true, consent = true } = {}) => {
+  if (method === 'POST' && ['/api/billing/checkout', '/api/billing/topup'].includes(path) && body && typeof body === 'object') {
+    const user = identities.get(token);
+    if (details && user && !db.profiles.has(user.id)) db.profiles.set(user.id, { ...DEFAULT_PROFILE, created_at: new Date().toISOString(), updated_at: new Date().toISOString() });
+    if (consent && !('consent' in body)) body = { ...body, consent: CURRENT_DOCUMENTS };
+  }
   const response = await app.request('https://zero-x.live' + path, {
     method, headers: { Authorization: `Bearer ${token}`, ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}) },
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
@@ -373,7 +422,12 @@ try {
   // ── 4. billing_not_configured ──
   db.policiesV2 = policyRows(false);
   const noPlanIds = { ...billingEnv };
-  expectError(await call('/api/billing/checkout', { body: { plan: 'pro', currency: 'INR' }, bindings: noPlanIds }), 503, 'billing_not_configured');
+  // Keys set but no Razorpay plan id stored: a different error from missing keys, with a support message.
+  const noPlan = await call('/api/billing/checkout', { body: { plan: 'pro', currency: 'INR' }, bindings: noPlanIds });
+  expectError(noPlan, 503, 'billing_plan_missing');
+  assert.match(noPlan.body.error.message, /Pro plan in INR is not set up yet.*support@zero-x\.live/);
+  assert.ok(!/plan_|rzp_|zerox_plan_policy/.test(noPlan.body.error.message), 'the user-facing message names no internals');
+  expectError(await call('/api/billing/checkout', { body: { plan: 'max', currency: 'USD' }, bindings: noPlanIds }), 503, 'billing_plan_missing');
   const noKeys = { ...baseEnv };
   expectError(await call('/api/billing/checkout', { body: { plan: 'pro', currency: 'INR' }, bindings: noKeys }), 503, 'billing_not_configured');
   expectError(await call('/api/billing/topup', { body: { pack: 'credits_5', currency: 'INR' }, bindings: noKeys }), 503, 'billing_not_configured');
@@ -398,7 +452,7 @@ try {
   assert.match(checkout.body.subscription_id, /^sub_/);
   assert.deepEqual({ ...checkout.body, subscription_id: undefined }, {
     provider: 'razorpay', key_id: KEY_ID, subscription_id: undefined, name: 'Zero-X', description: 'Neuron Pro plan, billed monthly',
-    prefill: { email: 'buyer@example.test', name: 'Buyer One' }, notes: { user_id: buyer.id, plan: 'pro' },
+    prefill: { email: 'buyer@example.test', name: 'Buyer One', contact: '+919876543210' }, notes: { user_id: buyer.id, plan: 'pro' },
   });
   const created = rzp.requests.find(entry => entry.method === 'POST' && entry.path === '/v1/subscriptions');
   assert.deepEqual(created.body, { plan_id: PLAN_IDS.pro.INR, total_count: 120, quantity: 1, customer_notify: 1, notes: { user_id: buyer.id, plan: 'pro' } });
@@ -437,7 +491,19 @@ try {
     { kind: 'subscription', amount: 89900, currency: 'INR', status: 'captured' });
   assert.ok(!JSON.stringify(storedPayment.raw).includes('1111') && !JSON.stringify(storedPayment.raw).includes('buyer@example.test'),
     'card and contact details are not stored');
-  assert.equal(db.grants.size, 0, 'monthly credits come from subscription.charged, not verify');
+  // The first month's credits are granted at verify (ledger ref = the payment id), so a plan never
+  // sits at $0 while the subscription.charged webhook is late or unconfigured ...
+  assert.deepEqual(db.grants.get(payment.id), { user_id: buyer.id, delta: 8000000, reason: 'subscription_pro' });
+  assert.equal(db.grants.size, 1);
+  assert.equal(accountOf(buyer).credit_balance_microusd, 8000000, 'Pro: $8 of credits at the first verified payment');
+  // ... and neither a second verify nor the webhook for the same payment grants them again.
+  assert.equal((await subscriptionVerify(payment.id)).body.status, 'ok');
+  assert.equal(accountOf(buyer).credit_balance_microusd, 8000000, 'verifying twice grants once');
+  const firstCharge = webhookEvent('subscription.charged', { subscription: { ...rzp.subscriptions.get(subscriptionId) }, payment: rzp.payments.get(payment.id) });
+  assert.deepEqual((await webhook(firstCharge)).body, { received: true });
+  assert.equal(accountOf(buyer).credit_balance_microusd, 8000000, 'the webhook for the verified payment grants nothing more');
+  assert.equal(db.grants.size, 1);
+  db.claims.clear();
   const pendingSubscription = (await call('/api/billing/checkout', { token: 'billing-token-third', body: { plan: 'pro', currency: 'INR' } })).body.subscription_id;
   const pendingPayment = { id: rid('pay'), amount: 89900, currency: 'INR', status: 'created' };
   rzp.payments.set(pendingPayment.id, pendingPayment);
@@ -445,6 +511,7 @@ try {
     razorpay_subscription_id: pendingSubscription, razorpay_signature: hmac(KEY_SECRET, `${pendingPayment.id}|${pendingSubscription}`) } });
   assert.equal(pending.body.status, 'pending', 'unconfirmed subscriptions are not activated');
   assert.equal(accountOf(third).plan, 'free');
+  assert.ok(!db.grants.has(pendingPayment.id), 'no credits for an unconfirmed payment');
   assert.equal(db.payments.get(pendingPayment.id).status, 'created', 'the unconfirmed attempt is recorded for Billing');
   assert.equal(db.payments.get(pendingPayment.id).raw.subscription_id, pendingSubscription);
   assert.equal(accountOf(other).plan, 'free');
@@ -469,7 +536,7 @@ try {
   assert.equal(topup.status, 200);
   assert.match(topup.body.order_id, /^order_/);
   assert.deepEqual({ ...topup.body, order_id: undefined }, { provider: 'razorpay', key_id: KEY_ID, order_id: undefined, amount_minor: 44900, currency: 'INR',
-    name: 'Zero-X', description: '$5 Neuron credit top-up', prefill: { email: 'buyer@example.test', name: 'Buyer One' } });
+    name: 'Zero-X', description: '$5 Neuron credit top-up', prefill: { email: 'buyer@example.test', name: 'Buyer One', contact: '+919876543210' } });
   const order = rzp.orders.get(topup.body.order_id);
   assert.deepEqual(order.notes, { user_id: buyer.id, pack: 'credits_5' });
   assert.ok(order.receipt.length <= 40 && order.receipt.startsWith('topup_'));
@@ -484,7 +551,7 @@ try {
   const toppedUp = await orderVerify(order.id, topupPayment.id);
   assert.equal(toppedUp.body.status, 'ok');
   assert.equal(accountOf(buyer).credit_balance_microusd - balanceBefore, 5000000);
-  assert.equal(toppedUp.body.account.credits.balance_usd, 5);
+  assert.equal(toppedUp.body.account.credits.balance_usd, 13, 'the $8 first-month credits plus the $5 pack');
   assert.deepEqual(db.grants.get(topupPayment.id), { user_id: buyer.id, delta: 5000000, reason: 'topup_credits_5' }, 'ref = payment id');
   await orderVerify(order.id, topupPayment.id);
   assert.equal(accountOf(buyer).credit_balance_microusd - balanceBefore, 5000000, 'verifying twice never grants twice');
@@ -840,6 +907,221 @@ try {
   assert.ok(sql.includes(`razorpay_plan_id_inr = '${applied[0].id}', razorpay_plan_id_usd = '${applied[1].id}' WHERE plan = 'pro';`));
   assert.ok(sql.includes(`WHERE plan = 'max';`));
   assert.match(planSql([{ plan: 'pro', currency: 'INR', id: "plan_x'; DROP TABLE x; --" }]), /<razorpay plan id INR>/, 'ids are validated before SQL output');
+  // --store-pglite: a local test-mode rehearsal stores the four test plan ids in a local PGlite database only.
+  await assert.rejects(storePlanIdsInPglite({ env: { RAZORPAY_KEY_ID: 'rzp_live_RealKey123', RAZORPAY_KEY_SECRET: KEY_SECRET }, results: applied, dataDir: 'x' }), /test-mode keys/);
+  await assert.rejects(storePlanIdsInPglite({ env: bootstrapEnv, results: dryRun, dataDir: 'x' }), /run with --apply first/);
+  await assert.rejects(storePlanIdsInPglite({ env: bootstrapEnv, results: applied, dataDir: '' }), /PGlite directory/);
+  const localDir = await mkdtemp(join(tmpdir(), 'zerox-bootstrap-'));
+  try {
+    const stored = await storePlanIdsInPglite({ env: bootstrapEnv, results: applied, dataDir: localDir });
+    assert.deepEqual(stored.map(row => [row.plan, row.razorpay_plan_id_inr, row.razorpay_plan_id_usd]), [
+      ['max', applied[2].id, applied[3].id], ['pro', applied[0].id, applied[1].id]]);
+  } finally {
+    await rm(localDir, { recursive: true, force: true });
+  }
+
+  // ── 10. Billing details: the profile routes, the checkout gate, agreements, what Razorpay receives ──
+  const gate = { id: '99999999-9999-4999-8999-999999999999', email: 'gate@example.test', user_metadata: { name: 'Gate Keeper' } };
+  identities.set('billing-token-gate', gate);
+  const gateCall = (path, options = {}) => call(path, { token: 'billing-token-gate', details: false, consent: false, ...options });
+  const PROFILE_PATH = '/api/billing/profile';
+  const GOOD = { customer_type: 'individual', full_name: '  Gate   Keeper ', country: 'in', state: 'Tamil Nadu', city: 'Karur', postal_code: '639 113',
+    address_line1: '12 Secret Street', phone: '098765 43210' };
+  const SAVED = { customer_type: 'individual', full_name: 'Gate Keeper', business_name: null, country: 'IN', state: 'TN', city: 'Karur', postal_code: '639113',
+    address_line1: '12 Secret Street', address_line2: null, phone: '+919876543210', tax_id: null };
+  // A GSTIN of Tamil Nadu with a correct check character (check-billing-profile.mjs computes it).
+  const GSTIN_TN = '33ABCDE1234F1Z7';
+  const checkoutBody = consent => ({ plan: 'pro', currency: 'INR', ...(consent === undefined ? {} : { consent }) });
+  const topupBody = consent => ({ pack: 'credits_5', currency: 'INR', ...(consent === undefined ? {} : { consent }) });
+  const gateConsents = () => db.consents.filter(row => row.user_id === gate.id);
+  const noRazorpay = async (work, label) => {
+    const before = rzp.requests.length;
+    const result = await work();
+    assert.equal(rzp.requests.length, before, label);
+    return result;
+  };
+
+  // GET: nothing saved yet, the documents and the form's choices.
+  const fresh = await gateCall(PROFILE_PATH, { method: 'GET' });
+  assert.equal(fresh.status, 200);
+  assert.deepEqual([fresh.body.profile, fresh.body.complete, fresh.body.missing], [null, false, ['full_name', 'country', 'city', 'postal_code']]);
+  assert.deepEqual(fresh.body.documents, JSON.parse(JSON.stringify(LEGAL_DOCUMENTS)), 'the current document versions and where they live');
+  assert.deepEqual([fresh.body.accepted, fresh.body.tax], [{}, { no_gst_notice: false }], 'no GST statement unless the owner turns it on');
+  assert.deepEqual(fresh.body.options.countries[0], { code: 'IN', name: 'India' }, 'India first');
+  assert.equal(fresh.body.options.countries.length, 249);
+  assert.equal(fresh.body.options.states.IN.length, 36);
+  assert.ok(fresh.body.options.states.IN.some(state => state.code === 'TN' && state.name === 'Tamil Nadu') && fresh.body.options.no_postal.includes('AE'));
+  for (const [value, expected] of [['true', true], [' TRUE ', true], ['yes', false], ['false', false], ['', false]]) {
+    const gst = await gateCall(PROFILE_PATH, { method: 'GET', bindings: { ...billingEnv, BILLING_NO_GST_NOTICE: value } });
+    assert.equal(gst.body.tax.no_gst_notice, expected, `BILLING_NO_GST_NOTICE=${JSON.stringify(value)}`);
+  }
+  assert.equal((await app.request('https://zero-x.live' + PROFILE_PATH, {}, billingEnv)).status, 401, 'a session is required');
+  assert.equal((await app.request('https://zero-x.live' + PROFILE_PATH, { method: 'PUT', body: '{}' }, billingEnv)).status, 401);
+
+  // No profile, no checkout: nothing is created at Razorpay and nothing is recorded.
+  accountOf(gate).plan = 'pro'; // so the top-up reaches the gate
+  const noProfile = await noRazorpay(() => gateCall('/api/billing/checkout', { body: checkoutBody(CURRENT_DOCUMENTS) }), 'no Razorpay call without a profile');
+  expectError(noProfile, 409, 'billing_profile_required');
+  assert.deepEqual(noProfile.body.error.missing, ['full_name', 'country', 'city', 'postal_code']);
+  expectError(await noRazorpay(() => gateCall('/api/billing/topup', { body: topupBody(CURRENT_DOCUMENTS) }), 'no order without a profile'), 409, 'billing_profile_required');
+  assert.equal(gateConsents().length, 0);
+
+  // PUT: validated and normalised by the server; unknown fields (a tax id included) refused; refused saves store nothing.
+  expectError(await gateCall(PROFILE_PATH, { method: 'PUT', body: 'not-an-object' }), 400, 'invalid_request');
+  expectError(await gateCall(PROFILE_PATH, { method: 'PUT', body: { ...GOOD, address_line2: 'x'.repeat(20000) } }), 413, 'invalid_request');
+  assert.equal(db.profiles.has(gate.id), false);
+  const refusals = [
+    [{ ...GOOD, gstin: '33AAAAA0000A1Z5' }, 'gstin'], [{ ...GOOD, postal_code: '12345' }, 'postal_code'], [{ ...GOOD, phone: '12345' }, 'phone'],
+    [{ ...GOOD, state: '' }, 'state'], [{ ...GOOD, state: 'Atlantis' }, 'state'], [{ ...GOOD, country: 'ZZ' }, 'country'], [{ ...GOOD, full_name: '   ' }, 'full_name'],
+    [{ ...GOOD, city: undefined }, 'city'], [{ ...GOOD, customer_type: 'business' }, 'business_name'], [{ ...GOOD, address_line1: 5 }, 'address_line1'],
+    [{ ...GOOD, full_name: 'x'.repeat(121) }, 'full_name'], [{ ...GOOD, address_line1: undefined, address_line2: 'Floor 2' }, 'address_line1'],
+    [{ ...GOOD, tax_id: '29ABCDE1234F1ZW' }, 'tax_id'], [{ ...GOOD, tax_id: GSTIN_TN.slice(0, 14) + 'A' }, 'tax_id'], [{ ...GOOD, tax_id: 'x'.repeat(41) }, 'tax_id'],
+  ];
+  for (const [body, param] of refusals) {
+    const refused = await gateCall(PROFILE_PATH, { method: 'PUT', body });
+    expectError(refused, 400, 'invalid_request');
+    assert.equal(refused.body.error.param, param, JSON.stringify(refused.body.error));
+    assert.equal(typeof refused.body.error.fields[param], 'string');
+  }
+  assert.equal(db.profiles.has(gate.id), false, 'a refused save stores nothing');
+  const saved = await gateCall(PROFILE_PATH, { method: 'PUT', body: GOOD });
+  assert.equal(saved.status, 200);
+  assert.deepEqual(saved.body, { profile: SAVED, complete: true, missing: [] }, 'normalised: name, India state code, PIN, E.164 phone');
+  assert.equal(db.profiles.get(gate.id).phone_e164, '+919876543210');
+  assert.ok(!db.profileKeys.includes('tax_id'), 'without a tax id the key is not sent (so a database without 20261106000200 still saves it)');
+  // The optional tax id: normalised, saved, read back and cleared by a PUT without it.
+  const taxed = await gateCall(PROFILE_PATH, { method: 'PUT', body: { ...GOOD, tax_id: ' 33abcde 1234 f1z7 ' } });
+  assert.deepEqual(taxed.body.profile, { ...SAVED, tax_id: GSTIN_TN }, 'spaces removed, upper case');
+  assert.equal(db.profiles.get(gate.id).tax_id, GSTIN_TN);
+  assert.equal((await gateCall(PROFILE_PATH, { method: 'GET' })).body.profile.tax_id, GSTIN_TN);
+  assert.deepEqual((await gateCall(PROFILE_PATH, { method: 'PUT', body: GOOD })).body.profile.tax_id, null, 'a PUT without it clears it');
+  const business = await gateCall(PROFILE_PATH, { method: 'PUT', body: { ...GOOD, country: 'GB', state: '', postal_code: 'SW1A 1AA', phone: undefined, customer_type: 'business',
+    business_name: 'Gate Ltd', tax_id: 'gb 123 4567 89' } });
+  assert.deepEqual([business.status, business.body.profile.tax_id], [200, 'GB123456789'], 'a VAT number outside India');
+  const mismatch = await gateCall(PROFILE_PATH, { method: 'PUT', body: { ...GOOD, tax_id: '29ABCDE1234F1ZW' } });
+  assert.equal(mismatch.body.error.message, 'This GSTIN starts with 29, but the GST state code of Tamil Nadu is 33. Check the GSTIN or the state.');
+  await gateCall(PROFILE_PATH, { method: 'PUT', body: GOOD });
+  const reread = await gateCall(PROFILE_PATH, { method: 'GET' });
+  assert.deepEqual([reread.body.profile, reread.body.complete, reread.body.missing], [SAVED, true, []]);
+  // A PUT replaces the profile: what is not sent is cleared.
+  await gateCall(PROFILE_PATH, { method: 'PUT', body: { ...GOOD, tax_id: GSTIN_TN } });
+  const replaced = await gateCall(PROFILE_PATH, { method: 'PUT', body: { full_name: 'Gate Keeper', country: 'US', state: 'Texas', city: 'Austin', postal_code: '73301' } });
+  assert.deepEqual([replaced.body.profile.country, replaced.body.profile.phone, replaced.body.profile.address_line1, replaced.body.profile.tax_id], ['US', null, null, null]);
+  // The checkout below runs with a saved GSTIN, which must reach neither the browser's answer nor Razorpay.
+  await gateCall(PROFILE_PATH, { method: 'PUT', body: { ...GOOD, tax_id: GSTIN_TN } });
+
+  // A profile is not enough: the current documents must be agreed to as well.
+  const everyDocument = ['terms', 'privacy', 'auto_renewal', 'refund'];
+  const needConsent = await noRazorpay(() => gateCall('/api/billing/checkout', { body: checkoutBody() }), 'no Razorpay call without agreement');
+  expectError(needConsent, 409, 'consent_required');
+  assert.deepEqual(needConsent.body.error.missing, everyDocument);
+  assert.deepEqual(needConsent.body.error.documents, CURRENT_DOCUMENTS, 'the response names the current versions');
+  assert.match(needConsent.body.error.message, /Terms of Service.*Privacy Policy.*renewal notice.*Refund Policy/);
+  const stale = await gateCall('/api/billing/checkout', { body: checkoutBody({ ...CURRENT_DOCUMENTS, terms: '2020-01-01' }) });
+  expectError(stale, 409, 'consent_required');
+  assert.deepEqual(stale.body.error.missing, ['terms'], 'an old version of a document is not agreement to the current one');
+  expectError(await gateCall('/api/billing/checkout', { body: checkoutBody('yes') }), 409, 'consent_required');
+  expectError(await gateCall('/api/billing/checkout', { body: checkoutBody({ ...CURRENT_DOCUMENTS, privacy: true }) }), 409, 'consent_required');
+  const topupNeedsConsent = await gateCall('/api/billing/topup', { body: topupBody() });
+  expectError(topupNeedsConsent, 409, 'consent_required');
+  assert.deepEqual(topupNeedsConsent.body.error.missing, ['terms', 'privacy', 'refund'], 'a one-time top-up has no renewal notice');
+  assert.equal(gateConsents().length, 0, 'nothing is recorded for a refused checkout');
+  expectError(await gateCall('/api/billing/checkout', { body: { plan: 'pro', currency: 'INR', consent: CURRENT_DOCUMENTS }, bindings: noPlanIds }),
+    503, 'billing_plan_missing');
+
+  // Agreement given: a payable subscription, recorded agreements, and only name, e-mail and phone for Razorpay's prefill.
+  const sent = await gateCall('/api/billing/checkout', { body: checkoutBody(CURRENT_DOCUMENTS) });
+  assert.equal(sent.status, 200);
+  assert.deepEqual(sent.body.prefill, { email: 'gate@example.test', name: 'Gate Keeper', contact: '+919876543210' });
+  assert.deepEqual(sent.body.notes, { user_id: gate.id, plan: 'pro' });
+  assert.deepEqual(rzp.subscriptions.get(sent.body.subscription_id).notes, { user_id: gate.id, plan: 'pro' }, 'only ids in Razorpay notes');
+  assert.deepEqual(gateConsents().map(row => [row.user_id, row.document, row.version, row.context]),
+    everyDocument.slice().sort().map(document => [gate.id, document, CURRENT_DOCUMENTS[document], 'subscription']), 'one record per document, with the version shown');
+  const razorpayBodies = JSON.stringify(rzp.requests.filter(entry => entry.method === 'POST' && entry.path.startsWith('/v1/subscriptions')).map(entry => entry.body));
+  // The answer to the browser carries the prefill (so the phone is in it) but no address; Razorpay's own API receives none of it.
+  assert.equal(db.profiles.get(gate.id).tax_id, GSTIN_TN, 'this checkout ran with a saved GSTIN');
+  for (const hidden of ['Secret Street', '639113', 'Karur', 'Tamil Nadu', '"TN"', GSTIN_TN, '1234F1Z7']) assert.ok(!JSON.stringify(sent.body).includes(hidden), `the checkout answer holds no ${hidden}`);
+  for (const hidden of ['Secret Street', '639113', 'Karur', 'Tamil Nadu', '"TN"', '9876543210', 'Gate Keeper', GSTIN_TN, '1234F1Z7']) {
+    assert.ok(!razorpayBodies.includes(hidden), `no ${hidden} in anything sent to Razorpay's API`);
+  }
+  assert.deepEqual(rzp.requests.filter(entry => entry.method === 'POST' && entry.path === '/v1/subscriptions').at(-1).body,
+    { plan_id: PLAN_IDS.pro.INR, total_count: 120, quantity: 1, customer_notify: 1, notes: { user_id: gate.id, plan: 'pro' } }, 'the request to Razorpay keeps its shape');
+  // Razorpay's name limit is 50 characters.
+  const longNameProfile = { ...GOOD, full_name: 'Bartholomew '.repeat(5).trim() };
+  await gateCall(PROFILE_PATH, { method: 'PUT', body: longNameProfile });
+  const longName = await gateCall('/api/billing/checkout', { body: checkoutBody({ auto_renewal: CURRENT_DOCUMENTS.auto_renewal }) });
+  assert.equal(longName.body.subscription_id, sent.body.subscription_id, 'the unpaid checkout is reused');
+  assert.ok(longName.body.prefill.name.length === 50 && 'Bartholomew '.repeat(5).startsWith(longName.body.prefill.name));
+  // No phone saved: no contact in the prefill.
+  await gateCall(PROFILE_PATH, { method: 'PUT', body: { ...GOOD, phone: undefined } });
+  assert.deepEqual((await gateCall('/api/billing/checkout', { body: checkoutBody({ auto_renewal: CURRENT_DOCUMENTS.auto_renewal }) })).body.prefill,
+    { email: 'gate@example.test', name: 'Gate Keeper' });
+  await gateCall(PROFILE_PATH, { method: 'PUT', body: GOOD });
+
+  // Returning buyer: documents already agreed to need no new tick; the renewal notice is per purchase.
+  const recorded = gateConsents().length;
+  const returning = await gateCall('/api/billing/checkout', { body: checkoutBody({ auto_renewal: CURRENT_DOCUMENTS.auto_renewal }) });
+  assert.equal(returning.status, 200);
+  assert.equal(gateConsents().length - recorded, 1, 'only the agreement made now is recorded');
+  assert.deepEqual([gateConsents().at(-1).document, gateConsents().at(-1).context], ['auto_renewal', 'subscription']);
+  const noRenewal = await gateCall('/api/billing/checkout', { body: checkoutBody() });
+  expectError(noRenewal, 409, 'consent_required');
+  assert.deepEqual(noRenewal.body.error.missing, ['auto_renewal'], 'the renewal notice is never carried over from an earlier purchase');
+  const accepted = (await gateCall(PROFILE_PATH, { method: 'GET' })).body.accepted;
+  assert.deepEqual(Object.keys(accepted).sort(), everyDocument.slice().sort());
+  assert.ok(Object.values(accepted).every(entry => entry.current === true && /^\d{4}-\d\d-\d\dT/.test(entry.accepted_at)));
+  const oneClick = await gateCall('/api/billing/topup', { body: topupBody() });
+  assert.equal(oneClick.status, 200, 'a top-up needs no tick once terms, privacy and refund are agreed to');
+  assert.equal(gateConsents().length - recorded, 1, 'nothing new to record');
+  assert.deepEqual(oneClick.body.prefill, { email: 'gate@example.test', name: 'Gate Keeper', contact: '+919876543210' });
+  assert.deepEqual(rzp.orders.get(oneClick.body.order_id).notes, { user_id: gate.id, pack: 'credits_5' });
+  // A document changes: its new version has to be agreed to again.
+  for (const row of gateConsents().filter(entry => entry.document === 'terms')) row.version = '2026-01-01';
+  assert.equal((await gateCall(PROFILE_PATH, { method: 'GET' })).body.accepted.terms.current, false, 'an old agreement is shown as not current');
+  const changed = await gateCall('/api/billing/topup', { body: topupBody() });
+  expectError(changed, 409, 'consent_required');
+  assert.deepEqual(changed.body.error.missing, ['terms']);
+  const reaccepted = await gateCall('/api/billing/topup', { body: topupBody({ terms: CURRENT_DOCUMENTS.terms }) });
+  assert.equal(reaccepted.status, 200);
+  assert.deepEqual([gateConsents().at(-1).document, gateConsents().at(-1).version, gateConsents().at(-1).context], ['terms', CURRENT_DOCUMENTS.terms, 'topup']);
+  // A stored profile that no longer meets the rules is asked for again.
+  const complete = db.profiles.get(gate.id);
+  db.profiles.set(gate.id, { ...complete, city: null, postal_code: 'abc' });
+  const incomplete = await gateCall('/api/billing/checkout', { body: checkoutBody(CURRENT_DOCUMENTS) });
+  expectError(incomplete, 409, 'billing_profile_required');
+  assert.deepEqual(incomplete.body.error.missing.slice().sort(), ['city', 'postal_code']);
+  expectError(await gateCall('/api/billing/topup', { body: topupBody(CURRENT_DOCUMENTS) }), 409, 'billing_profile_required');
+  db.profiles.set(gate.id, complete);
+
+  // ── 10b. Operator /health: plans_configured ──
+  const ADMIN = 'billing-operator-token-0123456789-abcdef';
+  const operatorHealth = async () => (await app.request('https://zero-x.live/health', { headers: { Authorization: `Bearer ${ADMIN}` } },
+    { ...billingEnv, GATEWAY_ADMIN_TOKEN: ADMIN })).json();
+  db.policiesV2 = policyRows(true);
+  assert.deepEqual((await operatorHealth()).plans_configured, { inr: true, usd: true, missing: [] });
+  db.policiesV2 = policyRows(true).map(row => ({ ...row, razorpay_plan_id_usd: null }));
+  assert.deepEqual((await operatorHealth()).plans_configured, { inr: true, usd: false, missing: ['pro:USD', 'max:USD'] }, 'USD plan ids missing');
+  db.policiesV2 = policyRows(false);
+  assert.deepEqual((await operatorHealth()).plans_configured, { inr: false, usd: false, missing: ['pro:INR', 'pro:USD', 'max:INR', 'max:USD'] });
+  const anonymousHealth = await (await app.request('https://zero-x.live/health', {}, { ...billingEnv, GATEWAY_ADMIN_TOKEN: ADMIN })).json();
+  assert.equal(anonymousHealth.plans_configured, undefined, 'only the operator sees it');
+  db.policiesV2 = policyRows(true);
+
+  // ── 10c. First-month credits at verify: an authorized payment waits for the capture ──
+  const authz = { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', email: 'authz@example.test', user_metadata: { name: 'Authz' } };
+  identities.set('billing-token-authz', authz);
+  const authzSubscription = (await call('/api/billing/checkout', { token: 'billing-token-authz', body: { plan: 'pro', currency: 'INR' } })).body.subscription_id;
+  const authorized = paySubscription(authzSubscription, { amount: 89900, currency: 'INR', status: 'authorized' });
+  const authzVerify = (paymentId = authorized.id) => call('/api/billing/verify', { token: 'billing-token-authz', body: { razorpay_payment_id: paymentId,
+    razorpay_subscription_id: authzSubscription, razorpay_signature: hmac(KEY_SECRET, `${paymentId}|${authzSubscription}`) } });
+  assert.equal((await authzVerify()).body.status, 'ok');
+  assert.equal(accountOf(authz).plan, 'pro');
+  assert.ok(!db.grants.has(authorized.id), 'no credits for a payment that is only authorized');
+  authorized.status = 'captured';
+  assert.equal((await authzVerify()).body.status, 'ok');
+  assert.deepEqual(db.grants.get(authorized.id), { user_id: authz.id, delta: 8000000, reason: 'subscription_pro' }, 'granted once the payment is captured');
+  await webhook(webhookEvent('subscription.charged', { subscription: { ...rzp.subscriptions.get(authzSubscription) }, payment: authorized }));
+  assert.equal(accountOf(authz).credit_balance_microusd, 8000000, 'the webhook for the same payment adds nothing');
 } finally {
   globalThis.fetch = originalFetch;
   fakeRazorpay.close();
@@ -847,4 +1129,5 @@ try {
 console.log('PASS: Razorpay signatures (positive/negative, constant-time), checkout/topup/verify/cancel against a fake Razorpay server, ' +
   'raw-body webhook verification, duplicate events, leased webhook claims, credits once per payment, plan/status mapping, downgrade on ' +
   'cancellation, one payable subscription per account (checkout reuse, duplicate cancel + refund, cancel-all), refund clawback, ' +
-  'billing_not_configured and plan bootstrap');
+  'billing_not_configured and billing_plan_missing, plan bootstrap, billing profile routes, the details and agreement gate (nothing reaches ' +
+  'Razorpay without them), the optional tax id (normalised, refused with field messages, never sent to Razorpay), consent records, name/e-mail/phone-only prefill, first-month credits at verify and plans_configured in /health');
