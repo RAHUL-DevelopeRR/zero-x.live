@@ -666,7 +666,8 @@ Work through these in order; nothing in this repository does them for you.
    `refund.processed` and the `payment.dispute.*` events. Test a Pro checkout, a top-up, a refund
    and a cancellation end to end in test mode, then repeat the bootstrap with live keys
    (`--allow-live`) and set `RAZORPAY_KEY_ID` to the `rzp_live_` id. Read "Refunds and disputes"
-   below before taking live payments.
+   below before taking live payments. The step-by-step owner list, with test cards and the CSP checkout test, is
+   `docs/RAZORPAY_OWNER_CHECKLIST.md`.
 4. **Paid upstream capacity.** Create a Groq Developer-plan key and a billing-linked Gemini
    project key and store them as `GROQ_PAID_API_KEY` and `GEMINI_PAID_API_KEY`, and an Anthropic
    API key as `ANTHROPIC_API_KEY` (`gh secret set ANTHROPIC_API_KEY`; set the console spend limit
