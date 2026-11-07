@@ -166,6 +166,7 @@ positive integer keeps the default. The limits are per process (isolate on the W
 |---|---|---|
 | `BODY_LIMIT_BYTES` | 65536 | Request body limit of every route except the chat routes (`/v1/chat/completions`, `/v1/messages`, the `/auth/azure/*` aliases), the relay (2 MiB) and the Razorpay webhook (256 KiB). Over it: 413 `request_too_large` before any route or database call; on the VM the bytes are counted as they arrive, on the Worker the declared `Content-Length` is checked. |
 | `CHAT_BODY_LIMIT_BYTES` | 2097152 | Chat and relay body limit (2 MiB is what production enforced before; Neuron 7.0.0-alpha.4 sends 15-20 KB per turn). The chat handler's own 1 MiB cap still applies. |
+| `BODY_READ_TIMEOUT_MS` | 30000 | Longest a client may take to deliver a request body the gateway buffers before auth; slower bodies answer 408 request_timeout. |
 | `REQUEST_TIMEOUT_MS` | 120000 | The whole request (headers and body) must arrive within this time (Node's own default is 5 minutes; never below the headers timeout plus 1 s). A response is never cut by it: token streams run as long as before. |
 | `MAX_CONNECTIONS` | 2000 | Open sockets per VM instance. |
 | `MODELS_STREAM_PER_IP`, `MODELS_STREAM_MAX` | 4, 500 | Anonymous `/v1/models/stream` connections per address and in all (credentialed streams count in the total only): 429 with `Retry-After`. The status payload is computed once per tick and serialised once for all connections with the same view. |
@@ -312,6 +313,7 @@ and apply the missing ones, in order (the ten catalog and app migrations were re
 12. `20261102000000_free_token_window.sql` (Free: 1,000,000 tokens per rolling 5-hour window instead of 500K a day; see below)
 13. `20261104000000_health_probes.sql` (the active health checker's lease, verdict rows and `zerox_probe_take`; see below)
 14. `20261104300000_free_plan_features_lineup.sql` (the Free plan's feature line on the pricing page; no restart needed if applied late)
+24. `20261107000000_pool_user_cost_share.sql` (one free account may use at most 25 percent of a sponsored pool's daily spend cap `cpd`; later requests read `user_pool_share` and the gateway tries the next pool; the pool cap itself is unchanged; apply any time, no gateway change)
 15. `20261106000000_pool_fair_share.sql` (per-user fair share of the free pools, security audit F6; see below)
 16. `20261106000100_billing_details.sql` (billing profiles and consent records; see below)
 17. `20261106000200_billing_tax_id.sql` (an optional `tax_id` on `zerox_billing_profiles` with its CHECK, and the two profile functions returning it; applies after `20261106000100`; see below)
@@ -387,7 +389,8 @@ check `zerox_catalog_revision_pools_free_terms`) and inserts the Haiku row at re
 - `SELECT plan, jsonb_array_length(features) FROM public.zerox_plan_policy ORDER BY sort;` returns free 5, pro 6, max 6, ultrawork 6;
 - `SELECT public.zerox_catalog_slot_ok('anthropic', 'free', 'anthropic.paid');` returns true.
 
-Roll back newest first with `migrations/down/20261106000800_plan_features_haiku.sql`,
+Roll back newest first with `migrations/down/20261107000000_pool_user_cost_share.sql`,
+`migrations/down/20261106000800_plan_features_haiku.sql`,
 `20261106000700_haiku_catalog.sql` and `20261106000600_sponsored_pools.sql` (psql -X -v
 ON_ERROR_STOP=1 -f), or hide the row at once with `CATALOG_SOURCE=code`. The sponsored pool's
 daily spend cap ($5 upstream, `cpd` 6,250,000 billed) is a plain row value raised by catalog

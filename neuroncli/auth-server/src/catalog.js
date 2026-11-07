@@ -535,6 +535,12 @@ export function inheritCallerCountry(request, country) {
   return request;
 }
 
+// A request rebuilt from another (the body-limit middleware) keeps the original's inherited country.
+export function carryCallerCountry(from, to) {
+  if (INHERITED_COUNTRIES.has(from)) INHERITED_COUNTRIES.set(to, INHERITED_COUNTRIES.get(from));
+  return to;
+}
+
 export function callerCountry(request, env = {}) {
   if (request && INHERITED_COUNTRIES.has(request)) return INHERITED_COUNTRIES.get(request);
   let country = request?.cf?.country;

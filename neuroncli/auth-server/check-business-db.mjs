@@ -1892,7 +1892,8 @@ try {
   assert.deepEqual(downFiles, ['20261028000000_reservation_leases.sql', '20261029001000_pool_concurrency.sql',
     '20261102000000_free_token_window.sql', '20261104000000_health_probes.sql', '20261104300000_free_plan_features_lineup.sql',
     '20261106000000_pool_fair_share.sql', '20261106000300_connector_policy.sql', '20261106000400_connector_accounts.sql',
-    '20261106000600_sponsored_pools.sql', '20261106000700_haiku_catalog.sql', '20261106000800_plan_features_haiku.sql']);
+    '20261106000600_sponsored_pools.sql', '20261106000700_haiku_catalog.sql', '20261106000800_plan_features_haiku.sql',
+    '20261107000000_pool_user_cost_share.sql', '20261107000100_pool_share_refunds.sql']);
   for (const file of downFiles) {
     const migration = migrations.find(candidate => candidate.file === file);
     assert.ok(migration, `${file} undoes a migration of the same name`);
