@@ -202,16 +202,16 @@ try {
   ok('a reservation released by the next reservation or by the stale release keeps its month hold; a late settle corrects it');
 
   // ---------------------------------------------------------------- 7. cpd on a free pool
-  const spenders = [await newUser('free'), await newUser('free'), await newUser('free')];
+  const spenders = [await newUser('free'), await newUser('free'), await newUser('free'), await newUser('free'), await newUser('free')];
   const cpdModel = `anthropic/claude-cpd-${randomUUID().slice(0, 8)}`;
   const onCpd = (who, cost, overrides = {}) => reserve(who, { p_model: cpdModel, p_tokens: 100, p_cost_microusd: cost, p_pool: { cpd: POOL_CPD }, ...overrides });
-  assert.equal((await onCpd(spenders[0], 3_000_000)).status, 'ok');
-  assert.equal((await onCpd(spenders[1], 3_000_000)).status, 'ok');
-  const spent = await onCpd(spenders[2], 3_000_000);
+  // 1.5M is under each user's share of the 6.25M cap (25 percent: 1,562,500), so four users fill it.
+  for (const who of spenders.slice(0, 4)) assert.equal((await onCpd(who, 1_500_000)).status, 'ok');
+  const spent = await onCpd(spenders[4], 1_500_000);
   assert.equal(spent.status, 'pool_exhausted', 'holds past the cap are refused on a free pool too');
   assert.ok(Math.abs(spent.retry_after_seconds - secondsToMidnight()) <= 5, 'until 00:00 UTC');
   assert.equal(Number((await sql(`SELECT cost_microusd FROM public.zerox_pool_usage WHERE model = $1 AND tier = 'free' AND bucket = 'day'`, [cpdModel]))[0].cost_microusd), 6_000_000);
-  assert.equal((await reserve(spenders[2], { p_model: cpdModel, p_cost_microusd: 5_000_000, p_pool: { rpm: null, rpd: null } })).status, 'ok',
+  assert.equal((await reserve(spenders[4], { p_model: cpdModel, p_cost_microusd: 5_000_000, p_pool: { rpm: null, rpd: null } })).status, 'ok',
     'the same pool without cpd never refuses on cost');
   ok('cpd applies to a free pool: holds past the spend cap are pool_exhausted until 00:00 UTC; without cpd nothing refuses');
 
@@ -317,7 +317,7 @@ try {
 
   // ---------------------------------------------------------------- every statement can be re-run
   for (let run = 0; run < 2; run += 1) {
-    for (const file of ['20261106000600_sponsored_pools.sql', '20261106000700_haiku_catalog.sql', '20261106000800_plan_features_haiku.sql']) {
+    for (const file of ['20261106000600_sponsored_pools.sql', '20261106000700_haiku_catalog.sql', '20261106000800_plan_features_haiku.sql', '20261107000000_pool_user_cost_share.sql']) {
       await db.exec(await readFile(new URL(`./migrations/${file}`, import.meta.url), 'utf8'));
     }
   }

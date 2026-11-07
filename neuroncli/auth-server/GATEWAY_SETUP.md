@@ -312,6 +312,7 @@ and apply the missing ones, in order (the ten catalog and app migrations were re
 12. `20261102000000_free_token_window.sql` (Free: 1,000,000 tokens per rolling 5-hour window instead of 500K a day; see below)
 13. `20261104000000_health_probes.sql` (the active health checker's lease, verdict rows and `zerox_probe_take`; see below)
 14. `20261104300000_free_plan_features_lineup.sql` (the Free plan's feature line on the pricing page; no restart needed if applied late)
+24. `20261107000000_pool_user_cost_share.sql` (one free account may use at most 25 percent of a sponsored pool's daily spend cap `cpd`; later requests read `user_pool_share` and the gateway tries the next pool; the pool cap itself is unchanged; apply any time, no gateway change)
 15. `20261106000000_pool_fair_share.sql` (per-user fair share of the free pools, security audit F6; see below)
 16. `20261106000100_billing_details.sql` (billing profiles and consent records; see below)
 17. `20261106000200_billing_tax_id.sql` (an optional `tax_id` on `zerox_billing_profiles` with its CHECK, and the two profile functions returning it; applies after `20261106000100`; see below)
@@ -387,7 +388,8 @@ check `zerox_catalog_revision_pools_free_terms`) and inserts the Haiku row at re
 - `SELECT plan, jsonb_array_length(features) FROM public.zerox_plan_policy ORDER BY sort;` returns free 5, pro 6, max 6, ultrawork 6;
 - `SELECT public.zerox_catalog_slot_ok('anthropic', 'free', 'anthropic.paid');` returns true.
 
-Roll back newest first with `migrations/down/20261106000800_plan_features_haiku.sql`,
+Roll back newest first with `migrations/down/20261107000000_pool_user_cost_share.sql`,
+`migrations/down/20261106000800_plan_features_haiku.sql`,
 `20261106000700_haiku_catalog.sql` and `20261106000600_sponsored_pools.sql` (psql -X -v
 ON_ERROR_STOP=1 -f), or hide the row at once with `CATALOG_SOURCE=code`. The sponsored pool's
 daily spend cap ($5 upstream, `cpd` 6,250,000 billed) is a plain row value raised by catalog
