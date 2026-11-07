@@ -244,7 +244,7 @@ try {
   assert.equal(rpm.status, 'user_rpm', 'rpm is checked after the month passed');
   assert.equal(Number(rpm.cap_used_tokens), 0);
   const poolFull = await newUser('free');
-  assert.equal((await sponsored(poolFull, { p_pool: { cpd: 0 } })).status, 'pool_exhausted', 'a spent cap refuses (a pool with rpd 0 would read as the fair share: user_pool_share)');
+  assert.equal((await sponsored(poolFull, { p_pool: { cpd: 0 } })).status, 'pool_exhausted', 'a spent cap refuses (a pool with rpd 0 also reads pool_exhausted since 20261107000100)');
   assert.equal(Number((await monthRow(poolFull)).tokens), 0, 'a refusal by a later check holds nothing in the month');
   ok('order: daily requests, window, month, rpm, pool budgets; a later refusal leaves the month row at zero');
 
