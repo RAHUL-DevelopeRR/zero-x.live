@@ -679,7 +679,7 @@ export function planPolicy(env, plan, policies) {
 }
 
 // ── GET /v1/models (contract §3.2, §12.4) ──
-// A coding agent's system prompt and tool schemas alone take ~4K tokens (Neuron 7.0.0-alpha.4:
+// A coding agent's system prompt and tool schemas alone take ~4K tokens (Neuron alpha 4:
 // 3.8K input tokens for a one-line prompt), so a window below this cannot hold a working
 // session. Such a model stays listed, but never sets the window `auto` advertises.
 export const AGENT_MIN_CONTEXT = 65536;
@@ -695,7 +695,7 @@ export function usableContextWindow(entry, pools) {
 
 // Room the listed max_output_tokens leaves for the prompt. Clients size max_tokens from
 // max_output_tokens and refuse locally to send a request whose prompt plus max_tokens exceeds
-// context_window (Neuron 7.0.0-alpha.4, api providers/mod.rs preflight_message_request), so a
+// context_window (Neuron alpha 4, api providers/mod.rs preflight_message_request), so a
 // window listed with max_output_tokens equal to it blocked every request: Groq's 8K Free window
 // with 8K of output left no room for alpha.4's ~4K first turn. The router still fits max_tokens to
 // each request (router.js fitMaxTokens); this only keeps the listed pair sendable.

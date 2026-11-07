@@ -27,7 +27,7 @@ export const positiveInt = (value, fallback) => {
 /**
  * The body limits in bytes: BODY_LIMIT_BYTES (64 KiB) for every route, CHAT_BODY_LIMIT_BYTES
  * (2 MiB) for the chat routes and the relay. 2 MiB is the limit production enforced before this
- * module existed, so no released client loses a request: Neuron 7.0.0-alpha.4 sends 15-20 KB per
+ * module existed, so no released client loses a request: Neuron alpha 4 sends 15-20 KB per
  * turn (measured with the a4-compat harness), and its own preflight caps a conversation at the
  * model's context window (131,072 tokens on the Groq routes, about 0.5-0.6 MB of JSON), so 2 MiB
  * leaves three times that. The chat limit is never below the default.

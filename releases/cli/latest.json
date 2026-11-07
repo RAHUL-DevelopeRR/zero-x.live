@@ -2,97 +2,97 @@
   "schema_version": 1,
   "product": "cli",
   "channel": "stable",
-  "version": "7.0.0-alpha.4",
-  "released_at": "2026-11-03T18:27:37Z",
-  "notes_url": "https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/tag/v7.0.0-alpha.4",
+  "version": "7.0.0-alpha.5",
+  "released_at": "2026-11-07T13:54:34Z",
+  "notes_url": "https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/tag/v7.0.0-alpha.5",
   "minimum_version": null,
   "downloads": [
     {
       "platform": "linux-x64",
       "kind": "cli",
       "file": "neuron-linux-x64",
-      "url": "https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.4/neuron-linux-x64",
-      "sha256": "7473405526edc0b583e7b7d50ecf38d4bbee42836681ee5ad0f83921b9d5430d",
-      "size": 22996032
+      "url": "https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.5/neuron-linux-x64",
+      "sha256": "ac30a1955bc7b72b899cb2e7481af8235019e4b50aa4047a2c11eeaa55209b47",
+      "size": 27352608
     },
     {
       "platform": "linux-x64",
       "kind": "tui",
       "file": "neuron-tui-linux-x64",
-      "url": "https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.4/neuron-tui-linux-x64",
-      "sha256": "1993e6ddc7f0f34c3bb7d214ee35c6702da3199e13ab6b53744d7688917fce92",
-      "size": 127424640
+      "url": "https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.5/neuron-tui-linux-x64",
+      "sha256": "29bb2494ab28a0a39d7b6a7deb4a1391fdac8c101bec79d888801c93122a1aa3",
+      "size": 127527040
     },
     {
       "platform": "linux-arm64",
       "kind": "cli",
       "file": "neuron-linux-arm64",
-      "url": "https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.4/neuron-linux-arm64",
-      "sha256": "181883a8ae68adebd31efdae0332cfe13b4d11119c390c51f59c9510d8e6a6b2",
-      "size": 21776384
+      "url": "https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.5/neuron-linux-arm64",
+      "sha256": "b50b84708773e789aef02bf6878dd7a7913da81d3c4a4c18459490ff670b5dae",
+      "size": 25703976
     },
     {
       "platform": "linux-arm64",
       "kind": "tui",
       "file": "neuron-tui-linux-arm64",
-      "url": "https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.4/neuron-tui-linux-arm64",
-      "sha256": "2f922964a8208d21f0d3bda57bd5e4adc5dea47d18ae782b78c07beb11a36136",
-      "size": 126724240
+      "url": "https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.5/neuron-tui-linux-arm64",
+      "sha256": "e8c47928855da09278d91a0ec720d808a2cc0d7688786772859a15bfd89b6cf0",
+      "size": 126789776
     },
     {
       "platform": "macos-arm64",
       "kind": "cli",
       "file": "neuron-macos-arm64",
-      "url": "https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.4/neuron-macos-arm64",
-      "sha256": "29d3ad3b94d211df750d241057118c6f1d060217fc697d8c02bbb363ddf6effd",
-      "size": 19379664
+      "url": "https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.5/neuron-macos-arm64",
+      "sha256": "3a1df9cc15f2b5a2c2c0e9369930c32fd981358a832d91db2bad4dc8d8e12e8c",
+      "size": 23053440
     },
     {
       "platform": "macos-arm64",
       "kind": "tui",
       "file": "neuron-tui-macos-arm64",
-      "url": "https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.4/neuron-tui-macos-arm64",
-      "sha256": "0d1ac5f07c7bfbcb6bfcac07cf12d39a84845a3f1ca6ca9e83e800dfc674a494",
-      "size": 79495778
+      "url": "https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.5/neuron-tui-macos-arm64",
+      "sha256": "edfe7cadbe2552066ca2b3115b10a7c1f289ad01e7f5069ab64c4bceaac949fd",
+      "size": 79594850
     },
     {
       "platform": "macos-x64",
       "kind": "cli",
       "file": "neuron-macos-x64",
-      "url": "https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.4/neuron-macos-x64",
-      "sha256": "d2ed5733dc3e22f73051b00cf84382cf73d02ce4bedfe300788f177f27a5b2d3",
-      "size": 20176184
+      "url": "https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.5/neuron-macos-x64",
+      "sha256": "53c61bf6bc57041e83fe530acd920b66adf1045e2d759af605aeed69c0bf7af4",
+      "size": 24153200
     },
     {
       "platform": "macos-x64",
       "kind": "tui",
       "file": "neuron-tui-macos-x64",
-      "url": "https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.4/neuron-tui-macos-x64",
-      "sha256": "3a875a67c7e1fc23e4f9a87f8d4328c252ee005627c45591535fd8fe3ecf7c82",
-      "size": 85098576
+      "url": "https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.5/neuron-tui-macos-x64",
+      "sha256": "d770da1ba7c277324f49619ba553d496fe0d579f48822e6a424eff141229f3f8",
+      "size": 85213264
     },
     {
       "platform": "windows-x64",
       "kind": "cli",
       "file": "neuron-windows-x64.exe",
-      "url": "https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.4/neuron-windows-x64.exe",
-      "sha256": "ff66b4d8ea5a29b1d183aaab07a68286fa5471dd902d72f098839c78f2aa17aa",
-      "size": 19153920
+      "url": "https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.5/neuron-windows-x64.exe",
+      "sha256": "c92441581e208f90f070c8578ecd0a359c7befcac78bab20b1482e4ef5733d1a",
+      "size": 23291904
     },
     {
       "platform": "windows-x64",
       "kind": "tui",
       "file": "neuron-tui-windows-x64.exe",
-      "url": "https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.4/neuron-tui-windows-x64.exe",
-      "sha256": "a109f90dff7d93b84e65c59b264a037bca7874d0e988361b266ead5baf9d5b1c",
-      "size": 114573824
+      "url": "https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.5/neuron-tui-windows-x64.exe",
+      "sha256": "2c58936ccae3366853a3de4f381206d4b601f16ea9f656c56448c28b7f3cbf81",
+      "size": 114676736
     }
   ],
-  "checksums_url": "https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.4/SHA256SUMS",
+  "checksums_url": "https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.5/SHA256SUMS",
   "install": {
     "npm": "npm install -g @zero-x.live/neuron",
     "pip": "python -m pip install --pre neuroncli",
-    "powershell": "& ([scriptblock]::Create((irm https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.4/install.ps1))) -Version 7.0.0-alpha.4 -AddToPath",
-    "shell": "curl -fsSL https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.4/install.sh | sh -s -- --version 7.0.0-alpha.4"
+    "powershell": "& ([scriptblock]::Create((irm https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.5/install.ps1))) -Version 7.0.0-alpha.5 -AddToPath",
+    "shell": "curl -fsSL https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.5/install.sh | sh -s -- --version 7.0.0-alpha.5"
   }
 }

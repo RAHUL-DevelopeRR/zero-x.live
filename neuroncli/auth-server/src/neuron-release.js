@@ -5,11 +5,11 @@
 // command that differs from these, or a pip command without --pre while Neuron 7 is a
 // pre-release. To move the site to a new release, change the values below, then update the
 // pages until `node check-neuron-version.mjs` and `npm run check:web` pass.
-export const NEURON_VERSION = '7.0.0-alpha.4';
+export const NEURON_VERSION = '7.0.0-alpha.5';
 // PyPI spells the same pre-release the PEP 440 way.
-export const NEURON_PYPI_VERSION = '7.0.0a4';
-// As the pages write it (the GitHub release was published on 2026-11-03).
-export const NEURON_RELEASE_DATE = '3 November 2026';
+export const NEURON_PYPI_VERSION = '7.0.0a5';
+// As the pages write it (the GitHub release was published on 2026-11-07).
+export const NEURON_RELEASE_DATE = '7 November 2026';
 export const NEURON_REPOSITORY = 'RAHUL-DevelopeRR/neuron-v2';
 export const NEURON_RELEASE_URL = `https://github.com/${NEURON_REPOSITORY}/releases/tag/v${NEURON_VERSION}`;
 // A pre-release is never GitHub's "latest" release, and pip skips it unless asked with --pre.

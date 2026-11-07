@@ -84,7 +84,7 @@ export function identityOf(model) {
 /**
  * A row's health word (docs/PLATFORM_CONTRACT.md section 15.1): `availability` when the gateway
  * sends it (available, degraded, unknown, busy, unavailable), else `status`, where `blurred` is the
- * v1.3 word for unavailable that the gateway keeps for Neuron 7.0.0-alpha.4.
+ * v1.3 word for unavailable that the gateway keeps for Neuron 7.0.0-alpha.5.
  */
 export function healthWord(entry) {
   if (entry && typeof entry.availability === 'string' && entry.availability) return entry.availability;
