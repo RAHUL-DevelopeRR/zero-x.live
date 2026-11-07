@@ -211,6 +211,15 @@ assert.ok(!/secrets\.SEARXNG_URL/.test(workerJob), 'the Worker never gets the pr
 // Web search's fallback key reaches both runtimes, so a VM deploy never drops it.
 assert.ok(list(workerJob, 'OPTIONAL_SECRETS').includes('BRAVE_API_KEY') && list(ec2Job, 'OPTIONAL_SECRETS').includes('BRAVE_API_KEY'),
   'BRAVE_API_KEY reaches the Worker and the VM');
+// Hosted connectors (GATEWAY_SETUP.md, "Hosted connectors"): the key that seals linked accounts' tokens,
+// the switch and every vendor's OAuth app id and secret reach both runtimes through the secret set
+// (a repository variable never reaches the Worker). All optional: unset, connectors stay off (404).
+const CONNECTOR_SECRETS = ['HOSTED_CONNECTORS', 'CONNECTOR_TOKENS_KEK',
+  ...['ATLASSIAN', 'GITHUB', 'LINEAR', 'NOTION', 'SLACK'].flatMap(id => [`CONNECTOR_${id}_CLIENT_ID`, `CONNECTOR_${id}_CLIENT_SECRET`])];
+for (const name of CONNECTOR_SECRETS) {
+  assert.ok(list(workerJob, 'OPTIONAL_SECRETS').includes(name) && list(ec2Job, 'OPTIONAL_SECRETS').includes(name), `${name} reaches the Worker and the VM`);
+  assert.ok(!list(workerJob, 'REQUIRED_SECRETS').includes(name) && !list(ec2Job, 'REQUIRED_SECRETS').includes(name), `${name} stays optional`);
+}
 assert.deepEqual(list(ec2Job, 'VM_VARS'), ['EXTRA_WEB_HOSTS']);
 // package-release.sh dates the release's sitemap from the history, as job deploy does.
 assert.match(ec2Job, /uses: actions\/checkout@\S+ # v[\d.]+\n {8}with:\n {10}fetch-depth: 0\n/);

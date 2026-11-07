@@ -4,10 +4,9 @@
  * slots for the anonymous /v1/models/stream. Every limit is an environment variable with a default
  * (GATEWAY_SETUP.md, "Gateway limits"); a value that is not a positive integer keeps the default.
  *
- * server.js enforces the body limits by counting bytes (declared Content-Length first, then the
- * bytes read); the app and the Worker's proxy switch enforce the declared length only: a body sent
- * without Content-Length is bounded there by the runtime (the Worker: Cloudflare's own request
- * body limit) and, once forwarded, by the Node server.
+ * Both runtimes count bytes: server.js (declared Content-Length first, then the bytes read) and the
+ * app (declared length first, then readBodyWithin for a chunked body or an understated length), so
+ * a Worker body sent without Content-Length is also bounded before auth.
  */
 
 const KIB = 1024;
@@ -71,6 +70,53 @@ export function declaredBodyOver(headers, limit) {
   const length = Number(text);
   return length > limit ? length : null;
 }
+
+/**
+ * Reads a request body while counting its bytes, and stops at the first byte over `limit` (the
+ * stream is cancelled, so nothing more is buffered). Returns { bytes } with the whole body,
+ * { bytes: null } when the request has no body, or { tooLarge: true }. Used for bodies sent
+ * without a usable Content-Length (chunked) and for a declared length that understates the body.
+ */
+export async function readBodyWithin(request, limit, { timeoutMs = 0 } = {}) {
+  if (!request.body) return { bytes: null };
+  const reader = request.body.getReader();
+  const parts = [];
+  let size = 0;
+  let timer;
+  const deadline = timeoutMs > 0 ? new Promise(resolve => { timer = setTimeout(() => resolve({ timedOut: true }), timeoutMs); }) : null;
+  try {
+    for (;;) {
+      const step = reader.read();
+      const result = deadline ? await Promise.race([step, deadline]) : await step;
+      if (result.timedOut) {
+        step.catch(() => {});
+        reader.cancel().catch(() => {});
+        return { timedOut: true };
+      }
+      const { done, value } = result;
+      if (done) break;
+      size += value.byteLength;
+      if (size > limit) {
+        await reader.cancel().catch(() => {});
+        return { tooLarge: true };
+      }
+      parts.push(value);
+    }
+  } catch {
+    // The connection broke or the stream errored mid-body.
+    return { failed: true };
+  } finally {
+    clearTimeout(timer);
+    try { reader.releaseLock?.(); } catch { /* a read is still pending after a timeout */ }
+  }
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const part of parts) { bytes.set(part, offset); offset += part.byteLength; }
+  return { bytes };
+}
+
+/** Longest a client may take to deliver a body the gateway buffers (BODY_READ_TIMEOUT_MS, default 30 s). */
+export const bodyReadTimeoutMs = env => positiveInt(env?.BODY_READ_TIMEOUT_MS, 30000);
 
 export const newRequestId = () => 'req_' + crypto.randomUUID().replace(/-/g, '');
 

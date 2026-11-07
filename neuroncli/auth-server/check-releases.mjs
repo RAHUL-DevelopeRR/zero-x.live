@@ -5,6 +5,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import app from './src/index.js';
 import { RELEASE_MANIFEST_PATH, unreleasedManifest, validateReleaseManifest } from './src/routes/releases.js';
+import { NEURON_VERSION, NEURON_INSTALL } from './src/neuron-release.js';
+import { buildCliManifest, parseSha256Sums } from './scripts/build-release-manifest.mjs';
 
 const root = new URL('../../', import.meta.url);
 const committed = product => JSON.parse(readFileSync(new URL(`releases/${product}/latest.json`, root), 'utf8'));
@@ -35,10 +37,42 @@ const desktopRelease = () => ({
 // ── 1. Validator ──
 for (const product of ['cli', 'desktop']) {
   assert.deepEqual(validateReleaseManifest(committed(product), product), [], `committed ${product} manifest is valid`);
-  assert.equal(committed(product).version, null, `the committed ${product} manifest says nothing is released yet`);
+  if (product === 'desktop') assert.equal(committed(product).version, null, 'the committed desktop manifest says nothing is released yet');
   assert.deepEqual(validateReleaseManifest(unreleasedManifest(product), product), [], `built-in ${product} manifest is valid`);
 }
 assert.deepEqual(validateReleaseManifest(cliRelease(), 'cli'), []);
+
+// ── 1b. The generator (scripts/build-release-manifest.mjs) and the committed CLI manifest ──
+{
+  const platforms = ['linux-x64', 'linux-arm64', 'macos-arm64', 'macos-x64', 'windows-x64'];
+  const fileOf = (kind, platform) => `neuron-${kind === 'tui' ? 'tui-' : ''}${platform}${platform.startsWith('windows') ? '.exe' : ''}`;
+  const hex = n => n.toString(16).padStart(2, '0').repeat(32);
+  const files = platforms.flatMap((platform, i) => ['cli', 'tui'].map((kind, j) => ({ file: fileOf(kind, platform), hash: hex(i * 2 + j + 1), size: 1000 + i * 10 + j })));
+  const sums = [...files.map(f => `${f.hash}  ${f.file}`), `${hex(200)}  install.sh`, `${hex(201)}  THIRD_PARTY_NOTICES.md`].join('\n') + '\n';
+  const assetList = [...files.map(f => ({ name: f.file, size: f.size, digest: 'sha256:' + f.hash })), { name: 'install.sh', size: 5 }, { name: 'SHA256SUMS', size: 9 }, { name: 'neuron-linux-x64.sha256', size: 83 }];
+  const input = { tag: 'v7.0.0-alpha.4', publishedAt: '2026-11-03T18:27:37Z', assets: assetList, sums };
+  const built = buildCliManifest(input);
+  assert.deepEqual(validateReleaseManifest(built, 'cli'), [], 'a generated manifest passes the Worker validator');
+  assert.equal(built.version, '7.0.0-alpha.4');
+  assert.equal(built.released_at, '2026-11-03T18:27:37Z');
+  assert.equal(built.downloads.length, 10, 'cli and tui for five platforms; scripts, notices and .sha256 files are not downloads');
+  assert.deepEqual(built.downloads[0], { platform: 'linux-x64', kind: 'cli', file: 'neuron-linux-x64', url: 'https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.4/neuron-linux-x64', sha256: hex(1), size: 1000 });
+  assert.equal(built.downloads.at(-1).file, 'neuron-tui-windows-x64.exe');
+  assert.equal(built.checksums_url, 'https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.4/SHA256SUMS');
+  assert.equal(built.notes_url, 'https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/tag/v7.0.0-alpha.4');
+  assert.deepEqual(buildCliManifest({ ...input, assets: [...assetList].reverse(), sums: sums.split('\n').reverse().join('\n') }), built, 'idempotent: the order of the inputs does not matter');
+  assert.deepEqual(parseSha256Sums('ABCD'.padEnd(64, '0') + '  a\n\nnot a line\n'), new Map([['a', 'abcd'.padEnd(64, '0')]]));
+  assert.throws(() => buildCliManifest({ ...input, sums: sums.replace(files[0].hash + '  ' + files[0].file, '') }), /no checksum/, 'a binary without a checksum fails');
+  assert.throws(() => buildCliManifest({ ...input, assets: assetList.map(a => a.name === files[0].file ? { ...a, digest: 'sha256:' + hex(99) } : a) }), /does not match/, 'a GitHub digest that disagrees with SHA256SUMS fails');
+  assert.throws(() => buildCliManifest({ ...input, tag: 'latest' }), /tag/);
+  assert.throws(() => buildCliManifest({ ...input, assets: assetList.filter(a => a.name !== files[0].file) }), /missing/, 'a checksum for a binary that is not attached fails');
+
+  const live = committed('cli');
+  assert.equal(live.version, NEURON_VERSION, 'the committed CLI manifest is the release the site names');
+  assert.equal(live.downloads.length, 10);
+  assert.deepEqual(live.install, { npm: NEURON_INSTALL.npm, pip: NEURON_INSTALL.pip, powershell: NEURON_INSTALL.powershell, shell: NEURON_INSTALL.shell });
+  for (const entry of live.downloads) assert.ok(entry.size > 0 && /^[0-9a-f]{64}$/.test(entry.sha256), entry.file);
+}
 assert.deepEqual(validateReleaseManifest(desktopRelease(), 'desktop'), []);
 assert.deepEqual(validateReleaseManifest({ ...cliRelease(), version: '6.3.0-beta.1', channel: 'beta' }, 'cli'), []);
 const broken = (product, change) => {

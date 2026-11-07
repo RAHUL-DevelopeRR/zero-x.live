@@ -6,7 +6,9 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { createRequire } from 'node:module';
 import app from './src/index.js';
-import { bodyLimitFor, bodyLimits, declaredBodyOver, resetModelStreamSlots, streamLimits, streamSlots, windowLimiter } from './src/request-limits.js';
+import { boundedRequest } from './src/bounded-request.js';
+import { callerCountry } from './src/catalog.js';
+import { bodyLimitFor, bodyLimits, declaredBodyOver, readBodyWithin, resetModelStreamSlots, streamLimits, streamSlots, windowLimiter } from './src/request-limits.js';
 import { authCacheSize, noteRejected, rejectedRecently, rejectionsExceeded, resetAuthCache } from './src/auth-cache.js';
 import { resetSharedStatusFrames, sharedStatusFrame } from './src/routes/plans.js';
 
@@ -72,6 +74,99 @@ try {
   assert.notEqual(tuned.status, 413, 'BODY_LIMIT_BYTES raises the limit');
   assert.equal((await call('/health', { method: 'GET' })).status, 200);
   ok('app: 413 request_too_large from the declared length before any database call, chat exempt, limits configurable');
+
+  // ── M1: a body without a usable Content-Length is counted as it is read, on both runtimes ──
+  const chunkedBody = (chunks, size) => new ReadableStream({ start(controller) {
+    for (let i = 0; i < chunks; i++) controller.enqueue(new TextEncoder().encode('q'.repeat(size)));
+    controller.close();
+  } });
+  const send = (path, body, headers, bindings) => call(path, { method: 'POST', body, duplex: 'half',
+    headers: { 'Content-Type': 'application/json', ...headers } }, bindings);
+  for (const [runtime, bindings] of [['worker', env], ['node', { ...env, NEURON_RUNTIME: 'node' }]]) {
+    for (const path of ['/auth/cli/session', '/api/keys', '/auth/device/code']) {
+      const calls = databaseCalls;
+      const chunked = await send(path, chunkedBody(10, 10000), {}, bindings);
+      assert.equal(chunked.status, 413, `${runtime} ${path}: chunked body over 64 KiB`);
+      assert.equal((await chunked.json()).error.code, 'request_too_large');
+      assert.equal(databaseCalls, calls, `${runtime} ${path}: refused before any database call`);
+    }
+    // A declared length that understates the bytes actually sent is counted too.
+    const lying = await send('/auth/cli/session', 'x'.repeat(70000), { 'Content-Length': '10' }, bindings);
+    assert.equal(lying.status, 413, `${runtime}: declared length smaller than the body`);
+    const honest = await send('/auth/device/token', '{}', { 'Content-Length': '2' }, bindings);
+    assert.equal(honest.status, 400, `${runtime}: a small declared body reaches the route`);
+    const smallChunked = await send('/auth/device/token', chunkedBody(2, 5), {}, bindings);
+    assert.equal(smallChunked.status, 400, `${runtime}: a small chunked body reaches the route`);
+    const chatChunked = await send('/v1/chat/completions', chunkedBody(10, 10000), { Authorization: 'Bearer ses_nobody' }, bindings);
+    assert.equal(chatChunked.status, 401, `${runtime}: chat is exempt from the 64 KiB limit when chunked`);
+    const chatOver = await send('/v1/chat/completions', chunkedBody(3, 1024 * 1024), { Authorization: 'Bearer ses_nobody' }, bindings);
+    assert.equal(chatOver.status, 413, `${runtime}: chat keeps its own ceiling when chunked`);
+    const hookChunked = await send('/webhooks/razorpay', chunkedBody(20, 10000), {}, bindings);
+    assert.notEqual(hookChunked.status, 413, `${runtime}: the webhook keeps its 256 KiB cap when chunked`);
+    const hookOver = await send('/webhooks/razorpay', chunkedBody(30, 10000), {}, bindings);
+    assert.equal(hookOver.status, 413, `${runtime}: and refuses more than that`);
+    assert.equal((await hookOver.json()).error.code, 'invalid_request', `${runtime}: with the webhook route's own code`);
+  }
+  const counted = await readBodyWithin(new Request(BASE + '/x', { method: 'POST', body: chunkedBody(3, 100), duplex: 'half' }), 1000);
+  assert.equal(counted.bytes.byteLength, 300);
+  const stopped = await readBodyWithin(new Request(BASE + '/x', { method: 'POST', body: chunkedBody(100, 100), duplex: 'half' }), 1000);
+  assert.equal(stopped.tooLarge, true);
+  assert.equal((await readBodyWithin(new Request(BASE + '/x'), 10)).bytes, null, 'no body');
+  ok('app: chunked and understated bodies are counted against the route limit on both runtimes');
+
+  // ── Review follow-ups: the rebuilt request, signed webhooks, mid-stream errors, the read deadline ──
+  {
+    const text = '{"event":"payment.captured","note":"café 🚀"}';
+    const bytes = new TextEncoder().encode(text);
+    const original = new Request(BASE + '/api/keys', { method: 'POST', body: 'x'.repeat(5), headers: {
+      'Content-Type': 'application/json', Authorization: 'Bearer ses_x', 'Content-Length': '5', 'X-Keep': 'yes' } });
+    original.cf = { country: 'IN' };
+    const rebuilt = boundedRequest(original, bytes);
+    assert.equal(rebuilt.headers.get('content-length'), String(bytes.byteLength), 'Content-Length is set from the counted bytes');
+    assert.equal(rebuilt.headers.get('transfer-encoding'), null);
+    assert.equal(rebuilt.headers.get('authorization'), 'Bearer ses_x', 'other headers are kept');
+    assert.equal(rebuilt.headers.get('x-keep'), 'yes');
+    assert.equal(rebuilt.headers.get('content-type'), 'application/json');
+    assert.equal(rebuilt.cf?.country, 'IN', 'raw.cf is carried');
+    assert.equal(callerCountry(rebuilt, {}), 'IN', 'the caller country survives the rebuild');
+    assert.equal(await rebuilt.text(), text, 'the route still parses the body');
+    const noLength = boundedRequest(new Request(BASE + '/x', { method: 'POST', body: 'abc', headers: { 'Transfer-Encoding': 'chunked' } }), bytes);
+    assert.equal(noLength.headers.get('content-length'), String(bytes.byteLength));
+
+    // A validly signed Razorpay webhook survives the rebuild byte for byte, also with a lying Content-Length.
+    const secret = 'whsec_limits_test_secret';
+    const signed = new TextEncoder().encode(JSON.stringify({ event: 'payment.captured', note: 'café 🚀', payload: {} }));
+    const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+    const signature = Buffer.from(await crypto.subtle.sign('HMAC', key, signed)).toString('hex');
+    const hookEnv = { ...env, RAZORPAY_WEBHOOK_SECRET: secret };
+    for (const [label, headers, body] of [['exact', {}, signed],
+      ['understated Content-Length', { 'Content-Length': '10' }, signed],
+      ['chunked', {}, new ReadableStream({ start(c) { c.enqueue(signed.slice(0, 20)); c.enqueue(signed.slice(20)); c.close(); } })]]) {
+      const hook = await call('/webhooks/razorpay', { method: 'POST', body, duplex: 'half',
+        headers: { 'Content-Type': 'application/json', 'X-Razorpay-Signature': signature, ...headers } }, hookEnv);
+      assert.equal(hook.status, 200, `webhook ${label}: the signature over the raw bytes verifies after the rebuild`);
+    }
+    const tampered = await call('/webhooks/razorpay', { method: 'POST', body: signed, headers: { 'X-Razorpay-Signature': '0'.repeat(64) } }, hookEnv);
+    assert.equal(tampered.status, 400, 'a wrong signature is still refused');
+
+    // A body that fails mid-stream answers 400 (not 500); one that never finishes answers 408 at the deadline.
+    const failing = () => new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode('{"a":')); },
+      pull() { throw new Error('connection reset'); } });
+    for (const path of ['/auth/device/code', '/api/keys', '/v1/chat/completions', '/webhooks/razorpay']) {
+      const r = await call(path, { method: 'POST', body: failing(), duplex: 'half', headers: { 'Content-Type': 'application/json' } }, hookEnv);
+      assert.ok([400, 413].includes(r.status), `${path}: a mid-stream read error answers ${r.status}, not 500`);
+    }
+    const stalled = () => new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode('{')); } });
+    const started = Date.now();
+    const timedOut = await call('/v1/chat/completions', { method: 'POST', body: stalled(), duplex: 'half',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ses_nobody' } }, { ...env, BODY_READ_TIMEOUT_MS: '200' });
+    assert.equal(timedOut.status, 408, 'a body that stalls past the read deadline answers 408');
+    assert.equal((await timedOut.json()).error.code, 'request_timeout');
+    assert.ok(Date.now() - started < 3000);
+    const direct = await readBodyWithin(new Request(BASE + '/x', { method: 'POST', body: stalled(), duplex: 'half' }), 1000, { timeoutMs: 100 });
+    assert.equal(direct.timedOut, true);
+    ok('review follow-ups: corrected headers on the rebuilt request, signed webhook intact, mid-stream errors, read deadline');
+  }
 
   // The asset server decodes percent-encoding after the app's path guards: the operator pages' files
   // stay hidden under every spelling (audit 3b).
