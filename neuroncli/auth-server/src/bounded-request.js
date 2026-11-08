@@ -13,7 +13,8 @@ export function boundedRequest(raw, bytes) {
   // Built from the URL, not from `raw`: its body is already read, and the Workers runtime refuses to
   // construct a Request from a used one. `cf` goes in through the init, where workerd accepts it;
   // assigning it afterwards throws there because the property is read-only.
-  const init = { method: raw.method, headers, body: bytes, redirect: raw.redirect };
+  // The signal is the client's disconnect: dropping it let a request outlive a caller that left.
+  const init = { method: raw.method, headers, body: bytes, redirect: raw.redirect, signal: raw.signal };
   if (raw.cf) init.cf = raw.cf;
   return carryCallerCountry(raw, new Request(raw.url, init));
 }
