@@ -81,9 +81,9 @@ ANTHROPIC_MODELS = "claude-sonnet-5-5,claude-opus-5-5,claude-haiku-5-5"
 # the code catalog). "code" is the kill switch: src/catalog.js only, whatever the rows say.
 # CATALOG_DB_MODELS is no longer read: promoted discovery models are draft catalog rows.
 # CATALOG_SOURCE = "code"
-# Public Razorpay key id (rzp_live_...). RAZORPAY_KEY_SECRET and RAZORPAY_WEBHOOK_SECRET are
+# Public Razorpay key id (TEST MODE, rzp_test_...; restore the rzp_live_ id for real payments). RAZORPAY_KEY_SECRET and RAZORPAY_WEBHOOK_SECRET are
 # Worker secrets; billing answers 503 billing_not_configured until all three are set.
-RAZORPAY_KEY_ID = "rzp_live_TK43zZbnvcWZa8"
+RAZORPAY_KEY_ID = "rzp_test_TxXi333VQ3fP5D"
 # The Content-Security-Policy is enforced (inline scripts and styles by sha256, src/csp.js). "false" is the
 # kill switch: the same policy as Content-Security-Policy-Report-Only.
 CSP_ENFORCE = "true"
