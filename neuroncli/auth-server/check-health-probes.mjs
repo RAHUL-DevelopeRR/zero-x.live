@@ -306,6 +306,80 @@ const entry = id => CATALOG.find(item => item.id === id);
   ok('a 400 the classifier gives a specific kind (model gone, rejected key, bad tool call) keeps that verdict; only a plain 400 is probe_misconfigured');
 }
 
+/* ───────────── 2d. The daily test-request count restarts at 00:00 UTC ───────────── */
+
+{
+  // Incident 2026-11-08: runProbes stamped probe_day = today before reading usedToday, so the count
+  // carried over from yesterday. A pool that reached its cap probed once just after 00:00 UTC and
+  // then never again that day; every row went stale and /v1/models/status showed unknown.
+  let now = Date.parse('2026-11-08T00:00:18Z');
+  const prober = new HealthProber({}, { store: {}, now: () => now, log: quiet });
+  const sent = [];
+  // Stub the store and the providers: every budget check passes, users' traffic shows nothing.
+  prober.budget = () => ({});
+  prober.take = async (item, budget, maxTokens, messages, tools, take) => (take ? { status: 'ok' } : {});
+  prober.watchTraffic = async () => {};
+  prober.releaseSlots = async () => {};
+  const probe = kind => async item => {
+    sent.push({ pool: item.key, kind, at: now });
+    const row = prober.row(item);
+    if (kind === 'tool') Object.assign(row, { tool_ok: true, tool_checked_at: now, checked_at: now });
+    else Object.assign(row, { status: 'available', base_status: 'available', probed_at: now, checked_at: now, verdict_at: now });
+  };
+  prober.chatProbe = probe('chat');
+  prober.toolProbe = probe('tool');
+  const poolItem = id => {
+    const item = entry(id);
+    const pool = item.pools[0];
+    return { entry: item, pool, key: poolKey(item, pool), plan: probePlan(item, pool) };
+  };
+  const groq = poolItem('groq/openai/gpt-oss-120b');
+  const yesterdayAt = Date.parse('2026-11-07T12:00:00Z'); // last tested long enough ago to be due
+  const seed = (item, fields) => Object.assign(prober.row(item), { status: 'available', base_status: 'available',
+    probed_at: yesterdayAt, checked_at: yesterdayAt, tool_checked_at: yesterdayAt, verdict_at: yesterdayAt, ...fields });
+
+  // 1. Midnight rollover: yesterday's spent cap does not carry into today.
+  seed(groq, { probe_day: '2026-11-07', probe_count: groq.plan.dailyCap });
+  assert.equal(await prober.runProbes([groq], new Set()), 1, 'one test request just after 00:00 UTC');
+  assert.equal(prober.row(groq).probe_day, '2026-11-08');
+  assert.equal(prober.row(groq).probe_count, 1, `the count restarts at 1, not ${groq.plan.dailyCap + 1}`);
+
+  // 2. Probing continues through the day.
+  const firstProbe = prober.row(groq).probed_at;
+  now += 61 * 60_000; // past Groq's hourly chat interval
+  assert.equal(await prober.runProbes([groq], new Set()), 1, 'the next chat test an hour later is sent');
+  assert.ok(prober.row(groq).probed_at > firstProbe, 'probed_at moves forward');
+  assert.equal(prober.row(groq).probe_count, 2);
+  for (let hour = 0; hour < 12; hour++) { now += 61 * 60_000; await prober.runProbes([groq], new Set()); }
+  assert.ok(sent.filter(call => call.pool === groq.key).length >= 12, 'a pool keeps being tested all day');
+
+  // 3. The cap still holds within a day.
+  seed(groq, { probe_day: '2026-11-08', probe_count: groq.plan.dailyCap, probed_at: null });
+  const capped = { ...prober.row(groq) };
+  const before = sent.length;
+  assert.equal(await prober.runProbes([groq], new Set()), 0, 'no test request past the daily cap');
+  assert.equal(sent.length, before);
+  assert.deepEqual(prober.row(groq), capped, 'and the row is unchanged');
+
+  // 4. OpenRouter's account-wide cap restarts too.
+  now = Date.parse('2026-11-08T00:00:23Z');
+  const north = poolItem('cohere/north-mini-code:free');
+  const minimax = poolItem('minimax/minimax-m3.1-flash:free');
+  const cap = north.plan.providerDailyCap;
+  seed(north, { probe_day: '2026-11-07', probe_count: cap - 1 });
+  seed(minimax, { probe_day: '2026-11-07', probe_count: 1 });
+  const orSent = () => sent.filter(call => call.pool === north.key || call.pool === minimax.key).length;
+  const orBefore = orSent();
+  await prober.runProbes([north, minimax], new Set());
+  assert.equal(orSent() - orBefore, 2, "yesterday's OpenRouter total does not block today's tests");
+  assert.deepEqual([prober.row(north).probe_count, prober.row(minimax).probe_count], [1, 1]);
+  now += north.plan.chatMs + 60_000;
+  await prober.runProbes([north, minimax], new Set());
+  assert.ok(orSent() - orBefore > 2, 'more OpenRouter tests later the same day, up to the account cap');
+  assert.ok(prober.row(north).probe_count + prober.row(minimax).probe_count <= cap, 'within the account cap');
+  ok('daily test-request count restarts at 00:00 UTC (pool and OpenRouter caps); probes continue all day; the cap still holds');
+}
+
 /* ───────────── 3. Against Postgres and mock providers ───────────── */
 
 const env = {
