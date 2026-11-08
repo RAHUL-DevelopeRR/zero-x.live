@@ -12,7 +12,7 @@ const isFile = file => existsSync(new URL(file, root)) && statSync(new URL(file,
 
 const PUBLIC_PAGES = ['index.html', 'pricing.html', 'neuron-cli.html', 'docs.html', 'ai-coding-agent.html', 'free-ai-coding-agent.html', 'claude-code-alternative.html', 'docs/trust.html', 'docs/data.html', 'download.html', 'changelog.html', 'refund.html', 'contact.html', 'shipping.html', 'privacy.html', 'terms.html'];
 const PRIVATE_PAGES = ['dashboard.html', '404.html', 'neuroncli/index.html'];
-const SITE_SCRIPTS = ['dashboard.js', 'pricing.js', 'billing-checkout.js', 'home.js', 'download.js', 'billing-details.js', 'changelog.js', 'site-nav.js', 'announce.js'];
+const SITE_SCRIPTS = ['dashboard.js', 'pricing.js', 'billing-checkout.js', 'home.js', 'download.js', 'billing-details.js', 'changelog.js', 'site-nav.js', 'announce.js', 'copy-code.js'];
 const RELEASE_MANIFESTS = ['releases/cli/latest.json', 'releases/desktop/latest.json'];
 const SITE_FILES = [...PUBLIC_PAGES, ...PRIVATE_PAGES, ...SITE_SCRIPTS, ...RELEASE_MANIFESTS, 'zx-tokens.css', 'home.css', 'content.css', 'zerox-auth.js', 'neuroncli/login/index.html', 'neuroncli/callback/index.html'];
 const BASES = {'dashboard.html': 'https://dashboard.zero-x.live/', '404.html': 'https://zero-x.live/404', 'neuroncli/index.html': 'https://zero-x.live/neuroncli/'};
@@ -1292,6 +1292,156 @@ assert.equal(checkout.normalizeCurrency('EUR'), 'USD');
     {product: 'neucockpit', version: '1.0.0', url: 'https://github.com/x'}, {product: 'cli', version: '1.0.0', url: 'https://evil.example/'}]});
   assert.equal(view.length, 1, 'unknown products and foreign links are dropped');
   assert.equal(view[0].published, 'November 2, 2026');
+}
+
+/* ───────────── Copy buttons on command blocks (copy-code.js) ───────────── */
+
+// Every command block carries one icon-only copy button: a native button with an accessible name, the
+// copy and check icons from the sprite, and a target id that names the block's own <code>. Only pure
+// response samples (marked data-sample) have none. Pages other than the dashboard announce through
+// #copy-status and load /copy-code.js after the header script; the dashboard keeps its toast binding.
+{
+  const COPY_PAGES = ['index.html', 'download.html', 'neuron-cli.html', 'docs.html', 'ai-coding-agent.html', 'free-ai-coding-agent.html', 'claude-code-alternative.html', 'dashboard.html'];
+  const sprite = read('icons.svg');
+  for (const icon of ['copy', 'check']) assert.match(sprite, new RegExp(`<symbol id="${icon}"`), 'icons.svg has #' + icon);
+  for (const file of COPY_PAGES) {
+    const html = read(file);
+    const blocks = [...html.matchAll(/<div class="(zx-code\b[^"]*)"([^>]*)>([\s\S]*?)<\/pre>([\s\S]*?)<\/div>/g)];
+    assert.ok(blocks.length > 0, file + ': has command blocks');
+    assert.equal(blocks.length, (html.match(/<pre><code/g) || []).length, file + ': every <pre><code> sits in a zx-code block');
+    let copies = 0;
+    for (const [, cls, extra, body, after] of blocks) {
+      const where = `${file}: ${body.replace(/<[^>]+>/g, '').slice(0, 40)}`;
+      if (/\bdata-sample\b/.test(extra)) {
+        assert.ok(!after.includes('zx-copy'), where + ': a response sample has no copy button');
+        assert.match(body.replace(/<[^>]+>/g, '').trim(), /^\{/, where + ': only JSON response samples skip the copy button');
+        continue;
+      }
+      const buttons = tags(after, 'button');
+      assert.equal(buttons.length, 1, where + ': one copy button');
+      const b = buttons[0];
+      assert.equal(b.class, 'zx-copy', where + ': icon-only zx-copy button');
+      assert.equal(b.type, 'button', where + ': type=button');
+      assert.equal(b.title, 'Copy', where + ': title');
+      assert.match(b['aria-label'] || '', /^Copy [a-zA-Z]/, where + ': aria-label names what it copies');
+      assert.ok(b['data-copy-label'], where + ': data-copy-label');
+      assert.match(body, new RegExp(`<code id="${b['data-copy-target']}">`), where + ': target is the block\'s own <code>');
+      assert.ok(/\bzx-code--copy\b/.test(cls), where + ': zx-code--copy reserves room for the button');
+      assert.match(after, /<svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="\/icons\.svg#copy"\/><\/svg>/, where + ': copy icon');
+      assert.match(after, /<svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="\/icons\.svg#check"\/><\/svg>/, where + ': check icon');
+      assert.doesNotMatch(after, />\s*Copy\s*</, where + ': no text label');
+      copies++;
+    }
+    const targets = tags(html, 'button').filter(b => 'data-copy-target' in b).map(b => b['data-copy-target']);
+    assert.equal(targets.length, copies, file + ': every copy button sits in a command block');
+    assert.equal(new Set(targets).size, targets.length, file + ': copy target ids are unique');
+    for (const id of targets) assert.equal(ids(html).filter(x => x === id).length, 1, `${file}: #${id} exists once`);
+    const scripts = tags(html, 'script').filter(s => s.src).map(s => s.src);
+    if (file === 'dashboard.html') {
+      assert.ok(!scripts.includes('/copy-code.js'), 'dashboard.html keeps its own toast binding');
+      continue;
+    }
+    const status = tags(html, 'p').find(p => p.id === 'copy-status');
+    assert.ok(status && status.role === 'status' && status['aria-live'] === 'polite' && /\bzx-visually-hidden\b/.test(status.class), file + ': visually hidden #copy-status live region');
+    assert.ok(tags(html, 'script').some(s => s.src === '/copy-code.js' && s.type === 'module'), file + ': loads /copy-code.js as a module');
+    assert.ok(scripts.indexOf('/site-nav.js') >= 0 && scripts.indexOf('/copy-code.js') > scripts.indexOf('/site-nav.js'), file + ': copy-code.js after site-nav.js');
+  }
+  // home.js and download.js share the one implementation; nothing gates it on [data-home].
+  assert.match(read('home.js'), /export \{ copyButtons \} from '\.\/copy-code\.js';/, 'home.js re-exports copyButtons');
+  assert.doesNotMatch(read('home.js'), /navigator\.clipboard/, 'home.js has no second copy implementation');
+  assert.match(read('download.js'), /import \{ copyButtons \} from '\.\/copy-code\.js';/, 'download.js imports copy-code.js');
+  const home = await import(new URL('home.js', root));
+  const copyModule = await import(new URL('copy-code.js', root));
+  assert.equal(home.copyButtons, copyModule.copyButtons, 'one copyButtons');
+  // Styles: a 32px icon button (40px for touch), room reserved in the block, the check in the success colour.
+  const css = read('zx-tokens.css');
+  assert.match(css, /\.zx-copy \{[^}]*width: 32px; height: 32px;/, 'zx-copy is 32px');
+  assert.match(css, /@media \(pointer: coarse\) \{[^}]*\.zx-copy \{ width: 40px; height: 40px;/, 'zx-copy is 40px on touch');
+  assert.match(css, /\.zx-code--copy pre, \.zx-code--copy \.zx-code__label \{ padding-right: 48px; \}/, 'the block reserves room for the button');
+  assert.match(css, /\.zx-copy\[data-state="copied"\] \{[^}]*color: var\(--zx-success\)/, 'copied shows the check in --zx-success');
+  assert.match(css, /^\.zx-copy \{[^}]*background: inherit;/m, 'the button takes its code block background (also the homepage CTA override)');
+  assert.doesNotMatch(css, /^\.zx-copy \{[^}]*background: var\(--zx-code-bg\)/m, 'no fixed code background on the button');
+  assert.match(css, /^\.zx-copy\[data-state="selected"\] \{[^}]*color: var\(--zx-ink\);[^}]*border-color: var\(--zx-border-strong\);[^}]*background: var\(--zx-bg\);/m, 'a refused clipboard shows a visible selected state');
+  assert.match(css, /\.zx-copy:focus-visible \{[^}]*box-shadow: var\(--zx-focus\)/, 'visible keyboard focus');
+  assert.doesNotMatch(css, /padding-right: 84px/, 'the old text-button padding is gone');
+}
+
+/* ───────────── Dark/light switch (site-nav.js installThemeToggle) ───────────── */
+
+// Every page with the shared header carries one icon-only theme button between the mark and the
+// Menu button (CSS order puts it after the nav on desktop and beside Menu on phones), and the same
+// inline head script before the first stylesheet, which applies a saved choice before first paint
+// and adds html.zx-js so the button (hidden without JavaScript) never shifts the bar.
+{
+  const THEME_PRESET = `<script>(function(d){if('noModule'in HTMLScriptElement.prototype)d.classList.add('zx-js');try{var t=localStorage.getItem('zx-theme');if(t==='dark'||t==='light')d.dataset.theme=t}catch(e){}})(document.documentElement)</script>`;
+  const THEME_BUTTON = /<button class="zx-theme-toggle" type="button" aria-label="Dark mode" aria-pressed="false" title="Switch to dark mode"><svg class="zx-icon zx-icon--moon" aria-hidden="true"><use href="\/icons\.svg#moon"\/><\/svg><svg class="zx-icon zx-icon--sun" aria-hidden="true"><use href="\/icons\.svg#sun"\/><\/svg><\/button>/;
+  const candidates = [...readdirSync(root).filter(name => name.endsWith('.html')), ...readdirSync(new URL('docs/', root)).filter(name => name.endsWith('.html')).map(name => 'docs/' + name)];
+  const headerPages = candidates.filter(file => read(file).includes('<header class="zx-header">'));
+  for (const file of [...PUBLIC_PAGES, 'dashboard.html', '404.html', 'about.html', 'neucockpit.html']) assert.ok(headerPages.includes(file), file + ': has the shared header');
+  for (const file of headerPages) {
+    const html = read(file);
+    assert.equal((html.match(/class="zx-theme-toggle"/g) || []).length, 1, file + ': one theme button');
+    assert.match(html, THEME_BUTTON, file + ': an icon-only native button named "Dark mode" with aria-pressed, a title and the moon and sun icons');
+    assert.match(html, new RegExp('<a class="zx-brand"[^>]*>[\\s\\S]*?</a>\\s*' + THEME_BUTTON.source + '\\s*<button class="zx-nav-toggle"'), file + ': between the mark and the Menu button (Menu stays right before the nav)');
+    assert.equal(html.split(THEME_PRESET).length - 1, 1, file + ': the theme preset inline script once');
+    const head = html.slice(0, html.indexOf('</head>'));
+    const preset = head.indexOf(THEME_PRESET);
+    const firstStylesheet = head.search(/<link rel="stylesheet"/);
+    assert.ok(preset > 0 && firstStylesheet > preset, file + ': the theme preset runs before the first stylesheet');
+    assert.ok(tags(html, 'script').some(a => a.type === 'module' && a.src === '/site-nav.js'), file + ': loads /site-nav.js, which wires the button');
+  }
+  // Pages whose checks forbid inline scripts, and pages without the shared header, get no button.
+  for (const file of ['neuroncli/device/index.html', 'neuroncli/admin/keys/index.html', 'neuroncli/admin/models/index.html', 'neuroncli/login/index.html', 'neuroncli/callback/index.html', 'start.html']) {
+    assert.doesNotMatch(read(file), /zx-theme-toggle|zx-theme/, file + ': no theme switch');
+  }
+  const {INLINE_SCRIPT_HASHES} = await import('./src/csp-hashes.js');
+  const {hashOf} = await import('./build-csp-hashes.mjs');
+  assert.ok(INLINE_SCRIPT_HASHES.includes(hashOf(THEME_PRESET.slice('<script>'.length, -'</script>'.length))), 'the theme preset is allowed by its sha256');
+  // Styles: hidden until html.zx-js. No flex `order` anywhere in the header, so the visual order is
+  // the DOM (and tab) order at every width: the button opens the right-hand group (it takes the
+  // auto margin from the nav), then Menu on phones, then the nav;
+  // the icon shows what a click switches to, in both the forced and the system dark theme.
+  const css = read('zx-tokens.css');
+  assert.match(css, /^\.zx-theme-toggle \{ display: none; \}$/m, 'the theme button is hidden without JavaScript');
+  assert.match(css, /^\.zx-js \.zx-theme-toggle \{[^}]*display: inline-flex;[^}]*margin-left: auto;/m, 'with JavaScript it shows and starts the right-hand group');
+  assert.match(css, /^\.zx-js \.zx-theme-toggle ~ \.zx-nav \{ margin-left: 0; \}$/m, 'the nav gives up its auto margin to the button, so both stay right-aligned');
+  assert.match(css, /^\.zx-header__inner > \.zx-nav \{ margin-left: auto; \}$/m, 'without the button the nav is right-aligned');
+  const headerCss = css.slice(css.indexOf('header and navigation'), css.indexOf('.zx-crumbs'));
+  assert.doesNotMatch(headerCss, /order:/, 'no flex order in the header: focus order matches visual order (WCAG 2.4.3)');
+  assert.match(css, /^\.zx-theme-toggle:focus-visible \{[^}]*box-shadow: var\(--zx-focus\)/m, 'visible keyboard focus');
+  assert.match(css, /^\.zx-theme-toggle \.zx-icon--sun \{ display: none; \}$/m, 'light: the moon shows');
+  assert.match(css, /^:root\[data-theme="dark"\] \.zx-theme-toggle \.zx-icon--moon \{ display: none; \}$/m, 'forced dark hides the moon');
+  assert.match(css, /^:root\[data-theme="dark"\] \.zx-theme-toggle \.zx-icon--sun \{ display: inline; \}$/m, 'forced dark shows the sun');
+  assert.match(css, /@media \(prefers-color-scheme: dark\) \{\s*:root:not\(\[data-theme="light"\]\) \.zx-theme-toggle \.zx-icon--moon \{ display: none; \}\s*:root:not\(\[data-theme="light"\]\) \.zx-theme-toggle \.zx-icon--sun \{ display: inline; \}\s*\}/,
+    'system dark swaps the icons unless forced light');
+  const phone = css.match(/@media \(max-width: 720px\) \{([\s\S]*?)^\}/m)[1];
+  assert.match(phone, /\.zx-header\[data-nav\] \.zx-theme-toggle \{[^}]*margin-left: auto;/, 'phones: right-aligned, just before the Menu button');
+  const themeHeight = Number(phone.match(/\.zx-header\[data-nav\] \.zx-theme-toggle \{[^}]*min-height: (\d+)px/)[1]);
+  const inner = phone.match(/\.zx-header\[data-nav\] \.zx-header__inner \{ min-height: (\d+)px; padding-block: (\d+)px; \}/);
+  assert.ok(themeHeight >= 44 && Math.max(Number(inner[1]), themeHeight + 2 * Number(inner[2])) + 1 <= 64, 'phones: a 44 px target in a header of at most 64 px');
+}
+
+/* ───────────── Signed-in account chip (site-nav.js installAccountChip) ───────────── */
+
+// Every header page has exactly one account button in its nav, the target installAccountChip
+// fills: the Dashboard button to dashboard.zero-x.live with the user icon, or on the dashboard
+// itself a pending Account button (space reserved, invisible until dashboard.js has the profile). No inline script is added.
+{
+  const candidates = [...readdirSync(root).filter(name => name.endsWith('.html')), ...readdirSync(new URL('docs/', root)).filter(name => name.endsWith('.html')).map(name => 'docs/' + name)];
+  const USER_ICON = '<svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#user"/></svg>';
+  for (const file of candidates.filter(name => read(name).includes('<header class="zx-header">'))) {
+    const html = read(file);
+    const nav = (/<nav class="zx-nav" id="site-nav"[^>]*>([\s\S]*?)<\/nav>/.exec(html) || [])[1] || '';
+    const buttons = nav.match(/<a class="zx-btn[^"]*"[^>]*>[\s\S]*?<\/a>/g) || [];
+    const expected = file === 'dashboard.html'
+      ? '<a class="zx-btn zx-btn--sm" href="https://dashboard.zero-x.live/#account" data-account-link data-pending>' + USER_ICON + 'Account</a>'
+      : '<a class="zx-btn zx-btn--sm" href="https://dashboard.zero-x.live/">' + USER_ICON + 'Dashboard</a>';
+    assert.deepEqual(buttons, [expected], file + ': one account button in the header nav');
+    assert.doesNotMatch(html, /zx-nav-avatar/, file + ': the avatar is added by site-nav.js, not in the HTML');
+  }
+  assert.match(read('site-nav.js'), /export function installAccountChip\(doc/, 'site-nav.js exports installAccountChip');
+  assert.match(read('site-nav.js'), /installAccountChip\(document\);[\s\S]*addEventListener\("pageshow"/, 'the bootstrap runs it and again on pageshow');
+  assert.doesNotMatch(read('site-nav.js'), /\bfetch\(|XMLHttpRequest/, 'no network call to show the account');
 }
 
 console.log('PASS: ' + (PUBLIC_PAGES.length + PRIVATE_PAGES.length) + ' pages: structure, landmarks, aria references, robots, resolvable links, legal sections, contract prices/limits/error codes, CSP origins, pinned SDK, no secrets or unsafe sinks; download, trust and support pages and the gateway logging policy; pure helpers for formatting, chart scaling, normalisation, routing, checkout validation and release manifests');

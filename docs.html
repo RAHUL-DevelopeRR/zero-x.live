@@ -25,16 +25,19 @@
   <meta name="twitter:image:alt" content="Zero-X logo">
   <link rel="preload" href="/fonts/aspekta-400.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="/fonts/aspekta-500.woff2" as="font" type="font/woff2" crossorigin>
+  <script>(function(d){if('noModule'in HTMLScriptElement.prototype)d.classList.add('zx-js');try{var t=localStorage.getItem('zx-theme');if(t==='dark'||t==='light')d.dataset.theme=t}catch(e){}})(document.documentElement)</script>
   <link rel="stylesheet" href="/zx-tokens.css">
   <link rel="stylesheet" href="/content.css">
   <script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"TechArticle","@id":"https://zero-x.live/docs#article","headline":"Neuron CLI and Zero-X API documentation","url":"https://zero-x.live/docs","about":{"@id":"https://zero-x.live/neuron-cli#software"},"publisher":{"@id":"https://zero-x.live/#organization"},"inLanguage":"en"},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Zero-X","item":"https://zero-x.live/"},{"@type":"ListItem","position":2,"name":"Docs","item":"https://zero-x.live/docs"}]}]}</script>
   <script type="module" src="/site-nav.js"></script>
+  <script type="module" src="/copy-code.js"></script>
 </head>
 <body>
   <a class="zx-skip" href="#main">Skip to content</a>
   <header class="zx-header">
     <div class="zx-container zx-header__inner">
       <a class="zx-brand" href="/"><img src="/Assets/zerox-mark.svg" width="28" height="28" alt="">Zero-X</a>
+      <button class="zx-theme-toggle" type="button" aria-label="Dark mode" aria-pressed="false" title="Switch to dark mode"><svg class="zx-icon zx-icon--moon" aria-hidden="true"><use href="/icons.svg#moon"/></svg><svg class="zx-icon zx-icon--sun" aria-hidden="true"><use href="/icons.svg#sun"/></svg></button>
       <button class="zx-nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" hidden><svg class="zx-icon zx-icon--menu" aria-hidden="true"><use href="/icons.svg#menu"/></svg><svg class="zx-icon zx-icon--close" aria-hidden="true"><use href="/icons.svg#x"/></svg>Menu</button>
       <nav class="zx-nav" id="site-nav" aria-label="Main">
         <a href="/neuron-cli">Neuron CLI</a>
@@ -78,19 +81,19 @@
                 <li><strong>npm</strong>, in any terminal (needs Node.js 22.14 or later): <code>npm install -g @zero-x.live/neuron</code></li>
                 <li><strong>pip</strong> (Python 3.8 or later): <code>python -m pip install --pre neuroncli</code>. Keep <code>--pre</code> while Neuron 7 is a pre-release, or pip installs the old, unsupported 6.2.4.</li>
                 <li><strong>Install script</strong>, without Node.js or Python:
-                  <div class="zx-code zx-code--wrap"><span class="zx-code__label">macOS or Linux terminal</span><pre><code>curl -fsSL https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.5/install.sh | sh -s -- --version 7.0.0-alpha.5</code></pre></div>
-                  <div class="zx-code zx-code--wrap"><span class="zx-code__label">Windows PowerShell</span><pre><code>&amp; ([scriptblock]::Create((irm https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.5/install.ps1))) -Version 7.0.0-alpha.5 -AddToPath</code></pre></div>
-                  <div class="zx-code zx-code--wrap"><span class="zx-code__label">Command Prompt (cmd.exe)</span><pre><code>powershell -NoProfile -ExecutionPolicy Bypass -Command "&amp; ([scriptblock]::Create((irm https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.5/install.ps1))) -Version 7.0.0-alpha.5 -AddToPath"</code></pre></div>
+                  <div class="zx-code zx-code--copy zx-code--wrap"><span class="zx-code__label">macOS or Linux terminal</span><pre><code id="docs-sh">curl -fsSL https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.5/install.sh | sh -s -- --version 7.0.0-alpha.5</code></pre><button class="zx-copy" type="button" data-copy-target="docs-sh" data-copy-label="macOS and Linux install command" aria-label="Copy macOS and Linux install command" title="Copy"><svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="/icons.svg#copy"/></svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="/icons.svg#check"/></svg></button></div>
+                  <div class="zx-code zx-code--copy zx-code--wrap"><span class="zx-code__label">Windows PowerShell</span><pre><code id="docs-ps1">&amp; ([scriptblock]::Create((irm https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.5/install.ps1))) -Version 7.0.0-alpha.5 -AddToPath</code></pre><button class="zx-copy" type="button" data-copy-target="docs-ps1" data-copy-label="PowerShell install command" aria-label="Copy PowerShell install command" title="Copy"><svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="/icons.svg#copy"/></svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="/icons.svg#check"/></svg></button></div>
+                  <div class="zx-code zx-code--copy zx-code--wrap"><span class="zx-code__label">Command Prompt (cmd.exe)</span><pre><code id="docs-cmd">powershell -NoProfile -ExecutionPolicy Bypass -Command "&amp; ([scriptblock]::Create((irm https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.5/install.ps1))) -Version 7.0.0-alpha.5 -AddToPath"</code></pre><button class="zx-copy" type="button" data-copy-target="docs-cmd" data-copy-label="Command Prompt install command" aria-label="Copy Command Prompt install command" title="Copy"><svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="/icons.svg#copy"/></svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="/icons.svg#check"/></svg></button></div>
                   On Windows, <code>-AddToPath</code> puts Neuron on your user PATH: open a new terminal before you run it.</li>
               </ul>
             </li>
             <li>Sign in: <code>neuron login</code> prints <code>https://neuron.zero-x.live/device</code> and a short code. Open it in any browser, sign in, check the code and choose <strong>Approve</strong>. The code expires after 10 minutes.</li>
             <li>Run <code>neuron</code> inside a project; on a terminal it opens the full-screen UI. The UI cannot trust a folder yet: run <code>neuron --no-tui</code> there once and press 1, or add the folder to <code>trustedRoots</code> in <code>~/.neuron/settings.json</code>. Until then the folder's own settings, hooks and MCP servers are ignored. <a href="/docs/trust">Security and trust</a> explains what trusting a folder allows.</li>
           </ol>
-          <div class="zx-code"><span class="zx-code__label">Any terminal: macOS, Linux or Windows</span><pre><code>npm install -g @zero-x.live/neuron
+          <div class="zx-code zx-code--copy"><span class="zx-code__label">Any terminal: macOS, Linux or Windows</span><pre><code id="docs-npm">npm install -g @zero-x.live/neuron
 neuron login
 cd path/to/project
-neuron</code></pre></div>
+neuron</code></pre><button class="zx-copy" type="button" data-copy-target="docs-npm" data-copy-label="install and run commands" aria-label="Copy install and run commands" title="Copy"><svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="/icons.svg#copy"/></svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="/icons.svg#check"/></svg></button></div>
           <p>Check the result with <code>neuron auth status</code>. If something fails, run <code>neuron doctor</code>.</p>
         </section>
 
@@ -185,8 +188,8 @@ neuron</code></pre></div>
           <p>The gateway speaks the OpenAI Chat Completions protocol. Base URL: <code>https://zero-x.live/v1</code>. Authenticate with <code>Authorization: Bearer &lt;token&gt;</code>, where the token is an API key from the dashboard or a CLI session.</p>
           <h3 id="models-endpoint">GET /v1/models</h3>
           <p>Lists the catalog, one entry per model. Authentication is optional; <code>available</code> and <code>context_window</code> are computed for your plan (anonymous callers see the Free plan).</p>
-          <div class="zx-code"><pre><code>curl https://zero-x.live/v1/models -H "Authorization: Bearer $NEURON_TOKEN"</code></pre></div>
-          <div class="zx-code"><pre><code>{
+          <div class="zx-code zx-code--copy"><pre><code id="docs-models">curl https://zero-x.live/v1/models -H "Authorization: Bearer $NEURON_TOKEN"</code></pre><button class="zx-copy" type="button" data-copy-target="docs-models" data-copy-label="models request" aria-label="Copy models request" title="Copy"><svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="/icons.svg#copy"/></svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="/icons.svg#check"/></svg></button></div>
+          <div class="zx-code" data-sample><pre><code>{
   "object": "list",
   "data": [{
     "id": "openai/gpt-oss-120b",
@@ -216,10 +219,10 @@ neuron</code></pre></div>
 
           <h3 id="chat-completions">POST /v1/chat/completions</h3>
           <p>Standard OpenAI request body. <code>model</code> may be <code>auto</code>. Set <code>"stream": true</code> for server-sent events ending with <code>data: [DONE]</code>; streamed <code>tool_calls</code> deltas always include <code>index</code>.</p>
-          <div class="zx-code"><pre><code>curl https://zero-x.live/v1/chat/completions \
+          <div class="zx-code zx-code--copy"><pre><code id="docs-chat">curl https://zero-x.live/v1/chat/completions \
   -H "Authorization: Bearer $NEURON_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"model":"auto","messages":[{"role":"user","content":"Explain this stack trace"}]}'</code></pre></div>
+  -d '{"model":"auto","messages":[{"role":"user","content":"Explain this stack trace"}]}'</code></pre><button class="zx-copy" type="button" data-copy-target="docs-chat" data-copy-label="chat completions request" aria-label="Copy chat completions request" title="Copy"><svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="/icons.svg#copy"/></svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="/icons.svg#check"/></svg></button></div>
           <p>Response headers:</p>
           <ul>
             <li><code>x-request-id</code>: quote it when you contact support.</li>
@@ -233,7 +236,7 @@ neuron</code></pre></div>
         <section id="errors" aria-labelledby="errors-title">
           <h2 id="errors-title">Error codes</h2>
           <p>Errors use the OpenAI shape, with extra fields when they help:</p>
-          <div class="zx-code"><pre><code>{ "error": { "message": "…", "type": "insufficient_quota", "code": "insufficient_quota",
+          <div class="zx-code" data-sample><pre><code>{ "error": { "message": "…", "type": "insufficient_quota", "code": "insufficient_quota",
   "param": null, "request_id": "…", "upgrade_url": "https://zero-x.live/pricing",
   "resets_at": "2026-10-17T00:00:00Z" } }</code></pre></div>
           <div class="zx-table-wrap">
@@ -342,6 +345,7 @@ neuron</code></pre></div>
         </section>
       </article>
     </div>
+    <p class="zx-visually-hidden" id="copy-status" role="status" aria-live="polite"></p>
   </main>
 
   <footer class="zx-footer">

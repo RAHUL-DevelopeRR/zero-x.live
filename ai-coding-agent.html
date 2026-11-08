@@ -25,16 +25,19 @@
   <meta name="twitter:image:alt" content="Zero-X logo">
   <link rel="preload" href="/fonts/aspekta-400.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="/fonts/aspekta-500.woff2" as="font" type="font/woff2" crossorigin>
+  <script>(function(d){if('noModule'in HTMLScriptElement.prototype)d.classList.add('zx-js');try{var t=localStorage.getItem('zx-theme');if(t==='dark'||t==='light')d.dataset.theme=t}catch(e){}})(document.documentElement)</script>
   <link rel="stylesheet" href="/zx-tokens.css">
   <link rel="stylesheet" href="/content.css">
   <script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"TechArticle","@id":"https://zero-x.live/ai-coding-agent#article","headline":"What is an AI coding agent?","description":"How an AI coding agent reads, edits and tests code, what it should be allowed to do, which models it uses and how to try Neuron in your terminal.","datePublished":"2026-10-24","dateModified":"2026-10-24","author":{"@id":"https://zero-x.live/#organization"},"publisher":{"@id":"https://zero-x.live/#organization"},"mainEntityOfPage":"https://zero-x.live/ai-coding-agent","isPartOf":{"@id":"https://zero-x.live/#website"},"about":[{"@type":"Thing","name":"AI coding agent"},{"@id":"https://zero-x.live/#neuron"}],"image":"https://zero-x.live/Assets/zerox-share.png"},{"@type":"FAQPage","@id":"https://zero-x.live/ai-coding-agent#faq","mainEntity":[{"@type":"Question","name":"Is a coding agent the same as an AI agent?","acceptedAnswer":{"@type":"Answer","text":"A coding agent is one kind of AI agent. An AI agent is any program where a model chooses actions and uses tools toward a goal. A coding agent's tools are for software work: reading and editing files, searching code and running commands."}},{"@type":"Question","name":"Is Neuron free?","acceptedAnswer":{"@type":"Answer","text":"Neuron is open source under the MIT licence. The Zero-X Free plan gives you hosted models with daily limits at no cost, or you can use your own API key. Pro and Max raise the limits."}},{"@type":"Question","name":"Does Neuron work on Windows?","acceptedAnswer":{"@type":"Answer","text":"Yes. A Windows x64 build installs with PowerShell, and Neuron can run PowerShell commands as well as shell commands. Windows on Arm runs the x64 build under emulation."}},{"@type":"Question","name":"Can I run a coding agent in CI?","acceptedAnswer":{"@type":"Answer","text":"Yes. Create an API key in the Zero-X dashboard, store it as a CI secret in NEURON_TOKEN and run neuron -p with your task. Never commit the key."}}]},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Zero-X","item":"https://zero-x.live/"},{"@type":"ListItem","position":2,"name":"AI coding agent guide","item":"https://zero-x.live/ai-coding-agent"}]}]}</script>
   <script type="module" src="/site-nav.js"></script>
+  <script type="module" src="/copy-code.js"></script>
 </head>
 <body>
   <a class="zx-skip" href="#main">Skip to content</a>
   <header class="zx-header">
     <div class="zx-container zx-header__inner">
       <a class="zx-brand" href="/"><img src="/Assets/zerox-mark.svg" width="28" height="28" alt="">Zero-X</a>
+      <button class="zx-theme-toggle" type="button" aria-label="Dark mode" aria-pressed="false" title="Switch to dark mode"><svg class="zx-icon zx-icon--moon" aria-hidden="true"><use href="/icons.svg#moon"/></svg><svg class="zx-icon zx-icon--sun" aria-hidden="true"><use href="/icons.svg#sun"/></svg></button>
       <button class="zx-nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" hidden><svg class="zx-icon zx-icon--menu" aria-hidden="true"><use href="/icons.svg#menu"/></svg><svg class="zx-icon zx-icon--close" aria-hidden="true"><use href="/icons.svg#x"/></svg>Menu</button>
       <nav class="zx-nav" id="site-nav" aria-label="Main">
         <a href="/neuron-cli">Neuron CLI</a>
@@ -112,17 +115,17 @@
 
     <h2 id="try">Try a coding agent in your terminal</h2>
     <p>Neuron installs with one command on macOS, Linux and Windows. With Node.js 22.14 or later, npm is the quickest:</p>
-    <div class="zx-code"><span class="zx-code__label">npm, any terminal</span><pre><code>npm install -g @zero-x.live/neuron</code></pre></div>
+    <div class="zx-code zx-code--copy"><span class="zx-code__label">npm, any terminal</span><pre><code id="guide-npm">npm install -g @zero-x.live/neuron</code></pre><button class="zx-copy" type="button" data-copy-target="guide-npm" data-copy-label="npm install command" aria-label="Copy npm install command" title="Copy"><svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="/icons.svg#copy"/></svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="/icons.svg#check"/></svg></button></div>
     <p>With Python instead, keep <code>--pre</code> while Neuron 7 is a pre-release:</p>
-    <div class="zx-code"><span class="zx-code__label">pip, any terminal</span><pre><code>python -m pip install --pre neuroncli</code></pre></div>
+    <div class="zx-code zx-code--copy"><span class="zx-code__label">pip, any terminal</span><pre><code id="guide-pip">python -m pip install --pre neuroncli</code></pre><button class="zx-copy" type="button" data-copy-target="guide-pip" data-copy-label="pip install command" aria-label="Copy pip install command" title="Copy"><svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="/icons.svg#copy"/></svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="/icons.svg#check"/></svg></button></div>
     <p>Without either, use the install script for your system. On Windows, open a new terminal afterwards so that <code>neuron</code> is on your PATH.</p>
-    <div class="zx-code"><span class="zx-code__label">macOS and Linux terminal</span><pre><code>curl -fsSL https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.5/install.sh | sh -s -- --version 7.0.0-alpha.5</code></pre></div>
-    <div class="zx-code zx-code--wrap"><span class="zx-code__label">Windows PowerShell</span><pre><code>&amp; ([scriptblock]::Create((irm https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.5/install.ps1))) -Version 7.0.0-alpha.5 -AddToPath</code></pre></div>
-    <div class="zx-code zx-code--wrap"><span class="zx-code__label">Windows Command Prompt (cmd.exe)</span><pre><code>powershell -NoProfile -ExecutionPolicy Bypass -Command "&amp; ([scriptblock]::Create((irm https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.5/install.ps1))) -Version 7.0.0-alpha.5 -AddToPath"</code></pre></div>
+    <div class="zx-code zx-code--copy"><span class="zx-code__label">macOS and Linux terminal</span><pre><code id="guide-sh">curl -fsSL https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.5/install.sh | sh -s -- --version 7.0.0-alpha.5</code></pre><button class="zx-copy" type="button" data-copy-target="guide-sh" data-copy-label="macOS and Linux install command" aria-label="Copy macOS and Linux install command" title="Copy"><svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="/icons.svg#copy"/></svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="/icons.svg#check"/></svg></button></div>
+    <div class="zx-code zx-code--copy zx-code--wrap"><span class="zx-code__label">Windows PowerShell</span><pre><code id="guide-ps1">&amp; ([scriptblock]::Create((irm https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.5/install.ps1))) -Version 7.0.0-alpha.5 -AddToPath</code></pre><button class="zx-copy" type="button" data-copy-target="guide-ps1" data-copy-label="PowerShell install command" aria-label="Copy PowerShell install command" title="Copy"><svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="/icons.svg#copy"/></svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="/icons.svg#check"/></svg></button></div>
+    <div class="zx-code zx-code--copy zx-code--wrap"><span class="zx-code__label">Windows Command Prompt (cmd.exe)</span><pre><code id="guide-cmd">powershell -NoProfile -ExecutionPolicy Bypass -Command "&amp; ([scriptblock]::Create((irm https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.5/install.ps1))) -Version 7.0.0-alpha.5 -AddToPath"</code></pre><button class="zx-copy" type="button" data-copy-target="guide-cmd" data-copy-label="Command Prompt install command" aria-label="Copy Command Prompt install command" title="Copy"><svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="/icons.svg#copy"/></svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="/icons.svg#check"/></svg></button></div>
     <p>Then sign in once and start Neuron in a project:</p>
-    <div class="zx-code"><span class="zx-code__label">First run</span><pre><code>neuron login
+    <div class="zx-code zx-code--copy"><span class="zx-code__label">First run</span><pre><code id="guide-first">neuron login
 cd path/to/your-project
-neuron</code></pre></div>
+neuron</code></pre><button class="zx-copy" type="button" data-copy-target="guide-first" data-copy-label="first run commands" aria-label="Copy first run commands" title="Copy"><svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="/icons.svg#copy"/></svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="/icons.svg#check"/></svg></button></div>
     <p><code>neuron login</code> shows a short code to approve at neuron.zero-x.live/device. For CI, create an API key in the dashboard and run Neuron headless with <code>neuron -p</code>. The <a href="/docs#quickstart">quickstart</a> covers folder trust, models and commands.</p>
     <div class="zx-row">
       <a class="zx-btn zx-btn--primary" href="/neuron-cli#install">Install Neuron</a>
@@ -150,6 +153,7 @@ neuron</code></pre></div>
       </details>
     </div>
     </article>
+    <p class="zx-visually-hidden" id="copy-status" role="status" aria-live="polite"></p>
   </main>
 
   <footer class="zx-footer">

@@ -25,10 +25,12 @@
   <meta name="twitter:image:alt" content="Zero-X logo">
   <link rel="preload" href="/fonts/aspekta-400.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="/fonts/aspekta-500.woff2" as="font" type="font/woff2" crossorigin>
+  <script>(function(d){if('noModule'in HTMLScriptElement.prototype)d.classList.add('zx-js');try{var t=localStorage.getItem('zx-theme');if(t==='dark'||t==='light')d.dataset.theme=t}catch(e){}})(document.documentElement)</script>
   <link rel="stylesheet" href="/zx-tokens.css">
   <link rel="stylesheet" href="/home.css">
   <script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"Organization","@id":"https://zero-x.live/#organization","name":"Zero-X","alternateName":["Zero X","ZeroX","zero-x.live"],"url":"https://zero-x.live/","logo":"https://zero-x.live/Assets/zerox-favicon-centered.png","description":"Zero-X builds Neuron, an AI coding agent for the terminal, and NeuCockpit, local AI file search for desktop. Built in Tamil Nadu, India.","sameAs":["https://www.instagram.com/zerox.corporation/","https://github.com/RAHUL-DevelopeRR/neuron-v2"],"contactPoint":{"@type":"ContactPoint","email":"support@zero-x.live","contactType":"customer support"},"knowsAbout":["AI coding agents","AI agents","Large language models","LLM gateways","Developer tools","Command-line tools","Semantic file search"]},{"@type":"WebSite","@id":"https://zero-x.live/#website","name":"Zero-X","alternateName":["Zero X","ZeroX","Neuron by Zero-X"],"url":"https://zero-x.live/","publisher":{"@id":"https://zero-x.live/#organization"}},{"@type":"WebPage","@id":"https://zero-x.live/#webpage","url":"https://zero-x.live/","name":"Zero-X | Neuron, the Free AI Coding Agent for Your Terminal","isPartOf":{"@id":"https://zero-x.live/#website"},"about":{"@id":"https://zero-x.live/#neuron"}},{"@type":"SoftwareApplication","@id":"https://zero-x.live/#neuron","name":"Neuron CLI","applicationCategory":"DeveloperApplication","operatingSystem":"Windows, macOS, Linux","url":"https://zero-x.live/neuron-cli","description":"An AI coding agent for the terminal that reads, edits and tests code in your repository with your permission.","publisher":{"@id":"https://zero-x.live/#organization"},"offers":{"@type":"Offer","name":"Free","price":"0","priceCurrency":"USD","url":"https://zero-x.live/pricing#plan-free"},"softwareVersion":"7.0.0-alpha.5","downloadUrl":"https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/tag/v7.0.0-alpha.5","alternateName":["Neuron","Neuron by Zero-X","Zero-X Neuron"],"applicationSubCategory":"AI coding agent","isAccessibleForFree":true,"license":"https://opensource.org/licenses/MIT","featureList":["Reads, writes and edits files in your repository","Runs shell or PowerShell commands, tests and builds","Permission modes: read-only, workspace-write and danger-full-access","Full-screen terminal UI and a line REPL","MCP servers and subagents","Headless runs for CI with neuron -p","Hosted models through Zero-X or your own OpenAI-compatible API key"]},{"@type":"SoftwareApplication","@id":"https://zero-x.live/#neucockpit","name":"NeuCockpit","applicationCategory":"UtilitiesApplication","operatingSystem":"Windows, macOS, Linux","url":"https://zero-x.live/neucockpit","description":"NeuCockpit local AI file search for desktop: find files by meaning and summarize your own documents.","publisher":{"@id":"https://zero-x.live/#organization"}}]}</script>
   <script type="module" src="/site-nav.js"></script>
+  <script type="module" src="/copy-code.js"></script>
   <script type="module" src="/pricing.js"></script>
   <script type="module" src="/home.js"></script>
   <script type="module" src="/announce.js"></script>
@@ -45,6 +47,7 @@
   <header class="zx-header">
     <div class="zx-container zx-header__inner">
       <a class="zx-brand" href="/"><img src="/Assets/zerox-mark.svg" width="28" height="28" alt="">Zero-X</a>
+      <button class="zx-theme-toggle" type="button" aria-label="Dark mode" aria-pressed="false" title="Switch to dark mode"><svg class="zx-icon zx-icon--moon" aria-hidden="true"><use href="/icons.svg#moon"/></svg><svg class="zx-icon zx-icon--sun" aria-hidden="true"><use href="/icons.svg#sun"/></svg></button>
       <button class="zx-nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" hidden><svg class="zx-icon zx-icon--menu" aria-hidden="true"><use href="/icons.svg#menu"/></svg><svg class="zx-icon zx-icon--close" aria-hidden="true"><use href="/icons.svg#x"/></svg>Menu</button>
       <nav class="zx-nav" id="site-nav" aria-label="Main">
         <a href="/neuron-cli">Neuron CLI</a>
@@ -65,27 +68,27 @@
         <div class="zx-home-install" data-install-tabs>
           <section class="zx-install" id="install-npm" data-tab-label="npm" aria-labelledby="install-npm-title">
             <h2 class="zx-visually-hidden" id="install-npm-title">Install with npm</h2>
-            <div class="zx-code zx-code--copy"><span class="zx-code__label">Any terminal</span><pre><code id="cmd-npm">npm install -g @zero-x.live/neuron</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="cmd-npm" data-copy-label="npm install command">Copy</button></div>
+            <div class="zx-code zx-code--copy"><span class="zx-code__label">Any terminal</span><pre><code id="cmd-npm">npm install -g @zero-x.live/neuron</code></pre><button class="zx-copy" type="button" data-copy-target="cmd-npm" data-copy-label="npm install command" aria-label="Copy npm install command" title="Copy"><svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="/icons.svg#copy"/></svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="/icons.svg#check"/></svg></button></div>
             <p class="zx-help">Installs Neuron 7.0.0-alpha.5 on macOS, Linux or Windows. Needs Node.js 22.14 or later. Run it again to upgrade.</p>
           </section>
           <section class="zx-install" id="install-pip" data-tab-label="pip" aria-labelledby="install-pip-title">
             <h2 class="zx-visually-hidden" id="install-pip-title">Install with pip</h2>
-            <div class="zx-code zx-code--copy"><span class="zx-code__label">Any terminal</span><pre><code id="cmd-pip">python -m pip install --pre neuroncli</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="cmd-pip" data-copy-label="pip install command">Copy</button></div>
+            <div class="zx-code zx-code--copy"><span class="zx-code__label">Any terminal</span><pre><code id="cmd-pip">python -m pip install --pre neuroncli</code></pre><button class="zx-copy" type="button" data-copy-target="cmd-pip" data-copy-label="pip install command" aria-label="Copy pip install command" title="Copy"><svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="/icons.svg#copy"/></svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="/icons.svg#check"/></svg></button></div>
             <p class="zx-help">Keep <code>--pre</code>: Neuron 7 is a pre-release, and without it pip installs the old, unsupported 6.2.4. Needs Python 3.8 or later.</p>
           </section>
           <section class="zx-install" id="install-sh" data-tab-label="macOS and Linux" aria-labelledby="install-sh-title">
             <h2 class="zx-visually-hidden" id="install-sh-title">Install on macOS and Linux</h2>
-            <div class="zx-code zx-code--copy zx-code--wrap"><span class="zx-code__label">Terminal (sh, bash or zsh)</span><pre><code id="cmd-sh">curl -fsSL https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.5/install.sh | sh -s -- --version 7.0.0-alpha.5</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="cmd-sh" data-copy-label="macOS and Linux install command">Copy</button></div>
+            <div class="zx-code zx-code--copy zx-code--wrap"><span class="zx-code__label">Terminal (sh, bash or zsh)</span><pre><code id="cmd-sh">curl -fsSL https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.5/install.sh | sh -s -- --version 7.0.0-alpha.5</code></pre><button class="zx-copy" type="button" data-copy-target="cmd-sh" data-copy-label="macOS and Linux install command" aria-label="Copy macOS and Linux install command" title="Copy"><svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="/icons.svg#copy"/></svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="/icons.svg#check"/></svg></button></div>
             <p class="zx-help">Installs <code>neuron</code> and <code>neuron-tui</code> to <code>~/.local/bin</code> and checks their SHA-256 checksums. Linux needs glibc 2.35 or later (Ubuntu 22.04, Debian 12, Fedora 36 or newer).</p>
           </section>
           <section class="zx-install" id="install-ps1" data-tab-label="PowerShell" aria-labelledby="install-ps1-title">
             <h2 class="zx-visually-hidden" id="install-ps1-title">Install on Windows with PowerShell</h2>
-            <div class="zx-code zx-code--copy zx-code--wrap"><span class="zx-code__label">Windows PowerShell or PowerShell 7</span><pre><code id="cmd-ps1">&amp; ([scriptblock]::Create((irm https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.5/install.ps1))) -Version 7.0.0-alpha.5 -AddToPath</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="cmd-ps1" data-copy-label="PowerShell install command">Copy</button></div>
+            <div class="zx-code zx-code--copy zx-code--wrap"><span class="zx-code__label">Windows PowerShell or PowerShell 7</span><pre><code id="cmd-ps1">&amp; ([scriptblock]::Create((irm https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.5/install.ps1))) -Version 7.0.0-alpha.5 -AddToPath</code></pre><button class="zx-copy" type="button" data-copy-target="cmd-ps1" data-copy-label="PowerShell install command" aria-label="Copy PowerShell install command" title="Copy"><svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="/icons.svg#copy"/></svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="/icons.svg#check"/></svg></button></div>
             <p class="zx-help">Installs to <code>%LOCALAPPDATA%\Programs\Neuron\bin</code> and adds it to your user PATH. Open a new terminal, then run <code>neuron</code>.</p>
           </section>
           <section class="zx-install" id="install-cmd" data-tab-label="Command Prompt" aria-labelledby="install-cmd-title">
             <h2 class="zx-visually-hidden" id="install-cmd-title">Install on Windows from Command Prompt</h2>
-            <div class="zx-code zx-code--copy zx-code--wrap"><span class="zx-code__label">Command Prompt (cmd.exe)</span><pre><code id="cmd-cmd">powershell -NoProfile -ExecutionPolicy Bypass -Command "&amp; ([scriptblock]::Create((irm https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.5/install.ps1))) -Version 7.0.0-alpha.5 -AddToPath"</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="cmd-cmd" data-copy-label="Command Prompt install command">Copy</button></div>
+            <div class="zx-code zx-code--copy zx-code--wrap"><span class="zx-code__label">Command Prompt (cmd.exe)</span><pre><code id="cmd-cmd">powershell -NoProfile -ExecutionPolicy Bypass -Command "&amp; ([scriptblock]::Create((irm https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.5/install.ps1))) -Version 7.0.0-alpha.5 -AddToPath"</code></pre><button class="zx-copy" type="button" data-copy-target="cmd-cmd" data-copy-label="Command Prompt install command" aria-label="Copy Command Prompt install command" title="Copy"><svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="/icons.svg#copy"/></svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="/icons.svg#check"/></svg></button></div>
             <p class="zx-help">Command Prompt rejects the PowerShell command with &ldquo;&amp; was unexpected at this time&rdquo;, so use this one there. Open a new terminal afterwards, then run <code>neuron</code>.</p>
           </section>
         </div>
@@ -170,7 +173,7 @@ The expiry check compared with &lt;= instead of &lt;. I fixed it and added <span
           <p class="zx-help" id="models-note" role="status" aria-live="polite">Built-in list: nothing here is checked until the live list loads from the Zero-X gateway.</p>
         </div>
       </div>
-      <div class="zx-code zx-code--copy zx-mt"><span class="zx-code__label">The gateway is OpenAI-compatible</span><pre><code id="cmd-models">curl https://zero-x.live/v1/models</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="cmd-models" data-copy-label="curl command">Copy</button></div>
+      <div class="zx-code zx-code--copy zx-mt"><span class="zx-code__label">The gateway is OpenAI-compatible</span><pre><code id="cmd-models">curl https://zero-x.live/v1/models</code></pre><button class="zx-copy" type="button" data-copy-target="cmd-models" data-copy-label="curl command" aria-label="Copy curl command" title="Copy"><svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="/icons.svg#copy"/></svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="/icons.svg#check"/></svg></button></div>
     </section>
 
     <section class="zx-container zx-section" id="get-started" aria-labelledby="get-started-title">
@@ -181,18 +184,18 @@ The expiry check compared with &lt;= instead of &lt;. I fixed it and added <span
       <ol class="zx-steps zx-home-steps">
         <li>
           <h3>Install</h3>
-          <div class="zx-code zx-code--copy"><span class="zx-code__label">Any terminal</span><pre><code id="step-install">npm install -g @zero-x.live/neuron</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="step-install" data-copy-label="Install command">Copy</button></div>
+          <div class="zx-code zx-code--copy"><span class="zx-code__label">Any terminal</span><pre><code id="step-install">npm install -g @zero-x.live/neuron</code></pre><button class="zx-copy" type="button" data-copy-target="step-install" data-copy-label="install command" aria-label="Copy install command" title="Copy"><svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="/icons.svg#copy"/></svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="/icons.svg#check"/></svg></button></div>
           <p class="zx-muted">Needs Node.js 22.14 or later. No Node.js? Use pip or the installer for your system from the tabs at the top of the page.</p>
         </li>
         <li>
           <h3>Sign in once</h3>
-          <div class="zx-code zx-code--copy"><pre><code id="step-login">neuron login</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="step-login" data-copy-label="Sign-in command">Copy</button></div>
+          <div class="zx-code zx-code--copy"><pre><code id="step-login">neuron login</code></pre><button class="zx-copy" type="button" data-copy-target="step-login" data-copy-label="sign-in command" aria-label="Copy sign-in command" title="Copy"><svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="/icons.svg#copy"/></svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="/icons.svg#check"/></svg></button></div>
           <p class="zx-muted">Neuron prints a link, <code>https://neuron.zero-x.live/device</code>, and a short code, and opens the link in your browser when it can. Sign in with Google, GitHub or email, check that the code matches and approve it; the terminal continues on its own. No local port is opened, so this also works over SSH, in WSL and in containers.</p>
         </li>
         <li>
           <h3>Ask in your project</h3>
           <div class="zx-code zx-code--copy"><pre><code id="step-run">cd path/to/your-project
-neuron</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="step-run" data-copy-label="Run commands">Copy</button></div>
+neuron</code></pre><button class="zx-copy" type="button" data-copy-target="step-run" data-copy-label="run commands" aria-label="Copy run commands" title="Copy"><svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="/icons.svg#copy"/></svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="/icons.svg#check"/></svg></button></div>
           <p class="zx-muted">On a terminal, <code>neuron</code> opens the full-screen UI. Ask for something concrete, like “explain how requests are authenticated, then add a test for an expired token”. Switch models with <code>/model</code>, change what Neuron may do with <code>/permissions</code> and check today's limits with <code>/usage</code>.</p>
         </li>
       </ol>
@@ -354,7 +357,7 @@ neuron</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-
     <section class="zx-container zx-section zx-home-cta" aria-labelledby="cta-title">
       <h2 id="cta-title">Start free in under a minute</h2>
       <div class="zx-code zx-code--copy"><span class="zx-code__label">Any terminal</span><pre><code id="cta-install">npm install -g @zero-x.live/neuron
-neuron login</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="cta-install" data-copy-label="Install and sign-in command">Copy</button></div>
+neuron login</code></pre><button class="zx-copy" type="button" data-copy-target="cta-install" data-copy-label="install and sign-in commands" aria-label="Copy install and sign-in commands" title="Copy"><svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="/icons.svg#copy"/></svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="/icons.svg#check"/></svg></button></div>
       <p class="zx-help">Needs Node.js 22.14 or later. Without Node.js, use pip or the installer for your system from the <a href="/neuron-cli#install">install options</a>, then run <code>neuron login</code>.</p>
       <div class="zx-row">
         <a class="zx-btn zx-btn--primary" href="/neuron-cli">Explore Neuron CLI <svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#arrow-right"/></svg></a>

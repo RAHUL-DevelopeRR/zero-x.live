@@ -6,6 +6,7 @@ import {
 } from './billing-checkout.js';
 import { collectBillingDetails, purchaseWithDetails } from './billing-details.js';
 import { PLAN_CATALOG, formatCount, formatMoney, formatTokens, normalizeCatalog } from './pricing.js';
+import { fillAvatar, initialsFor, renderAccountChip, safeAvatar } from './site-nav.js';
 
 export const TABS = ['overview', 'usage', 'keys', 'billing', 'sessions', 'connectors', 'account'];
 // Tabs shown only when the gateway serves them (Connectors: GET /api/connectors answers 404 unless
@@ -480,8 +481,29 @@ export function createDashboard({ doc = globalThis.document, win = globalThis.wi
     setTimeout(() => item.remove(), 5000);
   }
 
+  // The breadcrumb avatar and the header Account chip (site-nav.js), from the profile or reset.
+  // The chip ships data-pending (laid out, invisible) so the nav keeps its place until this runs.
+  function renderIdentity(profile) {
+    const crumb = doc.querySelector('.zx-crumbs__avatar');
+    const chip = doc.querySelector('.zx-header .zx-nav a.zx-btn');
+    if (chip) chip.removeAttribute('data-pending');
+    if (!profile) {
+      if (crumb) crumb.replaceChildren(doc.createTextNode('zx'));
+      renderAccountChip(doc, null);
+      if (chip) chip.hidden = true;
+      return;
+    }
+    const email = text(profile.email, 254);
+    const name = text(profile.fullName, 120) || email.split('@')[0] || 'your account';
+    const account = { name, email, image: safeAvatar(profile.imageUrl), initials: initialsFor(text(profile.firstName, 120) || name) };
+    if (crumb) fillAvatar(crumb, account);
+    renderAccountChip(doc, account);
+    if (chip) chip.hidden = false;
+  }
+
   function showGate(message) {
     state.gated = true;
+    renderIdentity(null);
     $('dash-loading').hidden = true;
     $('dash-app').hidden = true;
     $('dash-gate').hidden = false;
@@ -617,6 +639,7 @@ export function createDashboard({ doc = globalThis.document, win = globalThis.wi
     setText('crumb-account', text(profile.email, 254) || name);
     const avatar = safeHttpsUrl(profile.imageUrl);
     if (avatar) $('acct-avatar').setAttribute('src', avatar);
+    renderIdentity(profile);
   }
 
   async function loadAccount() {
@@ -1218,6 +1241,9 @@ export function createDashboard({ doc = globalThis.document, win = globalThis.wi
   }
 
   function bind() {
+    // The header Account chip opens the Account tab in place on any host.
+    const chip = doc.querySelector('.zx-header .zx-nav a.zx-btn');
+    if (chip) chip.setAttribute('href', '#account');
     for (const id of TABS) $('tab-' + id).addEventListener('click', () => navigate(id, false));
     $('dash-tabs').addEventListener('keydown', event => {
       const target = nextTab(state.tab, event.key, visibleTabs());
@@ -1255,9 +1281,14 @@ export function createDashboard({ doc = globalThis.document, win = globalThis.wi
     $('sessions-revoke').addEventListener('click', revokeSessions);
     $('acct-signout').addEventListener('click', signOut);
     for (const button of doc.querySelectorAll('[data-copy-target]')) {
-      button.addEventListener('click', () => {
+      // Icon-only zx-copy buttons: the toast speaks, and the button shows the check for two seconds.
+      let timer = 0;
+      button.addEventListener('click', async () => {
         const target = $(button.dataset.copyTarget);
-        if (target) copyText(target.textContent.trim(), button.dataset.copyLabel || 'Command');
+        if (!target || !(await copyText(target.textContent.trim(), button.dataset.copyLabel || 'Command'))) return;
+        clearTimeout(timer);
+        button.setAttribute('data-state', 'copied');
+        timer = setTimeout(() => button.removeAttribute('data-state'), 2000);
       });
     }
     for (const link of doc.querySelectorAll('a[data-site-path]')) link.setAttribute('href', siteUrl(link.dataset.sitePath, host()));

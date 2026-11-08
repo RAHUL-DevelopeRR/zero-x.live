@@ -3,6 +3,7 @@
 // 'unsafe-inline'. Run `node build-csp-hashes.mjs` after changing an inline script or style.
 export const INLINE_SCRIPT_HASHES = Object.freeze([
   'sha256-1X58qcVOLSwWdcQ/ld9XaPEBO0pDvEKBD2BSWHPlRZg=',
+  'sha256-M2iLKZ8AQPNkZOoK2qXR02EswzonYLhrET7D4KQFcM8=',
   'sha256-Vvs8WVCZJQnTsMKEPZRQrS3oUHjvVqNKZSItebnq1IM=',
   'sha256-ugojgbjflhMCVdk7cCNGvvuKxjUvdT12P677inamRmc=',
 ]);

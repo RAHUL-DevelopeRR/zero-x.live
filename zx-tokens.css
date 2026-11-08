@@ -271,16 +271,41 @@ li + li { margin-top: .35em; }
 .zx-nav a:not(.zx-btn):hover { color: var(--zx-ink); background: var(--zx-panel); }
 .zx-nav a[aria-current="page"] { color: var(--zx-ink); background: var(--zx-surface-strong); }
 .zx-nav .zx-btn { margin-left: 6px; }
+/* Signed in (site-nav.js installAccountChip): a 20 px round avatar or initials replaces the user icon. */
+.zx-btn[data-signed-in] > .zx-icon { display: none; }
+.zx-nav-avatar { display: inline-grid; place-items: center; flex: none; width: 20px; height: 20px; margin-left: -4px; overflow: hidden; border-radius: 50%; background: var(--zx-surface-strong); color: var(--zx-ink); box-shadow: inset 0 0 0 1px var(--zx-border); font: 600 .5625rem/1 var(--zx-font-mono); letter-spacing: 0; text-transform: uppercase; }
+.zx-nav-avatar img, .zx-crumbs__avatar img { display: block; width: 100%; height: 100%; object-fit: cover; border-radius: inherit; }
 /* Phones: one compact row, the mark and a Menu button (site-nav.js) that opens the nav below it.
    data-nav is set before first paint by the inline script right after each page's </header>, so
    the bar never paints wrapped first. Without JavaScript the header has no data-nav: the button
    stays hidden and the nav wraps in a header that does not stick, so it never covers a fifth of
    the screen. */
 .zx-nav-toggle { display: none; }
+/* Dark/light switch (site-nav.js installThemeToggle): one icon button, hidden until the inline head
+   script adds html.zx-js (only where module scripts run), so it never shifts the bar. In the DOM it
+   sits between the mark and Menu (Menu stays right before the nav it opens) and it is drawn there
+   too: it takes the nav's auto margin and opens the right-hand group. No flex `order`, so the tab
+   order is the visual order at every width. The icon shows what a click switches to: the moon in
+   light, the sun in dark (forced or from the system). */
+.zx-theme-toggle { display: none; }
+.zx-js .zx-theme-toggle { display: inline-flex; align-items: center; justify-content: center; margin-left: auto; width: 36px; height: 36px; padding: 0; border: 1px solid var(--zx-border-strong); border-radius: var(--zx-radius-sm); background: transparent; color: var(--zx-ink); cursor: pointer; transition: color .12s ease, background-color .12s ease; }
+.zx-theme-toggle:hover { color: var(--zx-ink); background: var(--zx-panel); }
+.zx-theme-toggle:focus-visible { outline: none; box-shadow: var(--zx-focus); }
+.zx-theme-toggle .zx-icon--sun { display: none; }
+:root[data-theme="dark"] .zx-theme-toggle .zx-icon--moon { display: none; }
+:root[data-theme="dark"] .zx-theme-toggle .zx-icon--sun { display: inline; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .zx-theme-toggle .zx-icon--moon { display: none; }
+  :root:not([data-theme="light"]) .zx-theme-toggle .zx-icon--sun { display: inline; }
+}
+.zx-header__inner > .zx-nav { margin-left: auto; }
+.zx-js .zx-theme-toggle ~ .zx-nav { margin-left: 0; }
 @media (max-width: 720px) {
   .zx-header:not([data-nav]) { position: static; }
   .zx-header[data-nav] .zx-header__inner { min-height: 56px; padding-block: 6px; }
   .zx-header[data-nav] .zx-nav-toggle { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 12px; border: 1px solid var(--zx-border-strong); border-radius: var(--zx-radius-sm); background: transparent; color: var(--zx-ink); font: inherit; font-size: var(--zx-fs-small); font-weight: 500; cursor: pointer; }
+  .zx-header[data-nav] .zx-header__inner { column-gap: 8px; }
+  .zx-header[data-nav] .zx-theme-toggle { margin-left: auto; width: 44px; height: 44px; min-height: 44px; border: 1px solid var(--zx-border-strong); color: var(--zx-ink); }
   .zx-header[data-nav] .zx-nav-toggle:hover { background: var(--zx-panel); }
   .zx-header[data-nav] .zx-nav-toggle:focus-visible { outline: none; box-shadow: var(--zx-focus); }
   .zx-header[data-nav="closed"] .zx-nav-toggle .zx-icon--close, .zx-header[data-nav="open"] .zx-nav-toggle .zx-icon--menu { display: none; }
@@ -297,7 +322,7 @@ li + li { margin-top: .35em; }
 .zx-crumbs li { display: inline-flex; align-items: center; gap: 8px; margin: 0; }
 .zx-crumbs li + li::before { content: '/'; color: var(--zx-border-strong); }
 .zx-crumbs [aria-current="page"] { color: var(--zx-ink); font-weight: 500; }
-.zx-crumbs__avatar { display: inline-grid; place-items: center; width: 24px; height: 24px; border: 1px solid var(--zx-border-strong); border-radius: var(--zx-radius-xs); background: var(--zx-panel); color: var(--zx-ink); font: 500 .6875rem var(--zx-font-mono); text-transform: uppercase; }
+.zx-crumbs__avatar { display: inline-grid; place-items: center; width: 24px; height: 24px; overflow: hidden; border: 1px solid var(--zx-border-strong); border-radius: var(--zx-radius-xs); background: var(--zx-panel); color: var(--zx-ink); font: 500 .6875rem var(--zx-font-mono); text-transform: uppercase; }
 
 /* Announcement bar: a small black pill, one line, an arrow link and a close button */
 .zx-announce { border-bottom: 1px solid var(--zx-border); background: var(--zx-panel); font-size: var(--zx-fs-small); }
@@ -337,6 +362,8 @@ li + li { margin-top: .35em; }
 .zx-btn--danger { border-color: var(--zx-danger); color: var(--zx-danger); }
 .zx-btn--danger:hover { background: var(--zx-danger-soft); border-color: var(--zx-danger); color: var(--zx-danger); }
 .zx-btn--sm { min-height: 32px; padding: 4px 12px; font-size: .8125rem; }
+/* Laid out but invisible (and out of the tab order) until a script fills it, so nothing shifts. */
+.zx-btn[data-pending] { visibility: hidden; }
 .zx-btn--block { width: 100%; }
 .zx-btn[aria-busy="true"] { cursor: progress; }
 @media (pointer: coarse) { .zx-btn { min-height: 44px; } .zx-btn--sm { min-height: 40px; } }
@@ -470,9 +497,17 @@ a.zx-card:hover { border-color: var(--zx-border-strong); background: var(--zx-pa
 /* ---------------------------------------------------------------- code */
 .zx-code { position: relative; margin: 0 0 var(--zx-s4); border: 1px solid var(--zx-border); border-radius: var(--zx-radius); background: var(--zx-code-bg); }
 .zx-code pre { margin: 0; padding: 12px var(--zx-s4); overflow-x: auto; font-size: .8125rem; line-height: 1.65; color: var(--zx-text); }
-.zx-code--copy pre { padding-right: 84px; }
-.zx-code--copy .zx-code__label { padding-right: 84px; }
-.zx-code .zx-copy { position: absolute; top: 6px; right: 6px; }
+/* Icon-only copy button, top right; the block reserves its width so nothing shifts when it appears */
+.zx-code--copy pre, .zx-code--copy .zx-code__label { padding-right: 48px; }
+.zx-copy { position: absolute; top: 6px; right: 6px; display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 0; border: 1px solid transparent; border-radius: var(--zx-radius-sm); background: inherit; color: var(--zx-muted); cursor: pointer; transition: color .12s ease, background-color .12s ease, border-color .12s ease; }
+.zx-copy:hover { color: var(--zx-ink); background: var(--zx-bg); border-color: var(--zx-border-strong); }
+.zx-copy:focus-visible { outline: none; color: var(--zx-ink); box-shadow: var(--zx-focus); }
+.zx-copy .zx-icon { width: 16px; height: 16px; }
+.zx-copy .zx-copy__done, .zx-copy[data-state="copied"] .zx-copy__idle { display: none; }
+.zx-copy[data-state="copied"] .zx-copy__done { display: block; }
+.zx-copy[data-state="copied"] { color: var(--zx-success); }
+.zx-copy[data-state="selected"] { color: var(--zx-ink); border-color: var(--zx-border-strong); background: var(--zx-bg); }
+@media (pointer: coarse) { .zx-copy { width: 40px; height: 40px; top: 3px; right: 3px; } .zx-code--copy pre, .zx-code--copy .zx-code__label { padding-right: 52px; } }
 /* Long one-line commands wrap instead of scrolling under the copy button */
 .zx-code--wrap pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 .zx-code__label { display: block; padding: 10px var(--zx-s4) 0; font-family: var(--zx-font-mono); font-size: .6875rem; letter-spacing: var(--zx-tracking-label); text-transform: uppercase; color: var(--zx-faint); }

@@ -25,10 +25,12 @@
   <meta name="twitter:image:alt" content="Zero-X logo">
   <link rel="preload" href="/fonts/aspekta-400.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="/fonts/aspekta-500.woff2" as="font" type="font/woff2" crossorigin>
+  <script>(function(d){if('noModule'in HTMLScriptElement.prototype)d.classList.add('zx-js');try{var t=localStorage.getItem('zx-theme');if(t==='dark'||t==='light')d.dataset.theme=t}catch(e){}})(document.documentElement)</script>
   <link rel="stylesheet" href="/zx-tokens.css">
   <link rel="stylesheet" href="/home.css">
   <script type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Zero-X","item":"https://zero-x.live/"},{"@type":"ListItem","position":2,"name":"Download Neuron","item":"https://zero-x.live/download"}]}</script>
   <script type="module" src="/site-nav.js"></script>
+  <script type="module" src="/copy-code.js"></script>
   <script type="module" src="/download.js"></script>
 </head>
 <body data-download>
@@ -36,6 +38,7 @@
   <header class="zx-header">
     <div class="zx-container zx-header__inner">
       <a class="zx-brand" href="/"><img src="/Assets/zerox-mark.svg" width="28" height="28" alt="">Zero-X</a>
+      <button class="zx-theme-toggle" type="button" aria-label="Dark mode" aria-pressed="false" title="Switch to dark mode"><svg class="zx-icon zx-icon--moon" aria-hidden="true"><use href="/icons.svg#moon"/></svg><svg class="zx-icon zx-icon--sun" aria-hidden="true"><use href="/icons.svg#sun"/></svg></button>
       <button class="zx-nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" hidden><svg class="zx-icon zx-icon--menu" aria-hidden="true"><use href="/icons.svg#menu"/></svg><svg class="zx-icon zx-icon--close" aria-hidden="true"><use href="/icons.svg#x"/></svg>Menu</button>
       <nav class="zx-nav" id="site-nav" aria-label="Main">
         <a href="/neuron-cli">Neuron CLI</a>
@@ -61,22 +64,22 @@
       <div>
         <div class="zx-cmd">
           <h3>npm</h3>
-          <div class="zx-code zx-code--copy zx-code--wrap"><span class="zx-code__label">Any terminal</span><pre><code id="cmd-npm">npm install -g @zero-x.live/neuron</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="cmd-npm" data-copy-label="npm install command">Copy</button></div>
+          <div class="zx-code zx-code--copy zx-code--wrap"><span class="zx-code__label">Any terminal</span><pre><code id="cmd-npm">npm install -g @zero-x.live/neuron</code></pre><button class="zx-copy" type="button" data-copy-target="cmd-npm" data-copy-label="npm install command" aria-label="Copy npm install command" title="Copy"><svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="/icons.svg#copy"/></svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="/icons.svg#check"/></svg></button></div>
           <p class="zx-help">Needs Node.js 22.14 or later. Run the same command again to upgrade.</p>
         </div>
         <div class="zx-cmd">
           <h3>pip</h3>
-          <div class="zx-code zx-code--copy zx-code--wrap"><span class="zx-code__label">Any terminal</span><pre><code id="cmd-pip">python -m pip install --pre neuroncli</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="cmd-pip" data-copy-label="pip install command">Copy</button></div>
+          <div class="zx-code zx-code--copy zx-code--wrap"><span class="zx-code__label">Any terminal</span><pre><code id="cmd-pip">python -m pip install --pre neuroncli</code></pre><button class="zx-copy" type="button" data-copy-target="cmd-pip" data-copy-label="pip install command" aria-label="Copy pip install command" title="Copy"><svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="/icons.svg#copy"/></svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="/icons.svg#check"/></svg></button></div>
           <p class="zx-help">Keep <code>--pre</code> while Neuron 7 is a pre-release: without it, pip installs the old, unsupported 6.2.4. Needs Python 3.8 or later.</p>
         </div>
         <div class="zx-cmd">
           <h3>macOS and Linux install script</h3>
-          <div class="zx-code zx-code--copy zx-code--wrap"><span class="zx-code__label">Terminal (sh, bash or zsh)</span><pre><code id="cmd-shell">curl -fsSL https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.5/install.sh | sh -s -- --version 7.0.0-alpha.5</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="cmd-shell" data-copy-label="curl install command">Copy</button></div>
+          <div class="zx-code zx-code--copy zx-code--wrap"><span class="zx-code__label">Terminal (sh, bash or zsh)</span><pre><code id="cmd-shell">curl -fsSL https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.5/install.sh | sh -s -- --version 7.0.0-alpha.5</code></pre><button class="zx-copy" type="button" data-copy-target="cmd-shell" data-copy-label="curl install command" aria-label="Copy curl install command" title="Copy"><svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="/icons.svg#copy"/></svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="/icons.svg#check"/></svg></button></div>
         </div>
         <div class="zx-cmd">
           <h3>Windows install script</h3>
-          <div class="zx-code zx-code--copy zx-code--wrap"><span class="zx-code__label">PowerShell</span><pre><code id="cmd-powershell">&amp; ([scriptblock]::Create((irm https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.5/install.ps1))) -Version 7.0.0-alpha.5 -AddToPath</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="cmd-powershell" data-copy-label="PowerShell install command">Copy</button></div>
-          <div class="zx-code zx-code--copy zx-code--wrap"><span class="zx-code__label">Command Prompt (cmd.exe)</span><pre><code id="cmd-cmd">powershell -NoProfile -ExecutionPolicy Bypass -Command "&amp; ([scriptblock]::Create((irm https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.5/install.ps1))) -Version 7.0.0-alpha.5 -AddToPath"</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="cmd-cmd" data-copy-label="Command Prompt install command">Copy</button></div>
+          <div class="zx-code zx-code--copy zx-code--wrap"><span class="zx-code__label">PowerShell</span><pre><code id="cmd-powershell">&amp; ([scriptblock]::Create((irm https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.5/install.ps1))) -Version 7.0.0-alpha.5 -AddToPath</code></pre><button class="zx-copy" type="button" data-copy-target="cmd-powershell" data-copy-label="PowerShell install command" aria-label="Copy PowerShell install command" title="Copy"><svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="/icons.svg#copy"/></svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="/icons.svg#check"/></svg></button></div>
+          <div class="zx-code zx-code--copy zx-code--wrap"><span class="zx-code__label">Command Prompt (cmd.exe)</span><pre><code id="cmd-cmd">powershell -NoProfile -ExecutionPolicy Bypass -Command "&amp; ([scriptblock]::Create((irm https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.5/install.ps1))) -Version 7.0.0-alpha.5 -AddToPath"</code></pre><button class="zx-copy" type="button" data-copy-target="cmd-cmd" data-copy-label="Command Prompt install command" aria-label="Copy Command Prompt install command" title="Copy"><svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="/icons.svg#copy"/></svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="/icons.svg#check"/></svg></button></div>
           <p class="zx-help">Use the command for the window you have open: Command Prompt rejects the PowerShell one with "&amp; was unexpected at this time." <code>-AddToPath</code> puts Neuron on your user PATH. Open a new terminal, then run <code>neuron</code>.</p>
         </div>
       </div>
@@ -101,10 +104,10 @@
       <h2 id="verify-title">Verify your download</h2>
       <p id="checksums-link">Every release publishes a <code>.sha256</code> file for each binary and a <code>SHA256SUMS</code> list of all files.</p>
       <p>Compare the checksum of the file you downloaded with the one in the table above or in the release's <code>.sha256</code> file:</p>
-      <div class="zx-code"><span class="zx-code__label">Windows (PowerShell)</span><pre><code>Get-FileHash .\neuron-windows-x64.exe -Algorithm SHA256</code></pre></div>
-      <div class="zx-code"><span class="zx-code__label">macOS and Linux</span><pre><code>shasum -a 256 neuron-macos-arm64</code></pre></div>
+      <div class="zx-code zx-code--copy"><span class="zx-code__label">Windows (PowerShell)</span><pre><code id="verify-windows">Get-FileHash .\neuron-windows-x64.exe -Algorithm SHA256</code></pre><button class="zx-copy" type="button" data-copy-target="verify-windows" data-copy-label="PowerShell checksum command" aria-label="Copy PowerShell checksum command" title="Copy"><svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="/icons.svg#copy"/></svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="/icons.svg#check"/></svg></button></div>
+      <div class="zx-code zx-code--copy"><span class="zx-code__label">macOS and Linux</span><pre><code id="verify-unix">shasum -a 256 neuron-macos-arm64</code></pre><button class="zx-copy" type="button" data-copy-target="verify-unix" data-copy-label="shasum command" aria-label="Copy shasum command" title="Copy"><svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="/icons.svg#copy"/></svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="/icons.svg#check"/></svg></button></div>
       <p>Release binaries also carry a GitHub build attestation that proves which workflow built them:</p>
-      <div class="zx-code"><pre><code>gh attestation verify neuron-linux-x64 --repo RAHUL-DevelopeRR/neuron-v2</code></pre></div>
+      <div class="zx-code zx-code--copy"><pre><code id="verify-attest">gh attestation verify neuron-linux-x64 --repo RAHUL-DevelopeRR/neuron-v2</code></pre><button class="zx-copy" type="button" data-copy-target="verify-attest" data-copy-label="attestation command" aria-label="Copy attestation command" title="Copy"><svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="/icons.svg#copy"/></svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="/icons.svg#check"/></svg></button></div>
       <p>The install scripts check each binary's SHA-256 before installing it. If a checksum does not match, do not run the file; tell us at <a href="mailto:support@zero-x.live">support@zero-x.live</a>.</p>
     </section>
 

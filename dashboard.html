@@ -12,6 +12,7 @@
   <link rel="apple-touch-icon" sizes="180x180" href="/Assets/zerox-apple-touch-icon.png">
   <link rel="preload" href="/fonts/aspekta-400.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="/fonts/aspekta-500.woff2" as="font" type="font/woff2" crossorigin>
+  <script>(function(d){if('noModule'in HTMLScriptElement.prototype)d.classList.add('zx-js');try{var t=localStorage.getItem('zx-theme');if(t==='dark'||t==='light')d.dataset.theme=t}catch(e){}})(document.documentElement)</script>
   <link rel="stylesheet" href="/zx-tokens.css">
   <link rel="stylesheet" href="/dashboard.css">
   <script type="module" src="/site-nav.js"></script>
@@ -23,11 +24,13 @@
   <header class="zx-header">
     <div class="zx-container zx-header__inner">
       <a class="zx-brand" href="https://zero-x.live/" data-site-path="/"><img src="/Assets/zerox-mark.svg" width="28" height="28" alt="">Zero-X</a>
+      <button class="zx-theme-toggle" type="button" aria-label="Dark mode" aria-pressed="false" title="Switch to dark mode"><svg class="zx-icon zx-icon--moon" aria-hidden="true"><use href="/icons.svg#moon"/></svg><svg class="zx-icon zx-icon--sun" aria-hidden="true"><use href="/icons.svg#sun"/></svg></button>
       <button class="zx-nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" hidden><svg class="zx-icon zx-icon--menu" aria-hidden="true"><use href="/icons.svg#menu"/></svg><svg class="zx-icon zx-icon--close" aria-hidden="true"><use href="/icons.svg#x"/></svg>Menu</button>
       <nav class="zx-nav" id="site-nav" aria-label="Main">
         <a href="https://zero-x.live/neuron-cli" data-site-path="/neuron-cli">Neuron CLI</a>
         <a href="https://zero-x.live/pricing" data-site-path="/pricing">Pricing</a>
         <a href="https://zero-x.live/docs" data-site-path="/docs">Docs</a>
+        <a class="zx-btn zx-btn--sm" href="https://dashboard.zero-x.live/#account" data-account-link data-pending><svg class="zx-icon zx-icon--sm" aria-hidden="true"><use href="/icons.svg#user"/></svg>Account</a>
       </nav>
     </div>
   </header>
@@ -152,11 +155,11 @@
           <div class="zx-card__head"><h3 class="zx-card__title" id="qs-title">Quick start</h3></div>
           <div class="zx-card__body">
           <p class="zx-muted">Install Neuron 7.0.0-alpha.5 (a GitHub pre-release), sign in once with <code>neuron login</code> and approve the short code it shows, then run <code>neuron</code> in any project.</p>
-          <div class="zx-code zx-code--copy"><span class="zx-code__label">Install with npm</span><pre><code id="qs-install">npm install -g @zero-x.live/neuron</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="qs-install" data-copy-label="npm install command">Copy</button></div>
-          <div class="zx-code zx-code--copy"><span class="zx-code__label">Or with pip</span><pre><code id="qs-install-pip">python -m pip install --pre neuroncli</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="qs-install-pip" data-copy-label="pip install command">Copy</button></div>
+          <div class="zx-code zx-code--copy"><span class="zx-code__label">Install with npm</span><pre><code id="qs-install">npm install -g @zero-x.live/neuron</code></pre><button class="zx-copy" type="button" data-copy-target="qs-install" data-copy-label="npm install command" aria-label="Copy npm install command" title="Copy"><svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="/icons.svg#copy"/></svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="/icons.svg#check"/></svg></button></div>
+          <div class="zx-code zx-code--copy"><span class="zx-code__label">Or with pip</span><pre><code id="qs-install-pip">python -m pip install --pre neuroncli</code></pre><button class="zx-copy" type="button" data-copy-target="qs-install-pip" data-copy-label="pip install command" aria-label="Copy pip install command" title="Copy"><svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="/icons.svg#copy"/></svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="/icons.svg#check"/></svg></button></div>
           <p class="zx-help">Both work in any terminal on macOS, Linux or Windows. npm needs Node.js 22.14 or later; pip needs Python 3.8 or later; keep <code>--pre</code> while Neuron 7 is a pre-release. No Node.js or Python? The install scripts for macOS and Linux, Windows PowerShell and Command Prompt are on the <a href="https://zero-x.live/download#cli" data-site-path="/download#cli">download page</a>.</p>
-          <div class="zx-code zx-code--copy zx-mt"><span class="zx-code__label">Sign in</span><pre><code id="qs-login">neuron login</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="qs-login" data-copy-label="Login command">Copy</button></div>
-          <div class="zx-code zx-code--copy"><span class="zx-code__label">OpenAI-compatible base URL</span><pre><code id="qs-base">https://zero-x.live/v1</code></pre><button class="zx-btn zx-btn--sm zx-copy" type="button" data-copy-target="qs-base" data-copy-label="Base URL">Copy</button></div>
+          <div class="zx-code zx-code--copy zx-mt"><span class="zx-code__label">Sign in</span><pre><code id="qs-login">neuron login</code></pre><button class="zx-copy" type="button" data-copy-target="qs-login" data-copy-label="Login command" aria-label="Copy sign-in command" title="Copy"><svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="/icons.svg#copy"/></svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="/icons.svg#check"/></svg></button></div>
+          <div class="zx-code zx-code--copy"><span class="zx-code__label">OpenAI-compatible base URL</span><pre><code id="qs-base">https://zero-x.live/v1</code></pre><button class="zx-copy" type="button" data-copy-target="qs-base" data-copy-label="Base URL" aria-label="Copy base URL" title="Copy"><svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="/icons.svg#copy"/></svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="/icons.svg#check"/></svg></button></div>
           <p class="zx-help">Need more? Read the <a href="https://zero-x.live/docs" data-site-path="/docs">documentation</a>.</p>
           </div>
         </section>
@@ -256,8 +259,8 @@
             <tbody id="keys-list"><tr><td colspan="6" class="zx-empty">Loading keys…</td></tr></tbody>
           </table>
         </div>
-        <div class="zx-code zx-mt"><span class="zx-code__label">Headless example</span><pre><code>export NEURON_TOKEN=nzx_your_key
-neuron -p "Run the tests and summarise failures"</code></pre></div>
+        <div class="zx-code zx-code--copy zx-mt"><span class="zx-code__label">Headless example</span><pre><code id="qs-headless">export NEURON_TOKEN=nzx_your_key
+neuron -p "Run the tests and summarise failures"</code></pre><button class="zx-copy" type="button" data-copy-target="qs-headless" data-copy-label="Headless example" aria-label="Copy headless example" title="Copy"><svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="/icons.svg#copy"/></svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="/icons.svg#check"/></svg></button></div>
         <p class="zx-help">Without a terminal nobody can approve commands, so test and build commands are denied and <code>neuron</code> exits with code 2 unless <code>~/.neuron/settings.json</code> allows them. See <a href="https://zero-x.live/neuron-cli#first-run" data-site-path="/neuron-cli#first-run">headless runs</a>.</p>
       </section>
 
