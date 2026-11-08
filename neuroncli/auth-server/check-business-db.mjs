@@ -186,6 +186,12 @@ try {
     { plan: 'free', name: 'Free', price_usd: 0, price_usd_cents: 0, price_inr_paise: 0, daily_requests: 100, daily_tokens: 5000000,
       rpm_limit: 10, concurrency_limit: 2, allowed_tiers: ['free'], monthly_credit_microusd: 0, listed: true,
       window_tokens: 1000000, window_seconds: 18000 },
+    { plan: 'athlete', name: 'Athlete', price_usd: 1, price_usd_cents: 100, price_inr_paise: 8900, daily_requests: 300,
+      daily_tokens: 6000000, rpm_limit: 15, concurrency_limit: 2, allowed_tiers: ['free', 'paid'],
+      monthly_credit_microusd: 750000, listed: true, window_tokens: null, window_seconds: null },
+    { plan: 'speed', name: 'Speed', price_usd: 5, price_usd_cents: 500, price_inr_paise: 44900, daily_requests: 1000,
+      daily_tokens: 8000000, rpm_limit: 20, concurrency_limit: 3, allowed_tiers: ['free', 'paid'],
+      monthly_credit_microusd: 4000000, listed: true, window_tokens: null, window_seconds: null },
     { plan: 'pro', name: 'Pro', price_usd: 10, price_usd_cents: 1000, price_inr_paise: 89900, daily_requests: 2000,
       daily_tokens: 10000000, rpm_limit: 30, concurrency_limit: 4, allowed_tiers: ['free', 'paid'],
       monthly_credit_microusd: 8000000, listed: true, window_tokens: null, window_seconds: null },
@@ -197,10 +203,10 @@ try {
       monthly_credit_microusd: 8000000, listed: false, window_tokens: null, window_seconds: null },
   ]);
   assert.ok(plans.every(plan => Array.isArray(plan.features) && plan.features.length >= 4 && plan.features.every(f => typeof f === 'string')));
-  assert.deepEqual(plans.map(plan => plan.highlighted), [false, true, false, false]);
+  assert.deepEqual(plans.map(plan => plan.highlighted), [false, false, false, true, false, false]);
   assert.ok(plans.every(plan => plan.razorpay_plan_id_inr === null && plan.razorpay_plan_id_usd === null));
   const legacy = (await rpc(env, 'zerox_plan_policies', {})).policies;
-  assert.deepEqual(Object.keys(legacy).sort(), ['free', 'max', 'pro', 'ultrawork'], 'legacy policy RPC includes max');
+  assert.deepEqual(Object.keys(legacy).sort(), ['athlete', 'free', 'max', 'pro', 'speed', 'ultrawork'], 'legacy policy RPC includes max, athlete and speed');
   assert.equal(legacy.max.daily_tokens, 50000000);
   // The session-KV allocation (src/capacity.js reserveSessionQuota) reads this map: Free carries its
   // window, so a session without an account ledger is held to 1M a day, not to daily_tokens (5M).
@@ -217,7 +223,7 @@ try {
   const connectorPolicyOf = hosted => ({ allowed: ['catalog:*'], denied: [], required: [], hosted, allow_unvetted: true,
     catalog_version: '2026-11-03' });
   assert.deepEqual(Object.fromEntries(plans.map(plan => [plan.plan, plan.connector_policy])), { free: connectorPolicyOf([]),
-    pro: connectorPolicyOf(hostedIds), max: connectorPolicyOf(hostedIds), ultrawork: connectorPolicyOf(hostedIds) });
+    athlete: connectorPolicyOf(hostedIds), speed: connectorPolicyOf(hostedIds), pro: connectorPolicyOf(hostedIds), max: connectorPolicyOf(hostedIds), ultrawork: connectorPolicyOf(hostedIds) });
   const policyUser = await newUser('max');
   assert.deepEqual((await rpc(env, 'zerox_account_overview', { p_user_id: policyUser })).policy.connector_policy, connectorPolicyOf(hostedIds));
   await assert.rejects(sql(`UPDATE public.zerox_plan_policy SET connector_policy = '["github"]'::jsonb WHERE plan = 'free'`),
@@ -228,7 +234,7 @@ try {
   handle.functions.clear();
   assert.deepEqual((await rpcRows(env, 'zerox_plan_policies_v2', {})).find(plan => plan.plan === 'pro').connector_policy, { denied: ['slack'] });
   await sql('UPDATE public.zerox_plan_policy SET connector_policy = $1::jsonb WHERE plan = $2', [JSON.stringify(connectorPolicyOf(hostedIds)), 'pro']);
-  ok('plans seeded exactly per contract section 1 (free/pro/max/ultrawork) with features and legacy RPC compatibility');
+  ok('plans seeded exactly per contract section 1 (free/athlete/speed/pro/max/ultrawork) with features and legacy RPC compatibility');
 
   // ---------------------------------------------------------------- reserve and settle happy path
   await clockHeadroom();
@@ -1893,7 +1899,7 @@ try {
     '20261102000000_free_token_window.sql', '20261104000000_health_probes.sql', '20261104300000_free_plan_features_lineup.sql',
     '20261106000000_pool_fair_share.sql', '20261106000300_connector_policy.sql', '20261106000400_connector_accounts.sql',
     '20261106000600_sponsored_pools.sql', '20261106000700_haiku_catalog.sql', '20261106000800_plan_features_haiku.sql',
-    '20261107000000_pool_user_cost_share.sql', '20261107000100_pool_share_refunds.sql']);
+    '20261107000000_pool_user_cost_share.sql', '20261107000100_pool_share_refunds.sql', '20261108000000_athlete_speed_plans.sql']);
   for (const file of downFiles) {
     const migration = migrations.find(candidate => candidate.file === file);
     assert.ok(migration, `${file} undoes a migration of the same name`);

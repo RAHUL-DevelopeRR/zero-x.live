@@ -20,7 +20,7 @@
 <body class="ap">
   <header class="ap-top"><a class="zx-brand" href="https://zero-x.live/"><img src="/Assets/zerox-mark.svg" width="28" height="28" alt="">Zero-X</a></header>
   <main class="ap-main" id="main">
-    <div class="ap-card">
+    <div class="ap-card" id="card">
       <p class="zx-label">Neuron CLI</p>
       <h1>Sign in to Neuron</h1>
       <p id="message" role="status" aria-live="polite">Checking your sign-in…</p>
@@ -57,13 +57,17 @@
         </div>
       </section>
 
-      <p id="done" class="ap-done" hidden></p>
-
       <div class="ap-help">
         <p>New to Neuron? <a href="https://zero-x.live/neuron-cli">Install it</a>.</p>
         <p>Trouble signing in? Email <a href="mailto:support@zero-x.live">support@zero-x.live</a>. <a href="https://zero-x.live/docs">Docs</a> · <a href="https://zero-x.live/terms">Terms</a> · <a href="https://zero-x.live/privacy">Privacy</a></p>
       </div>
     </div>
+    <section class="ap-result" id="result" hidden>
+      <img class="ap-result-mark" src="/Assets/zerox-mark.svg" width="56" height="56" alt="">
+      <h1 id="result-title" class="ap-result-title" tabindex="-1" aria-describedby="result-line result-detail"></h1>
+      <p id="result-line" class="ap-result-line"></p>
+      <p id="result-detail" class="ap-result-detail"></p>
+    </section>
   </main>
 </body>
 </html>

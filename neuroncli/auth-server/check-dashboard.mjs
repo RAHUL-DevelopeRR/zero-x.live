@@ -294,8 +294,8 @@ function dashboardRoutes(state) {
 }
 
 const {createDashboard, TABS} = await import(new URL('dashboard.js', root));
-const {createPricingPage, PENDING_CHECKOUT_KEY} = await import(new URL('pricing.js', root));
-const {CHECKOUT_THEME_COLOR, PAYMENT_LOCK_KEY, PAYMENT_LOCK_TTL_MS} = await import(new URL('billing-checkout.js', root));
+const {createPricingPage, findPlan, PENDING_CHECKOUT_KEY} = await import(new URL('pricing.js', root));
+const {CHECKOUT_THEME_COLOR, PAYMENT_LOCK_KEY, PAYMENT_LOCK_TTL_MS, startSubscription} = await import(new URL('billing-checkout.js', root));
 // The billing details step (billing-details.js) is replaced by a stub in every test but its own: it
 // answers like a buyer who filled in the details and ticked every box.
 const CONSENT_VERSIONS = {terms: '2026-10-25', privacy: '2026-10-25', auto_renewal: '2026-11-03', refund: '2026-10-24'};
@@ -681,7 +681,7 @@ async function mountDashboard({profile = PROFILE, hash = '', search = '', state 
   // Free accounts cannot buy credits they cannot spend (review B4 P2).
   assert.ok(doc.querySelectorAll('[data-topup]').every(button => button.disabled), 'top-ups are disabled on Free');
   assert.equal($('topup-note').hidden, false);
-  assert.match($('topup-note').textContent, /need an active Pro or Max plan/);
+  assert.match($('topup-note').textContent, /need an active paid plan/);
   assert.equal($('topup-note').querySelector('a').getAttribute('href'), 'https://zero-x.live/pricing');
   doc.querySelector('[data-topup="credits_5"]').click();
   await settle();
@@ -882,6 +882,76 @@ async function mountPricing({profile = null, routes = {}, hostname = 'zero-x.liv
   await settle();
   assert.equal(FakeRazorpay.instances.length, 0, 'Malformed checkout payloads never reach Razorpay');
   assert.match(forged.$('pricing-error').textContent, /not enabled yet/);
+}
+
+/* ───────────── Pricing page: Athlete and Speed (migration 20261108000000) ───────────── */
+
+{
+  const NEW_PLANS = ['athlete', 'speed'];
+  const onlyFor = (doc, id) => doc.querySelectorAll(`[data-plan-only="${id}"]`);
+  // Static page (no script, or before /api/plans answers): five cards in price order, both new plans shown.
+  const staticDoc = parseDocument(read('pricing.html'));
+  assert.deepEqual(staticDoc.querySelectorAll('#plans .zx-plan').map(card => card.getAttribute('id')),
+    ['plan-free', 'plan-athlete', 'plan-speed', 'plan-pro', 'plan-max'], 'pricing.html: Free, Athlete, Speed, Pro, Max');
+  assert.deepEqual(staticDoc.querySelectorAll('[data-upgrade]').map(button => button.dataset.upgrade), ['athlete', 'speed', 'pro', 'max']);
+  assert.ok(staticDoc.querySelector('#plan-pro').getAttribute('class').includes('zx-card--highlight'), 'Pro stays highlighted');
+  for (const id of NEW_PLANS) {
+    assert.equal(staticDoc.querySelector(`#plan-${id}`).getAttribute('data-plan-only'), id, `${id}: the card hides with its plan`);
+    assert.ok(!staticDoc.querySelector(`#plan-${id}`).getAttribute('class').includes('zx-card--highlight'), `${id}: not highlighted`);
+    // Every comparison cell of the plan's column hides with it: header, 14 rows.
+    assert.equal(staticDoc.querySelectorAll('#compare [data-plan-only]').filter(el => el.dataset.planOnly === id).length, 15, `${id}: comparison column`);
+    assert.ok(onlyFor(staticDoc, id).every(el => !el.hidden), `${id}: shown before hydration`);
+  }
+
+  // Before the migration: /api/plans lists Free, Pro and Max only (plansPayload), so both plans are
+  // hidden and a click (or a remembered intent) cannot start a checkout.
+  const before = await mountPricing({profile: PROFILE});
+  for (const id of NEW_PLANS) {
+    assert.ok(onlyFor(before.doc, id).length > 0 && onlyFor(before.doc, id).every(el => el.hidden), `${id}: hidden when the gateway does not list it`);
+    assert.equal(findPlan(before.page.catalog, id), null);
+  }
+  assert.ok(!before.doc.querySelector('#plan-pro').hidden && !before.doc.querySelector('#plan-max').hidden, 'Pro and Max stay');
+  before.doc.querySelector('[data-upgrade="athlete"]').click();
+  await settle();
+  assert.ok(!before.calls.some(call => call.path === '/api/billing/checkout'), 'no checkout for a plan the gateway does not offer');
+  assert.match(before.$('pricing-error').textContent, /not available yet/);
+  // The server's own refusal (a stale page) reads the same.
+  const stale = await mountPricing({profile: PROFILE, routes: {'GET /api/plans': {currency_default: 'USD', plans: [...plansPayload.plans, {id: 'speed', name: 'Speed',
+    price: {usd_cents: 500, inr_paise: 44900}, limits: {}, monthly_credit_usd: 4, tiers: ['free', 'paid'], features: [], highlighted: false}], topups: plansPayload.topups},
+  'POST /api/billing/checkout': apiError(409, 'plan_unavailable', 'This plan is not available yet. Choose another plan, or email support@zero-x.live.')}});
+  assert.ok(onlyFor(stale.doc, 'speed').every(el => !el.hidden) && onlyFor(stale.doc, 'athlete').every(el => el.hidden), 'each plan follows the gateway');
+  stale.doc.querySelector('[data-upgrade="speed"]').click();
+  await settle();
+  assert.match(stale.$('pricing-error').textContent, /not available yet/);
+
+  // After the migration: the gateway lists them; prices, credits and limits hydrate; checkout sends the plan id.
+  const listed = {currency_default: 'USD', plans: [plansPayload.plans[0],
+    {id: 'athlete', name: 'Athlete', price: {usd_cents: 100, inr_paise: 8900}, interval: 'month', limits: {daily_requests: 300, daily_tokens: 6000000, rpm: 15, concurrency: 2},
+      monthly_credit_usd: 0.75, tiers: ['free', 'paid'], features: [], highlighted: false},
+    {id: 'speed', name: 'Speed', price: {usd_cents: 500, inr_paise: 44900}, interval: 'month', limits: {daily_requests: 1000, daily_tokens: 8000000, rpm: 20, concurrency: 3},
+      monthly_credit_usd: 4, tiers: ['free', 'paid'], features: [], highlighted: false},
+    ...plansPayload.plans.slice(1)], topups: plansPayload.topups};
+  const after = await mountPricing({profile: PROFILE, routes: {'GET /api/plans': listed}});
+  for (const id of NEW_PLANS) assert.ok(onlyFor(after.doc, id).every(el => !el.hidden), `${id}: shown once the gateway lists it`);
+  assert.equal(after.doc.querySelector('[data-plan-price="athlete"]').textContent, '$1');
+  assert.equal(after.doc.querySelector('[data-plan-credit="athlete"]').textContent, '$0.75');
+  assert.equal(after.doc.querySelector('[data-plan-limit="athlete:token_allowance"]').textContent, '6M per day');
+  after.doc.querySelector('[data-currency="INR"]').click();
+  assert.deepEqual(['athlete', 'speed', 'pro', 'max'].map(id => after.doc.querySelector(`#plan-${id} [data-plan-price]`).textContent), ['₹89', '₹449', '₹899', '₹3,499'],
+    'INR prices in price order');
+  assert.equal(after.doc.querySelectorAll('[data-plan-features="athlete"] li').length, 6, 'empty API features keep the static Athlete list');
+  after.doc.querySelector('[data-upgrade="athlete"]').click();
+  await settle();
+  const checkoutCall = after.calls.find(call => call.path === '/api/billing/checkout');
+  assert.deepEqual([checkoutCall.body.plan, checkoutCall.body.currency], ['athlete', 'INR'], 'checkout for Athlete in INR');
+  // After the migration but before the Razorpay plan ids are stored: billing_plan_missing, as for Pro.
+  const missing = await mountPricing({profile: PROFILE, routes: {'GET /api/plans': listed,
+    'POST /api/billing/checkout': apiError(503, 'billing_plan_missing', 'Checkout for the Speed plan in USD is not set up yet.')}});
+  missing.doc.querySelector('[data-upgrade="speed"]').click();
+  await settle();
+  assert.match(missing.$('pricing-error').textContent, /not set up yet/);
+  assert.equal(missing.$('pricing-error').querySelector('a').getAttribute('href'), 'mailto:support@zero-x.live');
+  await assert.rejects(startSubscription({plan: 'gold', currency: 'USD'}), /Athlete, Speed, Pro or Max/);
 }
 
 /* ───────────── Neuron CLI page script ───────────── */
@@ -1638,14 +1708,14 @@ async function loadAuth({hostname, config, session = makeStorage(), sdk = true})
   free.doc.querySelector('[data-topup="credits_5"]').click();
   await settle();
   assert.ok(!free.calls.some(call => call.path === '/api/billing/topup'), 'no order for Free accounts');
-  assert.match(free.$('pricing-error').textContent, /need an active Pro or Max plan/);
+  assert.match(free.$('pricing-error').textContent, /need an active paid plan/);
   assert.equal(free.$('pricing-error').querySelector('a').getAttribute('href'), 'https://zero-x.live/pricing#plans');
   // The server-side refusal is handled the same way.
   const refused = await mountPricing({profile: PROFILE, routes: {'GET /api/account': accountPayload(),
-    'POST /api/billing/topup': apiError(403, 'upgrade_required', 'Credit top-ups are available on the Pro and Max plans. Upgrade first.')}});
+    'POST /api/billing/topup': apiError(403, 'upgrade_required', 'Credit top-ups are available on the paid plans (Athlete, Speed, Pro and Max). Upgrade first.')}});
   refused.doc.querySelector('[data-topup="credits_5"]').click();
   await settle();
-  assert.match(refused.$('pricing-error').textContent, /Pro and Max plans/);
+  assert.match(refused.$('pricing-error').textContent, /paid plans \(Athlete, Speed, Pro and Max\)/);
   assert.equal(refused.$('pricing-error').querySelector('a').getAttribute('href'), 'https://zero-x.live/pricing#plans');
 }
 

@@ -11,12 +11,16 @@ import { normalizePlanId } from './plan-policy.js';
 // of searches with purpose "research".
 export const SEARCH_LIMITS = Object.freeze({
   free: Object.freeze({ daily_searches: 40, daily_research_runs: 3 }),
+  athlete: Object.freeze({ daily_searches: 100, daily_research_runs: 8 }),
+  speed: Object.freeze({ daily_searches: 200, daily_research_runs: 15 }),
   pro: Object.freeze({ daily_searches: 400, daily_research_runs: 30 }),
   max: Object.freeze({ daily_searches: 2000, daily_research_runs: 150 }),
 });
 // Colony (multi-agent mode) budgets, enforced by the CLI: parallel workers and tokens per run.
 export const COLONY_LIMITS = Object.freeze({
   free: Object.freeze({ max_workers: 1, max_tokens_per_run: 300000 }),
+  athlete: Object.freeze({ max_workers: 2, max_tokens_per_run: 600000 }),
+  speed: Object.freeze({ max_workers: 3, max_tokens_per_run: 1000000 }),
   pro: Object.freeze({ max_workers: 4, max_tokens_per_run: 2000000 }),
   max: Object.freeze({ max_workers: 8, max_tokens_per_run: 6000000 }),
 });

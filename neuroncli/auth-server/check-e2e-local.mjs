@@ -308,7 +308,7 @@ try {
   const handle = await getPgliteHandle(dbEnv);
   const razorpayEnv = { RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET, RAZORPAY_API_BASE: razorpayBase };
   const plans = await bootstrapPlans({ env: razorpayEnv, apply: true });
-  assert.equal(plans.filter(row => row.action === 'created').length, 4, 'bootstrap creates Pro/Max in INR and USD');
+  assert.equal(plans.filter(row => row.action === 'created').length, 8, 'bootstrap creates Athlete, Speed, Pro and Max in INR and USD');
   await handle.db.exec(planSql(plans));
   // Cap fixture: a small Free token window (5 hours as in production) so the window is reached
   // without spending upstream calls (a 60K-token prompt exceeds it).
@@ -324,7 +324,7 @@ try {
   await handle.db.query(`INSERT INTO public.zerox_family_month_usage (user_id, family, month, tokens)
     VALUES ($1, $2, date_trunc('month', now() AT TIME ZONE 'UTC')::date, $3)`, [haikuCapUserId, HAIKU_FAMILY, HAIKU_MONTH_TOKENS - 10]);
   await closeAllPglite();
-  step('database prepared', `${handle.applied.length} migrations applied in a fresh PGlite directory; scripts/razorpay-bootstrap.mjs created 4 plans on the fake Razorpay and their ids were stored`);
+  step('database prepared', `${handle.applied.length} migrations applied in a fresh PGlite directory; scripts/razorpay-bootstrap.mjs created 8 plans on the fake Razorpay and their ids were stored`);
 
   const env = {
     PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, TEMP: process.env.TEMP, TMP: process.env.TMP,

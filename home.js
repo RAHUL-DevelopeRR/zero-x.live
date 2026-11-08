@@ -118,7 +118,7 @@ export function verdictExpired(model, now = Date.now()) {
 export function modelState(model, now = Date.now()) {
   if (!model || typeof model !== 'object') return { tone: 'off', label: 'Unavailable' };
   if (model.available === false) {
-    if (model.unavailable_reason === 'upgrade_required') return { tone: 'locked', label: 'Pro and Max plans' };
+    if (model.unavailable_reason === 'upgrade_required') return { tone: 'locked', label: 'Paid plans' };
     if (model.unavailable_reason === 'region_unavailable') return { tone: 'off', label: 'Not offered in your region' };
     return { tone: 'off', label: 'Not offered right now' };
   }
@@ -272,7 +272,7 @@ export function contextNote(row) {
   if (row.id === 'auto') return 'Auto picks a model whose context fits each request.';
   const usable = formatContext(row.context, row.id);
   if (usable === '—') return 'Context window not reported.';
-  const plan = row.paidOnly ? 'on Pro and Max' : 'on the Free plan';
+  const plan = row.paidOnly ? 'on the paid plans' : 'on the Free plan';
   return row.native > row.context
     ? `Up to ${usable} tokens per request ${plan}. The model itself takes up to ${formatContext(row.native, row.id)}.`
     : `Up to ${usable} tokens per request ${plan}.`;
@@ -384,7 +384,7 @@ function renderModels(doc, body, rows, now) {
     } else if (row.paidOnly && state.tone !== 'locked') {
       const tag = doc.createElement('span');
       tag.className = 'zx-badge zx-badge--tan';
-      tag.textContent = 'Pro and Max';
+      tag.textContent = 'Paid plans';
       main.append(tag);
     }
     const context = doc.createElement('span');

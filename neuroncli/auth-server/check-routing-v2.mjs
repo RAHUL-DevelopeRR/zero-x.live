@@ -417,7 +417,7 @@ try {
     try {
       reset({ 'rpc:zerox_plan_policies_v2': () => Response.json(B1_POLICY_ROWS) });
       const fromSeed = await loadPlanPolicies(seeded);
-      for (const id of ['free', 'pro', 'max', 'ultrawork']) assert.deepEqual({ ...fromSeed[id] }, { ...BUILTIN_PLANS[id] }, id);
+      for (const id of ['free', 'athlete', 'speed', 'pro', 'max', 'ultrawork']) assert.deepEqual({ ...fromSeed[id] }, { ...BUILTIN_PLANS[id] }, id);
       assert.deepEqual(logged, [], 'complete B1 rows report no problems');
       // A row without any recognised tiers column is reported loudly instead of routing silently.
       reset({ 'rpc:zerox_plan_policies_v2': () => Response.json([policyRow('free'), { plan: 'pro', name: 'Pro' }]) });

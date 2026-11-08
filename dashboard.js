@@ -53,7 +53,7 @@ export function nextTab(current, key, tabs = TABS) {
 }
 
 const CONNECTOR_STATUS = {
-  connected: ['Connected', 'success'], not_connected: ['Not connected', ''], not_in_plan: ['Pro and Max', 'purple'],
+  connected: ['Connected', 'success'], not_connected: ['Not connected', ''], not_in_plan: ['Paid plans', 'purple'],
   unavailable: ['Coming soon', ''],
 };
 /** GET /api/connectors rows, keeping only the fields the table shows. */
@@ -615,7 +615,7 @@ export function createDashboard({ doc = globalThis.document, win = globalThis.wi
       : dailyReset);
     setText('ov-credits', formatUsd(credits.balance_usd));
     setText('ov-credits-detail', plan.id === 'free'
-      ? 'Credits pay for Claude Sonnet 5.5, Claude Opus 5.5 and other paid capacity on Pro and Max.'
+      ? 'Credits pay for Claude Sonnet 5.5, Claude Opus 5.5 and other paid capacity on the paid plans.'
       : credits.monthly_grant_usd !== null
         ? formatUsd(credits.monthly_grant_usd) + ' added at each renewal. Pays for Claude Sonnet 5.5, Claude Opus 5.5 and other paid capacity.'
         : 'Pays for Claude and other paid capacity.');
@@ -895,7 +895,7 @@ export function createDashboard({ doc = globalThis.document, win = globalThis.wi
     if (note) {
       const needsPlan = Boolean(state.account) && !topupsAllowed();
       note.hidden = !needsPlan;
-      note.replaceChildren(...(needsPlan ? ['Top-ups need an active Pro or Max plan. ',
+      note.replaceChildren(...(needsPlan ? ['Top-ups need an active paid plan. ',
         el('a', { href: siteUrl('/pricing', host()), text: 'See plans' })] : []));
     }
   }

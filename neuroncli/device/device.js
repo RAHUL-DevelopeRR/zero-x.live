@@ -14,18 +14,27 @@
   let pendingCode = '';
   let grant = null;
   let busy = false;
+  let signedInAs = '';
 
   const show = name => { for (const [key, el] of Object.entries(steps)) el.hidden = key !== name; };
   const normalize = value => String(value || '').toUpperCase().replace(/[^A-Z]/g, '').slice(0, 8);
   const pretty = code => code.length > 4 ? code.slice(0, 4) + '-' + code.slice(4) : code;
   const errorText = (result, fallback) => result?.error?.message || fallback;
 
-  function finish(text) {
+  // The decision is final: the card gives way to a calm full-page result. Focus moves to the
+  // headline, which is described by the line and detail, so screen readers read all three.
+  // textContent only.
+  function finish(title, line, detail) {
     show('none');
     switchAccount.hidden = true;
-    $('done').hidden = false;
-    $('done').textContent = text;
     message.textContent = '';
+    $('card').hidden = true;
+    $('result-title').textContent = title;
+    $('result-line').textContent = line;
+    $('result-detail').textContent = detail || '';
+    $('result').hidden = false;
+    document.title = title + ' | Zero-X';
+    $('result-title').focus();
   }
 
   function relativeTime(iso) {
@@ -86,9 +95,12 @@
       const { ok, result } = await api('/auth/device/approve',
         { grant_id: grant.grant_id, approval_nonce: grant.approval_nonce, decision });
       if (!ok) { message.textContent = errorText(result, 'That did not work. Reload and try again.'); return; }
-      finish(decision === 'approve'
-        ? 'Approved. Return to your terminal: Neuron continues on its own. You can close this tab.'
-        : 'Denied. Nothing was signed in. You can close this tab.');
+      if (decision === 'approve') {
+        const email = grant.account?.email || signedInAs;
+        finish('Neuron is signed in', 'You can close this tab and return to your terminal.', email ? 'Signed in as ' + email : '');
+      } else {
+        finish('Sign-in denied', 'Nothing was signed in. You can close this tab.');
+      }
     } catch (error) {
       message.textContent = error.name === 'TimeoutError' ? 'Zero-X timed out. Try again.' : error.message;
     } finally {
@@ -106,6 +118,7 @@
       show('signin');
       return;
     }
+    signedInAs = profile.email || '';
     account.textContent = 'Signed in as ' + (profile.email || profile.fullName || 'your account');
     if (pendingCode.length === 8) { await lookup(pendingCode); return; }
     message.textContent = 'Enter the code shown in your terminal.';

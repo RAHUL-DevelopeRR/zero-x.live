@@ -16,12 +16,12 @@ import { provisionDevIdentity, rpc } from '../src/account-store.js';
 import { devUserId } from '../src/auth-context.js';
 import { closeAllPglite, getPgliteHandle } from '../src/db/pglite.js';
 
-const PLANS = new Set(['free', 'pro', 'max', 'ultrawork']);
+const PLANS = new Set(['free', 'athlete', 'speed', 'pro', 'max', 'ultrawork']);
 const EMAIL = /^[^\s@]{1,64}@[^\s@]{1,190}$/;
 
 function usage(message) {
   if (message) console.error(`error: ${message}`);
-  console.error('usage: node scripts/dev-db.mjs --data-dir <dir> [--email <email> [--name <name>] [--plan free|pro|max|ultrawork] [--credits-usd <amount>]]');
+  console.error('usage: node scripts/dev-db.mjs --data-dir <dir> [--email <email> [--name <name>] [--plan free|athlete|speed|pro|max|ultrawork] [--credits-usd <amount>]]');
   process.exit(2);
 }
 

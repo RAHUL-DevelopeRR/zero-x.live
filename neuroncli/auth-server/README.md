@@ -35,7 +35,7 @@ environment/secret reference and the launch checklist are in [GATEWAY_SETUP.md](
   did not count (429, 5xx, network) are refunded to the caller and the pool; model errors and
   timeouts keep their pool share and are refunded to the caller within a daily allowance.
 - **Billing** (`src/routes/billing.js`, `src/routes/webhooks.js`). Razorpay subscriptions
-  (Pro/Max, INR and USD) and credit top-ups; `subscription.charged` webhooks grant the monthly
+  (Athlete, Speed, Pro and Max; INR and USD) and credit top-ups; `subscription.charged` webhooks grant the monthly
   credits once per payment. An account holds one payable subscription (duplicates are cancelled
   and refunded) and `refund.processed` takes refunded credits back (GATEWAY_SETUP.md, "Refunds and
   disputes").

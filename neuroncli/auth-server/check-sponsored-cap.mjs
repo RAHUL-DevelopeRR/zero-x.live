@@ -311,8 +311,8 @@ try {
   const features = Object.fromEntries((await rpcRows(env, 'zerox_plan_policies_v2', {})).map(plan => [plan.plan, plan.features]));
   const LINE = 'Claude Haiku 5.5 included: 10M tokens a month at no charge';
   assert.equal(features.free[1], LINE, 'second line of Free');
-  for (const plan of ['pro', 'max', 'ultrawork']) assert.equal(features[plan][0], LINE, `first line of ${plan}`);
-  assert.deepEqual(Object.fromEntries(Object.entries(features).map(([plan, list]) => [plan, list.length])), { free: 5, pro: 6, max: 6, ultrawork: 6 });
+  for (const plan of ['athlete', 'speed', 'pro', 'max', 'ultrawork']) assert.equal(features[plan][0], LINE, `first line of ${plan}`);
+  assert.deepEqual(Object.fromEntries(Object.entries(features).map(([plan, list]) => [plan, list.length])), { free: 5, athlete: 6, speed: 6, pro: 6, max: 6, ultrawork: 6 });
   ok('the Haiku catalog row is seeded (revision 1 approved by the migration, free pool on anthropic.paid with price and $5 cap) and every plan carries the Haiku feature line');
 
   // ---------------------------------------------------------------- every statement can be re-run

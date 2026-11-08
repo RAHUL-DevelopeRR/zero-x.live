@@ -115,6 +115,10 @@ try {
       { daily_searches: 2000, daily_research_runs: 150 }, { daily_searches: 400, daily_research_runs: 30 }, { daily_searches: 40, daily_research_runs: 3 }]);
   assert.deepEqual([colonyLimits('free'), colonyLimits('pro'), colonyLimits('max')],
     [{ max_workers: 1, max_tokens_per_run: 300000 }, { max_workers: 4, max_tokens_per_run: 2000000 }, { max_workers: 8, max_tokens_per_run: 6000000 }]);
+  // Athlete and Speed (migration 20261108000000) sit between Free and Pro.
+  assert.deepEqual([searchLimits('athlete'), searchLimits('speed'), colonyLimits('athlete'), colonyLimits('speed')],
+    [{ daily_searches: 100, daily_research_runs: 8 }, { daily_searches: 200, daily_research_runs: 15 },
+      { max_workers: 2, max_tokens_per_run: 600000 }, { max_workers: 3, max_tokens_per_run: 1000000 }]);
   const cache = new SearchCache({ limit: 2 });
   cache.set('a', 1, 0); cache.set('b', 2, 1000); cache.set('c', 3, 2000);
   assert.deepEqual([cache.get('a', 2000), cache.get('b', 2000), cache.get('c', 2000)], [undefined, 2, 3], 'the oldest entry is evicted');

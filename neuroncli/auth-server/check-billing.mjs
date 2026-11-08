@@ -14,7 +14,7 @@ import {
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { bootstrapPlans, planSql, storePlanIdsInPglite } from './scripts/razorpay-bootstrap.mjs';
+import { bootstrapPlans, planSql, selection, storePlanIdsInPglite } from './scripts/razorpay-bootstrap.mjs';
 import { B1_CREDIT_REASON, planPolicyRows } from './contract-rows.mjs';
 import { LEGAL_DOCUMENTS } from './src/billing/legal-versions.js';
 import { planFromSubscription } from './src/routes/billing.js';
@@ -27,7 +27,8 @@ const SECRET = 'sb_secret_billing_test';
 const KEY_ID = 'rzp_test_ZeroXKey123';
 const KEY_SECRET = 'test_key_secret_' + 'q'.repeat(16);
 const WEBHOOK_SECRET = 'whsec_test_' + 'w'.repeat(20);
-const PLAN_IDS = { pro: { INR: 'plan_ProInr000001', USD: 'plan_ProUsd000001' }, max: { INR: 'plan_MaxInr000001', USD: 'plan_MaxUsd000001' } };
+const PLAN_IDS = { pro: { INR: 'plan_ProInr000001', USD: 'plan_ProUsd000001' }, max: { INR: 'plan_MaxInr000001', USD: 'plan_MaxUsd000001' },
+  athlete: { INR: 'plan_AthleteInr01', USD: 'plan_AthleteUsd01' }, speed: { INR: 'plan_SpeedInr0001', USD: 'plan_SpeedUsd0001' } };
 const hmac = (secret, message) => createHmac('sha256', secret).update(message).digest('hex');
 const rid = prefix => `${prefix}_${randomBytes(7).toString('hex')}`;
 const originalFetch = globalThis.fetch;
@@ -904,9 +905,17 @@ try {
   // ── 9. scripts/razorpay-bootstrap.mjs ──
   const dryWithoutKeys = await bootstrapPlans({ env: {} });
   assert.deepEqual(dryWithoutKeys.map(row => [row.plan, row.currency, row.amount, row.action]), [
+    ['athlete', 'INR', 8900, 'would_create'], ['athlete', 'USD', 100, 'would_create'], ['speed', 'INR', 44900, 'would_create'], ['speed', 'USD', 500, 'would_create'],
     ['pro', 'INR', 89900, 'would_create'], ['pro', 'USD', 1000, 'would_create'], ['max', 'INR', 349900, 'would_create'], ['max', 'USD', 4000, 'would_create'],
   ]);
   assert.match(planSql(dryWithoutKeys), /<razorpay plan id INR>/);
+  // --plan and --currency narrow the run: the account has no international payments, so Athlete and Speed are INR only.
+  assert.deepEqual((await bootstrapPlans({ env: {}, plans: 'athlete,speed', currencies: 'inr' })).map(row => [row.plan, row.currency, row.amount, row.body.item.name]),
+    [['athlete', 'INR', 8900, 'Neuron Athlete (monthly)'], ['speed', 'INR', 44900, 'Neuron Speed (monthly)']]);
+  assert.deepEqual(selection({ plans: ['Speed', 'athlete'], currencies: '' }), { plans: ['athlete', 'speed'], currencies: ['INR', 'USD'] }, 'catalogue order');
+  assert.throws(() => selection({ plans: 'gold' }), /Unknown plan: gold/);
+  assert.throws(() => selection({ currencies: 'EUR' }), /Unknown currency: EUR/);
+  assert.throws(() => selection({ plans: 'ultrawork' }), /Unknown plan/, 'the legacy plan is not sold');
   await assert.rejects(bootstrapPlans({ env: {}, apply: true }), /RAZORPAY_KEY_ID/);
   await assert.rejects(bootstrapPlans({ env: { ...billingEnv, RAZORPAY_KEY_ID: 'rzp_live_RealKey123' } }), /live/);
   const bootstrapEnv = { RAZORPAY_KEY_ID: KEY_ID, RAZORPAY_KEY_SECRET: KEY_SECRET, RAZORPAY_API_BASE };
@@ -914,15 +923,24 @@ try {
   const dryRun = await bootstrapPlans({ env: bootstrapEnv });
   assert.ok(dryRun.every(row => row.action === 'would_create'));
   assert.equal(rzp.plans.size, plansBefore, 'dry run creates nothing');
+  const inrOnly = await bootstrapPlans({ env: bootstrapEnv, apply: true, plans: 'athlete,speed', currencies: 'INR' });
+  assert.deepEqual(inrOnly.map(row => [row.plan, row.currency, row.action]), [['athlete', 'INR', 'created'], ['speed', 'INR', 'created']]);
+  assert.equal(rzp.plans.size, 2, 'INR only: no USD plan is created');
+  const inrSql = planSql(inrOnly);
+  assert.equal(inrSql, `UPDATE public.zerox_plan_policy SET razorpay_plan_id_inr = '${inrOnly[0].id}' WHERE plan = 'athlete';\n` +
+    `UPDATE public.zerox_plan_policy SET razorpay_plan_id_inr = '${inrOnly[1].id}' WHERE plan = 'speed';`, 'the SQL leaves the USD ids alone');
   const applied = await bootstrapPlans({ env: bootstrapEnv, apply: true });
-  assert.ok(applied.every(row => row.action === 'created' && /^plan_/.test(row.id)));
+  assert.deepEqual(applied.map(row => row.action), ['existing', 'created', 'existing', 'created', 'created', 'created', 'created', 'created'],
+    'the INR Athlete and Speed plans are reused');
+  assert.ok(applied.every(row => /^plan_/.test(row.id)));
   const createdPlans = [...rzp.plans.values()];
   assert.deepEqual(createdPlans.map(plan => [plan.notes.zerox_plan, plan.item.currency, plan.item.amount, plan.period, plan.interval]), [
+    ['athlete', 'INR', 8900, 'monthly', 1], ['speed', 'INR', 44900, 'monthly', 1], ['athlete', 'USD', 100, 'monthly', 1], ['speed', 'USD', 500, 'monthly', 1],
     ['pro', 'INR', 89900, 'monthly', 1], ['pro', 'USD', 1000, 'monthly', 1], ['max', 'INR', 349900, 'monthly', 1], ['max', 'USD', 4000, 'monthly', 1],
   ]);
   const again = await bootstrapPlans({ env: bootstrapEnv, apply: true });
   assert.ok(again.every(row => row.action === 'existing'));
-  assert.equal(rzp.plans.size, 4, 'bootstrap is idempotent');
+  assert.equal(rzp.plans.size, 8, 'bootstrap is idempotent');
   // Live keys need --allow-live (the fake server only knows the test key, so it answers 401 once the guard passes).
   const liveLike = { ...bootstrapEnv, RAZORPAY_KEY_ID: 'rzp_live_RealKey123' };
   await assert.rejects(bootstrapPlans({ env: liveLike }), /--allow-live/);
@@ -932,22 +950,28 @@ try {
   drifted.item.amount += 100;
   const drift = await bootstrapPlans({ env: bootstrapEnv });
   assert.equal(drift.find(row => row.plan === 'pro' && row.currency === 'INR').action, 'would_create');
-  assert.equal(drift.filter(row => row.action === 'existing').length, 3);
+  assert.equal(drift.filter(row => row.action === 'existing').length, 7);
   drifted.item.amount -= 100;
+  const idOf = (plan, currency) => applied.find(row => row.plan === plan && row.currency === currency).id;
   const sql = planSql(applied);
-  assert.equal(sql.split('\n').length, 2);
-  assert.ok(sql.includes(`razorpay_plan_id_inr = '${applied[0].id}', razorpay_plan_id_usd = '${applied[1].id}' WHERE plan = 'pro';`));
-  assert.ok(sql.includes(`WHERE plan = 'max';`));
+  assert.equal(sql.split('\n').length, 4);
+  assert.ok(sql.includes(`razorpay_plan_id_inr = '${idOf('pro', 'INR')}', razorpay_plan_id_usd = '${idOf('pro', 'USD')}' WHERE plan = 'pro';`));
+  assert.ok(sql.includes(`WHERE plan = 'max';`) && sql.includes(`WHERE plan = 'athlete';`) && sql.includes(`WHERE plan = 'speed';`));
   assert.match(planSql([{ plan: 'pro', currency: 'INR', id: "plan_x'; DROP TABLE x; --" }]), /<razorpay plan id INR>/, 'ids are validated before SQL output');
-  // --store-pglite: a local test-mode rehearsal stores the four test plan ids in a local PGlite database only.
+  // --store-pglite: a local test-mode rehearsal stores the selected test plan ids in a local PGlite database only.
   await assert.rejects(storePlanIdsInPglite({ env: { RAZORPAY_KEY_ID: 'rzp_live_RealKey123', RAZORPAY_KEY_SECRET: KEY_SECRET }, results: applied, dataDir: 'x' }), /test-mode keys/);
   await assert.rejects(storePlanIdsInPglite({ env: bootstrapEnv, results: dryRun, dataDir: 'x' }), /run with --apply first/);
   await assert.rejects(storePlanIdsInPglite({ env: bootstrapEnv, results: applied, dataDir: '' }), /PGlite directory/);
   const localDir = await mkdtemp(join(tmpdir(), 'zerox-bootstrap-'));
   try {
+    // INR only first: the USD ids stay null.
+    const inrStored = await storePlanIdsInPglite({ env: bootstrapEnv, results: inrOnly, dataDir: localDir });
+    assert.deepEqual(inrStored.map(row => [row.plan, row.razorpay_plan_id_inr, row.razorpay_plan_id_usd]), [
+      ['athlete', idOf('athlete', 'INR'), null], ['speed', idOf('speed', 'INR'), null]]);
     const stored = await storePlanIdsInPglite({ env: bootstrapEnv, results: applied, dataDir: localDir });
     assert.deepEqual(stored.map(row => [row.plan, row.razorpay_plan_id_inr, row.razorpay_plan_id_usd]), [
-      ['max', applied[2].id, applied[3].id], ['pro', applied[0].id, applied[1].id]]);
+      ['athlete', idOf('athlete', 'INR'), idOf('athlete', 'USD')], ['max', idOf('max', 'INR'), idOf('max', 'USD')],
+      ['pro', idOf('pro', 'INR'), idOf('pro', 'USD')], ['speed', idOf('speed', 'INR'), idOf('speed', 'USD')]]);
   } finally {
     await rm(localDir, { recursive: true, force: true });
   }
@@ -1132,9 +1156,14 @@ try {
   db.policiesV2 = policyRows(true);
   assert.deepEqual((await operatorHealth()).plans_configured, { inr: true, usd: true, missing: [] });
   db.policiesV2 = policyRows(true).map(row => ({ ...row, razorpay_plan_id_usd: null }));
-  assert.deepEqual((await operatorHealth()).plans_configured, { inr: true, usd: false, missing: ['pro:USD', 'max:USD'] }, 'USD plan ids missing');
+  assert.deepEqual((await operatorHealth()).plans_configured, { inr: true, usd: false, missing: ['athlete:USD', 'speed:USD', 'pro:USD', 'max:USD'] },
+    'USD plan ids missing');
   db.policiesV2 = policyRows(false);
-  assert.deepEqual((await operatorHealth()).plans_configured, { inr: false, usd: false, missing: ['pro:INR', 'pro:USD', 'max:INR', 'max:USD'] });
+  assert.deepEqual((await operatorHealth()).plans_configured, { inr: false, usd: false,
+    missing: ['athlete:INR', 'athlete:USD', 'speed:INR', 'speed:USD', 'pro:INR', 'pro:USD', 'max:INR', 'max:USD'] });
+  // Before migration 20261108000000 the catalogue has no Athlete or Speed, so only Pro and Max are reported.
+  db.policiesV2 = policyRows(true).filter(row => !['athlete', 'speed'].includes(row.plan));
+  assert.deepEqual((await operatorHealth()).plans_configured, { inr: true, usd: true, missing: [] });
   const anonymousHealth = await (await app.request('https://zero-x.live/health', {}, { ...billingEnv, GATEWAY_ADMIN_TOKEN: ADMIN })).json();
   assert.equal(anonymousHealth.plans_configured, undefined, 'only the operator sees it');
   db.policiesV2 = policyRows(true);
@@ -1154,6 +1183,78 @@ try {
   assert.deepEqual(db.grants.get(authorized.id), { user_id: authz.id, delta: 8000000, reason: 'subscription_pro' }, 'granted once the payment is captured');
   await webhook(webhookEvent('subscription.charged', { subscription: { ...rzp.subscriptions.get(authzSubscription) }, payment: authorized }));
   assert.equal(accountOf(authz).credit_balance_microusd, 8000000, 'the webhook for the same payment adds nothing');
+
+  // ── 11. Athlete and Speed (migration 20261108000000) ──
+  {
+    const athleteBuyer = { id: 'abababab-abab-4bab-8bab-abababababab', email: 'athlete@example.test', user_metadata: { name: 'Athlete Buyer' } };
+    identities.set('billing-token-athlete', athleteBuyer);
+    // Fresh bindings per call: the plan catalogue is cached per env object.
+    const athleteCall = body => call('/api/billing/checkout', { token: 'billing-token-athlete', body, bindings: { ...billingEnv } });
+    const subscriptionsCreated = () => rzp.requests.filter(entry => entry.method === 'POST' && entry.path === '/v1/subscriptions').length;
+    const before = subscriptionsCreated();
+    expectError(await athleteCall({ plan: 'gold', currency: 'INR' }), 400, 'invalid_request');
+    // Before the migration (no rows): refused with plan_unavailable, never a 500, nothing reaches Razorpay.
+    db.policiesV2 = policyRows(true).filter(row => !['athlete', 'speed'].includes(row.plan));
+    for (const plan of ['athlete', 'speed']) {
+      const refused = await athleteCall({ plan, currency: 'INR' });
+      expectError(refused, 409, 'plan_unavailable');
+      assert.match(refused.body.error.message, /not available yet/);
+    }
+    // The database does not answer: the same refusal (the static fallback leaves them out).
+    db.fail.add('zerox_plan_policies_v2');
+    expectError(await athleteCall({ plan: 'speed', currency: 'INR' }), 409, 'plan_unavailable');
+    db.fail.delete('zerox_plan_policies_v2');
+    // After the migration, before the Razorpay plan ids are stored: billing_plan_missing, as for Pro and Max.
+    db.policiesV2 = policyRows(false);
+    const missing = await athleteCall({ plan: 'athlete', currency: 'INR' });
+    expectError(missing, 503, 'billing_plan_missing');
+    assert.match(missing.body.error.message, /Athlete plan in INR is not set up yet/);
+    // INR ids only (no international payments): USD answers billing_plan_missing, INR checks out.
+    db.policiesV2 = policyRows(true).map(row => ['athlete', 'speed'].includes(row.plan) ? { ...row, razorpay_plan_id_usd: null } : row);
+    expectError(await athleteCall({ plan: 'speed', currency: 'USD' }), 503, 'billing_plan_missing');
+    assert.equal(subscriptionsCreated(), before, 'no Razorpay subscription for a refused checkout');
+    const athleteCheckout = await athleteCall({ plan: 'athlete', currency: 'INR' });
+    assert.equal(athleteCheckout.status, 200);
+    assert.equal(athleteCheckout.body.description, 'Neuron Athlete plan, billed monthly');
+    assert.deepEqual(athleteCheckout.body.notes, { user_id: athleteBuyer.id, plan: 'athlete' });
+    const athleteSubscription = athleteCheckout.body.subscription_id;
+    assert.equal(rzp.subscriptions.get(athleteSubscription).plan_id, PLAN_IDS.athlete.INR);
+    // Verify: the amount must be Rs 89; the plan and its $0.75 of credits are granted.
+    const verifyAthlete = paymentId => call('/api/billing/verify', { token: 'billing-token-athlete', bindings: { ...billingEnv }, body: { razorpay_payment_id: paymentId,
+      razorpay_subscription_id: athleteSubscription, razorpay_signature: hmac(KEY_SECRET, `${paymentId}|${athleteSubscription}`) } });
+    expectError(await verifyAthlete(paySubscription(athleteSubscription, { amount: 89900, currency: 'INR' }).id), 400, 'payment_mismatch');
+    const athletePayment = paySubscription(athleteSubscription, { amount: 8900, currency: 'INR' });
+    const athleteVerified = await verifyAthlete(athletePayment.id);
+    assert.equal(athleteVerified.status, 200);
+    assert.equal(accountOf(athleteBuyer).plan, 'athlete');
+    assert.equal(db.subscriptions.get(athleteSubscription).plan, 'athlete');
+    assert.deepEqual(db.grants.get(athletePayment.id), { user_id: athleteBuyer.id, delta: 750000, reason: 'subscription_athlete' });
+    // Athlete has the paid tier, so credit top-ups are allowed.
+    const athleteTopup = await call('/api/billing/topup', { token: 'billing-token-athlete', bindings: { ...billingEnv }, body: { pack: 'credits_5', currency: 'INR' } });
+    assert.equal(athleteTopup.status, 200, JSON.stringify(athleteTopup.body));
+    // A second checkout while Athlete is live is refused (no plan switch through checkout).
+    expectError(await athleteCall({ plan: 'speed', currency: 'INR' }), 409, 'already_subscribed');
+    // An operator hides Athlete again (public = false): no new checkout, but the existing subscriber's
+    // renewals, top-ups and cancellation still resolve the plan.
+    db.policiesV2 = policyRows(true).map(row => row.plan === 'athlete' ? { ...row, public: false } : row);
+    const hiddenPlans = await app.request('https://zero-x.live/api/plans', {}, { ...billingEnv });
+    assert.ok(!(await hiddenPlans.json()).plans.some(plan => plan.id === 'athlete'), '/api/plans hides an Athlete row with public = false');
+    expectError(await athleteCall({ plan: 'athlete', currency: 'INR' }), 409, 'plan_unavailable');
+    const renewal = paySubscription(athleteSubscription, { amount: 8900, currency: 'INR' });
+    const renewed = await webhook(webhookEvent('subscription.charged', { subscription: { ...rzp.subscriptions.get(athleteSubscription) }, payment: renewal }),
+      { bindings: { ...billingEnv } });
+    assert.equal(renewed.status, 200);
+    assert.notEqual(renewed.body.status, 'ignored', 'a hidden plan is still a known plan for webhooks');
+    assert.deepEqual(db.grants.get(renewal.id), { user_id: athleteBuyer.id, delta: 750000, reason: 'subscription_athlete' },
+      'a renewal for a hidden Athlete plan still grants $0.75');
+    const hiddenTopup = await call('/api/billing/topup', { token: 'billing-token-athlete', bindings: { ...billingEnv }, body: { pack: 'credits_5', currency: 'INR' } });
+    assert.equal(hiddenTopup.status, 200, `top-ups stay open on a hidden plan: ${JSON.stringify(hiddenTopup.body)}`);
+    rzp.subscriptions.get(athleteSubscription).status = 'cancelled';
+    await webhook(webhookEvent('subscription.cancelled', { subscription: { ...rzp.subscriptions.get(athleteSubscription) } }), { bindings: { ...billingEnv } });
+    assert.equal(db.subscriptions.get(athleteSubscription).status, 'cancelled', 'a cancellation for a hidden plan is applied');
+    assert.equal(accountOf(athleteBuyer).plan, 'free', 'and downgrades the account');
+    db.policiesV2 = policyRows(true);
+  }
 } finally {
   globalThis.fetch = originalFetch;
   fakeRazorpay.close();

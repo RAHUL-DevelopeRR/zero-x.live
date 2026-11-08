@@ -94,6 +94,17 @@ const PLAN_FEATURES = {
   max: [HAIKU_LINE, ...BASE_FEATURES.max],
 };
 PLAN_FEATURES.ultrawork = PLAN_FEATURES.pro;
+// Athlete and Speed (20261108000000_athlete_speed_plans.sql) are seeded with the Haiku line first.
+PLAN_FEATURES.athlete = [HAIKU_LINE, 'Claude Sonnet 5.5 and Claude Opus 5.5, billed from credits', '$0.75 of credits included every month',
+  'Free models with higher limits: 300 requests and 6M tokens per day', '15 requests per minute, 2 at once',
+  'Every Neuron feature, the same on all plans'];
+PLAN_FEATURES.speed = [HAIKU_LINE, 'Claude Sonnet 5.5 and Claude Opus 5.5, billed from credits', '$4 of credits included every month',
+  'Free models with higher limits: 1,000 requests and 8M tokens per day', '20 requests per minute, 3 at once',
+  'Every Neuron feature, the same on all plans'];
+// The plans the 20261029000900 and 20261106000800 feature migrations rewrite.
+const FEATURE_MIGRATION_PLANS = ['free', 'pro', 'max', 'ultrawork'];
+const featuresOf = rows => Object.fromEntries(rows.filter(plan => FEATURE_MIGRATION_PLANS.includes(plan.plan)).map(plan => [plan.plan, plan.features]));
+const pick = (map, ids) => Object.fromEntries(ids.map(id => [id, map[id]]));
 const SPONSORED = '20261106000600_sponsored_pools.sql';
 const HAIKU_CATALOG = '20261106000700_haiku_catalog.sql';
 const HAIKU_PLANS = '20261106000800_plan_features_haiku.sql';
@@ -322,10 +333,12 @@ try {
   assert.deepEqual(plans.map(plan => [plan.plan, plan.allowed_tiers, plan.daily_requests, plan.daily_tokens, plan.price_usd,
     plan.monthly_credit_microusd, plan.rpm_limit, plan.concurrency_limit]), [
     ['free', ['free'], 100, 5000000, 0, 0, 10, 2],
+    ['athlete', ['free', 'paid'], 300, 6000000, 1, 750000, 15, 2],
+    ['speed', ['free', 'paid'], 1000, 8000000, 5, 4000000, 20, 3],
     ['pro', ['free', 'paid'], 2000, 10000000, 10, 8000000, 30, 4],
     ['max', ['free', 'paid'], 10000, 50000000, 40, 35000000, 60, 8],
     ['ultrawork', ['free', 'paid'], 2000, 10000000, 10, 8000000, 30, 4],
-  ], 'Free has the free tier only, Pro and Max add paid; limits, prices and credits unchanged (Free: daily_tokens 5M under its 5-hour window)');
+  ], 'Free has the free tier only, Athlete, Speed, Pro and Max add paid; limits, prices and credits as approved (Free: daily_tokens 5M under its 5-hour window)');
   assert.deepEqual(Object.fromEntries(plans.map(plan => [plan.plan, plan.features])), PLAN_FEATURES);
   // The static fallbacks on the site show the same strings until /api/plans answers.
   const { PLAN_CATALOG: sitePlans } = await import(pathToFileURL(join(site, 'pricing.js')).href);
@@ -333,9 +346,10 @@ try {
   // So does the gateway's static plan catalogue (src/plan-policy.js, /api/plans without a database).
   const { PLAN_CATALOG: gatewayPlans } = await import('./src/plan-policy.js');
   for (const plan of gatewayPlans) assert.deepEqual(plan.features, PLAN_FEATURES[plan.id], `src/plan-policy.js features for ${plan.id}`);
-  assert.deepEqual(gatewayPlans.map(plan => [plan.id, plan.tiers]), [['free', ['free']], ['pro', ['free', 'paid']], ['max', ['free', 'paid']]]);
+  assert.deepEqual(gatewayPlans.map(plan => [plan.id, plan.tiers]),
+    [['free', ['free']], ['athlete', ['free', 'paid']], ['speed', ['free', 'paid']], ['pro', ['free', 'paid']], ['max', ['free', 'paid']]]);
   const pricingHtml = await readFile(join(site, 'pricing.html'), 'utf8');
-  for (const id of ['free', 'pro', 'max']) {
+  for (const id of ['free', 'athlete', 'speed', 'pro', 'max']) {
     const list = pricingHtml.match(new RegExp(`<ul data-plan-features="${id}">([\\s\\S]*?)</ul>`))[1];
     assert.deepEqual([...list.matchAll(/<li>([^<]+)<\/li>/g)].map(match => match[1]), PLAN_FEATURES[id], `pricing.html features for ${id}`);
   }
@@ -344,11 +358,11 @@ try {
     'credits alone do not open paid pools on Free');
   // The Haiku line goes away again with its down script (the PLANS statements below rewrite every plan's features).
   await db.exec(await readFile(join(root, 'migrations', 'down', HAIKU_PLANS), 'utf8'));
-  assert.deepEqual(Object.fromEntries((await rpcRows(env, 'zerox_plan_policies_v2', {})).map(plan => [plan.plan, plan.features])), BASE_FEATURES,
+  assert.deepEqual(featuresOf(await rpcRows(env, 'zerox_plan_policies_v2', {})), BASE_FEATURES,
     'the features down script removes exactly the Haiku line');
   await db.exec(await migrationSql(HAIKU_PLANS));
   await db.exec(await migrationSql(HAIKU_PLANS));
-  assert.deepEqual(Object.fromEntries((await rpcRows(env, 'zerox_plan_policies_v2', {})).map(plan => [plan.plan, plan.features])), PLAN_FEATURES,
+  assert.deepEqual(featuresOf(await rpcRows(env, 'zerox_plan_policies_v2', {})), pick(PLAN_FEATURES, FEATURE_MIGRATION_PLANS),
     'applied again (twice) the line is back once, in place');
   await db.exec(await readFile(join(root, 'migrations', 'down', HAIKU_PLANS), 'utf8'));
   // Re-running the plans migration repairs drifted tiers and leaves the rest alone.
@@ -358,10 +372,10 @@ try {
   await db.exec(await migrationSql(PLANS));
   await db.exec(await migrationSql(LINEUP)); // the plans file seeds the old Free provider line; this file replaces it
   assert.deepEqual((await sql('SELECT plan, allowed_tiers FROM public.zerox_plan_policy ORDER BY sort')).map(row => [row.plan, row.allowed_tiers]),
-    [['free', ['free']], ['pro', ['free', 'paid']], ['max', ['free', 'paid']], ['ultrawork', ['free', 'paid']]]);
+    [['free', ['free']], ['athlete', ['free', 'paid']], ['speed', ['free', 'paid']], ['pro', ['free', 'paid']], ['max', ['free', 'paid']], ['ultrawork', ['free', 'paid']]]);
   assert.equal((await sql("SELECT updated_at FROM public.zerox_plan_policy WHERE plan = 'pro'"))[0].updated_at.getTime(), stamp.getTime(),
     'rows already up to date are not rewritten');
-  ok('plans: Free free-only, Pro/Max/ultrawork free+paid, limits and credits unchanged, features equal the site fallback, pricing.html and src/plan-policy.js, re-run repairs drifted tiers');
+  ok('plans: Free free-only, Athlete/Speed/Pro/Max/ultrawork free+paid, limits and credits as approved, features equal the site fallback, pricing.html and src/plan-policy.js, re-run repairs drifted tiers');
 
   // ---------------------------------------------------------------- down scripts and re-runs
   // Baseline: every migration except the two under test, on a fresh PGlite.
@@ -391,6 +405,8 @@ try {
       has_function_privilege('anon', p.oid, 'EXECUTE') AS anon, has_function_privilege('authenticated', p.oid, 'EXECUTE') AS auth,
       has_function_privilege('service_role', p.oid, 'EXECUTE') AS service
     FROM pg_proc AS p JOIN pg_namespace AS n ON n.oid = p.pronamespace WHERE n.nspname = 'public' AND p.proname = ANY($1) ORDER BY 1, 2`, [names])).rows;
+  // Newest first: 20261108000000 removes the Athlete and Speed rows the baseline never had.
+  await db.exec(await readFile(join(root, 'migrations', 'down', '20261108000000_athlete_speed_plans.sql'), 'utf8'));
   await db.exec(await readFile(join(root, 'migrations', 'down', '20261106000300_connector_policy.sql'), 'utf8'));
   // 20261104300000 only rewrites a Free feature line; its down script brings the line PLANS wrote back.
   // Newest first: the Haiku migrations (the plan line is already out), then the lineup.

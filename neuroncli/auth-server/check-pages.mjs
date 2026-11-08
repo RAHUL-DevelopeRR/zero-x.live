@@ -543,7 +543,7 @@ const ADDRESS = '6/2, N. Pugalur, Karur 639113, Tamil Nadu, India';
   assert.match(text('terms.html'), /may not resell, sublicense, rent or share access/);
   assert.match(text('terms.html'), /at least 18 years old/);
 
-  // Claude on Pro and Max (Anthropic as a processor, credit holds, daily spend limits).
+  // Claude on the paid plans (Anthropic as a processor, credit holds, daily spend limits).
   assert.match(text('terms.html'), /Effective date: 3 November 2026\. Replaces the terms dated 25 October 2026/, 'terms.html effective date');
   // 4 November 2026: the optional GSTIN or tax ID (legal-versions.js privacy is 2026-11-04 with it, so buyers agree again).
   assert.match(text('privacy.html'), /Effective date: 4 November 2026\. Replaces the policy dated 3 November 2026\. This version adds the optional GSTIN or tax ID/, 'privacy.html effective date');
@@ -551,8 +551,8 @@ const ADDRESS = '6/2, N. Pugalur, Karur 639113, Tamil Nadu, India';
   assert.ok(anthropicRow, 'privacy: Anthropic is listed as a processor');
   assert.match(anthropicRow[1], /not used to train its models/);
   assert.doesNotMatch(anthropicRow[1], /\d+[ -]days?/, 'privacy: no Anthropic retention period until it is confirmed in docs/PROVIDER_TERMS.md');
-  assert.match(privacy, /Requests to Claude Haiku 5\.5, which every plan includes, go to Anthropic, and so do requests to Claude Sonnet 5\.5 or Claude Opus 5\.5 on Pro and Max/);
-  assert.match(anthropicRow[1], /Claude Haiku 5\.5 on every plan and the paid models on Pro and Max/, 'privacy: Haiku on the Free plan reaches Anthropic');
+  assert.match(privacy, /Requests to Claude Haiku 5\.5, which every plan includes, go to Anthropic, and so do requests to Claude Sonnet 5\.5 or Claude Opus 5\.5 on the paid plans/);
+  assert.match(anthropicRow[1], /Claude Haiku 5\.5 on every plan and the paid models on the paid plans/, 'privacy: Haiku on the Free plan reaches Anthropic');
   assert.match(privacy, /read from or written to Anthropic's prompt cache/);
   assert.match(text('terms.html'), /including Anthropic, Groq, Google, Cloudflare, NVIDIA, OpenRouter and Z\.ai;/);
   assert.match(text('terms.html'), /paid-capacity models, including Claude Sonnet 5\.5 and Claude Opus 5\.5/);
@@ -560,7 +560,7 @@ const ADDRESS = '6/2, N. Pugalur, Karur 639113, Tamil Nadu, India';
   const pricingPage = text('pricing.html');
   assert.match(pricingPage, /Claude Sonnet 5\.5 \$2\.50 \$0\.25 \$3\.125 \$12\.50/, 'pricing: Sonnet 5.5 at list price plus 25%');
   assert.match(pricingPage, /Claude Opus 5\.5 \$5\.00 \$0\.25 \$6\.25 \$25\.00/, 'pricing: Opus 5.5 at list price plus 25%');
-  assert.match(pricingPage, /Anthropic \(Claude Haiku 5\.5 on every plan, Claude Sonnet 5\.5 and Claude Opus 5\.5 on Pro and Max\)/, 'pricing: the provider FAQ names Anthropic');
+  assert.match(pricingPage, /Anthropic \(Claude Haiku 5\.5 on every plan, Claude Sonnet 5\.5 and Claude Opus 5\.5 on the paid plans\)/, 'pricing: the provider FAQ names Anthropic');
   // Claude Haiku 5.5 on every plan (contract section 19): the copy says what it is and how it is limited, and names no provider.
   assert.match(pricingPage, /Every plan includes Claude Haiku 5\.5 at no charge, up to 10M tokens a month per account/);
   assert.match(pricingPage, /Claude Haiku 5\.5 on every plan Pick it with \/model claude-haiku-5-5 ; auto stays on the free models\. It costs no credits\./);
@@ -642,7 +642,7 @@ const ADDRESS = '6/2, N. Pugalur, Karur 639113, Tamil Nadu, India';
   assert.match(text('refund.html'), /Razorpay may retry it/);
   assert.match(text('refund.html'), /5 to 7 business days/);
   assert.match(pricingPage, /No GST is charged, so the price shown is the price you pay/);
-  assert.match(pricingPage, /Pro and Max renew every month at the price shown until you cancel/);
+  assert.match(pricingPage, /Paid plans renew every month at the price shown until you cancel/);
   assert.match(pricingPage, /How far does 1M tokens go\?/);
   // The owner's rule (2026-11-04): the pricing page does not name the providers behind the free models; the
   // privacy policy and docs/data.html, which disclose who receives requests, still do.
@@ -668,7 +668,7 @@ const ADDRESS = '6/2, N. Pugalur, Karur 639113, Tamil Nadu, India';
 
 const contract = read('neuroncli/auth-server/docs/PLATFORM_CONTRACT.md');
 const money = value => Math.round(Number(String(value).replace(/[^0-9.]/g, '')) * 100);
-const expectedPlans = ['free', 'pro', 'max'].map(id => {
+const expectedPlans = ['free', 'athlete', 'speed', 'pro', 'max'].map(id => {
   const cells = contract.match(new RegExp(`^\\| ${id} \\|(.*)\\|$`, 'm'))[1].split('|').map(cell => cell.trim());
   const [name, price, requests, tokens, rpm, concurrency, tiers, credits, windowTokens, windowSeconds] = cells;
   const [usd, inr] = price.split('/');
@@ -678,8 +678,9 @@ const expectedPlans = ['free', 'pro', 'max'].map(id => {
     rpm: Number(rpm), concurrency: Number(concurrency), tiers: tiers.split(',').map(t => t.trim()), monthly_credit_usd: money(credits) / 100};
 });
 const expectedTopups = [...contract.matchAll(/`(credits_\d+)` \(\$(\d+) credit, \$(\d+) \/ ₹([\d,]+)\)/g)].map(m => ({id: m[1], credit_usd: Number(m[2]), usd_cents: Number(m[3]) * 100, inr_paise: money(m[4])}));
-assert.equal(expectedPlans.length, 3);
-assert.deepEqual(expectedPlans.map(plan => [plan.id, plan.window_tokens, plan.window_seconds]), [['free', 1000000, 18000], ['pro', null, null], ['max', null, null]],
+assert.equal(expectedPlans.length, 5);
+assert.deepEqual(expectedPlans.map(plan => [plan.id, plan.window_tokens, plan.window_seconds]),
+  [['free', 1000000, 18000], ['athlete', null, null], ['speed', null, null], ['pro', null, null], ['max', null, null]],
   'contract section 1: Free has 1M tokens per rolling 5 hours, paid plans no window');
 assert.equal(expectedTopups.length, 2);
 
@@ -734,6 +735,7 @@ for (const file of ['ai-coding-agent.html', 'free-ai-coding-agent.html', 'claude
   assert.deepEqual(offers.sort(), expectedOffers.sort(), 'Product JSON-LD offers match real prices');
   assert.match(meta(html).description, /\$10\/month/);
   assert.match(meta(html).description, /\$40\/month/);
+  assert.match(meta(html).description, /Athlete \(\$1\/month\), Speed \(\$5\/month\)/);
   const software = JSON.parse(read('neuron-cli.html').match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/)[1])['@graph'].find(n => n['@type'] === 'SoftwareApplication');
   assert.deepEqual([software.offers.price, software.offers.priceCurrency], ['0', 'USD']);
   const docsLimits = text('docs.html');
@@ -898,11 +900,18 @@ assert.equal(pricing.normalizeCatalog({plans: [{id: 'pro', price: {usd_cents: -1
   assert.equal(normalized.plans[0].highlighted, false);
   assert.deepEqual(normalized.topups.map(t => t.id), ['credits_5']);
 }
-assert.equal(limitLabel(PLAN_CATALOG.plans[1], 'daily_tokens'), '10M');
+const proPlan = PLAN_CATALOG.plans.find(plan => plan.id === 'pro');
+const athletePlan = PLAN_CATALOG.plans.find(plan => plan.id === 'athlete');
+assert.deepEqual(PLAN_CATALOG.plans.map(plan => plan.id), ['free', 'athlete', 'speed', 'pro', 'max'], 'the site catalog lists the plans in price order');
+assert.equal(limitLabel(athletePlan, 'token_allowance'), '6M per day', 'Athlete: 6M tokens per day');
+assert.equal(limitLabel(athletePlan, 'daily_requests'), '300');
+assert.equal(formatUsdAmount(athletePlan.monthly_credit_usd), '$0.75', 'Athlete credits show cents');
+assert.equal(formatMoney(athletePlan.price.inr_paise, 'INR'), '₹89');
+assert.equal(limitLabel(proPlan, 'daily_tokens'), '10M');
 assert.equal(limitLabel(PLAN_CATALOG.plans[0], 'token_allowance'), '1M every 5 hours', 'Free: the rolling window');
 assert.equal(limitLabel(PLAN_CATALOG.plans[0], 'window_tokens'), '1M');
-assert.equal(limitLabel(PLAN_CATALOG.plans[1], 'token_allowance'), '10M per day');
-assert.equal(limitLabel(PLAN_CATALOG.plans[1], 'window_tokens'), null, 'no window on Pro');
+assert.equal(limitLabel(proPlan, 'token_allowance'), '10M per day');
+assert.equal(limitLabel(proPlan, 'window_tokens'), null, 'no window on Pro');
 assert.equal(pricing.windowLength(3600), 'hour');
 assert.equal(pricing.windowLength(5400), '90 minutes');
 assert.equal(pricing.tokenAllowance({limits: {daily_tokens: 500000, window_tokens: null}}), '500K per day', 'a catalog without a window');
@@ -910,7 +919,7 @@ assert.equal(pricing.tokenAllowance({limits: {daily_tokens: 500000, window_token
 // (before migration 20261102000000) turns "1M tokens every 5 hours" into "500K tokens per day".
 assert.equal(limitLabel(PLAN_CATALOG.plans[0], 'token_phrase'), '1M tokens every 5 hours');
 assert.equal(limitLabel({limits: {daily_tokens: 500000, window_tokens: null, window_seconds: null}}, 'token_phrase'), '500K tokens per day');
-assert.equal(limitLabel(PLAN_CATALOG.plans[1], 'token_phrase'), '10M tokens per day');
+assert.equal(limitLabel(proPlan, 'token_phrase'), '10M tokens per day');
 for (const page of ['index.html', 'neuron-cli.html', 'ai-coding-agent.html', 'free-ai-coding-agent.html', 'claude-code-alternative.html']) {
   const html = read(page);
   assert.doesNotMatch(html, /data-plan-limit="free:window_tokens"/, `${page}: no bare window number next to static "every 5 hours"`);
@@ -918,7 +927,7 @@ for (const page of ['index.html', 'neuron-cli.html', 'ai-coding-agent.html', 'fr
 }
 assert.deepEqual(pricing.normalizeCatalog({plans: [{id: 'free', price: {usd_cents: 0, inr_paise: 0}, limits: {window_tokens: 1000000, window_seconds: 18000}}]}).plans[0].limits,
   {daily_requests: null, daily_tokens: null, window_tokens: 1000000, window_seconds: 18000, rpm: null, concurrency: null});
-assert.equal(limitLabel(PLAN_CATALOG.plans[1], 'daily_requests'), '2,000');
+assert.equal(limitLabel(proPlan, 'daily_requests'), '2,000');
 assert.equal(limitLabel({limits: {rpm: null}}, 'rpm'), null);
 {
   const store = new Map();
@@ -1042,6 +1051,7 @@ assert.equal(checkout.normalizeCurrency('EUR'), 'USD');
   for (const id of ['cmd-npm', 'cmd-pip', 'cmd-sh', 'cmd-ps1', 'cmd-cmd']) assert.ok(tags(html, 'button').some(b => b['data-copy-target'] === id), 'index.html copies #' + id);
   assert.match(html, /<a class="zx-btn zx-btn--primary" href="#get-started">Start free<\/a>/, 'index.html: the free plan call to action');
   for (const plan of ['free', 'pro', 'max']) assert.match(html, new RegExp(`data-plan-price="${plan}"`), 'index.html hydrates the ' + plan + ' price');
+  assert.match(text('index.html'), /The paid plans \(Athlete, Speed, Pro and Max\) raise the limits/, 'index.html names every paid plan');
   assert.match(html, /<main id="main" data-pricing-root>/, 'pricing.js hydrates the homepage');
   for (const button of tags(html, 'button').filter(b => 'data-copy-target' in b)) assert.ok(ids(html).includes(button['data-copy-target']), 'copy target ' + button['data-copy-target']);
   // The live model pane (home.js), on the homepage and the Neuron CLI page.
@@ -1096,7 +1106,7 @@ assert.equal(checkout.normalizeCurrency('EUR'), 'USD');
   assert.deepEqual(state({available: true, status: 'unknown'}), {tone: 'unknown', label: 'Not checked recently'});
   assert.equal(state({available: true}).tone, 'unknown', 'no status: not shown as available');
   assert.equal(state({available: true, status: 'something-new'}).tone, 'unknown');
-  assert.deepEqual(state({available: false, unavailable_reason: 'upgrade_required'}), {tone: 'locked', label: 'Pro and Max plans'});
+  assert.deepEqual(state({available: false, unavailable_reason: 'upgrade_required'}), {tone: 'locked', label: 'Paid plans'});
   assert.equal(state({available: false, unavailable_reason: 'region_unavailable'}).label, 'Not offered in your region');
   assert.equal(state({available: false, unavailable_reason: 'not_configured'}).tone, 'off');
   assert.equal(state(null).tone, 'off');

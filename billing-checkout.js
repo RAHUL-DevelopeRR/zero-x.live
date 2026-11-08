@@ -29,8 +29,12 @@ const FRIENDLY_MESSAGES = {
   network_error: 'Could not reach Zero-X. Check your connection and try again.',
   timeout: 'Zero-X took too long to respond. Try again.',
   account_suspended: 'This account is suspended. Email ' + SUPPORT_EMAIL + ' for help.',
-  topup_requires_plan: 'Credit top-ups need an active Pro or Max plan: credits pay only for paid-capacity models.',
+  topup_requires_plan: 'Credit top-ups need an active paid plan (Athlete, Speed, Pro or Max): credits pay only for paid-capacity models.',
+  plan_unavailable: 'This plan is not available yet. Choose another plan, or email ' + SUPPORT_EMAIL + '.',
 };
+
+/** The plans checkout sells, in price order (the gateway's PAID_PLAN_IDS). */
+export const PAID_PLAN_IDS = Object.freeze(['athlete', 'speed', 'pro', 'max']);
 
 export class ApiError extends Error {
   constructor(message, details = {}) {
@@ -375,7 +379,7 @@ function consentField(consent) {
 
 /** POST /api/billing/checkout → Razorpay subscription → verify. `consent` is what the billing details step returned. */
 export async function startSubscription({ plan, currency, consent, ...deps }) {
-  if (!['pro', 'max'].includes(plan)) throw new ApiError('Choose the Pro or Max plan.', { code: 'invalid_request' });
+  if (!PAID_PLAN_IDS.includes(plan)) throw new ApiError('Choose a paid plan: Athlete, Speed, Pro or Max.', { code: 'invalid_request' });
   if (deps.onStatus) deps.onStatus('Preparing secure checkout…');
   const payload = await apiFetch('/api/billing/checkout', {
     method: 'POST', body: { plan, currency: normalizeCurrency(currency), ...consentField(consent) }, auth: deps.auth, fetchImpl: deps.fetchImpl,

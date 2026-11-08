@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Terms of Service | Zero-X</title>
-  <meta name="description" content="Terms for Zero-X accounts, the Neuron CLI gateway, Free, Pro and Max plans, alpha status, billing and automatic renewal, credits, fair use, acceptable use, AI output and liability.">
+  <meta name="description" content="Terms for Zero-X accounts, the Neuron CLI gateway, Free and paid plans, alpha status, billing and automatic renewal, credits, fair use, acceptable use, AI output and liability.">
   <meta name="robots" content="index,follow,max-image-preview:large">
   <link rel="canonical" href="https://zero-x.live/terms">
   <meta name="theme-color" content="#FFFFFF" media="(prefers-color-scheme: light)">
@@ -63,7 +63,7 @@
     <p>Neuron 7.0.0-alpha.5 and parts of the services are pre-release software. Features, limits, models and prices can change, break or be withdrawn, and we may reset or remove data created during the alpha. Do not rely on the services for work that cannot tolerate interruption.</p>
 
     <h2 id="plans">Plans</h2>
-    <p>We offer a Free plan and paid Pro and Max plans. Each plan's price, request limits, token allowance, per-minute and concurrency limits, model pools and included credits are listed on the <a href="/pricing">pricing page</a>, which forms part of these terms. On the Free plan, tokens (prompt plus completion) are counted over a rolling 5-hour window, currently 1,000,000 tokens, with a daily cap on requests, currently 100. Paid plans have daily request and token caps. We may change plans, prices and limits. A price change for a paid plan applies from your next renewal after we notify you, and you can cancel before it takes effect.</p>
+    <p>We offer a Free plan and the paid Athlete, Speed, Pro and Max plans. Each plan's price, request limits, token allowance, per-minute and concurrency limits, model pools and included credits are listed on the <a href="/pricing">pricing page</a>, which forms part of these terms. On the Free plan, tokens (prompt plus completion) are counted over a rolling 5-hour window, currently 1,000,000 tokens, with a daily cap on requests, currently 100. Paid plans have daily request and token caps. We may change plans, prices and limits. A price change for a paid plan applies from your next renewal after we notify you, and you can cancel before it takes effect.</p>
 
     <h2 id="free-tier">Free tier is best effort</h2>
     <p>The Free plan runs on free tiers of upstream providers that all Zero-X users share. Models, capacity and response quality can change or be unavailable at any time, some pools are not offered in some regions, and requests may fail with <code>capacity_exhausted</code> when a shared pool is used up. We may change Free plan limits or discontinue the Free plan. No uptime or service level is promised for the Free plan.</p>
@@ -81,8 +81,8 @@
     <h2 id="credits">Credits</h2>
     <ul>
       <li>Credits are a prepaid balance, recorded in US dollars, that pays for requests served by paid-capacity models, including Claude Sonnet 5.5 and Claude Opus 5.5. Each paid-capacity request is charged at the upstream provider's price plus 25%, as shown per request in the dashboard. Free-pool requests do not use credits.</li>
-      <li>Pro and Max include a monthly credit amount that is added at each successful renewal. You can buy additional credits as top-up packs.</li>
-      <li>Credits can only be used while you have an active Pro or Max plan. They have no cash value, cannot be transferred or exchanged, and are forfeited if the account is closed or terminated for breach of these terms. A top-up pack you have not used can still be refunded as the <a href="/refund">refund policy</a> says.</li>
+      <li>Every paid plan includes a monthly credit amount that is added at each successful renewal. You can buy additional credits as top-up packs.</li>
+      <li>Credits can only be used while you have an active paid plan. They have no cash value, cannot be transferred or exchanged, and are forfeited if the account is closed or terminated for breach of these terms. A top-up pack you have not used can still be refunded as the <a href="/refund">refund policy</a> says.</li>
       <li>When a request would need more credits than you have, it is refused with <code>insufficient_credits</code>; we do not charge beyond your balance.</li>
       <li>Before a paid request starts we hold the most it could cost, based on its prompt and its <code>max_tokens</code>, and release the unused part when it finishes. Held credits cannot pay for other requests while they are held. Each paid model also has a daily spending limit shared by all users.</li>
     </ul>

@@ -420,6 +420,15 @@ a.zx-card:hover { border-color: var(--zx-border-strong); background: var(--zx-pa
 /* Release notes come from GitHub: a long URL or identifier must wrap, not widen the phone page. */
 #changelog-list .zx-card { overflow-wrap: anywhere; }
 .zx-plan + .zx-help, .zx-grid + .zx-help { margin-top: var(--zx-s4); }
+/* The pricing page's plan cards (Free, Athlete, Speed, Pro, Max): two columns on tablets, three on
+   small desktops, then one column per visible card, so the row stays full when the pricing script
+   hides plans the gateway does not offer yet. */
+@media (min-width: 640px) { .zx-grid--plans { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (min-width: 960px) { .zx-grid--plans { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (min-width: 1100px) {
+  .zx-grid--plans { grid-template-columns: none; grid-template-rows: repeat(4, auto); grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); }
+  .zx-grid--plans > * { grid-row: span 4; }
+}
 
 /* Badges and status dots */
 .zx-badge { display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: var(--zx-radius-xs); font-family: var(--zx-font-mono); font-size: .6875rem; font-weight: 500; letter-spacing: .06em; text-transform: uppercase; line-height: 1.6; border: 1px solid var(--zx-border-strong); color: var(--zx-muted); background: transparent; white-space: nowrap; }

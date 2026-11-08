@@ -27,9 +27,26 @@ change both together.
 | id | name | price | daily_requests | daily_tokens | rpm | concurrency | tiers | monthly credits | window_tokens | window_seconds |
 |----|------|-------|----------------|--------------|-----|-------------|-------|-----------------|---------------|----------------|
 | free | Free | $0 | 100 | 5,000,000 | 10 | 2 | free | $0 | 1,000,000 | 18,000 |
+| athlete | Athlete | $1 / ₹89 per month | 300 | 6,000,000 | 15 | 2 | free, paid | $0.75 | — | — |
+| speed | Speed | $5 / ₹449 per month | 1,000 | 8,000,000 | 20 | 3 | free, paid | $4 | — | — |
 | pro | Pro | $10 / ₹899 per month | 2,000 | 10,000,000 | 30 | 4 | free, paid | $8 | — | — |
 | max | Max | $40 / ₹3,499 per month | 10,000 | 50,000,000 | 60 | 8 | free, paid | $35 | — | — |
 | ultrawork | Pro (legacy) | same as pro | | | | | | | | |
+
+**Athlete and Speed** (migration `20261108000000_athlete_speed_plans.sql`, approved by the owner
+2026-11-08) are paid plans priced below Pro: same tiers as Pro and Max, sort 12 and 15 (between
+Free 10 and Pro 20), public, not highlighted (Pro stays highlighted), the hosted connectors of
+Pro. The migration widens the plan CHECK constraints (`zerox_accounts.plan` and `.manual_plan`,
+`zerox_plan_policy.plan`, `zerox_subscriptions.plan`) and the plan check of
+`zerox_billing_upsert_subscription` and `zerox_billing_record_checkout`; a re-run keeps stored
+Razorpay plan ids. Plans rank by `price_usd` (upgrade, downgrade, `zerox_billing_plan_target`).
+Until the rows exist the gateway leaves both plans out of `/api/plans` (`ROW_REQUIRED_PLAN_IDS`
+in `src/plan-policy.js`; a row with `public = false` hides them too), the pricing page hides their
+cards and comparison columns, and checkout answers 409 `plan_unavailable`. Without their Razorpay
+plan ids checkout answers 503 `billing_plan_missing`. The Razorpay account has no international
+payments, so `scripts/razorpay-bootstrap.mjs --plan athlete,speed --currency INR` creates INR plans
+only and their USD ids stay null. Search: Athlete 100 searches and 8 research runs a day, Speed 200
+and 15; colony: Athlete 2 workers and 600,000 tokens a run, Speed 3 and 1,000,000.
 
 **Rolling token window** (migration `20261102000000_free_token_window.sql`, 2026-11-02). A plan
 with `window_tokens` and `window_seconds` (set together; `—` = none) allows at most
@@ -194,9 +211,10 @@ credential (never an `nzx_` key). Session tokens are stored hashed (SHA-256) in 
 - `GET /api/billing` → `{provider_configured, subscription:null|{id, plan, status,
   current_period_end, cancel_at_period_end, provider:'razorpay'}, payments:[{id, kind:
   'subscription'|'topup', amount_minor, currency, status, created_at, invoice_url}]}`
-- `POST /api/billing/checkout {plan:'pro'|'max', currency:'INR'|'USD'}` → `{provider:
+- `POST /api/billing/checkout {plan:'athlete'|'speed'|'pro'|'max', currency:'INR'|'USD'}` → `{provider:
   'razorpay', key_id, subscription_id, name, description, prefill:{email,name}, notes}`
-  (409 `already_subscribed`, 503 `billing_not_configured`; section 16 adds the billing details
+  (409 `already_subscribed`, 409 `plan_unavailable` for a plan `/api/plans` does not list, 503
+  `billing_not_configured`; section 16 adds the billing details
   gate, `consent`, `billing_plan_missing` and the phone in `prefill`)
 - `POST /api/billing/topup {pack, currency}` → `{provider, key_id, order_id, amount_minor,
   currency, name, description, prefill}`
@@ -1390,6 +1408,8 @@ are not cached. A cached answer says `"cached": true` and still counts as a sear
 | plan | searches | research runs |
 |---|---|---|
 | Free | 40 | 3 |
+| Athlete | 100 | 8 |
+| Speed | 200 | 15 |
 | Pro | 400 | 30 |
 | Max | 2000 | 150 |
 
@@ -1467,7 +1487,7 @@ Connectors are MCP servers. There are no organisations yet, so gateway policy is
 - Seed (migration `20261106000300_connector_policy.sql`, kept if an operator already set a
   policy): every plan `allowed: ["catalog:*"]`, `denied: []`, `required: []`,
   `allow_unvetted: true`, `catalog_version: "2026-11-03"`; Free `hosted: []` (local connectors
-  only); Pro, Max and ultrawork `hosted: ["atlassian", "github", "linear", "notion", "slack"]`
+  only); Pro, Max and ultrawork (and Athlete and Speed, migration `20261108000000`) `hosted: ["atlassian", "github", "linear", "notion", "slack"]`
   (vendors with an official remote MCP server). The ids must equal the CLI catalog's ids. Not yet
   checked: the CLI's compiled-in catalog (`assets/mcp-catalog.json`) is on no neuron-v2 branch as
   of 2026-11-04, so these five ids are provisional. When it lands, compare them and fix either

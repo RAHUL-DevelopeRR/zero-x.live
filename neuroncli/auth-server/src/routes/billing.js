@@ -32,6 +32,10 @@ export const billingNotConfigured = () => new ApiError(503, 'billing_not_configu
 export const billingPlanMissing = (plan, currency) => new ApiError(503, 'billing_plan_missing',
   `Checkout for the ${plan?.name || 'selected'} plan in ${currency} is not set up yet. Email support@zero-x.live and we will activate your plan.`);
 
+// A known paid plan that this gateway's catalogue does not offer (yet).
+export const planUnavailable = () => new ApiError(409, 'plan_unavailable',
+  'This plan is not available yet. Choose another plan, or email support@zero-x.live.', { param: 'plan' });
+
 export function providerFailure(error, message = 'The payment provider could not complete the request. Please retry.') {
   if (error instanceof ApiError) return error;
   if (error instanceof RazorpayError) {
@@ -245,12 +249,17 @@ async function retireCheckout(env, userId, stored, remote) {
 
 async function checkout(c, caller) {
   const body = await jsonObject(c);
-  if (!PAID_PLAN_IDS.includes(body.plan)) throw new ApiError(400, 'invalid_request', '`plan` must be pro or max.', { param: 'plan' });
+  if (!PAID_PLAN_IDS.includes(body.plan)) {
+    throw new ApiError(400, 'invalid_request', `\`plan\` must be one of ${PAID_PLAN_IDS.join(', ')}.`, { param: 'plan' });
+  }
   const currency = parseCurrency(body.currency);
   const env = c.env;
   if (!razorpayConfigured(env)) throw billingNotConfigured();
   await requireActiveAccount(env, caller);
   const plan = (await loadPlanCatalog(env)).plans.find(entry => entry.id === body.plan);
+  // A plan the catalogue does not offer (Athlete or Speed before their migration is applied, or
+  // hidden with public = false) cannot be bought. Existing subscribers still resolve it elsewhere.
+  if (!plan?.offered) throw planUnavailable();
   const providerPlanId = currency === 'INR' ? plan?.razorpay_plan_id_inr : plan?.razorpay_plan_id_usd;
   if (!providerPlanId) {
     console.error('Razorpay plan id missing; store it in zerox_plan_policy (GATEWAY_SETUP.md)', { plan: body.plan, currency });
@@ -327,7 +336,7 @@ async function topup(c, caller) {
   const plan = (await loadPlanCatalog(c.env)).plans.find(entry => entry.id === normalizePlanId(current?.plan ?? caller.plan));
   if (!plan?.tiers.includes('paid')) {
     // Credits are only spent on paid pools, which the Free plan cannot use.
-    throw new ApiError(403, 'upgrade_required', 'Credit top-ups are available on the Pro and Max plans. Upgrade first.',
+    throw new ApiError(403, 'upgrade_required', 'Credit top-ups are available on the paid plans (Athlete, Speed, Pro and Max). Upgrade first.',
       { upgrade_url: pricingUrl(c.env) });
   }
   const details = await requireBillingDetails(c.env, caller, 'topup', body);

@@ -7,7 +7,7 @@ import { callerCountry, catalogEntries, catalogWarnings, inheritCallerCountry, l
 import { refreshModelsDevFacts } from './oiop/models-dev.js';
 import { globalHealthTracker } from './provider-health.js';
 import { createChatHandler } from './chat-handler.js';
-import { loadPlanCatalog, loadPlanLimits, PAID_PLAN_IDS } from './plan-policy.js';
+import { loadPlanCatalog, loadPlanLimits, offeredPlans, PAID_PLAN_IDS } from './plan-policy.js';
 import { isOperator } from './operator-auth.js';
 import {
   persistentSessionStore, readRecord, writeRecord, deleteRecord, sealSession, sessionExpiry, sessionTtlSeconds,
@@ -345,7 +345,7 @@ async function availableModels(c, session = {}) {
 
 function normalizePlan(plan) {
   const key = String(plan || "free").toLowerCase().replace(/[^a-z0-9_-]/g, "");
-  return ["free", "pro", "max", "ultrawork"].includes(key) ? key : "free";
+  return ["free", "athlete", "speed", "pro", "max", "ultrawork"].includes(key) ? key : "free";
 }
 
 // The account's current rolling token window (zerox_account_overview usage_window, migration
@@ -594,7 +594,7 @@ function takePkceStart(address) {
 async function plansConfigured(env) {
   try {
     const { plans } = await loadPlanCatalog(env);
-    const paid = plans.filter(plan => PAID_PLAN_IDS.includes(plan.id));
+    const paid = offeredPlans(plans).filter(plan => PAID_PLAN_IDS.includes(plan.id));
     const missing = paid.flatMap(plan => [['INR', plan.razorpay_plan_id_inr], ['USD', plan.razorpay_plan_id_usd]]
       .filter(([, id]) => !id).map(([currency]) => `${plan.id}:${currency}`));
     return { inr: !missing.some(entry => entry.endsWith(':INR')), usd: !missing.some(entry => entry.endsWith(':USD')), missing };
