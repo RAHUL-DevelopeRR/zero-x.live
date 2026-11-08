@@ -175,7 +175,7 @@ export function identityProfileFromUser(user = {}) {
 // app_metadata is writable only with the service role, so it may seed a new account's plan.
 export function claimsPlan(user) {
   const plan = String(user?.app_metadata?.plan || 'free').toLowerCase();
-  return ['free', 'pro', 'max', 'ultrawork'].includes(plan) ? plan : 'free';
+  return ['free', 'athlete', 'speed', 'pro', 'max', 'ultrawork'].includes(plan) ? plan : 'free';
 }
 
 const CACHE_TTL_MS = 60000;

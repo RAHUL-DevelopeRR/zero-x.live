@@ -22,7 +22,6 @@
 .ap-card .zx-alert[hidden] { display: none; }
 .ap-actions { display: flex; flex-wrap: wrap; gap: var(--zx-s3); margin-top: var(--zx-s4); }
 .ap-actions .zx-btn { flex: 1 1 140px; margin-top: 0; }
-.ap-done { font-size: 1.0625rem; color: var(--zx-ink); }
 .ap-help { margin: var(--zx-s5) 0 0; padding-top: var(--zx-s4); border-top: 1px solid var(--zx-border); font-size: var(--zx-fs-small); color: var(--zx-muted); }
 .ap-help p { margin: 0 0 var(--zx-s2); }
 .ap-help p:last-child { margin: 0; }
@@ -37,3 +36,20 @@
 .ap-session[hidden] { display: none; }
 .ap-steps { margin: var(--zx-s4) 0; padding-left: 1.25em; font-size: var(--zx-fs-small); color: var(--zx-muted); }
 .ap-meta { margin-top: var(--zx-s4); font-family: var(--zx-font-mono); font-size: var(--zx-fs-label); letter-spacing: .02em; color: var(--zx-faint); }
+
+/* Result screen: the calm, centred page once Neuron sign-in is decided (device approval) or a
+   callback finishes. It replaces the card: mark, one large headline, one line, a muted detail. */
+.ap-result { align-self: center; display: flex; flex-direction: column; align-items: center; width: min(600px, 100%); padding: var(--zx-s6) 0; text-align: center; animation: ap-rise .45s ease-out both; }
+.ap-result[hidden] { display: none; }
+.ap-result-mark { box-sizing: content-box; width: 40px; height: 40px; margin: 0 0 var(--zx-s5); padding: 16px; border: 1px solid var(--zx-border); border-radius: 50%; background: var(--zx-card); }
+.ap-result.is-failed .ap-result-mark { border-color: var(--zx-danger); }
+.ap-result-title { margin: 0 0 var(--zx-s3); font-family: var(--zx-font-display); font-size: clamp(2rem, 8vw, 3.25rem); font-weight: 500; line-height: 1.08; letter-spacing: var(--zx-tracking-tight); color: var(--zx-heading); overflow-wrap: anywhere; }
+.ap-result-title:focus { outline: none; }
+.ap-result-line { max-width: 40ch; margin: 0 0 var(--zx-s4); font-size: var(--zx-fs-lead); line-height: 1.5; color: var(--zx-text); overflow-wrap: anywhere; }
+.ap-result-detail { max-width: 52ch; margin: 0; font-family: var(--zx-font-mono); font-size: var(--zx-fs-small); line-height: 1.6; color: var(--zx-faint); overflow-wrap: anywhere; }
+.ap-result-detail:empty { display: none; }
+.ap-result .ap-status { margin: 0 0 var(--zx-s4); }
+.ap-result .ap-session { width: 100%; text-align: left; }
+.ap-result .zx-btn { margin-top: var(--zx-s2); }
+.ap-result .ap-meta { margin-top: var(--zx-s6); }
+@keyframes ap-rise { from { opacity: 0; transform: translateY(8px); } }

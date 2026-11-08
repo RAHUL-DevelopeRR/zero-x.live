@@ -341,9 +341,13 @@ assert.equal(details.valuesFromProfile({ ...publicProfile(row), tax_id: TN }).ta
   assert.deepEqual(details.summaryRows({ kind: 'subscription', plan, currency: 'INR', now: NOW }), [
     { label: 'Plan', value: 'Neuron Pro' }, { label: 'Billing', value: 'Monthly, renews until you cancel' }, { label: 'Price', value: '₹899 per month' },
     { label: 'Credits included', value: '$8 every month' }, { label: 'Due today', value: '₹899' }, { label: 'First renewal', value: 'About 3 December 2026, then monthly' }]);
-  assert.deepEqual(details.summaryRows({ kind: 'subscription', plan: pricing.PLAN_CATALOG.plans[2], currency: 'USD', noGst: true, now: NOW }).map(row => [row.label, row.value]), [
+  assert.deepEqual(details.summaryRows({ kind: 'subscription', plan: pricing.PLAN_CATALOG.plans.find(entry => entry.id === 'max'), currency: 'USD', noGst: true, now: NOW }).map(row => [row.label, row.value]), [
     ['Plan', 'Neuron Max'], ['Billing', 'Monthly, renews until you cancel'], ['Price', '$40 per month'], ['Credits included', '$35 every month'], ['Tax', 'No GST charged'],
     ['Due today', '$40'], ['First renewal', 'About 3 December 2026, then monthly']]);
+  // Athlete: cents in the credits line, the INR price.
+  assert.deepEqual(details.summaryRows({ kind: 'subscription', plan: pricing.PLAN_CATALOG.plans.find(entry => entry.id === 'athlete'), currency: 'INR', now: NOW })
+    .map(row => [row.label, row.value]), [['Plan', 'Neuron Athlete'], ['Billing', 'Monthly, renews until you cancel'], ['Price', '₹89 per month'],
+    ['Credits included', '$0.75 every month'], ['Due today', '₹89'], ['First renewal', 'About 3 December 2026, then monthly']]);
   assert.deepEqual(details.summaryRows({ kind: 'topup', pack, currency: 'INR', now: NOW }), [{ label: 'Item', value: '$5 of Neuron credits' }, { label: 'Payment', value: 'One time, no renewal' },
     { label: 'Price', value: '₹449' }, { label: 'Due today', value: '₹449' }]);
   assert.ok(details.summaryRows({ kind: 'topup', pack, currency: 'USD', noGst: true }).some(row => row.label === 'Tax' && row.value === 'No GST charged'));

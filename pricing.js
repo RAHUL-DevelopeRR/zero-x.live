@@ -18,6 +18,24 @@ export const PLAN_CATALOG = Object.freeze({
         '100 requests per day and 1M tokens every 5 hours', '10 requests per minute, 2 at once', 'Every Neuron feature, the same on all plans'],
     },
     {
+      id: 'athlete', name: 'Athlete', price: { usd_cents: 100, inr_paise: 8900 }, interval: 'month',
+      limits: { daily_requests: 300, daily_tokens: 6000000, window_tokens: null, window_seconds: null, rpm: 15, concurrency: 2 },
+      monthly_credit_usd: 0.75, tiers: ['free', 'paid'], highlighted: false,
+      features: ['Claude Haiku 5.5 included: 10M tokens a month at no charge',
+        'Claude Sonnet 5.5 and Claude Opus 5.5, billed from credits', '$0.75 of credits included every month',
+        'Free models with higher limits: 300 requests and 6M tokens per day', '15 requests per minute, 2 at once',
+        'Every Neuron feature, the same on all plans'],
+    },
+    {
+      id: 'speed', name: 'Speed', price: { usd_cents: 500, inr_paise: 44900 }, interval: 'month',
+      limits: { daily_requests: 1000, daily_tokens: 8000000, window_tokens: null, window_seconds: null, rpm: 20, concurrency: 3 },
+      monthly_credit_usd: 4, tiers: ['free', 'paid'], highlighted: false,
+      features: ['Claude Haiku 5.5 included: 10M tokens a month at no charge',
+        'Claude Sonnet 5.5 and Claude Opus 5.5, billed from credits', '$4 of credits included every month',
+        'Free models with higher limits: 1,000 requests and 8M tokens per day', '20 requests per minute, 3 at once',
+        'Every Neuron feature, the same on all plans'],
+    },
+    {
       id: 'pro', name: 'Pro', price: { usd_cents: 1000, inr_paise: 89900 }, interval: 'month',
       limits: { daily_requests: 2000, daily_tokens: 10000000, window_tokens: null, window_seconds: null, rpm: 30, concurrency: 4 },
       monthly_credit_usd: 8, tiers: ['free', 'paid'], highlighted: true,
@@ -307,6 +325,11 @@ export function createPricingPage({ doc = globalThis.document, win = globalThis.
     for (const el of all('[data-currency-label]')) el.textContent = currency;
   }
 
+  /** Hides the cards and comparison cells ([data-plan-only]) of plans the current catalog does not list. */
+  function showListedPlans() {
+    for (const el of all('[data-plan-only]')) el.hidden = !findPlan(catalog, el.dataset.planOnly);
+  }
+
   function setCurrency(value) {
     currency = normalizeCurrency(value);
     storageSet(local, CURRENCY_STORAGE_KEY, currency);
@@ -317,12 +340,15 @@ export function createPricingPage({ doc = globalThis.document, win = globalThis.
     try {
       const data = normalizeCatalog(await apiFetch('/api/plans', { fetchImpl, timeoutMs: 8000 }));
       if (!data) return false;
-      // Only update plans the page already describes; unknown or legacy plans (e.g. ultrawork) stay hidden.
+      // Only update plans the page already describes; unknown or legacy plans (e.g. ultrawork) stay
+      // hidden. A described plan the gateway does not list (Athlete or Speed before their database
+      // rows exist) is hidden too, with its comparison column, and cannot be bought.
       catalog = {
         currency_default: data.currency_default,
-        plans: PLAN_CATALOG.plans.map(plan => findPlan(data, plan.id) || plan),
+        plans: PLAN_CATALOG.plans.map(plan => findPlan(data, plan.id)).filter(Boolean),
         topups: PLAN_CATALOG.topups.map(pack => findTopup(data, pack.id) || pack),
       };
+      showListedPlans();
       render();
       return true;
     } catch {
@@ -409,7 +435,7 @@ export function createPricingPage({ doc = globalThis.document, win = globalThis.
     const planId = account && account.plan && typeof account.plan.id === 'string' ? account.plan.id : 'free';
     const plan = findPlan(catalog, planId);
     if (!plan || !Array.isArray(plan.tiers) || !plan.tiers.includes('paid')) {
-      throw new ApiError('Credit top-ups need an active Pro or Max plan.', { code: 'topup_requires_plan' });
+      throw new ApiError('Credit top-ups need an active paid plan.', { code: 'topup_requires_plan' });
     }
   }
 
@@ -417,6 +443,12 @@ export function createPricingPage({ doc = globalThis.document, win = globalThis.
     if (busy || locked) return;
     const plan = intent.kind === 'plan' ? findPlan(catalog, intent.id) : null;
     const pack = intent.kind === 'topup' ? findTopup(catalog, intent.id) : null;
+    if (intent.kind === 'plan' && !plan && findPlan(PLAN_CATALOG, intent.id)) {
+      // Described on the page but not offered by the gateway (yet): say so instead of doing nothing.
+      clearPending();
+      setError(describeError(new ApiError('This plan is not available yet.', { code: 'plan_unavailable' })));
+      return;
+    }
     if (!plan && !pack) return;
     const planName = plan ? plan.name : '';
     setError('');

@@ -3,7 +3,7 @@
 // manifests cannot be loaded, the page keeps its static "coming soon" state. Every value is
 // rendered with textContent, and only https links to GitHub or zero-x.live are used.
 import { apiFetch } from './billing-checkout.js';
-import { copyButtons } from './home.js';
+import { copyButtons } from './copy-code.js';
 
 export const MANIFEST_PATHS = Object.freeze({ cli: '/releases/cli/latest.json', desktop: '/releases/desktop/latest.json' });
 const DOWNLOAD_HOSTS = ['github.com', 'zero-x.live'];

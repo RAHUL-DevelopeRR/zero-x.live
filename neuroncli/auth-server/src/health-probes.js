@@ -734,8 +734,10 @@ export class HealthProber {
         continue;
       }
       sent++;
-      row.probe_day = today;
+      // Read today's count before stamping the day: stamping first carried yesterday's count over,
+      // so a pool that had reached its cap was tested once after 00:00 UTC and then not again.
       row.probe_count = this.usedToday(row, today) + 1;
+      row.probe_day = today;
       providerUse.set(item.entry.provider, (providerUse.get(item.entry.provider) || 0) + 1);
       try {
         if (kind === 'tool') await this.toolProbe(item, changed);

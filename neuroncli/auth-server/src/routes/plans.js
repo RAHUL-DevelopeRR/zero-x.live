@@ -1,4 +1,4 @@
-import { loadPlanCatalog, TOPUP_PACKS } from '../plan-policy.js';
+import { loadPlanCatalog, offeredPlans, TOPUP_PACKS } from '../plan-policy.js';
 import {
   AUTO_MODEL_ID, callerCountry, catalogEntry, entryPools, familyModels, listModelsForCaller, loadCatalog, loadPlanPolicies,
   planPolicy, poolKey, withIdentity,
@@ -44,7 +44,7 @@ export function registerPlanRoutes(api) {
   api.get('/api/plans', async c => {
     const { plans } = await loadPlanCatalog(c.env);
     c.header('Cache-Control', 'public, max-age=60');
-    return c.json({ currency_default: 'USD', plans: plans.map(publicPlan), topups: TOPUP_PACKS.map(publicTopup) });
+    return c.json({ currency_default: 'USD', plans: offeredPlans(plans).map(publicPlan), topups: TOPUP_PACKS.map(publicTopup) });
   });
 }
 

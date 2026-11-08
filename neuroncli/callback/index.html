@@ -16,34 +16,42 @@
 <body class="ap">
     <header class="ap-top"><a class="zx-brand" href="https://zero-x.live/"><img src="/Assets/zerox-mark.svg" width="28" height="28" alt="">Zero-X</a></header>
     <main class="ap-main" id="main">
-        <div class="ap-card" id="card">
-            <p class="ap-status is-working" id="spinner" role="status">Working</p>
-            <h1 id="title">Authenticating...</h1>
-            <p id="message">Finishing your connection...</p>
-            <div id="steps"></div>
+        <section class="ap-result" id="result">
+            <img class="ap-result-mark" src="/Assets/zerox-mark.svg" width="56" height="56" alt="">
+            <p class="ap-status is-working" id="spinner">Working</p>
+            <h1 id="title" class="ap-result-title" tabindex="-1">Connecting your account</h1>
+            <p id="message" class="ap-result-line">This takes a few seconds.</p>
+            <p id="detail" class="ap-result-detail"></p>
             <div class="ap-session" id="session" hidden></div>
             <button class="zx-btn zx-btn--primary" id="copy-session" type="button" hidden>Copy gateway token</button>
             <p class="ap-meta" id="meta">zero-x.live</p>
-        </div>
+        </section>
     </main>
 
     <script>
         const AUTH_SERVER = '/neuroncli/auth-server';
+        const SIGN_IN = 'To sign in to Neuron, run neuron login in your terminal and approve the code at neuron.zero-x.live/device.';
+        const RETRY = 'Start the connection again from Zero-X.';
         const params = new URLSearchParams(location.search);
         const code = params.get('code');
         const state = params.get('state');
         const token = params.get('session_token');
         const provider = params.get('provider') || (code ? 'openrouter' : '');
         history.replaceState(null, '', location.pathname);
-        const title = document.getElementById('title');
-        const message = document.getElementById('message');
-        const spinner = document.getElementById('spinner');
-        message.style.whiteSpace = 'pre-line';
-        function finish(success, text) {
-            spinner.className = 'ap-status zx-badge ' + (success ? 'zx-badge--success' : 'zx-badge--danger');
-            spinner.textContent = success ? 'Done' : 'Failed';
-            title.textContent = success ? 'Authentication Complete' : 'Authentication Failed';
-            message.textContent = text;
+        const $ = id => document.getElementById(id);
+        // The outcome replaces the working state on the full-page result screen. Focus moves to
+        // the headline so screen readers announce it; the section is not a live region, so the
+        // gateway token is never read out as an update. A failure's detail says how to retry
+        // (RETRY unless given). textContent only.
+        function finish(success, line, detail) {
+            const title = success ? 'Connection complete' : 'Connection failed';
+            $('spinner').hidden = true;
+            $('result').className = success ? 'ap-result' : 'ap-result is-failed';
+            $('title').textContent = title;
+            $('message').textContent = line;
+            $('detail').textContent = detail || (success ? '' : RETRY);
+            document.title = title + ' | Zero-X';
+            $('title').focus();
         }
         async function complete() {
             try {
@@ -51,28 +59,28 @@
                     const response = await fetch(AUTH_SERVER + '/auth/openrouter/callback?' +
                         new URLSearchParams({code, state}), {signal: AbortSignal.timeout(15000)});
                     const result = await response.json().catch(() => ({}));
-                    if (!response.ok || !/^ses_[A-Za-z0-9_-]+$/.test(result.session_token || '')) throw new Error('Authorization exchange failed. Restart the provider connection.');
-                    const session = document.getElementById('session');
-                    const copy = document.getElementById('copy-session');
+                    if (!response.ok || !/^ses_[A-Za-z0-9_-]+$/.test(result.session_token || '')) throw new Error('Authorization exchange failed.');
+                    const session = $('session');
+                    const copy = $('copy-session');
                     session.textContent = result.session_token;
                     session.hidden = copy.hidden = false;
                     copy.addEventListener('click', async () => {
                         try { await navigator.clipboard.writeText(result.session_token); copy.textContent = 'Copied'; }
                         catch { copy.textContent = 'Select and copy the token above'; }
                     });
-                    finish(true, 'Your connection is ready. This is a gateway token. To sign in to Neuron, run neuron login in your terminal.');
+                    finish(true, 'Copy the gateway token below, then close this tab.', 'This is a gateway token. To sign in to Neuron, run neuron login in your terminal.');
                 } else if (provider === 'azure' && token) {
                     const response = await fetch(AUTH_SERVER + '/auth/session', {
                         headers: {Authorization: 'Bearer ' + token}, signal: AbortSignal.timeout(15000)
                     });
-                    if (!response.ok) throw new Error('Invalid or expired session. Restart authentication in your terminal.');
+                    if (!response.ok) throw new Error('Invalid or expired session.');
                     await response.json();
-                    finish(true, 'Your gateway session was verified. To sign in to Neuron, run neuron login in your terminal.');
+                    finish(true, 'You can close this tab and return to your terminal.', 'Your gateway session was verified. To sign in to Neuron, run neuron login in your terminal.');
                 } else {
-                    finish(false, 'This page only completes a provider connection started from Zero-X. To sign in to Neuron, run neuron login and approve the code at https://neuron.zero-x.live/device.');
+                    finish(false, 'This page only completes a provider connection started from Zero-X.', SIGN_IN);
                 }
             } catch (error) {
-                finish(false, error.name === 'TimeoutError' ? 'Authentication timed out. Restart authentication in your terminal.' : error.message);
+                finish(false, error.name === 'TimeoutError' ? 'Authentication timed out.' : error.message);
             }
         }
         complete();

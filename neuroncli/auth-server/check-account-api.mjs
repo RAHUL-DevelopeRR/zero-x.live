@@ -522,6 +522,8 @@ try {
   // ── 4. GET /api/plans (public, static fallback identical to contract §1) ──
   const expectedPlans = [
     { id: 'free', name: 'Free', price: { usd_cents: 0, inr_paise: 0 }, limits: { daily_requests: 100, daily_tokens: 5000000, window_tokens: 1000000, window_seconds: 18000, rpm: 10, concurrency: 2 }, monthly_credit_usd: 0, tiers: ['free'] },
+    { id: 'athlete', name: 'Athlete', price: { usd_cents: 100, inr_paise: 8900 }, limits: { daily_requests: 300, daily_tokens: 6000000, window_tokens: null, window_seconds: null, rpm: 15, concurrency: 2 }, monthly_credit_usd: 0.75, tiers: ['free', 'paid'] },
+    { id: 'speed', name: 'Speed', price: { usd_cents: 500, inr_paise: 44900 }, limits: { daily_requests: 1000, daily_tokens: 8000000, window_tokens: null, window_seconds: null, rpm: 20, concurrency: 3 }, monthly_credit_usd: 4, tiers: ['free', 'paid'] },
     { id: 'pro', name: 'Pro', price: { usd_cents: 1000, inr_paise: 89900 }, limits: { daily_requests: 2000, daily_tokens: 10000000, window_tokens: null, window_seconds: null, rpm: 30, concurrency: 4 }, monthly_credit_usd: 8, tiers: ['free', 'paid'] },
     { id: 'max', name: 'Max', price: { usd_cents: 4000, inr_paise: 349900 }, limits: { daily_requests: 10000, daily_tokens: 50000000, window_tokens: null, window_seconds: null, rpm: 60, concurrency: 8 }, monthly_credit_usd: 35, tiers: ['free', 'paid'] },
   ];
@@ -529,11 +531,14 @@ try {
     { id: 'credits_5', credit_usd: 5, price: { usd_cents: 500, inr_paise: 44900 } },
     { id: 'credits_20', credit_usd: 20, price: { usd_cents: 2000, inr_paise: 174900 } },
   ];
-  const checkPlans = (body, overrides = {}) => {
+  const ALL_PLANS = ['free', 'athlete', 'speed', 'pro', 'max'];
+  // Before migration 20261108000000 (no Athlete or Speed row) or without a database answer: three plans.
+  const WITHOUT_NEW_PLANS = ['free', 'pro', 'max'];
+  const checkPlans = (body, overrides = {}, ids = ALL_PLANS) => {
     assert.equal(body.currency_default, 'USD');
     assert.deepEqual(body.topups, expectedTopups);
-    assert.deepEqual(body.plans.map(plan => plan.id), ['free', 'pro', 'max'], 'legacy ultrawork is not offered');
-    for (const [index, expected] of expectedPlans.entries()) {
+    assert.deepEqual(body.plans.map(plan => plan.id), ids, 'legacy ultrawork is not offered; plans in price order');
+    for (const [index, expected] of expectedPlans.filter(plan => ids.includes(plan.id)).entries()) {
       const plan = body.plans[index];
       assert.deepEqual({ id: plan.id, name: plan.name, price: plan.price, limits: plan.limits, monthly_credit_usd: plan.monthly_credit_usd, tiers: plan.tiers },
         { ...expected, ...(overrides[expected.id] || {}) });
@@ -563,8 +568,20 @@ try {
     const oldFree = catalogEntry(PLAN_CATALOG[0], { ...oldRow, daily_tokens: 500000 });
     assert.deepEqual([oldFree.limits.daily_tokens, oldFree.limits.window_tokens, oldFree.limits.window_seconds], [500000, null, null]);
   }
+  // Pro stays the highlighted plan; Athlete and Speed are not.
+  assert.deepEqual((await json(await request('/api/plans', { bindings: { ...env } }))).body.plans.map(plan => [plan.id, plan.highlighted]),
+    [['free', false], ['athlete', false], ['speed', false], ['pro', true], ['max', false]]);
+  // Deploy safety: a database without the Athlete and Speed rows (migration 20261108000000 not applied
+  // yet) answers 200 with Free, Pro and Max; so does a row an operator hid with public = false.
+  db.policiesV2 = B1_POLICY_ROWS.filter(row => !['athlete', 'speed'].includes(row.plan));
+  const beforeMigration = await json(await request('/api/plans', { bindings: { ...env } }));
+  assert.equal(beforeMigration.status, 200);
+  checkPlans(beforeMigration.body, {}, WITHOUT_NEW_PLANS);
+  db.policiesV2 = B1_POLICY_ROWS.map(row => row.plan === 'athlete' ? { ...row, public: false } : row);
+  checkPlans((await json(await request('/api/plans', { bindings: { ...env } }))).body, {}, ['free', 'speed', 'pro', 'max']);
+  // A database that does not answer serves the static catalogue without the plans that need their row.
   db.fail.add('zerox_plan_policies_v2');
-  checkPlans((await json(await request('/api/plans', { bindings: { ...env } }))).body);
+  checkPlans((await json(await request('/api/plans', { bindings: { ...env } }))).body, {}, WITHOUT_NEW_PLANS);
   db.fail.delete('zerox_plan_policies_v2');
   db.policiesV2 = [];
 

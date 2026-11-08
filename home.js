@@ -1,4 +1,4 @@
-// Homepage and Neuron CLI page: install tabs, copy buttons and the live model pane.
+// Homepage and Neuron CLI page: install tabs and the live model pane.
 // The pane starts from the built-in list rendered in the HTML (every row "Not checked recently"),
 // is replaced by GET /v1/models, then follows GET /v1/models/status every poll interval: the
 // gateway's health checker (docs/PLATFORM_CONTRACT.md section 15) decides each model's status, so a
@@ -6,6 +6,8 @@
 // as [maker logo] [model name] [usable context] [status]; no serving provider, route or route id is
 // ever shown. Every value from the API is untrusted and rendered with textContent.
 import { apiFetch } from './billing-checkout.js';
+// Copy buttons live in copy-code.js (it binds every page's command blocks on load); re-exported for callers.
+export { copyButtons } from './copy-code.js';
 
 /** Companies that make models (GET /v1/models `maker`), by slug. */
 export const MAKERS = Object.freeze({
@@ -116,7 +118,7 @@ export function verdictExpired(model, now = Date.now()) {
 export function modelState(model, now = Date.now()) {
   if (!model || typeof model !== 'object') return { tone: 'off', label: 'Unavailable' };
   if (model.available === false) {
-    if (model.unavailable_reason === 'upgrade_required') return { tone: 'locked', label: 'Pro and Max plans' };
+    if (model.unavailable_reason === 'upgrade_required') return { tone: 'locked', label: 'Paid plans' };
     if (model.unavailable_reason === 'region_unavailable') return { tone: 'off', label: 'Not offered in your region' };
     return { tone: 'off', label: 'Not offered right now' };
   }
@@ -270,7 +272,7 @@ export function contextNote(row) {
   if (row.id === 'auto') return 'Auto picks a model whose context fits each request.';
   const usable = formatContext(row.context, row.id);
   if (usable === '—') return 'Context window not reported.';
-  const plan = row.paidOnly ? 'on Pro and Max' : 'on the Free plan';
+  const plan = row.paidOnly ? 'on the paid plans' : 'on the Free plan';
   return row.native > row.context
     ? `Up to ${usable} tokens per request ${plan}. The model itself takes up to ${formatContext(row.native, row.id)}.`
     : `Up to ${usable} tokens per request ${plan}.`;
@@ -333,30 +335,6 @@ function installTabs(doc) {
   select(0, false);
 }
 
-export function copyButtons(doc, win) {
-  const live = doc.getElementById('copy-status');
-  for (const button of doc.querySelectorAll('[data-copy-target]')) {
-    const target = doc.getElementById(button.dataset.copyTarget);
-    if (!target || !win.navigator.clipboard) { button.hidden = true; continue; }
-    button.addEventListener('click', async () => {
-      try {
-        await win.navigator.clipboard.writeText(target.textContent.trim());
-        button.textContent = 'Copied';
-        if (live) live.textContent = (button.dataset.copyLabel || 'Command') + ' copied to the clipboard.';
-      } catch {
-        button.textContent = 'Selected';
-        if (live) live.textContent = 'Copying is blocked here; the command is selected, so press Ctrl+C or Cmd+C.';
-        const range = doc.createRange();
-        range.selectNodeContents(target);
-        const selection = win.getSelection();
-        selection.removeAllRanges();
-        selection.addRange(range);
-      }
-      win.setTimeout(() => { button.textContent = 'Copy'; }, 2000);
-    });
-  }
-}
-
 /** The maker badge: the vendored logo when there is one, otherwise a monogram. */
 export function makerBadge(doc, maker) {
   const badge = doc.createElement('span');
@@ -406,7 +384,7 @@ function renderModels(doc, body, rows, now) {
     } else if (row.paidOnly && state.tone !== 'locked') {
       const tag = doc.createElement('span');
       tag.className = 'zx-badge zx-badge--tan';
-      tag.textContent = 'Pro and Max';
+      tag.textContent = 'Paid plans';
       main.append(tag);
     }
     const context = doc.createElement('span');
@@ -554,7 +532,6 @@ export function liveModels(doc, win, { fetchImpl, clock = () => Date.now() } = {
 if (typeof document !== 'undefined' && typeof window !== 'undefined') {
   if (document.querySelector('[data-home]')) {
     installTabs(document);
-    copyButtons(document, window);
   }
   if (document.querySelector('[data-live-models]')) liveModels(document, window);
 }

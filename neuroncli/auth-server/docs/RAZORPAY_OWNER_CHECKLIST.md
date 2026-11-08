@@ -26,10 +26,17 @@ Do not commit test or live secrets anywhere. Only the key id lives in the repo.
 
 | Plan | INR (paise) | USD (cents) | Credits granted each month |
 |---|---|---|---|
-| Pro | 89900 (Rs 899) | 1000 ($10) | $16 |
+| Athlete | 8900 (Rs 89) | 100 ($1) | $0.75 |
+| Speed | 44900 (Rs 449) | 500 ($5) | $4 |
+| Pro | 89900 (Rs 899) | 1000 ($10) | $8 |
 | Max | 349900 (Rs 3499) | 4000 ($40) | $35 |
 
 Top-up packs (orders, not plans): `credits_5` Rs 449 / $5, `credits_20` Rs 1749 / $20.
+
+Athlete and Speed exist once migration `20261108000000_athlete_speed_plans.sql` is applied; before
+that the gateway does not offer them. The account has no international payments, so create their
+plans in INR only (section 2, step 6); their USD ids stay null and USD checkout for them answers
+`billing_plan_missing`.
 
 ## 2. Create the four plans
 
@@ -46,6 +53,26 @@ Preferred: let the script create them, dry run first (dashboard in **Test mode**
 4. The script prints two `UPDATE public.zerox_plan_policy ...` statements. Run them against the
    Supabase database yourself (SQL editor or `psql`); the script never writes to a remote database.
 5. Check: the operator `/health` shows `plans_configured` `{inr: true, usd: true, missing: []}`.
+6. Athlete and Speed, INR only, in **live mode** (production uses the live key id `rzp_live_...`, so
+   test-mode plan ids would make every Athlete and Speed checkout fail at Razorpay):
+   - Put the LIVE `RAZORPAY_KEY_ID` and `RAZORPAY_KEY_SECRET` in a separate env file, for example
+     `.env.razorpay-live` in `neuroncli/auth-server` (ignored by git through `.env.*`). Do not use
+     `.dev.vars`: it holds the test keys.
+   - Dry run: `node --env-file=.env.razorpay-live scripts/razorpay-bootstrap.mjs --plan athlete,speed --currency INR --allow-live`
+     (the script refuses live keys without `--allow-live`, even for a dry run).
+   - Create: `node --env-file=.env.razorpay-live scripts/razorpay-bootstrap.mjs --plan athlete,speed --currency INR --apply --allow-live`.
+   - The printed ids must be the ones the Razorpay dashboard shows in **Live mode** (Subscriptions,
+     Plans). The two printed statements set only `razorpay_plan_id_inr`; run them in Supabase.
+   - `/health` then lists `athlete:USD` and `speed:USD` as missing, which is expected without
+     international payments.
+7. Pro and Max must also hold LIVE plan ids before the deploy that switches `RAZORPAY_KEY_ID` to
+   `rzp_live_` goes out. `razorpay-test-mode-plans.sql` (2026-11-08) stored the test-mode ids
+   `plan_TxXujCbICi0G1b` (pro) and `plan_TxXujjBrKBOhY8` (max); with a live key id they make every
+   Pro and Max checkout fail at Razorpay. Run `razorpay-restore-live-plans.sql` before or with that
+   deploy, with the live Pro and Max INR ids from the live bootstrap (`--plan pro,max --currency INR
+   --apply --allow-live`, same env file) in place of its NULLs, or as is (NULLs) so Pro and Max
+   answer `billing_plan_missing` until live plans exist. `4-verify-athlete-speed-plans.sql` check 10
+   fails while a known test-mode id is still stored.
 
 By hand instead (dashboard, Subscriptions, Plans, Create): period monthly, interval 1, item name
 `Neuron Pro (monthly)` or `Neuron Max (monthly)`, the amounts above in the matching currency, and

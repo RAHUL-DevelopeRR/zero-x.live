@@ -585,6 +585,10 @@ export function unavailableReason(verdicts) {
 export const BUILTIN_PLANS = Object.freeze({
   free: Object.freeze({ id: 'free', name: 'Free', daily_requests: 100, daily_tokens: 5000000, rpm: 10,
     concurrency: 2, tiers: Object.freeze(['free']), monthly_credit_microusd: 0 }),
+  athlete: Object.freeze({ id: 'athlete', name: 'Athlete', daily_requests: 300, daily_tokens: 6000000, rpm: 15,
+    concurrency: 2, tiers: Object.freeze(['free', 'paid']), monthly_credit_microusd: 750000 }),
+  speed: Object.freeze({ id: 'speed', name: 'Speed', daily_requests: 1000, daily_tokens: 8000000, rpm: 20,
+    concurrency: 3, tiers: Object.freeze(['free', 'paid']), monthly_credit_microusd: 4000000 }),
   pro: Object.freeze({ id: 'pro', name: 'Pro', daily_requests: 2000, daily_tokens: 10000000, rpm: 30,
     concurrency: 4, tiers: Object.freeze(['free', 'paid']), monthly_credit_microusd: 8000000 }),
   max: Object.freeze({ id: 'max', name: 'Max', daily_requests: 10000, daily_tokens: 50000000, rpm: 60,

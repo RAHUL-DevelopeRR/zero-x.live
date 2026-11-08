@@ -25,6 +25,7 @@
   <meta name="twitter:image:alt" content="Zero-X logo">
   <link rel="preload" href="/fonts/aspekta-400.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="/fonts/aspekta-500.woff2" as="font" type="font/woff2" crossorigin>
+  <script>(function(d){if('noModule'in HTMLScriptElement.prototype)d.classList.add('zx-js');try{var t=localStorage.getItem('zx-theme');if(t==='dark'||t==='light')d.dataset.theme=t}catch(e){}})(document.documentElement)</script>
   <link rel="stylesheet" href="/zx-tokens.css">
   <link rel="stylesheet" href="/content.css">
   <script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"TechArticle","@id":"https://zero-x.live/docs/data#article","headline":"Data and subprocessors","url":"https://zero-x.live/docs/data","publisher":{"@id":"https://zero-x.live/#organization"},"inLanguage":"en"},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Zero-X","item":"https://zero-x.live/"},{"@type":"ListItem","position":2,"name":"Docs","item":"https://zero-x.live/docs"},{"@type":"ListItem","position":3,"name":"Data and subprocessors","item":"https://zero-x.live/docs/data"}]}]}</script>
@@ -35,6 +36,7 @@
   <header class="zx-header">
     <div class="zx-container zx-header__inner">
       <a class="zx-brand" href="/"><img src="/Assets/zerox-mark.svg" width="28" height="28" alt="">Zero-X</a>
+      <button class="zx-theme-toggle" type="button" aria-label="Dark mode" aria-pressed="false" title="Switch to dark mode"><svg class="zx-icon zx-icon--moon" aria-hidden="true"><use href="/icons.svg#moon"/></svg><svg class="zx-icon zx-icon--sun" aria-hidden="true"><use href="/icons.svg#sun"/></svg></button>
       <button class="zx-nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" hidden><svg class="zx-icon zx-icon--menu" aria-hidden="true"><use href="/icons.svg#menu"/></svg><svg class="zx-icon zx-icon--close" aria-hidden="true"><use href="/icons.svg#x"/></svg>Menu</button>
       <nav class="zx-nav" id="site-nav" aria-label="Main">
         <a href="/neuron-cli">Neuron CLI</a>
@@ -113,7 +115,7 @@
             <table class="zx-table">
               <thead><tr><th scope="col">Company</th><th scope="col">Role</th><th scope="col">Based in</th><th scope="col">Training and retention, as the company states it</th></tr></thead>
               <tbody>
-                <tr><th scope="row">Anthropic</th><td>Claude models on Pro and Max</td><td>United States</td><td>API data is not used for training under its commercial terms; deleted after a limited period; flagged requests can be kept longer</td></tr>
+                <tr><th scope="row">Anthropic</th><td>Claude models: Claude Haiku 5.5 on every plan, Claude Sonnet 5.5 and Claude Opus 5.5 on the paid plans</td><td>United States</td><td>API data is not used for training under its commercial terms; deleted after a limited period; flagged requests can be kept longer</td></tr>
                 <tr><th scope="row">Groq</th><td>Groq-hosted models, free and paid</td><td>United States</td><td>Not kept by default, but may be logged up to 30 days for abuse and reliability unless zero data retention is on; training not stated, not confirmed</td></tr>
                 <tr><th scope="row">NVIDIA</th><td>Free models on shared trial endpoints</td><td>United States</td><td>Not confirmed</td></tr>
                 <tr><th scope="row">OpenRouter</th><td>Free OpenRouter models, and your own OpenRouter account</td><td>United States</td><td>The gateway asks for endpoints that do not retain or train; OpenRouter's own logging and each model host's practices not confirmed</td></tr>

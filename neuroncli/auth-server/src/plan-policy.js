@@ -3,6 +3,8 @@ import { accountRpc, rpcRows, databaseConfigured } from './account-store.js';
 // Development-only allocations; production policy is maintained in Postgres.
 export const DEVELOPMENT_PLANS = Object.freeze({
   free: { name: 'Free', daily_tokens: 256000, daily_requests: 2000, price_usd: 0 },
+  athlete: { name: 'Athlete', daily_tokens: 6000000, daily_requests: 300, price_usd: 1 },
+  speed: { name: 'Speed', daily_tokens: 8000000, daily_requests: 1000, price_usd: 5 },
   pro: { name: 'Pro', daily_tokens: 2000000, daily_requests: 20000, price_usd: 10 },
   max: { name: 'Max', daily_tokens: 50000000, daily_requests: 10000, price_usd: 40 },
   ultrawork: { name: 'Pro (Legacy Ultrawork)', daily_tokens: 2000000, daily_requests: 20000, price_usd: 10 },
@@ -35,7 +37,15 @@ export async function loadPlanLimits(env) {
 // free tier only; Pro and Max add the paid tier (Claude Sonnet 5.5 and Claude Opus 5.5, billed
 // from credits); every plan has the same Neuron features and Claude Haiku 5.5 at no charge, up to
 // 10M tokens a month (migration 20261106000800_plan_features_haiku.sql, contract section 19).
-export const PAID_PLAN_IDS = Object.freeze(['pro', 'max']);
+// Athlete and Speed (migration 20261108000000_athlete_speed_plans.sql) are paid plans like Pro and
+// Max, priced below them. PAID_PLAN_IDS is in price order.
+export const PAID_PLAN_IDS = Object.freeze(['athlete', 'speed', 'pro', 'max']);
+// Plans that are offered only once their zerox_plan_policy row is there: a database that answers
+// without the row (the migration is not applied yet), a row marked public = false, or a database that
+// does not answer at all marks them offered: false, so /api/plans hides them and checkout refuses
+// them. They stay in the catalogue either way, so webhooks, payment verify, top-ups and /api/account
+// still resolve an existing subscriber's plan. Without a database (local development) they are offered.
+export const ROW_REQUIRED_PLAN_IDS = Object.freeze(['athlete', 'speed']);
 export const PLAN_CATALOG = Object.freeze([
   Object.freeze({
     id: 'free', name: 'Free', price: { usd_cents: 0, inr_paise: 0 }, interval: 'month',
@@ -43,6 +53,24 @@ export const PLAN_CATALOG = Object.freeze([
     monthly_credit_microusd: 0, tiers: ['free'], highlighted: false,
     features: ['Free models chosen for coding, with tool use', 'Claude Haiku 5.5 included: 10M tokens a month at no charge',
       '100 requests per day and 1M tokens every 5 hours', '10 requests per minute, 2 at once', 'Every Neuron feature, the same on all plans'],
+  }),
+  Object.freeze({
+    id: 'athlete', name: 'Athlete', price: { usd_cents: 100, inr_paise: 8900 }, interval: 'month',
+    limits: { daily_requests: 300, daily_tokens: 6000000, window_tokens: null, window_seconds: null, rpm: 15, concurrency: 2 },
+    monthly_credit_microusd: 750000, tiers: ['free', 'paid'], highlighted: false,
+    features: ['Claude Haiku 5.5 included: 10M tokens a month at no charge',
+      'Claude Sonnet 5.5 and Claude Opus 5.5, billed from credits', '$0.75 of credits included every month',
+      'Free models with higher limits: 300 requests and 6M tokens per day', '15 requests per minute, 2 at once',
+      'Every Neuron feature, the same on all plans'],
+  }),
+  Object.freeze({
+    id: 'speed', name: 'Speed', price: { usd_cents: 500, inr_paise: 44900 }, interval: 'month',
+    limits: { daily_requests: 1000, daily_tokens: 8000000, window_tokens: null, window_seconds: null, rpm: 20, concurrency: 3 },
+    monthly_credit_microusd: 4000000, tiers: ['free', 'paid'], highlighted: false,
+    features: ['Claude Haiku 5.5 included: 10M tokens a month at no charge',
+      'Claude Sonnet 5.5 and Claude Opus 5.5, billed from credits', '$4 of credits included every month',
+      'Free models with higher limits: 1,000 requests and 8M tokens per day', '20 requests per minute, 3 at once',
+      'Every Neuron feature, the same on all plans'],
   }),
   Object.freeze({
     id: 'pro', name: 'Pro', price: { usd_cents: 1000, inr_paise: 89900 }, interval: 'month',
@@ -135,27 +163,41 @@ export function catalogEntry(base, row) {
 }
 
 const withoutProviderIds = base => ({ ...base, razorpay_plan_id_inr: null, razorpay_plan_id_usd: null });
-const staticCatalog = () => ({ source: 'static', plans: PLAN_CATALOG.map(withoutProviderIds) });
+const rowOptional = base => !ROW_REQUIRED_PLAN_IDS.includes(base.id);
+// rowPlansOffered: false when a database is configured but could not be read, so a plan that needs
+// its row is listed (for plan resolution) but not offered.
+const staticCatalog = ({ rowPlansOffered = true } = {}) => ({
+  source: 'static',
+  plans: PLAN_CATALOG.map(base => ({ ...withoutProviderIds(base), offered: rowPlansOffered || rowOptional(base) })),
+});
 const catalogCache = new WeakMap();
 
+// Plans that can be bought or shown on the pricing page (offered !== false). Plan resolution
+// (webhooks, verify, top-up, planById) uses the full catalogue instead.
+export const offeredPlans = plans => plans.filter(plan => plan.offered !== false);
+
 // Returns {source, plans[]} from zerox_plan_policies_v2 (cached for 60 s), falling back to the
-// static contract catalogue when the database is not configured or the RPC fails.
+// static contract catalogue when the database is not configured or the RPC fails. Every
+// PLAN_CATALOG entry is always returned, each with `offered`: with a database, a plan in
+// ROW_REQUIRED_PLAN_IDS is offered only when its row is there and not marked public = false.
 export async function loadPlanCatalog(env) {
   if (!databaseConfigured(env)) return staticCatalog();
   const cached = catalogCache.get(env);
-  if (cached?.expires > Date.now()) return cached.value;
+  if (cached && cached.expires > Date.now()) return cached.value;
   let value;
   let ttl = 60000;
   try {
     const rows = (await rpcRows(env, 'zerox_plan_policies_v2', {})).filter(row => row && typeof row === 'object');
     const plans = PLAN_CATALOG.map(base => {
       const row = rows.find(item => String(item.plan ?? item.id ?? '').toLowerCase() === base.id);
-      return row ? catalogEntry(base, row) : withoutProviderIds(base);
+      // An operator hides a new plan again with public = false on its row.
+      if (row) return { ...catalogEntry(base, row), offered: rowOptional(base) || row.public !== false };
+      return { ...withoutProviderIds(base), offered: rowOptional(base) };
     });
     value = { source: rows.length ? 'database' : 'static', plans };
   } catch {
     console.warn('Plan catalogue unavailable; serving the static contract catalogue');
-    value = staticCatalog();
+    value = staticCatalog({ rowPlansOffered: false });
     ttl = 10000;
   }
   catalogCache.set(env, { value, expires: Date.now() + ttl });

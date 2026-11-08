@@ -294,8 +294,8 @@ function dashboardRoutes(state) {
 }
 
 const {createDashboard, TABS} = await import(new URL('dashboard.js', root));
-const {createPricingPage, PENDING_CHECKOUT_KEY} = await import(new URL('pricing.js', root));
-const {CHECKOUT_THEME_COLOR, PAYMENT_LOCK_KEY, PAYMENT_LOCK_TTL_MS} = await import(new URL('billing-checkout.js', root));
+const {createPricingPage, findPlan, PENDING_CHECKOUT_KEY} = await import(new URL('pricing.js', root));
+const {CHECKOUT_THEME_COLOR, PAYMENT_LOCK_KEY, PAYMENT_LOCK_TTL_MS, startSubscription} = await import(new URL('billing-checkout.js', root));
 // The billing details step (billing-details.js) is replaced by a stub in every test but its own: it
 // answers like a buyer who filled in the details and ticked every box.
 const CONSENT_VERSIONS = {terms: '2026-10-25', privacy: '2026-10-25', auto_renewal: '2026-11-03', refund: '2026-10-24'};
@@ -390,9 +390,13 @@ async function mountDashboard({profile = PROFILE, hash = '', search = '', state 
   doc.querySelector('[data-copy-target="qs-install"]').click();
   await settle();
   assert.equal(win.copied, NEURON_INSTALL.npm);
+  assert.equal(doc.querySelector('[data-copy-target="qs-install"]').getAttribute('data-state'), 'copied', 'the copied button shows the check');
   doc.querySelector('[data-copy-target="qs-install-pip"]').click();
   await settle();
   assert.equal(win.copied, NEURON_INSTALL.pip);
+  doc.querySelector('[data-copy-target="qs-headless"]').click();
+  await settle();
+  assert.equal(win.copied, 'export NEURON_TOKEN=nzx_your_key\nneuron -p "Run the tests and summarise failures"', 'the headless example copies');
 
   // Hash routing to Usage.
   win.location.hash = '#usage';
@@ -677,7 +681,7 @@ async function mountDashboard({profile = PROFILE, hash = '', search = '', state 
   // Free accounts cannot buy credits they cannot spend (review B4 P2).
   assert.ok(doc.querySelectorAll('[data-topup]').every(button => button.disabled), 'top-ups are disabled on Free');
   assert.equal($('topup-note').hidden, false);
-  assert.match($('topup-note').textContent, /need an active Pro or Max plan/);
+  assert.match($('topup-note').textContent, /need an active paid plan/);
   assert.equal($('topup-note').querySelector('a').getAttribute('href'), 'https://zero-x.live/pricing');
   doc.querySelector('[data-topup="credits_5"]').click();
   await settle();
@@ -878,6 +882,76 @@ async function mountPricing({profile = null, routes = {}, hostname = 'zero-x.liv
   await settle();
   assert.equal(FakeRazorpay.instances.length, 0, 'Malformed checkout payloads never reach Razorpay');
   assert.match(forged.$('pricing-error').textContent, /not enabled yet/);
+}
+
+/* ───────────── Pricing page: Athlete and Speed (migration 20261108000000) ───────────── */
+
+{
+  const NEW_PLANS = ['athlete', 'speed'];
+  const onlyFor = (doc, id) => doc.querySelectorAll(`[data-plan-only="${id}"]`);
+  // Static page (no script, or before /api/plans answers): five cards in price order, both new plans shown.
+  const staticDoc = parseDocument(read('pricing.html'));
+  assert.deepEqual(staticDoc.querySelectorAll('#plans .zx-plan').map(card => card.getAttribute('id')),
+    ['plan-free', 'plan-athlete', 'plan-speed', 'plan-pro', 'plan-max'], 'pricing.html: Free, Athlete, Speed, Pro, Max');
+  assert.deepEqual(staticDoc.querySelectorAll('[data-upgrade]').map(button => button.dataset.upgrade), ['athlete', 'speed', 'pro', 'max']);
+  assert.ok(staticDoc.querySelector('#plan-pro').getAttribute('class').includes('zx-card--highlight'), 'Pro stays highlighted');
+  for (const id of NEW_PLANS) {
+    assert.equal(staticDoc.querySelector(`#plan-${id}`).getAttribute('data-plan-only'), id, `${id}: the card hides with its plan`);
+    assert.ok(!staticDoc.querySelector(`#plan-${id}`).getAttribute('class').includes('zx-card--highlight'), `${id}: not highlighted`);
+    // Every comparison cell of the plan's column hides with it: header, 14 rows.
+    assert.equal(staticDoc.querySelectorAll('#compare [data-plan-only]').filter(el => el.dataset.planOnly === id).length, 15, `${id}: comparison column`);
+    assert.ok(onlyFor(staticDoc, id).every(el => !el.hidden), `${id}: shown before hydration`);
+  }
+
+  // Before the migration: /api/plans lists Free, Pro and Max only (plansPayload), so both plans are
+  // hidden and a click (or a remembered intent) cannot start a checkout.
+  const before = await mountPricing({profile: PROFILE});
+  for (const id of NEW_PLANS) {
+    assert.ok(onlyFor(before.doc, id).length > 0 && onlyFor(before.doc, id).every(el => el.hidden), `${id}: hidden when the gateway does not list it`);
+    assert.equal(findPlan(before.page.catalog, id), null);
+  }
+  assert.ok(!before.doc.querySelector('#plan-pro').hidden && !before.doc.querySelector('#plan-max').hidden, 'Pro and Max stay');
+  before.doc.querySelector('[data-upgrade="athlete"]').click();
+  await settle();
+  assert.ok(!before.calls.some(call => call.path === '/api/billing/checkout'), 'no checkout for a plan the gateway does not offer');
+  assert.match(before.$('pricing-error').textContent, /not available yet/);
+  // The server's own refusal (a stale page) reads the same.
+  const stale = await mountPricing({profile: PROFILE, routes: {'GET /api/plans': {currency_default: 'USD', plans: [...plansPayload.plans, {id: 'speed', name: 'Speed',
+    price: {usd_cents: 500, inr_paise: 44900}, limits: {}, monthly_credit_usd: 4, tiers: ['free', 'paid'], features: [], highlighted: false}], topups: plansPayload.topups},
+  'POST /api/billing/checkout': apiError(409, 'plan_unavailable', 'This plan is not available yet. Choose another plan, or email support@zero-x.live.')}});
+  assert.ok(onlyFor(stale.doc, 'speed').every(el => !el.hidden) && onlyFor(stale.doc, 'athlete').every(el => el.hidden), 'each plan follows the gateway');
+  stale.doc.querySelector('[data-upgrade="speed"]').click();
+  await settle();
+  assert.match(stale.$('pricing-error').textContent, /not available yet/);
+
+  // After the migration: the gateway lists them; prices, credits and limits hydrate; checkout sends the plan id.
+  const listed = {currency_default: 'USD', plans: [plansPayload.plans[0],
+    {id: 'athlete', name: 'Athlete', price: {usd_cents: 100, inr_paise: 8900}, interval: 'month', limits: {daily_requests: 300, daily_tokens: 6000000, rpm: 15, concurrency: 2},
+      monthly_credit_usd: 0.75, tiers: ['free', 'paid'], features: [], highlighted: false},
+    {id: 'speed', name: 'Speed', price: {usd_cents: 500, inr_paise: 44900}, interval: 'month', limits: {daily_requests: 1000, daily_tokens: 8000000, rpm: 20, concurrency: 3},
+      monthly_credit_usd: 4, tiers: ['free', 'paid'], features: [], highlighted: false},
+    ...plansPayload.plans.slice(1)], topups: plansPayload.topups};
+  const after = await mountPricing({profile: PROFILE, routes: {'GET /api/plans': listed}});
+  for (const id of NEW_PLANS) assert.ok(onlyFor(after.doc, id).every(el => !el.hidden), `${id}: shown once the gateway lists it`);
+  assert.equal(after.doc.querySelector('[data-plan-price="athlete"]').textContent, '$1');
+  assert.equal(after.doc.querySelector('[data-plan-credit="athlete"]').textContent, '$0.75');
+  assert.equal(after.doc.querySelector('[data-plan-limit="athlete:token_allowance"]').textContent, '6M per day');
+  after.doc.querySelector('[data-currency="INR"]').click();
+  assert.deepEqual(['athlete', 'speed', 'pro', 'max'].map(id => after.doc.querySelector(`#plan-${id} [data-plan-price]`).textContent), ['₹89', '₹449', '₹899', '₹3,499'],
+    'INR prices in price order');
+  assert.equal(after.doc.querySelectorAll('[data-plan-features="athlete"] li').length, 6, 'empty API features keep the static Athlete list');
+  after.doc.querySelector('[data-upgrade="athlete"]').click();
+  await settle();
+  const checkoutCall = after.calls.find(call => call.path === '/api/billing/checkout');
+  assert.deepEqual([checkoutCall.body.plan, checkoutCall.body.currency], ['athlete', 'INR'], 'checkout for Athlete in INR');
+  // After the migration but before the Razorpay plan ids are stored: billing_plan_missing, as for Pro.
+  const missing = await mountPricing({profile: PROFILE, routes: {'GET /api/plans': listed,
+    'POST /api/billing/checkout': apiError(503, 'billing_plan_missing', 'Checkout for the Speed plan in USD is not set up yet.')}});
+  missing.doc.querySelector('[data-upgrade="speed"]').click();
+  await settle();
+  assert.match(missing.$('pricing-error').textContent, /not set up yet/);
+  assert.equal(missing.$('pricing-error').querySelector('a').getAttribute('href'), 'mailto:support@zero-x.live');
+  await assert.rejects(startSubscription({plan: 'gold', currency: 'USD'}), /Athlete, Speed, Pro or Max/);
 }
 
 /* ───────────── Neuron CLI page script ───────────── */
@@ -1086,6 +1160,307 @@ for (const scenario of ['live', 'offline']) {
   }
   assert.equal(installNav(parseDocument('<!doctype html><html><head></head><body><main id="main"></main></body></html>')), null, 'no header: nothing to wire');
   console.log('ok - site header menu: a disclosure button (aria-expanded, aria-controls), Escape returns focus, link, outside click and focus loss close it, hidden without the script');
+}
+
+/* ───────────── Dark/light switch (site-nav.js installThemeToggle) ───────────── */
+
+{
+  const {installThemeToggle, THEME_KEY} = await import(new URL('site-nav.js', root));
+  assert.equal(THEME_KEY, 'zx-theme');
+  const media = dark => {
+    const mql = {matches: dark, media: '(prefers-color-scheme: dark)', listeners: [], addEventListener(type, fn) { if (type === 'change') this.listeners.push(fn); }};
+    mql.flip = value => { mql.matches = value; for (const fn of mql.listeners) fn({matches: value}); };
+    return mql;
+  };
+  const windowStub = () => ({listeners: {}, addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); }, fire(type, event) { for (const fn of this.listeners[type] || []) fn(event); }});
+  const mount = ({file = 'index.html', dark = false, storage = makeStorage(), preset} = {}) => {
+    const doc = parseDocument(read(file));
+    if (preset) doc.documentElement.setAttribute('data-theme', preset);
+    const mql = media(dark);
+    const win = windowStub();
+    const control = installThemeToggle(doc, {storage, matchMedia: () => mql, win});
+    const button = doc.querySelector('.zx-theme-toggle');
+    const view = () => ({theme: doc.documentElement.getAttribute('data-theme'), pressed: button.getAttribute('aria-pressed'), title: button.getAttribute('title'), label: button.getAttribute('aria-label'),
+      colors: doc.querySelectorAll('meta[name="theme-color"]').map(m => m.getAttribute('content'))});
+    return {doc, mql, win, control, button, view, storage};
+  };
+  for (const file of ['index.html', 'docs/trust.html', 'dashboard.html', '404.html']) {
+    // System light, nothing saved: the button offers dark mode and the page is left to the system.
+    const light = mount({file});
+    assert.ok(light.control, `${file}: the header has a theme switch`);
+    assert.deepEqual(light.view(), {theme: null, pressed: 'false', title: 'Switch to dark mode', label: 'Dark mode', colors: ['#FFFFFF', '#141413']}, `${file}: follows a light system`);
+    light.button.click();
+    assert.equal(light.storage.map.get('zx-theme'), 'dark', `${file}: dark is saved`);
+    assert.deepEqual(light.view(), {theme: 'dark', pressed: 'true', title: 'Switch to light mode', label: 'Dark mode', colors: ['#141413', '#141413']}, `${file}: dark is applied, both theme-color tags follow`);
+    light.button.click();
+    assert.equal(light.storage.map.has('zx-theme'), false, `${file}: back to the system choice removes the key (two states)`);
+    assert.deepEqual(light.view(), {theme: null, pressed: 'false', title: 'Switch to dark mode', label: 'Dark mode', colors: ['#FFFFFF', '#141413']}, `${file}: and restores the system theme-color tags`);
+  }
+  // System dark: the button starts pressed and offers light mode.
+  const dark = mount({dark: true});
+  assert.deepEqual([dark.view().theme, dark.view().pressed, dark.view().title], [null, 'true', 'Switch to light mode'], 'a dark system shows dark mode pressed');
+  dark.button.click();
+  assert.deepEqual([dark.storage.map.get('zx-theme'), dark.view().theme, dark.view().pressed, dark.view().colors], ['light', 'light', 'false', ['#FFFFFF', '#FFFFFF']], 'light is saved and applied');
+  dark.button.click();
+  assert.deepEqual([dark.storage.map.has('zx-theme'), dark.view().theme, dark.view().pressed], [false, null, 'true'], 'dark again equals the system: the key is removed');
+  // A saved choice the head script already applied is read back on load.
+  const saved = mount({storage: makeStorage({'zx-theme': 'dark'}), preset: 'dark'});
+  assert.deepEqual([saved.view().theme, saved.view().pressed, saved.control.theme()], ['dark', 'true', 'dark'], 'a saved dark choice on a light system');
+  // Junk in storage is ignored.
+  const junk = mount({storage: makeStorage({'zx-theme': 'purple'})});
+  assert.deepEqual([junk.view().theme, junk.view().pressed], [null, 'false'], 'an unknown saved value falls back to the system');
+  // Storage that throws (private window, blocked site data): the switch still works for this page.
+  const broken = {getItem() { throw new Error('blocked'); }, setItem() { throw new Error('blocked'); }, removeItem() { throw new Error('blocked'); }};
+  const blocked = mount({storage: broken});
+  assert.deepEqual([blocked.view().theme, blocked.view().pressed], [null, 'false'], 'throwing storage: follows the system');
+  blocked.button.click();
+  assert.deepEqual([blocked.view().theme, blocked.view().pressed], ['dark', 'true'], 'throwing storage: a click still switches the page');
+  blocked.button.click();
+  assert.deepEqual([blocked.view().theme, blocked.view().pressed], [null, 'false'], 'throwing storage: and back');
+  const presetBlocked = mount({storage: broken, preset: 'dark'});
+  assert.equal(presetBlocked.view().pressed, 'true', 'throwing storage: the theme already on <html> is kept');
+  const noStorage = mount({storage: null});
+  noStorage.button.click();
+  assert.equal(noStorage.view().theme, 'dark', 'no storage at all: still switches');
+  // Another tab changes the theme: the storage event keeps this page in step.
+  const tab = mount();
+  tab.storage.map.set('zx-theme', 'dark');
+  tab.win.fire('storage', {key: 'zx-theme', newValue: 'dark'});
+  assert.deepEqual([tab.view().theme, tab.view().pressed, tab.view().title], ['dark', 'true', 'Switch to light mode'], 'storage event: dark from another tab');
+  tab.win.fire('storage', {key: 'something-else', newValue: 'x'});
+  assert.equal(tab.view().theme, 'dark', 'storage event for another key: ignored');
+  tab.storage.map.delete('zx-theme');
+  tab.win.fire('storage', {key: 'zx-theme', newValue: null});
+  assert.deepEqual([tab.view().theme, tab.view().pressed], [null, 'false'], 'storage event: key removed, back to the system');
+  tab.storage.map.set('zx-theme', 'dark');
+  tab.win.fire('storage', {key: null, newValue: null});
+  assert.equal(tab.view().theme, 'dark', 'storage event for clear(): re-read');
+  // The system theme changes while nothing is saved: the button state follows it.
+  const system = mount();
+  system.mql.flip(true);
+  assert.deepEqual([system.view().theme, system.view().pressed, system.view().title], [null, 'true', 'Switch to light mode'], 'system switched to dark');
+  system.button.click();
+  assert.equal(system.storage.map.get('zx-theme'), 'light', 'then a click saves light');
+  // A page without the header button: nothing to wire.
+  assert.equal(installThemeToggle(parseDocument('<!doctype html><html><head></head><body><main id="main"></main></body></html>'), {storage: makeStorage(), matchMedia: () => media(false), win: windowStub()}), null, 'no button: nothing to wire');
+  // The head preset: adds html.zx-js (only where module scripts run, the same guard as the Menu
+  // button, so the button never shows without site-nav.js), applies a saved choice and survives
+  // throwing storage.
+  const preset = /<script>(\(function\(d\)\{if\('noModule'in HTMLScriptElement\.prototype\)d\.classList\.add\('zx-js'\)[\s\S]*?)<\/script>/.exec(read('index.html'))[1];
+  const MODULES = {prototype: {noModule: false}};
+  for (const [store, expected] of [[{getItem: () => 'dark'}, 'dark'], [{getItem: () => 'light'}, 'light'], [{getItem: () => 'purple'}, null], [{getItem() { throw new Error('blocked'); }}, null]]) {
+    const doc = parseDocument(read('index.html'));
+    vm.runInNewContext(preset, {document: doc, localStorage: store, HTMLScriptElement: MODULES});
+    assert.deepEqual([doc.documentElement.classList.contains('zx-js'), doc.documentElement.getAttribute('data-theme')], [true, expected], 'head preset: zx-js and data-theme ' + expected);
+  }
+  {
+    // No module support: no zx-js (the button stays hidden), but a saved theme still applies.
+    const doc = parseDocument(read('index.html'));
+    vm.runInNewContext(preset, {document: doc, localStorage: {getItem: () => 'dark'}, HTMLScriptElement: {prototype: {}}});
+    assert.deepEqual([doc.documentElement.classList.contains('zx-js'), doc.documentElement.getAttribute('data-theme')], [false, 'dark'], 'head preset without modules: no zx-js, saved theme applied');
+  }
+  console.log('ok - theme switch: flips the effective theme, saves only a choice that differs from the system (else removes zx-theme), syncs aria-pressed, title and both theme-color tags, follows storage and system changes, survives throwing storage; the head preset applies it before paint');
+}
+
+/* ───────────── Signed-in account in the header (site-nav.js installAccountChip) ───────────── */
+
+{
+  const {installAccountChip, readSessionCookie, accountFromSession, safeAvatar, initialsFor, isLiveSession, pageOwnsAccountChip, AUTH_COOKIE, AVATAR_HOSTS} = await import(new URL('site-nav.js', root));
+  assert.equal(AUTH_COOKIE, 'zerox-supabase-auth');
+  // The avatar hosts match the CSP img-src allow-list.
+  const cspSource = readFileSync(new URL('src/csp.js', import.meta.url), 'utf8');
+  for (const host of AVATAR_HOSTS) assert.ok(cspSource.includes("'https://" + host + "'"), host + ' is allowed by img-src');
+  // Cookies exactly as zerox-auth.js writes them: encodeURIComponent'd, chunked with a .parts count.
+  const cookieFor = (session, chunk = 0) => {
+    const raw = JSON.stringify(session);
+    if (!chunk) return encodeURIComponent(AUTH_COOKIE) + '=' + encodeURIComponent(raw);
+    const parts = raw.match(new RegExp('[\\s\\S]{1,' + chunk + '}', 'g'));
+    return ['theme=dark', AUTH_COOKIE + '.parts=' + parts.length, ...parts.map((p, i) => AUTH_COOKIE + '.' + i + '=' + encodeURIComponent(p))].join('; ');
+  };
+  const b64url = value => Buffer.from(JSON.stringify(value)).toString('base64url');
+  const GOOGLE = 'https://lh3.googleusercontent.com/a/ACg8ocK=s96-c';
+  const user = (meta, email = 'ada@example.com') => ({id: 'u1', email, user_metadata: meta});
+  // A stored session as supabase-js keeps it: with a refresh token (without one it is signed out).
+  const live = s => ({refresh_token: 'r', ...s});
+  const mount = (cookie, file = 'index.html') => {
+    const doc = parseDocument(read(file));
+    doc.cookie = cookie;
+    const account = installAccountChip(doc);
+    return {doc, account, link: doc.querySelector('.zx-header .zx-nav a.zx-btn')};
+  };
+  const snapshot = link => [link.getAttribute('aria-label'), link.getAttribute('title'), link.hasAttribute('data-signed-in'), link.querySelectorAll('.zx-nav-avatar').length, link.querySelectorAll('svg').length];
+
+  // No cookie: the Dashboard button is untouched.
+  const none = mount('');
+  assert.equal(none.account, null);
+  assert.deepEqual(snapshot(none.link), [null, null, false, 0, 1], 'signed out: nothing changes');
+  assert.equal(none.link.textContent, 'Dashboard');
+  // Unrelated or broken cookies: still untouched, no throw.
+  for (const junk of ['theme=dark', AUTH_COOKIE + '=%E0%A4%A', AUTH_COOKIE + '=not-json', AUTH_COOKIE + '.parts=3; ' + AUTH_COOKIE + '.0=%7B', AUTH_COOKIE + '.parts=999']) {
+    assert.deepEqual(snapshot(mount(junk).link), [null, null, false, 0, 1], 'junk cookie ' + JSON.stringify(junk) + ': untouched');
+  }
+  // A thrown doc.cookie getter is tolerated.
+  {
+    const doc = parseDocument(read('index.html'));
+    Object.defineProperty(doc, 'cookie', {get() { throw new Error('blocked'); }});
+    assert.equal(installAccountChip(doc), null, 'a throwing cookie getter: signed out');
+  }
+
+  // Chunked cookie with a Google avatar: a 20 px round <img>, the label and title.
+  const session = {access_token: 'x.y.z', refresh_token: 'r', expires_at: 1, user: user({full_name: 'Ada Lovelace', avatar_url: GOOGLE, picture: 'https://evil.example/p.png'})};
+  const google = mount(cookieFor(session, 40));
+  assert.deepEqual(google.account, {name: 'Ada Lovelace', email: 'ada@example.com', image: GOOGLE});
+  const box = google.link.querySelector('.zx-nav-avatar');
+  assert.ok(box && google.link.firstChild === box, 'the avatar comes first in the button');
+  assert.equal(box.getAttribute('aria-hidden'), 'true');
+  const img = box.querySelector('img');
+  assert.deepEqual([img.getAttribute('src'), img.getAttribute('alt'), img.getAttribute('referrerpolicy'), img.getAttribute('width'), img.getAttribute('height')], [GOOGLE, '', 'no-referrer', '20', '20']);
+  assert.equal(google.link.getAttribute('aria-label'), 'Dashboard, signed in as Ada Lovelace');
+  assert.equal(google.link.getAttribute('title'), 'ada@example.com');
+  assert.equal(google.link.hasAttribute('data-signed-in'), true);
+  assert.equal(google.link.textContent, 'Dashboard', 'the visible text stays "Dashboard"');
+  // An image that fails to load falls back to initials.
+  img.dispatchEvent(makeEvent('error'));
+  assert.deepEqual([box.querySelectorAll('img').length, box.textContent], [0, 'AL'], 'image error: initials');
+  // Running again (pageshow) does not add a second avatar; signing out elsewhere restores the button.
+  google.doc.cookie = cookieFor(session, 40);
+  installAccountChip(google.doc);
+  assert.equal(google.link.querySelectorAll('.zx-nav-avatar').length, 1, 'idempotent');
+  google.doc.cookie = '';
+  installAccountChip(google.doc);
+  assert.deepEqual(snapshot(google.link), [null, null, false, 0, 1], 'after sign-out the button is as it was');
+
+  // GitHub picture is allowed; a disallowed host or http falls back to initials.
+  assert.equal(safeAvatar('https://avatars.githubusercontent.com/u/1?v=4'), 'https://avatars.githubusercontent.com/u/1?v=4');
+  for (const bad of ['http://lh3.googleusercontent.com/a', 'https://evil.example/a.png', 'https://lh3.googleusercontent.com.evil.example/a', 'javascript:alert(1)', '', null]) assert.equal(safeAvatar(bad), '', 'rejected ' + bad);
+  const other = mount(cookieFor(live({user: user({name: 'grace hopper', avatar_url: 'https://evil.example/a.png'}, 'grace@example.com')})));
+  assert.deepEqual([other.link.querySelectorAll('img').length, other.link.querySelector('.zx-nav-avatar').textContent], [0, 'GH'], 'disallowed host: initials');
+  assert.equal(other.link.getAttribute('aria-label'), 'Dashboard, signed in as grace hopper');
+  // An HTML-ish name stays text everywhere (the test DOM throws on innerHTML).
+  const XSS_NAME = '<img src=x onerror=alert(1)>';
+  const xss = mount(cookieFor(live({user: user({full_name: XSS_NAME})})));
+  assert.equal(xss.link.querySelectorAll('img').length, 0, 'no element from the name');
+  assert.equal(xss.link.getAttribute('aria-label'), 'Dashboard, signed in as ' + XSS_NAME);
+  assert.equal(xss.link.querySelector('.zx-nav-avatar').textContent, '<S', 'initials are text');
+  // Name order: full_name > name > user_name > email local part.
+  assert.equal(accountFromSession({user: user({name: 'N', user_name: 'U'})}).name, 'N');
+  assert.equal(accountFromSession({user: user({user_name: 'octo'})}).name, 'octo');
+  assert.equal(accountFromSession({user: user({})}).name, 'ada');
+  assert.equal(accountFromSession({user: user({picture: 'https://avatars.githubusercontent.com/u/2'})}).image, 'https://avatars.githubusercontent.com/u/2', 'picture when there is no avatar_url');
+  assert.deepEqual([initialsFor('ada'), initialsFor('Ada  Byron Lovelace'), initialsFor('')], ['AD', 'AB', 'ZX']);
+  // No session.user: the access token claims are decoded for display only.
+  const jwt = 'h.' + b64url({sub: 'u2', email: 'linus@example.com', user_metadata: {full_name: 'Linus Ł'}}) + '.sig';
+  const claims = mount(cookieFor(live({access_token: jwt})));
+  assert.deepEqual(claims.account, {name: 'Linus Ł', email: 'linus@example.com', image: ''}, 'JWT payload (UTF-8) when the user is not stored');
+  assert.equal(accountFromSession({access_token: 'not.a.jwt'}), null);
+  assert.equal(readSessionCookie(encodeURIComponent(AUTH_COOKIE) + '=base64-' + b64url({user: user({})}))?.user.email, 'ada@example.com', 'base64- prefixed values');
+  // A cookie whose session cannot be refreshed (no or empty refresh token, expired or not) shows
+  // signed out; an expired access token with a refresh token still shows the account.
+  const nowSec = Math.floor(Date.now() / 1000);
+  for (const dead of [{user: user({full_name: 'Ada'})}, {refresh_token: '', user: user({full_name: 'Ada'})}, {refresh_token: null, expires_at: nowSec - 60, user: user({full_name: 'Ada'})}, {access_token: jwt, expires_at: nowSec + 3600}]) {
+    const m = mount(cookieFor(dead));
+    assert.equal(m.account, null, 'no refresh token: signed out ' + JSON.stringify(dead).slice(0, 60));
+    assert.deepEqual(snapshot(m.link), [null, null, false, 0, 1], 'no refresh token: the button is untouched');
+  }
+  assert.equal(mount(cookieFor({refresh_token: 'r', expires_at: nowSec - 3600, user: user({full_name: 'Ada'})})).account?.name, 'Ada', 'expired access token with a refresh token: signed in');
+  assert.deepEqual([isLiveSession(null), isLiveSession({refresh_token: 'r'}), isLiveSession({refresh_token: 1})], [false, true, false]);
+  // Sign-out in another tab of a page restored from the back/forward cache resets the chip.
+  const restored = mount(cookieFor(session));
+  restored.doc.cookie = cookieFor({...session, refresh_token: ''});
+  assert.equal(installAccountChip(restored.doc), null);
+  assert.deepEqual(snapshot(restored.link), [null, null, false, 0, 1], 'pageshow after sign-out elsewhere: signed out');
+  // The dashboard draws its own chip from the profile, so site-nav.js leaves it alone (load and pageshow).
+  assert.equal(pageOwnsAccountChip(parseDocument(read('dashboard.html'))), true, 'dashboard.html owns its chip');
+  for (const file of ['index.html', 'docs.html', '404.html']) assert.equal(pageOwnsAccountChip(parseDocument(read(file))), false, file + ': site-nav.js draws the chip');
+  assert.match(read('site-nav.js'), /if \(!pageOwnsAccountChip\(document\)\) installAccountChip\(document\);/, 'the bootstrap skips pages that own the chip');
+  assert.match(read('site-nav.js'), /event\.persisted && !pageOwnsAccountChip\(document\)\) installAccountChip\(document\)/, 'pageshow skips pages that own the chip');
+  // Every page with the shared header gets the chip on its Dashboard button.
+  for (const file of ['docs.html', 'pricing.html', 'docs/trust.html', '404.html']) {
+    assert.equal(mount(cookieFor(session, 100), file).link.getAttribute('aria-label'), 'Dashboard, signed in as Ada Lovelace', file + ': chip');
+  }
+  // Styles: 20 px round, the generic icon hidden only when signed in, both themes via tokens.
+  const css = read('zx-tokens.css');
+  assert.match(css, /^\.zx-nav-avatar \{[^}]*width: 20px; height: 20px;[^}]*border-radius: 50%;[^}]*background: var\(--zx-surface-strong\);[^}]*color: var\(--zx-ink\)/m, '.zx-nav-avatar: 20 px round, token colours');
+  assert.match(css, /^\.zx-nav-avatar img, \.zx-crumbs__avatar img \{[^}]*object-fit: cover;/m, 'avatar images fill the circle');
+  assert.match(css, /^\.zx-btn\[data-signed-in\] > \.zx-icon \{ display: none; \}$/m, 'the user icon hides when the avatar shows');
+  console.log('ok - account chip: reads the (chunked) Supabase cookie without a network call, shows an allowed avatar or initials on the Dashboard button with an accessible label, leaves signed-out pages untouched');
+}
+
+/* ───────────── Copy buttons (copy-code.js) ───────────── */
+
+{
+  const {copyButtons} = await import(new URL('copy-code.js', root));
+  const copyWindow = writeText => {
+    const timers = [];
+    const win = {written: [], timers, selected: null,
+      navigator: writeText === null ? {} : {clipboard: {writeText: writeText || (async value => { win.written.push(value); })}},
+      setTimeout(fn, ms) { timers.push({fn, ms}); return timers.length; }, clearTimeout(id) { if (timers[id - 1]) timers[id - 1].fn = () => {}; },
+      getSelection() { return {removeAllRanges() { win.selected = null; }, addRange(range) { win.selected = range.node; }}; }};
+    return win;
+  };
+  for (const file of ['neuron-cli.html', 'docs.html', 'ai-coding-agent.html', 'free-ai-coding-agent.html', 'claude-code-alternative.html', 'index.html', 'download.html']) {
+    const doc = parseDocument(read(file));
+    doc.createRange = () => ({node: null, selectNodeContents(node) { this.node = node; }});
+    const win = copyWindow();
+    copyButtons(doc, win);
+    copyButtons(doc, win); // idempotent: a second call binds nothing twice
+    const buttons = doc.querySelectorAll('button[data-copy-target]');
+    assert.ok(buttons.length > 0, file + ': copy buttons');
+    for (const button of buttons) {
+      assert.equal(button.hidden, false, file + ': visible with a clipboard');
+      const target = doc.getElementById(button.dataset.copyTarget);
+      button.click();
+      await settle();
+      assert.equal(win.written.length, 1, `${file} #${button.dataset.copyTarget}: one write per click after two copyButtons calls`);
+      assert.equal(win.written.pop(), target.textContent.trim(), file + ': copies the trimmed command text');
+      assert.equal(button.getAttribute('data-state'), 'copied', file + ': shows the check');
+      assert.equal(doc.getElementById('copy-status').textContent, `Copied the ${button.dataset.copyLabel} to the clipboard.`);
+      assert.equal(win.timers.at(-1).ms, 2000, 'resets after two seconds');
+      win.timers.at(-1).fn();
+      assert.equal(button.hasAttribute('data-state'), false, file + ': back to the copy icon');
+    }
+  }
+  // neuron-cli.html: the exact multi-line text, entities decoded.
+  {
+    const doc = parseDocument(read('neuron-cli.html'));
+    const win = copyWindow();
+    copyButtons(doc, win);
+    doc.querySelector('[data-copy-target="run-start"]').click();
+    await settle();
+    assert.equal(win.written[0], 'cd path/to/your-project\nneuron');
+    doc.querySelector('[data-copy-target="tab-ps1"]').click();
+    await settle();
+    assert.equal(win.written[1], NEURON_INSTALL.powershell);
+  }
+  // Clipboard refused: the command is selected and the live region gives the keyboard shortcut.
+  {
+    const doc = parseDocument(read('neuron-cli.html'));
+    doc.createRange = () => ({node: null, selectNodeContents(node) { this.node = node; }});
+    const win = copyWindow(async () => { throw new Error('NotAllowedError'); });
+    copyButtons(doc, win);
+    const button = doc.querySelector('[data-copy-target="hero-npm"]');
+    button.click();
+    await settle();
+    assert.equal(win.selected, doc.getElementById('hero-npm'), 'the command text is selected');
+    assert.equal(button.getAttribute('data-state'), 'selected');
+    assert.equal(button.getAttribute('title'), 'Press Ctrl+C to copy', 'the tooltip gives the shortcut while selected');
+    assert.match(doc.getElementById('copy-status').textContent, /Copying is blocked here\. The npm install command is selected; press Ctrl\+C, or Cmd\+C on a Mac\./);
+    win.timers.at(-1).fn();
+    assert.equal(button.hasAttribute('data-state'), false);
+    assert.equal(button.getAttribute('title'), 'Copy', 'the tooltip resets with the icon');
+  }
+  // No clipboard API (or a missing target): the button is hidden rather than left doing nothing.
+  {
+    const doc = parseDocument(read('docs.html'));
+    copyButtons(doc, copyWindow(null));
+    assert.ok(doc.querySelectorAll('button[data-copy-target]').every(button => button.hidden), 'no clipboard: buttons hidden');
+    const orphan = parseDocument('<div class="zx-code zx-code--copy"><pre><code id="a">x</code></pre><button class="zx-copy" type="button" data-copy-target="missing">c</button></div>');
+    copyButtons(orphan, copyWindow());
+    assert.equal(orphan.querySelector('button').hidden, true, 'missing target: hidden');
+    const bare = parseDocument('<main></main>');
+    copyButtons(bare, copyWindow()); // no buttons, no live region: nothing throws
+  }
+  console.log('ok - copy-code.js: every command block copies its trimmed text once per click (idempotent binding), shows the check for 2 s and announces it; refused clipboard selects the text with a Ctrl+C hint; no clipboard hides the button');
 }
 
 /* ───────────── Announcement bar (announce.js) ───────────── */
@@ -1333,14 +1708,14 @@ async function loadAuth({hostname, config, session = makeStorage(), sdk = true})
   free.doc.querySelector('[data-topup="credits_5"]').click();
   await settle();
   assert.ok(!free.calls.some(call => call.path === '/api/billing/topup'), 'no order for Free accounts');
-  assert.match(free.$('pricing-error').textContent, /need an active Pro or Max plan/);
+  assert.match(free.$('pricing-error').textContent, /need an active paid plan/);
   assert.equal(free.$('pricing-error').querySelector('a').getAttribute('href'), 'https://zero-x.live/pricing#plans');
   // The server-side refusal is handled the same way.
   const refused = await mountPricing({profile: PROFILE, routes: {'GET /api/account': accountPayload(),
-    'POST /api/billing/topup': apiError(403, 'upgrade_required', 'Credit top-ups are available on the Pro and Max plans. Upgrade first.')}});
+    'POST /api/billing/topup': apiError(403, 'upgrade_required', 'Credit top-ups are available on the paid plans (Athlete, Speed, Pro and Max). Upgrade first.')}});
   refused.doc.querySelector('[data-topup="credits_5"]').click();
   await settle();
-  assert.match(refused.$('pricing-error').textContent, /Pro and Max plans/);
+  assert.match(refused.$('pricing-error').textContent, /paid plans \(Athlete, Speed, Pro and Max\)/);
   assert.equal(refused.$('pricing-error').querySelector('a').getAttribute('href'), 'https://zero-x.live/pricing#plans');
 }
 
@@ -1731,6 +2106,41 @@ console.log('PASS: dashboard gate, contract-driven overview, hash tabs and keybo
   assert.equal(doc.querySelectorAll('[data-metric]').map(node => node.getAttribute('data-metric')).join(), 'spend,requests,tokens,spend,requests,tokens', 'both trend controls offer Spend, Requests, Tokens');
   assert.ok(!/Anthropic|OpenRouter|Groq|NVIDIA|Cerebras/.test(DASHBOARD_HTML.replace(/<code[^>]*>[\s\S]*?<\/code>/g, '')), 'no provider names on the dashboard');
   assert.ok(!/ style="/.test(DASHBOARD_HTML) && !/<style/.test(DASHBOARD_HTML), 'dashboard uses classes, not inline styles');
+}
+
+// The breadcrumb avatar and the header account chip follow the signed-in profile and reset on sign-out.
+{
+  const crumbAvatar = doc => doc.querySelector('.zx-crumbs__avatar');
+  const chip = doc => doc.querySelector('.zx-header .zx-nav a.zx-btn');
+  // Static HTML: the 'zx' crumb and a pending Account chip: laid out but invisible (data-pending),
+  // so the nav does not jump left when the profile arrives; never hidden in the markup.
+  const html = parseDocument(DASHBOARD_HTML);
+  assert.equal(crumbAvatar(html).textContent, 'zx');
+  assert.deepEqual([chip(html).getAttribute('href'), chip(html).hidden, chip(html).hasAttribute('data-pending'), chip(html).textContent], ['https://dashboard.zero-x.live/#account', false, true, 'Account']);
+  assert.match(read('zx-tokens.css'), /^\.zx-btn\[data-pending\] \{ visibility: hidden; \}$/m, 'a pending button keeps its space but is invisible (and out of the tab order)');
+  // Unsafe image (PROFILE.imageUrl is javascript:) and an HTML-ish name: initials as text.
+  const xss = await mountDashboard();
+  assert.deepEqual([crumbAvatar(xss.doc).querySelectorAll('img').length, crumbAvatar(xss.doc).textContent], [0, 'OW'], 'initials from the first name, no element from the name');
+  assert.deepEqual([chip(xss.doc).hidden, chip(xss.doc).hasAttribute('data-pending')], [false, false], 'signed in: the chip shows in its reserved space');
+  assert.equal(chip(xss.doc).getAttribute('href'), '#account', 'the chip opens the Account tab in place');
+  assert.equal(chip(xss.doc).getAttribute('aria-label'), 'Account, signed in as ' + XSS);
+  assert.equal(chip(xss.doc).getAttribute('title'), 'owner@example.com');
+  assert.equal(chip(xss.doc).querySelector('.zx-nav-avatar').textContent, 'OW');
+  // An allowed Google avatar: the same image in the crumb and the chip.
+  const GOOGLE = 'https://lh3.googleusercontent.com/a/photo=s96-c';
+  const t = await mountDashboard({profile: {...PROFILE, fullName: 'Ada Lovelace', firstName: 'Ada', imageUrl: GOOGLE}});
+  const crumbImg = crumbAvatar(t.doc).querySelector('img');
+  assert.deepEqual([crumbImg.getAttribute('src'), crumbImg.getAttribute('alt'), crumbImg.getAttribute('referrerpolicy')], [GOOGLE, '', 'no-referrer']);
+  assert.equal(chip(t.doc).querySelector('.zx-nav-avatar img').getAttribute('src'), GOOGLE);
+  assert.equal(chip(t.doc).getAttribute('aria-label'), 'Account, signed in as Ada Lovelace');
+  // Sign-out elsewhere: the crumb goes back to 'zx' and the chip is hidden and reset.
+  t.auth.emit('SIGNED_OUT');
+  assert.deepEqual([crumbAvatar(t.doc).querySelectorAll('img').length, crumbAvatar(t.doc).textContent], [0, 'zx'], 'SIGNED_OUT resets the crumb avatar');
+  assert.deepEqual([chip(t.doc).hidden, chip(t.doc).hasAttribute('data-signed-in'), chip(t.doc).getAttribute('aria-label'), chip(t.doc).querySelectorAll('.zx-nav-avatar').length], [true, false, null, 0], 'SIGNED_OUT hides and resets the chip');
+  // Signed out from the start: the 'zx' crumb and no chip.
+  const gate = await mountDashboard({profile: null});
+  assert.deepEqual([crumbAvatar(gate.doc).textContent, chip(gate.doc).hidden, chip(gate.doc).hasAttribute('data-pending')], ['zx', true, false]);
+  console.log('ok - dashboard: breadcrumb avatar and header account chip follow the profile (allowed image or initials) and reset on SIGNED_OUT');
 }
 
 {
