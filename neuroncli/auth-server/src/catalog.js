@@ -538,6 +538,12 @@ export function inheritCallerCountry(request, country) {
 // A request rebuilt from another (the body-limit middleware) keeps the original's inherited country.
 export function carryCallerCountry(from, to) {
   if (INHERITED_COUNTRIES.has(from)) INHERITED_COUNTRIES.set(to, INHERITED_COUNTRIES.get(from));
+  else {
+    // The rebuilt request cannot have `cf` assigned on the Workers runtime (read-only), so the country
+    // the platform put on the original travels here.
+    const country = normalizeCountry(from?.cf?.country);
+    if (country) INHERITED_COUNTRIES.set(to, country);
+  }
   return to;
 }
 
