@@ -127,7 +127,11 @@ try {
     assert.equal(rebuilt.headers.get('authorization'), 'Bearer ses_x', 'other headers are kept');
     assert.equal(rebuilt.headers.get('x-keep'), 'yes');
     assert.equal(rebuilt.headers.get('content-type'), 'application/json');
-    assert.equal(rebuilt.cf?.country, 'IN', 'raw.cf is carried');
+    // workerd's Request.cf is read-only (assigning it threw and made every body-reading route answer 503
+    // on the Worker, 2026-11-08), so the rebuild must never assign it: it goes in through the init.
+    assert.doesNotThrow(() => Object.freeze(boundedRequest(original, bytes)), 'the rebuild does not assign a property');
+    const src = (await import('node:fs')).readFileSync(new URL('./src/bounded-request.js', import.meta.url), 'utf8');
+    assert.ok(!/(?<!init)\.cf\s*=[^=]/.test(src), 'bounded-request.js never assigns .cf');
     assert.equal(callerCountry(rebuilt, {}), 'IN', 'the caller country survives the rebuild');
     assert.equal(await rebuilt.text(), text, 'the route still parses the body');
     const noLength = boundedRequest(new Request(BASE + '/x', { method: 'POST', body: 'abc', headers: { 'Transfer-Encoding': 'chunked' } }), bytes);
