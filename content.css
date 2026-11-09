@@ -187,3 +187,8 @@ main:has(.zx-docs) > .zx-hero .zx-lead { font-size: 1.0625rem; }
 .zx-card > .zx-checks { margin-bottom: 0; }
 .zx-cp-faq { max-width: 760px; }
 .zx-cp-cta { display: grid; gap: var(--zx-s2); }
+
+/* Troubleshooting on the docs install section: the error text as the term, the fix under it. */
+.zx-trouble { margin: var(--zx-s3) 0 0; }
+.zx-trouble dt { margin-top: var(--zx-s4); font-weight: 500; color: var(--zx-ink); }
+.zx-trouble dd { margin: var(--zx-s1) 0 0; color: var(--zx-muted); }

@@ -31,6 +31,7 @@
   <script type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Zero-X","item":"https://zero-x.live/"},{"@type":"ListItem","position":2,"name":"Download Neuron","item":"https://zero-x.live/download"}]}</script>
   <script type="module" src="/site-nav.js"></script>
   <script type="module" src="/copy-code.js"></script>
+  <script type="module" src="/install-bar.js"></script>
   <script type="module" src="/download.js"></script>
 </head>
 <body data-download>
@@ -54,38 +55,31 @@
     <div class="zx-hero">
       <nav class="zx-breadcrumb" aria-label="Breadcrumb"><a href="/">Zero-X</a> / Download</nav>
       <h1>Download Neuron</h1>
-      <p class="zx-lead">Neuron is an AI coding agent that works in your projects. Install the command line with npm or pip, or download the release binaries below. Every file comes with a SHA-256 checksum. The desktop and mobile apps are coming soon; they are listed further down this page.</p>
+      <p class="zx-lead">Neuron is an AI coding agent that works in your projects. Install the command line with one command, or download the release binaries below. Every file comes with a SHA-256 checksum. The desktop and mobile apps are coming soon; they are listed further down this page.</p>
     </div>
 
     <section id="cli" class="zx-section--tight" aria-labelledby="cli-title">
       <h2 id="cli-title">Command line</h2>
-      <p>Installs the <code>neuron</code> command and its full-screen terminal UI. npm and pip work on every system; the install scripts are the option without Node.js or Python.</p>
+      <p>Installs the <code>neuron</code> command and its full-screen terminal UI. Pick your system in the menu: the Windows, macOS and Linux commands need nothing installed first, and npm and pip are there if you prefer them.</p>
       <p id="cli-release-note" class="zx-muted">Neuron 7.0.0-alpha.5 is a <a href="https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/tag/v7.0.0-alpha.5">GitHub pre-release</a>, published on 3 November 2026. It adds a status bar under the prompt that shows the model, thinking level, folder and branch, permission mode and how full the context is.</p>
-      <div>
-        <div class="zx-cmd">
-          <h3>npm</h3>
-          <div class="zx-code zx-code--copy zx-code--wrap"><span class="zx-code__label">Any terminal</span><pre><code id="cmd-npm">npm install -g @zero-x.live/neuron</code></pre><button class="zx-copy" type="button" data-copy-target="cmd-npm" data-copy-label="npm install command" aria-label="Copy npm install command" title="Copy"><svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="/icons.svg#copy"/></svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="/icons.svg#check"/></svg></button></div>
-          <p class="zx-help">Needs Node.js 22.14 or later. Run the same command again to upgrade.</p>
+      <div class="zx-getbar zx-getbar--start" data-install-bar>
+        <div class="zx-getbar__pill">
+          <span class="zx-getbar__pick">Get Neuron</span>
+          <div class="zx-getbar__scroll" tabindex="0" role="region" aria-label="Install command"><code class="zx-getbar__cmd" id="download-cmd" data-method="powershell">irm https://zero-x.live/install.ps1 | iex</code></div>
+          <button class="zx-copy" type="button" data-copy-target="download-cmd" data-copy-label="install command" aria-label="Copy install command" title="Copy"><svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="/icons.svg#copy"/></svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="/icons.svg#check"/></svg></button>
         </div>
-        <div class="zx-cmd">
-          <h3>pip</h3>
-          <div class="zx-code zx-code--copy zx-code--wrap"><span class="zx-code__label">Any terminal</span><pre><code id="cmd-pip">python -m pip install --pre neuroncli</code></pre><button class="zx-copy" type="button" data-copy-target="cmd-pip" data-copy-label="pip install command" aria-label="Copy pip install command" title="Copy"><svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="/icons.svg#copy"/></svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="/icons.svg#check"/></svg></button></div>
-          <p class="zx-help">Keep <code>--pre</code> while Neuron 7 is a pre-release: without it, pip installs the old, unsupported 6.2.4. Needs Python 3.8 or later.</p>
-        </div>
-        <div class="zx-cmd">
-          <h3>macOS and Linux install script</h3>
-          <div class="zx-code zx-code--copy zx-code--wrap"><span class="zx-code__label">Terminal (sh, bash or zsh)</span><pre><code id="cmd-shell">curl -fsSL https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.5/install.sh | sh -s -- --version 7.0.0-alpha.5</code></pre><button class="zx-copy" type="button" data-copy-target="cmd-shell" data-copy-label="curl install command" aria-label="Copy curl install command" title="Copy"><svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="/icons.svg#copy"/></svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="/icons.svg#check"/></svg></button></div>
-        </div>
-        <div class="zx-cmd">
-          <h3>Windows install script</h3>
-          <div class="zx-code zx-code--copy zx-code--wrap"><span class="zx-code__label">PowerShell</span><pre><code id="cmd-powershell">&amp; ([scriptblock]::Create((irm https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.5/install.ps1))) -Version 7.0.0-alpha.5 -AddToPath</code></pre><button class="zx-copy" type="button" data-copy-target="cmd-powershell" data-copy-label="PowerShell install command" aria-label="Copy PowerShell install command" title="Copy"><svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="/icons.svg#copy"/></svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="/icons.svg#check"/></svg></button></div>
-          <div class="zx-code zx-code--copy zx-code--wrap"><span class="zx-code__label">Command Prompt (cmd.exe)</span><pre><code id="cmd-cmd">powershell -NoProfile -ExecutionPolicy Bypass -Command "&amp; ([scriptblock]::Create((irm https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.5/install.ps1))) -Version 7.0.0-alpha.5 -AddToPath"</code></pre><button class="zx-copy" type="button" data-copy-target="cmd-cmd" data-copy-label="Command Prompt install command" aria-label="Copy Command Prompt install command" title="Copy"><svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="/icons.svg#copy"/></svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="/icons.svg#check"/></svg></button></div>
-          <p class="zx-help">Use the command for the window you have open: Command Prompt rejects the PowerShell one with "&amp; was unexpected at this time." <code>-AddToPath</code> puts Neuron on your user PATH. Open a new terminal, then run <code>neuron</code>.</p>
-        </div>
+        <p class="zx-getbar__alt">Or read the <a href="/docs#install">documentation</a></p>
+        <ul class="zx-getbar__list" aria-label="Install commands">
+          <li data-method="powershell"><span class="zx-getbar__name">Windows (PowerShell)</span> <code>irm https://zero-x.live/install.ps1 | iex</code></li>
+          <li data-method="cmd"><span class="zx-getbar__name">Windows (Command Prompt)</span> <code>powershell -ExecutionPolicy Bypass -NoProfile -Command "irm https://zero-x.live/install.ps1 | iex"</code></li>
+          <li data-method="shell"><span class="zx-getbar__name">macOS / Linux</span> <code>curl -fsSL https://zero-x.live/install.sh | sh</code></li>
+          <li data-method="npm"><span class="zx-getbar__name">npm</span> <code>npm install -g @zero-x.live/neuron</code></li>
+          <li data-method="pip"><span class="zx-getbar__name">pip</span> <code>python -m pip install --pre neuroncli</code></li>
+        </ul>
       </div>
-      <p class="zx-help">The install scripts download <code>neuron</code> and <code>neuron-tui</code> from GitHub Releases and verify their SHA-256 checksums. A pre-release is never marked as the latest release, so they name the version.</p>
+      <p class="zx-help">The installers download <code>neuron</code> and <code>neuron-tui</code> from GitHub Releases and verify their SHA-256 checksums; on Windows, <code>neuron-tui</code> (more than 100 MB) is a second command that the installer prints. npm needs Node.js 22.14 or later and pip Python 3.9 or later; keep <code>--pre</code> while Neuron 7 is a pre-release. The <a href="/docs#install">install guide</a> has the details and fixes for common errors.</p>
       <p class="zx-visually-hidden" id="copy-status" role="status" aria-live="polite"></p>
-      <p>Then sign in once with <code>neuron login</code> and run <code>neuron</code> in a project. The <a href="/docs#quickstart">quickstart</a> has the details.</p>
+      <p>Open a new terminal, run <code>neuron login</code>, then <code>neuron</code> in your project folder. The <a href="/docs#quickstart">quickstart</a> has the details.</p>
 
       <h3 class="zx-mt-lg">Direct downloads</h3>
       <div class="zx-table-wrap">

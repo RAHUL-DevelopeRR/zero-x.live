@@ -2,7 +2,6 @@
 // site's HTML pages (security audit 2026-11-05, F14, F15, D1), which src/csp.js allows in place of
 // 'unsafe-inline'. Run `node build-csp-hashes.mjs` after changing an inline script or style.
 export const INLINE_SCRIPT_HASHES = Object.freeze([
-  'sha256-1X58qcVOLSwWdcQ/ld9XaPEBO0pDvEKBD2BSWHPlRZg=',
   'sha256-M2iLKZ8AQPNkZOoK2qXR02EswzonYLhrET7D4KQFcM8=',
   'sha256-Vvs8WVCZJQnTsMKEPZRQrS3oUHjvVqNKZSItebnq1IM=',
   'sha256-ixqxysL44wRTX0lwm2xj/q8+bKm9zydlD9QcLzFk+Cc=',

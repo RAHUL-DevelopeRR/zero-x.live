@@ -4,6 +4,7 @@
 // rendered with textContent, and only https links to GitHub or zero-x.live are used.
 import { apiFetch } from './billing-checkout.js';
 import { copyButtons } from './copy-code.js';
+import { detectOs } from './install-bar.js';
 
 export const MANIFEST_PATHS = Object.freeze({ cli: '/releases/cli/latest.json', desktop: '/releases/desktop/latest.json' });
 const DOWNLOAD_HOSTS = ['github.com', 'zero-x.live'];
@@ -21,17 +22,8 @@ export const PLATFORM_LABELS = Object.freeze({
   'linux-x64': 'Linux (x64)', 'linux-arm64': 'Linux (Arm64)',
 });
 
-// The visitor's operating system, from the user agent (client hints first). Phones are told
-// apart so the desktop cards are not highlighted for them.
-export function detectOs(userAgent = '', platform = '') {
-  const text = `${platform} ${userAgent}`.toLowerCase();
-  if (/android/.test(text)) return 'android';
-  if (/iphone|ipad|ipod/.test(text)) return 'ios';
-  if (/win/.test(text)) return 'windows';
-  if (/mac/.test(text)) return 'macos';
-  if (/linux|x11|cros/.test(text)) return 'linux';
-  return null;
-}
+// The visitor's operating system (client hints first), shared with the install bar.
+export { detectOs };
 
 export function safeDownloadUrl(value) {
   if (typeof value !== 'string' || value.length > 512) return '';

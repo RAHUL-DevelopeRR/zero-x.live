@@ -32,6 +32,7 @@ import { registerSessionIndex, registerSessionRoutes, sessionClient, unregisterS
 import { registerDeviceRoutes } from './routes/device.js';
 import { registerDiscoveryRoutes } from './routes/discovery.js';
 import { RELEASE_MANIFEST_PATH, registerReleaseRoutes } from './routes/releases.js';
+import { INSTALL_SCRIPT_PATH, registerInstallRoutes } from './install-scripts.js';
 import { registerChangelogRoutes } from './routes/changelog.js';
 import { registerPushRoutes } from './routes/push.js';
 import { registerRelayRoutes } from './routes/relay.js';
@@ -266,9 +267,9 @@ app.use('*', async (c, next) => {
     }
   }
 
-  // Release manifests are answered by the API (R2 first, then the committed copy), and API paths
-  // with a dot (/api/changelog.json) are routes, not files.
-  if (RELEASE_MANIFEST_PATH.test(path) || isApiRoute(routePath(path))) return next();
+  // Release manifests are answered by the API (R2 first, then the committed copy), the install
+  // scripts by src/install-scripts.js, and API paths with a dot (/api/changelog.json) are routes, not files.
+  if (RELEASE_MANIFEST_PATH.test(path) || INSTALL_SCRIPT_PATH.test(path) || isApiRoute(routePath(path))) return next();
 
   const isAsset = path.startsWith('/Assets/') || path.startsWith('/assets/') ||
     (path.includes('.') && !path.endsWith('/'));
@@ -1158,6 +1159,7 @@ registerWebhookRoutes(api);
 registerAdminRoutes(api);
 registerDiscoveryRoutes(api);
 registerReleaseRoutes(api);
+registerInstallRoutes(api);
 registerChangelogRoutes(api);
 registerPushRoutes(api);
 registerRelayRoutes(api);

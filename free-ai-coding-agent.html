@@ -31,6 +31,7 @@
   <script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"TechArticle","@id":"https://zero-x.live/free-ai-coding-agent#article","headline":"A free AI coding agent for your terminal","description":"What is free in Neuron, the open-source AI coding agent by Zero-X: the MIT-licensed CLI, the Free plan on hosted LLMs, and using your own API key.","datePublished":"2026-11-05","dateModified":"2026-11-05","author":{"@id":"https://zero-x.live/#organization"},"publisher":{"@id":"https://zero-x.live/#organization"},"mainEntityOfPage":"https://zero-x.live/free-ai-coding-agent","isPartOf":{"@id":"https://zero-x.live/#website"},"about":[{"@type":"Thing","name":"AI coding agent"},{"@id":"https://zero-x.live/#neuron"}],"image":"https://zero-x.live/Assets/zerox-share.png"},{"@type":"FAQPage","@id":"https://zero-x.live/free-ai-coding-agent#faq","mainEntity":[{"@type":"Question","name":"Do I need a credit card to use Neuron for free?","acceptedAnswer":{"@type":"Answer","text":"No. Install Neuron, run neuron login and sign in. The Free plan needs no payment details."}},{"@type":"Question","name":"Which models are free?","acceptedAnswer":{"@type":"Answer","text":"Open-weight models chosen for coding with tool use, such as GPT-OSS and Qwen. The current list, with each model's usable context window and live status, is on the Zero-X homepage. Claude Sonnet 5.5 and Claude Opus 5.5 are on the paid plans only."}},{"@type":"Question","name":"Can I use a local model?","acceptedAnswer":{"@type":"Answer","text":"Neuron talks to any OpenAI-compatible endpoint set with OPENAI_BASE_URL and OPENAI_API_KEY, so a local server that offers that API can work. The model must support tool calls for Neuron to edit files and run commands."}},{"@type":"Question","name":"Is my code used to train models?","acceptedAnswer":{"@type":"Answer","text":"The files and messages Neuron includes in a request go to the company serving the model. Free tiers of some of these services may use prompts to improve their models. The Zero-X gateway records usage metadata and is not designed to store prompt or response text. The privacy policy names every company that can receive a request."}}]},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Zero-X","item":"https://zero-x.live/"},{"@type":"ListItem","position":2,"name":"Free AI coding agent","item":"https://zero-x.live/free-ai-coding-agent"}]}]}</script>
   <script type="module" src="/site-nav.js"></script>
   <script type="module" src="/copy-code.js"></script>
+  <script type="module" src="/install-bar.js"></script>
 </head>
 <body>
   <a class="zx-skip" href="#main">Skip to content</a>
@@ -87,11 +88,23 @@
     <p>Zero-X is a small team in Tamil Nadu, India. The <a href="/pricing">pricing page</a> shows plans in rupees as well as dollars, and support is by email at <a href="mailto:support@zero-x.live">support@zero-x.live</a>. The Free plan is the same wherever you are.</p>
 
     <h2 id="install">Install it free</h2>
-    <p>With Node.js 22.14 or later, npm is the quickest:</p>
-    <div class="zx-code zx-code--copy"><span class="zx-code__label">npm, any terminal</span><pre><code id="guide-npm">npm install -g @zero-x.live/neuron</code></pre><button class="zx-copy" type="button" data-copy-target="guide-npm" data-copy-label="npm install command" aria-label="Copy npm install command" title="Copy"><svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="/icons.svg#copy"/></svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="/icons.svg#check"/></svg></button></div>
-    <p>With Python instead, keep <code>--pre</code> while Neuron 7 is a pre-release:</p>
-    <div class="zx-code zx-code--copy"><span class="zx-code__label">pip, any terminal</span><pre><code id="guide-pip">python -m pip install --pre neuroncli</code></pre><button class="zx-copy" type="button" data-copy-target="guide-pip" data-copy-label="pip install command" aria-label="Copy pip install command" title="Copy"><svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="/icons.svg#copy"/></svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="/icons.svg#check"/></svg></button></div>
-    <p>Install scripts for macOS, Linux, PowerShell and Command Prompt are in the <a href="/neuron-cli#install">install options</a>. Then sign in once and start Neuron in a project:</p>
+    <p>One command on macOS, Linux and Windows. Pick your system and paste the command into a terminal:</p>
+    <div class="zx-getbar zx-getbar--start" data-install-bar>
+      <div class="zx-getbar__pill">
+        <span class="zx-getbar__pick">Get Neuron</span>
+        <div class="zx-getbar__scroll" tabindex="0" role="region" aria-label="Install command"><code class="zx-getbar__cmd" id="guide-cmd" data-method="powershell">irm https://zero-x.live/install.ps1 | iex</code></div>
+        <button class="zx-copy" type="button" data-copy-target="guide-cmd" data-copy-label="install command" aria-label="Copy install command" title="Copy"><svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="/icons.svg#copy"/></svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="/icons.svg#check"/></svg></button>
+      </div>
+      <p class="zx-getbar__alt">Or read the <a href="/docs#install">documentation</a></p>
+      <ul class="zx-getbar__list" aria-label="Install commands">
+        <li data-method="powershell"><span class="zx-getbar__name">Windows (PowerShell)</span> <code>irm https://zero-x.live/install.ps1 | iex</code></li>
+        <li data-method="cmd"><span class="zx-getbar__name">Windows (Command Prompt)</span> <code>powershell -ExecutionPolicy Bypass -NoProfile -Command "irm https://zero-x.live/install.ps1 | iex"</code></li>
+        <li data-method="shell"><span class="zx-getbar__name">macOS / Linux</span> <code>curl -fsSL https://zero-x.live/install.sh | sh</code></li>
+        <li data-method="npm"><span class="zx-getbar__name">npm</span> <code>npm install -g @zero-x.live/neuron</code></li>
+        <li data-method="pip"><span class="zx-getbar__name">pip</span> <code>python -m pip install --pre neuroncli</code></li>
+      </ul>
+    </div>
+    <p>Then open a new terminal, sign in once and start Neuron in a project:</p>
     <div class="zx-code zx-code--copy"><span class="zx-code__label">First run</span><pre><code id="guide-first">neuron login
 cd path/to/your-project
 neuron</code></pre><button class="zx-copy" type="button" data-copy-target="guide-first" data-copy-label="first run commands" aria-label="Copy first run commands" title="Copy"><svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="/icons.svg#copy"/></svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="/icons.svg#check"/></svg></button></div>
