@@ -10,7 +10,11 @@
 //   node check-install-route.mjs           offline
 //   node check-install-route.mjs --live    also fetch the tagged GitHub installers (follows redirects)
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { wranglerVars } from '../../deploy/aws/gateway-env.mjs';
 import app from './src/index.js';
 import {
@@ -74,7 +78,49 @@ ok('/install.ps1 and /install.sh answer 200 text/plain bootstraps on every host,
   assert.ok(sh.startsWith('#!/bin/sh\n') && sh.includes('\nset -eu\n'), 'sh, stopping at the first error');
   assert.match(sh, /\nmain "\$@"\n$/, 'runs only once fully downloaded');
   assert.ok(sh.includes(NEURON_INSTALL.shell), 'its header shows the command');
+  assert.match(sh, /''\|0\|false\|no\) echo "The full-screen UI is a download of more than 100 MB/, "install.sh warns about the UI size by the installer's own NEURON_NO_TUI rule");
   ok('bootstraps: no exit under iex, child scope, text download, size note; install.sh runs only when complete');
+}
+
+// The Windows bootstrap, run for real under `iex` (Windows only) against a stub installer read through
+// a file: URL. By default it installs neuron.exe alone (NEURON_NO_TUI=1 for the installer, then put
+// back) and prints the one command that adds the UI; NEURON_NO_TUI=0/false/no installs the UI too,
+// with the size warning; any other value skips the UI without either message.
+if (process.platform === 'win32') {
+  const dir = mkdtempSync(join(tmpdir(), 'zx-bootstrap-'));
+  try {
+    const stub = join(dir, 'install.ps1');
+    writeFileSync(stub, 'param([string]$Version, [switch]$AddToPath)\nWrite-Host "stub version=$Version addToPath=$AddToPath noTui=[$env:NEURON_NO_TUI]"\n');
+    const bootFile = join(dir, 'bootstrap.ps1');
+    writeFileSync(bootFile, windowsInstallScript(NEURON_VERSION).replace(`'${PS1_URL}'`, `'${pathToFileURL(stub).href}'`));
+    const run = noTui => {
+      const childEnv = Object.fromEntries(Object.entries(process.env).filter(([key]) => key.toUpperCase() !== 'NEURON_NO_TUI'));
+      if (noTui !== undefined) childEnv.NEURON_NO_TUI = noTui;
+      const result = spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-Command',
+        `Get-Content -Raw '${bootFile}' | Invoke-Expression; "after=[$env:NEURON_NO_TUI]"`], { env: childEnv, encoding: 'utf8' });
+      assert.equal(result.status, 0, result.stdout + result.stderr);
+      return result.stdout;
+    };
+    const SIZE = 'more than 100 MB and shows no progress';
+    const ADD = "$env:NEURON_NO_TUI = '0'; irm https://zero-x.live/install.ps1 | iex";
+    const plain = run(undefined);
+    assert.ok(plain.includes(`stub version=${NEURON_VERSION} addToPath=True noTui=[1]`), 'default: the installer skips the UI\n' + plain);
+    assert.ok(plain.includes('after=[]'), 'default: NEURON_NO_TUI is put back (unset) afterwards');
+    assert.ok(plain.includes(ADD) && plain.includes(`-Command "${ADD}"`), 'default: prints the PowerShell and Command Prompt commands that add the UI');
+    assert.ok(!plain.includes(SIZE), 'default: no download size warning, the UI is not downloaded');
+    for (const value of ['0', 'false', 'No']) {
+      const out = run(value);
+      assert.ok(out.includes(`noTui=[${value}]`) && out.includes(SIZE) && !out.includes(ADD), `NEURON_NO_TUI=${value}: the UI is installed, with the size warning\n${out}`);
+      assert.ok(out.includes(`after=[${value}]`), `NEURON_NO_TUI=${value} is kept`);
+    }
+    for (const value of ['1', 'true', 'yes']) {
+      const out = run(value);
+      assert.ok(out.includes(`noTui=[${value}]`) && !out.includes(SIZE) && !out.includes(ADD), `NEURON_NO_TUI=${value}: the UI is skipped, no size warning\n${out}`);
+    }
+    ok("Windows bootstrap under iex: neuron.exe first by default with the add-the-UI command; NEURON_NO_TUI follows the installer's rule and is restored");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 // The version comes from NEURON_INSTALL_VERSION; anything that is not a version falls back to the site's.

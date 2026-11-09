@@ -390,11 +390,8 @@ async function mountDashboard({profile = PROFILE, hash = '', search = '', state 
   // Copy quick-start command.
   doc.querySelector('[data-copy-target="qs-install"]').click();
   await settle();
-  assert.equal(win.copied, NEURON_INSTALL.npm);
+  assert.equal(win.copied, NEURON_INSTALL.powershell, 'the quick start install bar copies the command it shows');
   assert.equal(doc.querySelector('[data-copy-target="qs-install"]').getAttribute('data-state'), 'copied', 'the copied button shows the check');
-  doc.querySelector('[data-copy-target="qs-install-pip"]').click();
-  await settle();
-  assert.equal(win.copied, NEURON_INSTALL.pip);
   doc.querySelector('[data-copy-target="qs-headless"]').click();
   await settle();
   assert.equal(win.copied, 'export NEURON_TOKEN=nzx_your_key\nneuron -p "Run the tests and summarise failures"', 'the headless example copies');

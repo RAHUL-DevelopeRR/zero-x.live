@@ -238,8 +238,22 @@ for (const command of Object.values(NEURON_INSTALL).slice(0, 5)) assert.ok(read(
   }
   assert.match(html, /role="progressbar"[^>]*aria-valuemin="0" aria-valuemax="100"/);
   assert.doesNotMatch(html, /256,000|500K|10M|50M|2,000|10,000|44K/, 'Dashboard must not hardcode plan limits');
-  assert.match(html, new RegExp(`<code id="qs-install">${INSTALL_NPM}</code>[\\s\\S]*<code id="qs-install-pip">${INSTALL_PIP}</code>`), 'Dashboard quick start: npm, then pip');
-  assert.ok(html.includes(`<code>${INSTALL_PS1}</code>`) && html.includes(`<code>${INSTALL_SH}</code>`), 'Dashboard quick start names the one-line installers');
+  // The quick start leads with the same install bar as the public pages: on a fresh Windows machine
+  // npm.ps1 is blocked by the default ExecutionPolicy and `python` is the Microsoft Store alias.
+  {
+    const bars = installBars(html);
+    assert.equal(bars.length, 1, 'Dashboard quick start has the install bar');
+    assert.ok(html.includes('<script type="module" src="/install-bar.js"></script>'), 'dashboard.html loads install-bar.js');
+    const code = bars[0].match(/<code class="zx-getbar__cmd" id="qs-install" data-method="powershell">([^<]*)<\/code>/);
+    assert.ok(code && code[1] === INSTALL_PS1, 'Dashboard install bar shows the PowerShell one-liner by default');
+    assert.ok(bars[0].includes('data-copy-target="qs-install"'), 'Dashboard install bar copies its own command');
+    const items = [...bars[0].matchAll(/<li data-method="(\w+)"><span class="zx-getbar__name">([^<]+)<\/span> <code>([^<]*)<\/code><\/li>/g)].map(m => [m[1], m[2], m[3]]);
+    assert.deepEqual(items, INSTALL_BAR_METHODS.map(([id, name, command]) => [id, name, escapeHtml(command)]), 'Dashboard install bar: every command, best first');
+    assert.ok(html.indexOf('data-install-bar') < html.indexOf(INSTALL_NPM), 'Dashboard: the install bar comes before any npm command');
+    assert.doesNotMatch(html, /any terminal on macOS, Linux or Windows/, 'Dashboard does not claim npm and pip work in any Windows terminal');
+    assert.match(html, /<code>npm\.cmd<\/code>/, 'Dashboard names npm.cmd for Windows PowerShell');
+    assert.doesNotMatch(html, /id="qs-install-pip"/, 'Dashboard has no separate pip block ahead of the installers');
+  }
   assert.match(html, /href="https:\/\/zero-x\.live\/docs#install" data-site-path="\/docs#install">install guide<\/a>/, 'Dashboard quick start links the install guide');
   assert.match(html, /neuron -p[\s\S]*?exits with code 2 unless <code>~\/\.neuron\/settings\.json<\/code> allows them/, 'Dashboard headless example explains the denied run');
   assert.match(html, /<code id="qs-login">neuron login<\/code>/);

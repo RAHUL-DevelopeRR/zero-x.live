@@ -58,7 +58,7 @@ const INSTALLERS = [
   ['install.ps1 (zero-x.live)', /\birm [^\s<`"]*\/install\.ps1(?!\))[^<\n`"]*/g, [NEURON_INSTALL.powershell]],
   ['install.ps1 (GitHub)', /&(?:amp;)? \(\[scriptblock\]::Create\(\(irm [^)\s]*\/install\.ps1\)\)\)[^<\n`"]*/g, [NEURON_INSTALL.powershellPinned]],
   ['install.sh', /curl -fsSL [^\s<`"]*\/install\.sh[^<\n`"]*/g, [NEURON_INSTALL.shell, NEURON_INSTALL.shellPinned]],
-  ['Command Prompt', /powershell(?:\.exe)? -(?:NoProfile|ExecutionPolicy)[^<\n`]*/g, [NEURON_INSTALL.cmd]],
+  ['Command Prompt', /powershell(?:\.exe)? -(?:NoProfile|ExecutionPolicy)[^<\n`]*/g, [NEURON_INSTALL.cmd, NEURON_INSTALL.cmdWithUi]],
 ];
 
 for (const file of files) {

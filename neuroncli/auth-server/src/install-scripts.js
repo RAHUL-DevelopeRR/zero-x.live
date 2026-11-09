@@ -15,7 +15,7 @@
 // [vars] entry to the Node server too), so moving the installer to a new release is a one-line change.
 // Without it, or with a value that is not a version, the site's release (src/neuron-release.js) is used.
 // check-install-route.mjs keeps the two equal, so the pages and the installer name the same build.
-import { NEURON_REPOSITORY, NEURON_VERSION } from './neuron-release.js';
+import { NEURON_INSTALL, NEURON_REPOSITORY, NEURON_VERSION } from './neuron-release.js';
 
 export const INSTALL_SCRIPT_PATH = /^\/install\.(ps1|sh)$/;
 // Clients and shared caches pick up a new release within this many seconds.
@@ -42,10 +42,12 @@ export function windowsInstallScript(version) {
 #   Command Prompt:  powershell -ExecutionPolicy Bypass -NoProfile -Command "irm https://zero-x.live/install.ps1 | iex"
 #
 # Downloads the installer of Neuron ${version} from GitHub Releases and runs it with
-# -Version ${version} -AddToPath. It installs neuron.exe and neuron-tui.exe to
-# %LOCALAPPDATA%\\Programs\\Neuron\\bin, checks their SHA-256 checksums and adds that folder to your
-# user PATH. Set NEURON_NO_TUI=1 first to skip the full-screen UI, or NEURON_INSTALL_DIR to choose
-# the folder. The installer itself: ${url}
+# -Version ${version} -AddToPath. It installs neuron.exe (about 23 MB) to
+# %LOCALAPPDATA%\\Programs\\Neuron\\bin, checks its SHA-256 checksums and adds that folder to your
+# user PATH. The full-screen UI, neuron-tui.exe, is more than 100 MB and this release's installer
+# shows no progress while it downloads it, so it is a second, optional step: set NEURON_NO_TUI=0
+# first to install it too (the command is printed at the end). NEURON_INSTALL_DIR chooses the folder.
+# The installer itself: ${url}
 & {
     $neuronVersion = '${version}'
     $installerUrl = '${url}'
@@ -62,10 +64,31 @@ export function windowsInstallScript(version) {
         Write-Host 'Help: https://zero-x.live/docs#troubleshooting'
         return
     }
-    if ($env:NEURON_NO_TUI -ne '1') {
-        Write-Host 'The full-screen UI is a download of more than 100 MB. On a slow connection it can take several minutes.'
+    # NEURON_NO_TUI as the installer reads it: '', 0, false and no install the UI, anything else skips it.
+    # Unset or empty, this bootstrap skips the UI (set for the installer only, then put back).
+    $noTuiBefore = $env:NEURON_NO_TUI
+    $noTui = "$noTuiBefore".Trim().ToLowerInvariant()
+    $uiByDefault = -not $noTui
+    if ($uiByDefault) {
+        $env:NEURON_NO_TUI = '1'
+    } elseif (@('0', 'false', 'no') -contains $noTui) {
+        Write-Host 'The full-screen UI is a download of more than 100 MB and shows no progress. On a slow connection it can take several minutes.'
     }
-    & ([scriptblock]::Create($installer.TrimStart([char]0xFEFF))) -Version $neuronVersion -AddToPath
+    try {
+        & ([scriptblock]::Create($installer.TrimStart([char]0xFEFF))) -Version $neuronVersion -AddToPath
+    } finally {
+        if ($null -eq $noTuiBefore) { Remove-Item Env:NEURON_NO_TUI -ErrorAction SilentlyContinue } else { $env:NEURON_NO_TUI = $noTuiBefore }
+    }
+    if ($uiByDefault) {
+        Write-Host ''
+        Write-Host 'Optional: the full-screen UI (neuron-tui.exe, more than 100 MB). neuron works without it, using its line REPL.'
+        Write-Host 'To add it, run this in a new terminal (it shows no progress; let it finish):'
+        # A single-quoted here-string: printed as written, nothing expanded.
+        Write-Host @'
+  PowerShell:      ${NEURON_INSTALL.powershellWithUi}
+  Command Prompt:  ${NEURON_INSTALL.cmdWithUi}
+'@
+    }
 }
 `;
 }
@@ -95,7 +118,10 @@ main() {
         echo "error: the Neuron installer needs curl or wget" >&2
         exit 1
     fi
-    [ "\${NEURON_NO_TUI:-}" = 1 ] || echo "The full-screen UI is a download of more than 100 MB. On a slow connection it can take several minutes." >&2
+    # NEURON_NO_TUI as install.sh reads it: '', 0, false and no install the UI.
+    case "$(printf '%s' "\${NEURON_NO_TUI:-}" | tr '[:upper:]' '[:lower:]')" in
+        ''|0|false|no) echo "The full-screen UI is a download of more than 100 MB. On a slow connection it can take several minutes." >&2 ;;
+    esac
     printf '%s\\n' "$installer" | sh -s -- --version "$version" "$@"
 }
 

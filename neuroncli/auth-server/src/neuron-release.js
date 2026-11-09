@@ -36,4 +36,8 @@ export const NEURON_INSTALL = Object.freeze({
   // never GitHub's latest release). `&` is PowerShell's call operator, which Command Prompt rejects.
   powershellPinned: `& ([scriptblock]::Create((irm ${DOWNLOAD}/install.ps1))) -Version ${NEURON_VERSION} -AddToPath`,
   shellPinned: `curl -fsSL ${DOWNLOAD}/install.sh | sh -s -- --version ${NEURON_VERSION}`,
+  // The Windows one-liner installs neuron.exe first; these add the full-screen UI (neuron-tui.exe),
+  // the second step it prints (NEURON_NO_TUI=0 tells the installer to include the UI).
+  powershellWithUi: `$env:NEURON_NO_TUI = '0'; ${POWERSHELL}`,
+  cmdWithUi: `powershell -ExecutionPolicy Bypass -NoProfile -Command "$env:NEURON_NO_TUI = '0'; ${POWERSHELL}"`,
 });

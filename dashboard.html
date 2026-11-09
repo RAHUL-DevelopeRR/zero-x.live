@@ -17,6 +17,7 @@
   <link rel="stylesheet" href="/dashboard.css">
   <script type="module" src="/site-nav.js"></script>
   <script src="/zerox-auth.js" defer></script>
+  <script type="module" src="/install-bar.js"></script>
   <script type="module" src="/dashboard.js"></script>
 </head>
 <body>
@@ -155,9 +156,22 @@
           <div class="zx-card__head"><h3 class="zx-card__title" id="qs-title">Quick start</h3></div>
           <div class="zx-card__body">
           <p class="zx-muted">Install Neuron 7.0.0-alpha.5 (a GitHub pre-release), sign in once with <code>neuron login</code> and approve the short code it shows, then run <code>neuron</code> in any project.</p>
-          <div class="zx-code zx-code--copy"><span class="zx-code__label">Install with npm</span><pre><code id="qs-install">npm install -g @zero-x.live/neuron</code></pre><button class="zx-copy" type="button" data-copy-target="qs-install" data-copy-label="npm install command" aria-label="Copy npm install command" title="Copy"><svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="/icons.svg#copy"/></svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="/icons.svg#check"/></svg></button></div>
-          <div class="zx-code zx-code--copy"><span class="zx-code__label">Or with pip</span><pre><code id="qs-install-pip">python -m pip install --pre neuroncli</code></pre><button class="zx-copy" type="button" data-copy-target="qs-install-pip" data-copy-label="pip install command" aria-label="Copy pip install command" title="Copy"><svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="/icons.svg#copy"/></svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="/icons.svg#check"/></svg></button></div>
-          <p class="zx-help">Both work in any terminal on macOS, Linux or Windows. npm needs Node.js 22.14 or later; pip needs Python 3.9 or later; keep <code>--pre</code> while Neuron 7 is a pre-release. No Node.js or Python? Run <code>irm https://zero-x.live/install.ps1 | iex</code> in Windows PowerShell, or <code>curl -fsSL https://zero-x.live/install.sh | sh</code> on macOS and Linux; the <a href="https://zero-x.live/docs#install" data-site-path="/docs#install">install guide</a> has every option.</p>
+          <div class="zx-getbar zx-getbar--start" data-install-bar>
+            <div class="zx-getbar__pill">
+              <span class="zx-getbar__pick">Get Neuron</span>
+              <div class="zx-getbar__scroll" tabindex="0" role="region" aria-label="Install command"><code class="zx-getbar__cmd" id="qs-install" data-method="powershell">irm https://zero-x.live/install.ps1 | iex</code></div>
+              <button class="zx-copy" type="button" data-copy-target="qs-install" data-copy-label="Install command" aria-label="Copy install command" title="Copy"><svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="/icons.svg#copy"/></svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="/icons.svg#check"/></svg></button>
+            </div>
+            <p class="zx-getbar__alt">Or read the <a href="https://zero-x.live/docs#install" data-site-path="/docs#install">install guide</a></p>
+            <ul class="zx-getbar__list" aria-label="Install commands">
+              <li data-method="powershell"><span class="zx-getbar__name">Windows (PowerShell)</span> <code>irm https://zero-x.live/install.ps1 | iex</code></li>
+              <li data-method="cmd"><span class="zx-getbar__name">Windows (Command Prompt)</span> <code>powershell -ExecutionPolicy Bypass -NoProfile -Command "irm https://zero-x.live/install.ps1 | iex"</code></li>
+              <li data-method="shell"><span class="zx-getbar__name">macOS / Linux</span> <code>curl -fsSL https://zero-x.live/install.sh | sh</code></li>
+              <li data-method="npm"><span class="zx-getbar__name">npm</span> <code>npm install -g @zero-x.live/neuron</code></li>
+              <li data-method="pip"><span class="zx-getbar__name">pip</span> <code>python -m pip install --pre neuroncli</code></li>
+            </ul>
+          </div>
+          <p class="zx-help">Pick your system in the menu and paste the command into a terminal. On Windows, use PowerShell (or pick Command Prompt); the installer needs no Node.js or Python and works with Windows' default script settings. Other ways: npm needs Node.js 22.14 or later, and in Windows PowerShell its command is <code>npm.cmd</code> (plain <code>npm</code> is blocked with &ldquo;running scripts is disabled on this system&rdquo;); pip needs Python 3.9 or later, which Windows does not include, and <code>--pre</code> while Neuron 7 is a pre-release. The <a href="https://zero-x.live/docs#install" data-site-path="/docs#install">install guide</a> has every option and fixes for common errors.</p>
           <div class="zx-code zx-code--copy zx-mt"><span class="zx-code__label">Sign in</span><pre><code id="qs-login">neuron login</code></pre><button class="zx-copy" type="button" data-copy-target="qs-login" data-copy-label="Login command" aria-label="Copy sign-in command" title="Copy"><svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="/icons.svg#copy"/></svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="/icons.svg#check"/></svg></button></div>
           <div class="zx-code zx-code--copy"><span class="zx-code__label">OpenAI-compatible base URL</span><pre><code id="qs-base">https://zero-x.live/v1</code></pre><button class="zx-copy" type="button" data-copy-target="qs-base" data-copy-label="Base URL" aria-label="Copy base URL" title="Copy"><svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="/icons.svg#copy"/></svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="/icons.svg#check"/></svg></button></div>
           <p class="zx-help">Need more? Read the <a href="https://zero-x.live/docs" data-site-path="/docs">documentation</a>.</p>
