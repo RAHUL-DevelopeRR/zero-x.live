@@ -31,6 +31,7 @@
   <script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"TechArticle","@id":"https://zero-x.live/docs#article","headline":"Neuron CLI and Zero-X API documentation","url":"https://zero-x.live/docs","about":{"@id":"https://zero-x.live/neuron-cli#software"},"publisher":{"@id":"https://zero-x.live/#organization"},"inLanguage":"en"},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Zero-X","item":"https://zero-x.live/"},{"@type":"ListItem","position":2,"name":"Docs","item":"https://zero-x.live/docs"}]}]}</script>
   <script type="module" src="/site-nav.js"></script>
   <script type="module" src="/copy-code.js"></script>
+  <script type="module" src="/install-bar.js"></script>
 </head>
 <body>
   <a class="zx-skip" href="#main">Skip to content</a>
@@ -60,6 +61,7 @@
       <nav class="zx-toc" aria-label="On this page">
         <p class="zx-label">On this page</p>
         <ol>
+          <li><a href="#install">Install</a></li>
           <li><a href="#quickstart">Quickstart</a></li>
           <li><a href="#cli">CLI commands</a></li>
           <li><a href="#configuration">Configuration</a></li>
@@ -73,27 +75,71 @@
         </ol>
       </nav>
       <article>
+        <section id="install" aria-labelledby="install-title">
+          <h2 id="install-title">Install</h2>
+          <p>Neuron 7.0.0-alpha.5 runs on Windows x64 (Windows on Arm under emulation), macOS on Apple silicon and Intel, and Linux x64 and arm64 with glibc 2.35 or later (Ubuntu 22.04, Debian 12, Fedora 36 or newer). Pick your system in the menu and paste the command into a terminal.</p>
+          <div class="zx-getbar zx-getbar--start" data-install-bar>
+            <div class="zx-getbar__pill">
+              <span class="zx-getbar__pick">Get Neuron</span>
+              <div class="zx-getbar__scroll" tabindex="0" role="region" aria-label="Install command"><code class="zx-getbar__cmd" id="docs-cmd" data-method="powershell">irm https://zero-x.live/install.ps1 | iex</code></div>
+              <button class="zx-copy" type="button" data-copy-target="docs-cmd" data-copy-label="install command" aria-label="Copy install command" title="Copy"><svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="/icons.svg#copy"/></svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="/icons.svg#check"/></svg></button>
+            </div>
+            <p class="zx-getbar__alt">Something went wrong? See <a href="#troubleshooting">Troubleshooting</a></p>
+            <ul class="zx-getbar__list" aria-label="Install commands">
+              <li data-method="powershell"><span class="zx-getbar__name">Windows (PowerShell)</span> <code>irm https://zero-x.live/install.ps1 | iex</code></li>
+              <li data-method="cmd"><span class="zx-getbar__name">Windows (Command Prompt)</span> <code>powershell -ExecutionPolicy Bypass -NoProfile -Command "irm https://zero-x.live/install.ps1 | iex"</code></li>
+              <li data-method="shell"><span class="zx-getbar__name">macOS / Linux</span> <code>curl -fsSL https://zero-x.live/install.sh | sh</code></li>
+              <li data-method="npm"><span class="zx-getbar__name">npm</span> <code>npm install -g @zero-x.live/neuron</code></li>
+              <li data-method="pip"><span class="zx-getbar__name">pip</span> <code>python -m pip install --pre neuroncli</code></li>
+            </ul>
+          </div>
+          <h3>One-line installers</h3>
+          <ul class="zx-opts">
+            <li><strong>Windows PowerShell</strong> (Windows PowerShell 5.1, the default on Windows 10 and 11, or PowerShell 7): <code>irm https://zero-x.live/install.ps1 | iex</code>. It works with Windows' default script settings, because no script file is run. It installs <code>neuron.exe</code> and <code>neuron-tui.exe</code> to <code>%LOCALAPPDATA%\Programs\Neuron\bin</code> and adds that folder to your user PATH.</li>
+            <li><strong>Windows Command Prompt</strong> (cmd.exe): <code>powershell -ExecutionPolicy Bypass -NoProfile -Command "irm https://zero-x.live/install.ps1 | iex"</code> runs the same installer through PowerShell.</li>
+            <li><strong>macOS and Linux</strong> (sh, bash or zsh): <code>curl -fsSL https://zero-x.live/install.sh | sh</code> installs <code>neuron</code> and <code>neuron-tui</code> to <code>~/.local/bin</code> and tells you if that folder is not on your PATH. musl-based Linux such as Alpine is not supported.</li>
+          </ul>
+          <p>The installers download the binaries of this release from <a href="https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/tag/v7.0.0-alpha.5">GitHub Releases</a> and verify their SHA-256 checksums. The full-screen UI (<code>neuron-tui</code>) is a download of more than 100 MB, so on a slow connection that step can take several minutes. To install only <code>neuron</code>, which then uses its line REPL, set <code>NEURON_NO_TUI=1</code> first; in PowerShell: <code>$env:NEURON_NO_TUI = '1'</code>. The binaries are not code-signed (Windows) or notarized (macOS).</p>
+          <h3>Other ways to install</h3>
+          <ul class="zx-opts">
+            <li><strong>npm</strong> (needs Node.js 22.14 or later): <code>npm install -g @zero-x.live/neuron</code>. Run it again to upgrade. On Windows, if PowerShell says &ldquo;running scripts is disabled on this system&rdquo;, use <code>npm.cmd install -g @zero-x.live/neuron</code> and run <code>neuron.cmd</code>, or use the PowerShell command above.</li>
+            <li><strong>pip</strong> (needs Python 3.9 or later): <code>python -m pip install --pre neuroncli</code>. Keep <code>--pre</code> while Neuron 7 is a pre-release, or pip installs the old, unsupported 6.2.4. To upgrade: <code>python -m pip install --upgrade --pre neuroncli</code>.</li>
+            <li><strong>This release straight from GitHub</strong>, without zero-x.live:
+              <div class="zx-code zx-code--copy zx-code--wrap"><span class="zx-code__label">Windows PowerShell</span><pre><code id="docs-ps1-github">&amp; ([scriptblock]::Create((irm https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.5/install.ps1))) -Version 7.0.0-alpha.5 -AddToPath</code></pre><button class="zx-copy" type="button" data-copy-target="docs-ps1-github" data-copy-label="GitHub PowerShell install command" aria-label="Copy GitHub PowerShell install command" title="Copy"><svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="/icons.svg#copy"/></svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="/icons.svg#check"/></svg></button></div>
+              <div class="zx-code zx-code--copy zx-code--wrap"><span class="zx-code__label">macOS or Linux terminal</span><pre><code id="docs-sh-github">curl -fsSL https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.5/install.sh | sh -s -- --version 7.0.0-alpha.5</code></pre><button class="zx-copy" type="button" data-copy-target="docs-sh-github" data-copy-label="GitHub install.sh command" aria-label="Copy GitHub install.sh command" title="Copy"><svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="/icons.svg#copy"/></svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="/icons.svg#check"/></svg></button></div>
+              A pre-release is never GitHub's latest release, so these name the version.</li>
+          </ul>
+          <h3>After installing</h3>
+          <p>Open a new terminal, run <code>neuron login</code>, then <code>neuron</code> in your project folder. The PATH change only reaches terminals opened after the install. Check the install with <code>neuron --version</code>, and run <code>neuron doctor</code> if something does not work.</p>
+          <h3 id="troubleshooting">Troubleshooting</h3>
+          <dl class="zx-trouble">
+            <dt>&ldquo;npm.ps1 cannot be loaded because running scripts is disabled on this system&rdquo; (or the same for <code>neuron.ps1</code>)</dt>
+            <dd>Windows PowerShell's default setting blocks the <code>.ps1</code> launchers that npm installs. Use the PowerShell one-liner above, which runs no script file. To keep npm, run <code>npm.cmd install -g @zero-x.live/neuron</code> and start Neuron with <code>neuron.cmd</code>, or allow signed and local scripts for your account with <code>Set-ExecutionPolicy -Scope CurrentUser RemoteSigned</code>.</dd>
+            <dt>&ldquo;Python was not found; run without arguments to install from the Microsoft Store&rdquo;</dt>
+            <dd>Python is not installed: on Windows, <code>python</code> is a shortcut to the Microsoft Store until it is. Use the PowerShell one-liner above, or install Python 3.9 or later from python.org, open a new terminal and run the pip command again.</dd>
+            <dt>&ldquo;npm is not recognized as the name of a cmdlet&rdquo; or &ldquo;'npm' is not recognized as an internal or external command&rdquo;</dt>
+            <dd>Node.js is not installed. Use the one-liner for your system instead; it needs neither Node.js nor Python.</dd>
+            <dt>&ldquo;neuron is not recognized&rdquo; or &ldquo;neuron: command not found&rdquo; right after installing</dt>
+            <dd>Open a new terminal: the PATH change does not reach terminals that were already open. On macOS and Linux, add <code>~/.local/bin</code> to your PATH if the installer said it is missing.</dd>
+            <dt>&ldquo;&amp; was unexpected at this time.&rdquo;</dt>
+            <dd>A PowerShell command was pasted into Command Prompt. Choose <strong>Windows (Command Prompt)</strong> in the menu and use that command.</dd>
+            <dt>The install stays on &ldquo;installing the full-screen UI (neuron-tui.exe) ...&rdquo; for minutes</dt>
+            <dd>It is downloading the full-screen UI, more than 100 MB, and shows no progress while it does; Windows may also scan the new program the first time it runs. Let it finish. On a slow connection, install without the UI first (<code>$env:NEURON_NO_TUI = '1'</code>, then the one-liner) and run the one-liner again later, in a new terminal, to add it.</dd>
+            <dt>&ldquo;could not look up the latest Neuron release&rdquo;</dt>
+            <dd>The GitHub installer was run without a version, and a pre-release is never GitHub's latest release. Use <code>irm https://zero-x.live/install.ps1 | iex</code> or <code>curl -fsSL https://zero-x.live/install.sh | sh</code>, which name the version for you.</dd>
+          </dl>
+        </section>
+
         <section id="quickstart" aria-labelledby="quickstart-title">
           <h2 id="quickstart-title">Quickstart</h2>
           <ol>
-            <li>Install Neuron. Choose one option; every option is on <a href="/download">the download page</a>.
-              <ul class="zx-opts">
-                <li><strong>npm</strong>, in any terminal (needs Node.js 22.14 or later): <code>npm install -g @zero-x.live/neuron</code></li>
-                <li><strong>pip</strong> (Python 3.8 or later): <code>python -m pip install --pre neuroncli</code>. Keep <code>--pre</code> while Neuron 7 is a pre-release, or pip installs the old, unsupported 6.2.4.</li>
-                <li><strong>Install script</strong>, without Node.js or Python:
-                  <div class="zx-code zx-code--copy zx-code--wrap"><span class="zx-code__label">macOS or Linux terminal</span><pre><code id="docs-sh">curl -fsSL https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.5/install.sh | sh -s -- --version 7.0.0-alpha.5</code></pre><button class="zx-copy" type="button" data-copy-target="docs-sh" data-copy-label="macOS and Linux install command" aria-label="Copy macOS and Linux install command" title="Copy"><svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="/icons.svg#copy"/></svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="/icons.svg#check"/></svg></button></div>
-                  <div class="zx-code zx-code--copy zx-code--wrap"><span class="zx-code__label">Windows PowerShell</span><pre><code id="docs-ps1">&amp; ([scriptblock]::Create((irm https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.5/install.ps1))) -Version 7.0.0-alpha.5 -AddToPath</code></pre><button class="zx-copy" type="button" data-copy-target="docs-ps1" data-copy-label="PowerShell install command" aria-label="Copy PowerShell install command" title="Copy"><svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="/icons.svg#copy"/></svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="/icons.svg#check"/></svg></button></div>
-                  <div class="zx-code zx-code--copy zx-code--wrap"><span class="zx-code__label">Command Prompt (cmd.exe)</span><pre><code id="docs-cmd">powershell -NoProfile -ExecutionPolicy Bypass -Command "&amp; ([scriptblock]::Create((irm https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.5/install.ps1))) -Version 7.0.0-alpha.5 -AddToPath"</code></pre><button class="zx-copy" type="button" data-copy-target="docs-cmd" data-copy-label="Command Prompt install command" aria-label="Copy Command Prompt install command" title="Copy"><svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="/icons.svg#copy"/></svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="/icons.svg#check"/></svg></button></div>
-                  On Windows, <code>-AddToPath</code> puts Neuron on your user PATH: open a new terminal before you run it.</li>
-              </ul>
-            </li>
+            <li>Install Neuron with the command for your system from <a href="#install">Install</a>, then open a new terminal.</li>
             <li>Sign in: <code>neuron login</code> prints <code>https://neuron.zero-x.live/device</code> and a short code. Open it in any browser, sign in, check the code and choose <strong>Approve</strong>. The code expires after 10 minutes.</li>
             <li>Run <code>neuron</code> inside a project; on a terminal it opens the full-screen UI. The UI cannot trust a folder yet: run <code>neuron --no-tui</code> there once and press 1, or add the folder to <code>trustedRoots</code> in <code>~/.neuron/settings.json</code>. Until then the folder's own settings, hooks and MCP servers are ignored. <a href="/docs/trust">Security and trust</a> explains what trusting a folder allows.</li>
           </ol>
-          <div class="zx-code zx-code--copy"><span class="zx-code__label">Any terminal: macOS, Linux or Windows</span><pre><code id="docs-npm">npm install -g @zero-x.live/neuron
-neuron login
+          <div class="zx-code zx-code--copy"><span class="zx-code__label">After installing</span><pre><code id="docs-run">neuron login
 cd path/to/project
-neuron</code></pre><button class="zx-copy" type="button" data-copy-target="docs-npm" data-copy-label="install and run commands" aria-label="Copy install and run commands" title="Copy"><svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="/icons.svg#copy"/></svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="/icons.svg#check"/></svg></button></div>
+neuron</code></pre><button class="zx-copy" type="button" data-copy-target="docs-run" data-copy-label="sign-in and run commands" aria-label="Copy sign-in and run commands" title="Copy"><svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="/icons.svg#copy"/></svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="/icons.svg#check"/></svg></button></div>
           <p>Check the result with <code>neuron auth status</code>. If something fails, run <code>neuron doctor</code>.</p>
         </section>
 

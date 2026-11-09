@@ -188,7 +188,8 @@ function parseInto(parent, html, doc) {
   }
 }
 
-function parseDocument(html, options) { const doc = new Document(options); parseInto(doc, html, doc); return doc; }
+// The HTML parser turns CRLF into LF, as a browser does (a Windows checkout has CRLF pages).
+function parseDocument(html, options) { const doc = new Document(options); parseInto(doc, html.replace(/\r\n?/g, '\n'), doc); return doc; }
 
 /* ───────────── Test doubles ───────────── */
 
@@ -954,38 +955,118 @@ async function mountPricing({profile = null, routes = {}, hostname = 'zero-x.liv
   await assert.rejects(startSubscription({plan: 'gold', currency: 'USD'}), /Athlete, Speed, Pro or Max/);
 }
 
-/* ───────────── Neuron CLI page script ───────────── */
+/* ───────────── Install bar (install-bar.js) ───────────── */
 
-for (const scenario of ['live', 'offline']) {
+{
   const html = read('neuron-cli.html');
-  const doc = parseDocument(html);
-  const script = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].at(-1)[1];
-  const fetch = async path => {
-    assert.equal(path, '/v1/models');
-    if (scenario === 'offline') throw new TypeError('offline');
-    return json(200, {object: 'list', data: [
-      {id: 'auto', object: 'model', owned_by: 'zero-x', display_name: 'Auto', capabilities: {tools: true}, tiers: ['free', 'paid'], available: true},
-      {id: 'gemini/gemini-2.5-flash', owned_by: 'gemini', display_name: XSS, context_window: 1048576, capabilities: {tools: true}, tiers: ['free', 'paid'], available: false, unavailable_reason: 'region_unavailable'},
-      {id: 'paid/model', owned_by: 'groq', capabilities: {tools: false}, tiers: ['paid'], available: false, unavailable_reason: 'upgrade_required'},
-      {id: 42}]});
+  assert.doesNotMatch(html, /\/\/ Install tabs/, 'neuron-cli.html: the inline install-tab script is gone (install-bar.js builds the menu)');
+  const bar = await import(new URL('install-bar.js', root));
+  const {copyButtons} = await import(new URL('copy-code.js', root));
+  const WINDOWS_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36';
+  const MAC_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15';
+  const LINUX_UA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36';
+  const ANDROID_UA = 'Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Mobile Safari/537.36';
+  assert.deepEqual([WINDOWS_UA, MAC_UA, LINUX_UA, ANDROID_UA, ''].map(ua => bar.detectOs(ua)), ['windows', 'macos', 'linux', 'android', null]);
+  assert.equal(bar.detectOs('', 'Windows'), 'windows', 'client hints platform');
+  assert.deepEqual(['windows', 'macos', 'linux', 'android', 'ios', null].map(bar.methodForOs), ['powershell', 'shell', 'shell', null, null, null]);
+  const {detectOs} = await import(new URL('download.js', root));
+  assert.equal(detectOs, bar.detectOs, 'download.js shares the one detectOs');
+  // Tokens cover the whole command; the program, the pipe and the program piped into are marked.
+  for (const command of [NEURON_INSTALL.powershell, NEURON_INSTALL.cmd, NEURON_INSTALL.shell, NEURON_INSTALL.npm, NEURON_INSTALL.pip]) {
+    assert.equal(bar.commandTokens(command).map(t => t.text).join(''), command, 'tokens rebuild ' + command);
+  }
+  const kinds = command => bar.commandTokens(command).filter(t => t.kind !== 'space').map(t => `${t.kind}:${t.text}`);
+  assert.deepEqual(kinds(NEURON_INSTALL.powershell), ['cmd:irm', 'text:https://zero-x.live/install.ps1', 'op:|', 'run:iex']);
+  assert.deepEqual(kinds(NEURON_INSTALL.shell), ['cmd:curl', 'flag:-fsSL', 'text:https://zero-x.live/install.sh', 'op:|', 'run:sh']);
+  assert.deepEqual(kinds(NEURON_INSTALL.pip), ['cmd:python', 'flag:-m', 'text:pip', 'text:install', 'flag:--pre', 'text:neuroncli']);
+  assert.deepEqual(kinds(NEURON_INSTALL.cmd).slice(-4), ['cmd:"irm', 'text:https://zero-x.live/install.ps1', 'op:|', 'run:iex"']);
+
+  const barWindow = ({ua = '', platform = '', stored = null, storage = true} = {}) => {
+    const win = {
+      written: [], saved: null, timers: [],
+      navigator: {userAgent: ua, platform, clipboard: {writeText: async text => { win.written.push(text); }}},
+      setTimeout: (fn, ms) => { win.timers.push({fn, ms}); return win.timers.length; }, clearTimeout() {},
+    };
+    if (storage) win.localStorage = {getItem: () => stored, setItem: (key, value) => { win.saved = [key, value]; }};
+    else Object.defineProperty(win, 'localStorage', {get() { throw new Error('SecurityError'); }});
+    return win;
   };
-  vm.runInNewContext(script, {document: doc, fetch, Promise, Array, Math, isFinite, Error, TypeError});
+  const mount = (file, options) => {
+    const doc = parseDocument(read(file));
+    const win = barWindow(options);
+    const bars = bar.installBars(doc, win);
+    return {doc, win, bars, roots: doc.querySelectorAll('[data-install-bar]')};
+  };
+  const shown = root => root.querySelector('.zx-getbar__cmd').textContent;
+  // Default per system: Windows gets PowerShell, macOS and Linux curl, anything else the page's default.
+  for (const [ua, method] of [[WINDOWS_UA, 'powershell'], [MAC_UA, 'shell'], [LINUX_UA, 'shell'], [ANDROID_UA, 'powershell'], ['', 'powershell']]) {
+    const {bars, roots} = mount('index.html', {ua});
+    assert.equal(bars.length, 3, 'index.html: three install bars');
+    for (const root of roots) assert.equal(shown(root), NEURON_INSTALL[method], `${ua || 'unknown system'}: shows the ${method} command`);
+  }
+  // An earlier pick wins over the system; blocked storage changes nothing.
+  assert.equal(shown(mount('download.html', {ua: WINDOWS_UA, stored: 'npm'}).roots[0]), NEURON_INSTALL.npm, 'the remembered pick');
+  assert.equal(shown(mount('download.html', {ua: WINDOWS_UA, stored: 'brew'}).roots[0]), NEURON_INSTALL.powershell, 'an unknown remembered pick is ignored');
+  assert.equal(shown(mount('download.html', {ua: MAC_UA, storage: false}).roots[0]), NEURON_INSTALL.shell, 'storage that throws');
+
+  const {doc, win, roots} = mount('index.html', {ua: MAC_UA});
+  const hero = roots[0];
+  const code = hero.querySelector('.zx-getbar__cmd');
+  assert.equal(code.querySelector('.zx-tok-cmd').textContent, 'curl', 'the command word is tinted');
+  assert.equal(code.querySelector('.zx-tok-op').textContent, '|');
+  assert.equal(code.querySelector('.zx-tok-run').textContent, 'sh');
+  const button = hero.querySelector('button.zx-getbar__pick');
+  assert.ok(button && !hero.querySelector('span.zx-getbar__pick'), 'the label became a button');
+  const menu = doc.getElementById(button.getAttribute('aria-controls'));
+  assert.equal(button.getAttribute('aria-haspopup'), 'menu');
+  assert.equal(button.getAttribute('aria-expanded'), 'false');
+  assert.equal(button.textContent.trim(), 'Get Neuron');
+  assert.equal(button.getAttribute('aria-label'), 'Get Neuron, install method: macOS / Linux');
+  assert.ok(menu && menu.getAttribute('role') === 'menu' && menu.hidden, 'a closed menu');
+  const items = menu.querySelectorAll('[role="menuitemradio"]');
+  assert.deepEqual(items.map(item => item.textContent), ['Windows (PowerShell)', 'Windows (Command Prompt)', 'macOS / Linux', 'npm', 'pip']);
+  assert.deepEqual(items.map(item => item.getAttribute('aria-checked')), ['false', 'false', 'true', 'false', 'false']);
+  assert.ok(items.every(item => item.getAttribute('tabindex') === '-1' && item.getAttribute('type') === 'button'));
+  // Open: focus moves to the checked item; arrows move, Escape closes and focus returns to the button.
+  button.click();
+  assert.equal(button.getAttribute('aria-expanded'), 'true');
+  assert.equal(menu.hidden, false);
+  assert.equal(doc.activeElement, items[2], 'focus on the checked item');
+  items[2].dispatchEvent(makeEvent('keydown', {key: 'ArrowDown', bubbles: true}));
+  assert.equal(doc.activeElement, items[3]);
+  items[3].dispatchEvent(makeEvent('keydown', {key: 'End', bubbles: true}));
+  assert.equal(doc.activeElement, items[4]);
+  items[4].dispatchEvent(makeEvent('keydown', {key: 'ArrowDown', bubbles: true}));
+  assert.equal(doc.activeElement, items[0], 'wraps around');
+  items[0].dispatchEvent(makeEvent('keydown', {key: 'Escape', bubbles: true}));
+  assert.equal(menu.hidden, true, 'Escape closes');
+  assert.equal(button.getAttribute('aria-expanded'), 'false');
+  assert.equal(doc.activeElement, button, 'focus returns to the button');
+  assert.equal(shown(hero), NEURON_INSTALL.shell, 'Escape changes nothing');
+  // ArrowUp on the button opens on the last item; a click outside closes.
+  button.dispatchEvent(makeEvent('keydown', {key: 'ArrowUp', bubbles: true}));
+  assert.equal(doc.activeElement, items[4]);
+  doc.body.click();
+  assert.equal(menu.hidden, true, 'a click outside closes');
+  // Picking a method updates every bar on the page, remembers it, and the copy button copies it.
+  button.click();
+  items[4].click();
+  assert.equal(menu.hidden, true);
+  assert.equal(doc.activeElement, button);
+  for (const root of roots) assert.equal(shown(root), NEURON_INSTALL.pip, 'every bar follows the pick');
+  assert.deepEqual(win.saved, ['zx-install-method', 'pip']);
+  assert.equal(items[4].getAttribute('aria-checked'), 'true');
+  assert.equal(button.getAttribute('aria-label'), 'Get Neuron, install method: pip');
+  assert.equal(hero.querySelector('.zx-getbar__scroll').getAttribute('aria-label'), 'pip install command');
+  copyButtons(doc, win);
+  hero.querySelector('button.zx-copy').click();
   await settle();
-  const tabs = doc.querySelectorAll('[role="tab"]');
-  assert.deepEqual(tabs.map(tab => tab.textContent), ['npm', 'pip', 'macOS and Linux', 'PowerShell', 'Command Prompt', 'From source']);
-  assert.equal(doc.getElementById('install-npm').hidden, false, 'npm is the default tab');
-  assert.equal(doc.getElementById('install-ps1').hidden, true);
-  tabs[2].click();
-  assert.equal(doc.getElementById('install-sh').hidden, false);
-  assert.equal(doc.getElementById('install-npm').hidden, true);
-  assert.equal(tabs[2].getAttribute('aria-selected'), 'true');
-  tabs[2].focus();
-  doc.querySelector('[role="tablist"]').dispatchEvent(makeEvent('keydown', {key: 'ArrowRight', bubbles: true}));
-  assert.equal(doc.getElementById('install-ps1').hidden, false);
-  assert.equal(doc.activeElement, tabs[3]);
-  // The model list is home.js's live pane now; the inline script only builds the install tabs.
-  assert.equal(doc.getElementById('models-body'), null);
-  if (scenario === 'live') assert.doesNotMatch(script, /fetch\(/, 'the inline script makes no network calls');
+  assert.equal(win.written.at(-1), NEURON_INSTALL.pip, 'copies the chosen command');
+  assert.equal(hero.querySelector('button.zx-copy').getAttribute('data-state'), 'copied', 'shows the check');
+  // Bound once.
+  assert.deepEqual(bar.installBars(doc, win), [], 'a second call wires nothing');
+  assert.equal(doc.querySelectorAll('[role="menu"]').length, 3);
+  console.log('ok - install-bar.js: per-system default (Windows PowerShell, macOS and Linux curl), remembered pick, tinted command, accessible menu (arrows, Escape, outside click), every bar follows the pick and copy copies it');
 }
 
 /* ───────────── Live model pane (home.js) ───────────── */
@@ -1428,7 +1509,7 @@ for (const scenario of ['live', 'offline']) {
     doc.querySelector('[data-copy-target="run-start"]').click();
     await settle();
     assert.equal(win.written[0], 'cd path/to/your-project\nneuron');
-    doc.querySelector('[data-copy-target="tab-ps1"]').click();
+    doc.querySelector('[data-copy-target="install-cmd"]').click();
     await settle();
     assert.equal(win.written[1], NEURON_INSTALL.powershell);
   }
@@ -1438,13 +1519,13 @@ for (const scenario of ['live', 'offline']) {
     doc.createRange = () => ({node: null, selectNodeContents(node) { this.node = node; }});
     const win = copyWindow(async () => { throw new Error('NotAllowedError'); });
     copyButtons(doc, win);
-    const button = doc.querySelector('[data-copy-target="hero-npm"]');
+    const button = doc.querySelector('[data-copy-target="hero-cmd"]');
     button.click();
     await settle();
-    assert.equal(win.selected, doc.getElementById('hero-npm'), 'the command text is selected');
+    assert.equal(win.selected, doc.getElementById('hero-cmd'), 'the command text is selected');
     assert.equal(button.getAttribute('data-state'), 'selected');
     assert.equal(button.getAttribute('title'), 'Press Ctrl+C to copy', 'the tooltip gives the shortcut while selected');
-    assert.match(doc.getElementById('copy-status').textContent, /Copying is blocked here\. The npm install command is selected; press Ctrl\+C, or Cmd\+C on a Mac\./);
+    assert.match(doc.getElementById('copy-status').textContent, /Copying is blocked here\. The install command is selected; press Ctrl\+C, or Cmd\+C on a Mac\./);
     win.timers.at(-1).fn();
     assert.equal(button.hasAttribute('data-state'), false);
     assert.equal(button.getAttribute('title'), 'Copy', 'the tooltip resets with the icon');
@@ -2090,7 +2171,7 @@ async function loadAuth({hostname, config, session = makeStorage(), sdk = true})
   }
 }
 
-console.log('PASS: dashboard gate, contract-driven overview, hash tabs and keyboard, usage chart/table/pagination, key create-once/copy/revoke-confirm, billing cancel/top-up/verify, sessions, sign-out dev-token cleanup, 401/500 recovery, pricing currency/hydration/checkout/409/503/forged payloads, Neuron CLI install tabs, zerox-auth dev identity and pinned SDK; untrusted data never reached innerHTML, the billing details dialog (labelled controls, validation, server messages, review for returning buyers, one-click top-up, cancel, retry once, no GST line unless enabled)');
+console.log('PASS: dashboard gate, contract-driven overview, hash tabs and keyboard, usage chart/table/pagination, key create-once/copy/revoke-confirm, billing cancel/top-up/verify, sessions, sign-out dev-token cleanup, 401/500 recovery, pricing currency/hydration/checkout/409/503/forged payloads, install bar menu and copy, zerox-auth dev identity and pinned SDK; untrusted data never reached innerHTML, the billing details dialog (labelled controls, validation, server messages, review for returning buyers, one-click top-up, cancel, retry once, no GST line unless enabled)');
 
 /* ───────────── Console restyle: drawer, trend card, account and sign-in pages ───────────── */
 
@@ -2210,5 +2291,5 @@ console.log('PASS: dashboard gate, contract-driven overview, hash tabs and keybo
   assert.doesNotMatch(read('neuroncli/callback/index.html').replace(/openrouter(?=['/])/g, ''), /OpenRouter/, 'the callback page shows no provider name');
 }
 
-console.log('PASS: dashboard gate, contract-driven overview, hash tabs and keyboard, usage chart/table/pagination, key create-once/copy/revoke-confirm, billing cancel/top-up/verify, sessions, sign-out dev-token cleanup, 401/500 recovery, pricing currency/hydration/checkout/409/503/forged payloads, Neuron CLI install tabs, zerox-auth dev identity and pinned SDK; untrusted data never reached innerHTML');
+console.log('PASS: dashboard gate, contract-driven overview, hash tabs and keyboard, usage chart/table/pagination, key create-once/copy/revoke-confirm, billing cancel/top-up/verify, sessions, sign-out dev-token cleanup, 401/500 recovery, pricing currency/hydration/checkout/409/503/forged payloads, install bar menu and copy, zerox-auth dev identity and pinned SDK; untrusted data never reached innerHTML');
 process.exit(0);

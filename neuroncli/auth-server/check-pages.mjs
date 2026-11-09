@@ -12,7 +12,7 @@ const isFile = file => existsSync(new URL(file, root)) && statSync(new URL(file,
 
 const PUBLIC_PAGES = ['index.html', 'pricing.html', 'neuron-cli.html', 'docs.html', 'ai-coding-agent.html', 'free-ai-coding-agent.html', 'claude-code-alternative.html', 'docs/trust.html', 'docs/data.html', 'download.html', 'changelog.html', 'refund.html', 'contact.html', 'shipping.html', 'privacy.html', 'terms.html'];
 const PRIVATE_PAGES = ['dashboard.html', '404.html', 'neuroncli/index.html'];
-const SITE_SCRIPTS = ['dashboard.js', 'pricing.js', 'billing-checkout.js', 'home.js', 'download.js', 'billing-details.js', 'changelog.js', 'site-nav.js', 'announce.js', 'copy-code.js'];
+const SITE_SCRIPTS = ['dashboard.js', 'pricing.js', 'billing-checkout.js', 'home.js', 'download.js', 'billing-details.js', 'changelog.js', 'site-nav.js', 'announce.js', 'copy-code.js', 'install-bar.js'];
 const RELEASE_MANIFESTS = ['releases/cli/latest.json', 'releases/desktop/latest.json'];
 const SITE_FILES = [...PUBLIC_PAGES, ...PRIVATE_PAGES, ...SITE_SCRIPTS, ...RELEASE_MANIFESTS, 'zx-tokens.css', 'home.css', 'content.css', 'zerox-auth.js', 'neuroncli/login/index.html', 'neuroncli/callback/index.html'];
 const BASES = {'dashboard.html': 'https://dashboard.zero-x.live/', '404.html': 'https://zero-x.live/404', 'neuroncli/index.html': 'https://zero-x.live/neuroncli/'};
@@ -153,24 +153,60 @@ const INSTALL_SH = escapeHtml(NEURON_INSTALL.shell);
 const INSTALL_PS1 = escapeHtml(NEURON_INSTALL.powershell);
 const INSTALL_CMD = escapeHtml(NEURON_INSTALL.cmd);
 assert.equal(INSTALL_PIP, 'python -m pip install --pre neuroncli', 'pip needs --pre while Neuron 7 is a pre-release');
-assert.match(INSTALL_PS1, / -Version 7\.0\.0-alpha\.\d+ -AddToPath$/, 'the PowerShell installer puts neuron on PATH');
+assert.equal(NEURON_INSTALL.powershell, 'irm https://zero-x.live/install.ps1 | iex', 'Windows: the one-liner that runs under the default ExecutionPolicy');
 // The superseded alpha's installer still resolves, so a page that keeps naming it silently installs the old build.
 for (const file of new Set([...seoPages.map(page => page.file), ...PUBLIC_PAGES, ...PRIVATE_PAGES, 'llms.txt', 'neuroncli/login/index.html', 'neuroncli/callback/index.html', 'neuroncli/device/index.html'])) {
   assert.doesNotMatch(read(file), /7\.0\.0-alpha\.1\b/, file + ': names the superseded 7.0.0-alpha.1');
 }
-// Every option, best first: npm, pip, then the install scripts. On Windows, a PowerShell command and a
-// Command Prompt one (cmd.exe rejects PowerShell's "&" with "& was unexpected at this time."), and the
-// reminder that the PATH change needs a new terminal.
-for (const file of ['index.html', 'neuron-cli.html', 'docs.html', 'ai-coding-agent.html', 'download.html']) {
+// The install bar (install-bar.js, styles in zx-tokens.css) on every page that shows install commands:
+// one pill with "Get Neuron", the command and a copy button. Its list holds every command, best first:
+// the Windows PowerShell one-liner (works under the default ExecutionPolicy), Command Prompt, macOS and
+// Linux, then npm and pip. Without JavaScript the pill shows the PowerShell command and the page's
+// first bar lists them all; the docs install section has the requirements and troubleshooting.
+const INSTALL_BAR_METHODS = [
+  ['powershell', 'Windows (PowerShell)', NEURON_INSTALL.powershell], ['cmd', 'Windows (Command Prompt)', NEURON_INSTALL.cmd],
+  ['shell', 'macOS / Linux', NEURON_INSTALL.shell], ['npm', 'npm', NEURON_INSTALL.npm], ['pip', 'pip', NEURON_INSTALL.pip],
+];
+// (A Windows checkout has CRLF pages; the browser reads them as LF.)
+const installBars = html => [...html.replace(/\r\n?/g, '\n').matchAll(/<div class="zx-getbar[^"]*" data-install-bar>([\s\S]*?)\n\s*<\/ul>\n\s*<\/div>/g)].map(m => m[1]);
+const INSTALL_BAR_PAGES = ['index.html', 'neuron-cli.html', 'docs.html', 'download.html', 'ai-coding-agent.html', 'free-ai-coding-agent.html', 'claude-code-alternative.html'];
+for (const file of INSTALL_BAR_PAGES) {
   const page = read(file);
-  for (const command of [INSTALL_NPM, INSTALL_PIP, INSTALL_SH, INSTALL_PS1, INSTALL_CMD]) assert.ok(page.includes(command), `${file} shows ${command}`);
-  const at = command => page.indexOf(command);
-  assert.ok(at(INSTALL_NPM) < at(INSTALL_PIP) && at(INSTALL_PIP) < at(INSTALL_SH) && at(INSTALL_SH) < at(INSTALL_PS1) && at(INSTALL_PS1) < at(INSTALL_CMD),
-    file + ': npm, pip, install.sh, PowerShell, Command Prompt, in that order');
-  const words = stripScripts(page).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
-  assert.match(words, /open a new terminal/i, file + ': says to open a new terminal after -AddToPath');
-  assert.match(words, /keep --pre/i, file + ': explains --pre');
+  const bars = installBars(page);
+  assert.ok(bars.length >= 1, `${file}: has the install bar`);
+  assert.ok(page.includes('<script type="module" src="/install-bar.js"></script>') && page.includes('<script type="module" src="/copy-code.js"></script>'), `${file}: loads install-bar.js and copy-code.js`);
+  bars.forEach((bar, index) => {
+    const where = `${file} install bar ${index + 1}`;
+    assert.ok(bar.includes('<span class="zx-getbar__pick">Get Neuron</span>'), `${where}: the Get Neuron label`);
+    const code = bar.match(/<code class="zx-getbar__cmd" id="([\w-]+)" data-method="powershell">([^<]*)<\/code>/);
+    assert.ok(code, `${where}: the pill shows a command`);
+    assert.equal(code[2], escapeHtml(NEURON_INSTALL.powershell), `${where}: the PowerShell one-liner by default`);
+    assert.ok(bar.includes(`data-copy-target="${code[1]}"`), `${where}: the copy button copies the pill's command`);
+    assert.match(bar, /<p class="zx-getbar__alt">[^<]*<a href="[^"]*#(install|troubleshooting)">/, `${where}: links to the install guide`);
+    const items = [...bar.matchAll(/<li data-method="(\w+)"><span class="zx-getbar__name">([^<]+)<\/span> <code>([^<]*)<\/code><\/li>/g)].map(m => [m[1], m[2], m[3]]);
+    assert.deepEqual(items, INSTALL_BAR_METHODS.map(([id, name, command]) => [id, name, escapeHtml(command)]), `${where}: every command, best first`);
+    // The first bar on a page lists the commands for visitors without JavaScript; the others repeat it.
+    assert.equal(/<ul class="zx-getbar__list"[^>]* hidden>/.test(bar), index > 0, `${where}: list ${index ? 'hidden' : 'shown'} without JavaScript`);
+  });
+  // The first install command on the page is the bar's.
+  assert.ok(page.indexOf('data-install-bar') < page.indexOf(INSTALL_NPM), `${file}: the install bar comes before any npm command`);
 }
+// The docs install section: requirements, the other ways, after installing, and the errors people hit.
+{
+  const words = stripScripts(read('docs.html')).replace(/<[^>]+>/g, ' ').replace(/&ldquo;|&rdquo;/g, '"').replace(/&amp;/g, '&').replace(/\s+/g, ' ');
+  for (const phrase of ['Node.js 22.14 or later', 'Python 3.9 or later', 'keep --pre', 'npm.cmd install -g @zero-x.live/neuron', 'neuron.cmd',
+    '"npm.ps1 cannot be loaded because running scripts is disabled on this system"', '"Python was not found', '"& was unexpected at this time."',
+    'Open a new terminal, run neuron login , then neuron in your project folder.', 'NEURON_NO_TUI', NEURON_INSTALL.powershellPinned, NEURON_INSTALL.shellPinned]) {
+    assert.ok(words.toLowerCase().includes(phrase.toLowerCase()), 'docs.html install section says: ' + phrase);
+  }
+  assert.ok(ids(read('docs.html')).includes('install') && ids(read('docs.html')).includes('troubleshooting'), 'docs.html #install and #troubleshooting');
+}
+for (const file of ['index.html', 'neuron-cli.html', 'download.html']) {
+  const words = stripScripts(read(file)).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  assert.match(words, /Open a new terminal, run neuron login , then neuron in your project folder\./, file + ': what to do after installing');
+}
+// llms.txt stays plain text with every command.
+for (const command of Object.values(NEURON_INSTALL).slice(0, 5)) assert.ok(read('llms.txt').includes('`' + command + '`'), 'llms.txt lists ' + command);
 {
   const html = read('neuron-cli.html');
   const software = JSON.parse(html.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/)[1])['@graph'].find(n => n['@type'] === 'SoftwareApplication');
@@ -203,7 +239,8 @@ for (const file of ['index.html', 'neuron-cli.html', 'docs.html', 'ai-coding-age
   assert.match(html, /role="progressbar"[^>]*aria-valuemin="0" aria-valuemax="100"/);
   assert.doesNotMatch(html, /256,000|500K|10M|50M|2,000|10,000|44K/, 'Dashboard must not hardcode plan limits');
   assert.match(html, new RegExp(`<code id="qs-install">${INSTALL_NPM}</code>[\\s\\S]*<code id="qs-install-pip">${INSTALL_PIP}</code>`), 'Dashboard quick start: npm, then pip');
-  assert.match(html, /href="https:\/\/zero-x\.live\/download#cli" data-site-path="\/download#cli">download page<\/a>/, 'Dashboard quick start links the install scripts');
+  assert.ok(html.includes(`<code>${INSTALL_PS1}</code>`) && html.includes(`<code>${INSTALL_SH}</code>`), 'Dashboard quick start names the one-line installers');
+  assert.match(html, /href="https:\/\/zero-x\.live\/docs#install" data-site-path="\/docs#install">install guide<\/a>/, 'Dashboard quick start links the install guide');
   assert.match(html, /neuron -p[\s\S]*?exits with code 2 unless <code>~\/\.neuron\/settings\.json<\/code> allows them/, 'Dashboard headless example explains the denied run');
   assert.match(html, /<code id="qs-login">neuron login<\/code>/);
   assert.match(html, /https:\/\/zero-x\.live\/v1/);
@@ -1020,20 +1057,11 @@ assert.equal(checkout.normalizeCurrency('EUR'), 'USD');
   for (const command of [INSTALL_NPM, INSTALL_PIP, INSTALL_SH, INSTALL_PS1, INSTALL_CMD, 'neuron login', 'curl https://zero-x.live/v1/models']) {
     assert.ok(html.includes(command), 'index.html shows ' + command);
   }
-  for (const id of ['step-install', 'cta-install']) assert.match(html, new RegExp(`<code id="${id}">${INSTALL_NPM}\\b`), `index.html #${id} starts with npm`);
-  // npm's latest tag and PyPI (as a pre-release) serve Neuron 7: npm is the first tab, pip the second,
-  // and the install scripts follow. Each command is labelled with the shell it is for.
-  for (const [file, expected] of [['index.html', ['install-npm', 'install-pip', 'install-sh', 'install-ps1', 'install-cmd']],
-    ['neuron-cli.html', ['install-npm', 'install-pip', 'install-sh', 'install-ps1', 'install-cmd', 'install-source']]]) {
-    const page = read(file);
-    const tabs = [...page.matchAll(/<section class="zx-install" id="(install-[\w-]+)"/g)].map(m => m[1]);
-    assert.deepEqual(tabs, expected, file + ': install tabs, best first');
-    const labels = [...page.matchAll(/<section class="zx-install" id="install-[\w-]+" data-tab-label="([^"]+)"/g)].map(m => m[1]);
-    assert.deepEqual(labels.slice(0, 5), ['npm', 'pip', 'macOS and Linux', 'PowerShell', 'Command Prompt'], file + ': tab labels');
-    for (const label of ['Any terminal', 'Terminal (sh, bash or zsh)', 'Command Prompt (cmd.exe)']) {
-      assert.ok(page.includes(`<span class="zx-code__label">${label}`), `${file}: labels a command "${label}"`);
-    }
-  }
+  // The hero, the first step and the closing call to action each carry the install bar, the hero's first.
+  assert.deepEqual(installBars(html).map(bar => bar.match(/id="([\w-]+)-cmd"/)[1]), ['hero', 'step', 'cta'], 'index.html: install bars in the hero, step 1 and the call to action');
+  assert.ok(html.indexOf('data-install-bar') < html.indexOf('<figure class="zx-term"'), 'index.html: the install bar sits under the hero copy, before the terminal illustration');
+  // The old tabs are gone (the inline tab script on neuron-cli.html too).
+  for (const file of ['index.html', 'neuron-cli.html']) assert.doesNotMatch(read(file), /data-install-tabs|data-tab-label/, file + ': no install tabs');
   for (const file of ['index.html', 'neuron-cli.html', 'docs.html', 'dashboard.html', 'pricing.html', 'download.html',
     'docs/trust.html', 'changelog.html']) {
     const page = read(file);
@@ -1047,8 +1075,8 @@ assert.equal(checkout.normalizeCurrency('EUR'), 'USD');
     assert.doesNotMatch(read(file), /neuron auth login/, file + ': the sign-in command is neuron login');
   }
   for (const id of ['get-started', 'features', 'models', 'pricing', 'docs', 'faq', 'products']) assert.ok(ids(html).includes(id), 'index.html section #' + id);
-  // Every hero command has its own copy button.
-  for (const id of ['cmd-npm', 'cmd-pip', 'cmd-sh', 'cmd-ps1', 'cmd-cmd']) assert.ok(tags(html, 'button').some(b => b['data-copy-target'] === id), 'index.html copies #' + id);
+  // The hero's command has a copy button.
+  assert.ok(tags(html, 'button').some(b => b['data-copy-target'] === 'hero-cmd'), 'index.html copies #hero-cmd');
   assert.match(html, /<a class="zx-btn zx-btn--primary" href="#get-started">Start free<\/a>/, 'index.html: the free plan call to action');
   for (const plan of ['free', 'pro', 'max']) assert.match(html, new RegExp(`data-plan-price="${plan}"`), 'index.html hydrates the ' + plan + ' price');
   assert.match(text('index.html'), /The paid plans \(Athlete, Speed, Pro and Max\) raise the limits/, 'index.html names every paid plan');
@@ -1202,7 +1230,7 @@ assert.equal(checkout.normalizeCurrency('EUR'), 'USD');
     'shasum -a 256', 'gh attestation verify']) {
     assert.ok(html.includes(command), 'download.html shows ' + command);
   }
-  for (const id of ['cmd-npm', 'cmd-pip', 'cmd-shell', 'cmd-powershell', 'cmd-cmd']) assert.ok(tags(html, 'button').some(b => b['data-copy-target'] === id), 'download.html copies #' + id);
+  assert.ok(tags(html, 'button').some(b => b['data-copy-target'] === 'download-cmd'), 'download.html copies the install bar command');
   assert.match(text('download.html'), /status bar under the prompt/, 'download.html says what the release brings');
   assert.ok(html.includes('href="https://zero-x.live/neucockpit#downloads"'), 'download.html links the NeuCockpit downloads');
   for (const id of ['desktop', 'cli', 'mobile', 'verify', 'desktop-note', 'cli-release-note', 'cli-binaries', 'checksums-link', 'copy-status']) {
@@ -1342,8 +1370,17 @@ assert.equal(checkout.normalizeCurrency('EUR'), 'USD');
       assert.doesNotMatch(after, />\s*Copy\s*</, where + ': no text label');
       copies++;
     }
+    // The install bar's copy button sits in its pill, beside the command it copies.
+    for (const bar of installBars(html)) {
+      const pill = bar.match(/<div class="zx-getbar__pill">([\s\S]*?)\n\s*<\/div>\n/)[1];
+      const [b] = tags(pill, 'button');
+      assert.ok(b && b.class === 'zx-copy' && b.type === 'button' && b.title === 'Copy' && /^Copy [a-zA-Z]/.test(b['aria-label'] || '') && b['data-copy-label'], file + ': install bar copy button');
+      assert.match(pill, new RegExp(`<code class="zx-getbar__cmd" id="${b['data-copy-target']}"`), file + ': the install bar copies its own command');
+      assert.match(pill, /<svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="\/icons\.svg#copy"\/><\/svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="\/icons\.svg#check"\/><\/svg>/, file + ': install bar copy and check icons');
+      copies++;
+    }
     const targets = tags(html, 'button').filter(b => 'data-copy-target' in b).map(b => b['data-copy-target']);
-    assert.equal(targets.length, copies, file + ': every copy button sits in a command block');
+    assert.equal(targets.length, copies, file + ': every copy button sits in a command block or an install bar');
     assert.equal(new Set(targets).size, targets.length, file + ': copy target ids are unique');
     for (const id of targets) assert.equal(ids(html).filter(x => x === id).length, 1, `${file}: #${id} exists once`);
     const scripts = tags(html, 'script').filter(s => s.src).map(s => s.src);

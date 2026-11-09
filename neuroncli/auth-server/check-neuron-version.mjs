@@ -52,10 +52,13 @@ assert.ok(files.includes('index.html') && files.includes('llms.txt') && files.in
 const OTHER_BUILD = /(?<![\d.])7\.0\.0(?:-(?:alpha|beta|rc)\.\d+|(?:a|b|rc)\d+)(?!\d)/g;
 const PIP_INSTALL = /\bpip(?:x|3)?\s+install\b[^\n<`"']*?\bneuroncli\b/g;
 const STALE_WORDING = /not on npm or pip yet|not yet: (?:npm|pypi)|(?:npm|pypi) still serves/gi;
+// [name, pattern, the commands it may show]. The short commands (zero-x.live/install.*) come first on
+// every page; the GitHub ones name the same release, for installing it without zero-x.live.
 const INSTALLERS = [
-  ['install.ps1', /&(?:amp;)? \(\[scriptblock\]::Create\(\(irm [^)\s]*\/install\.ps1\)\)\)[^<\n`"]*/g, NEURON_INSTALL.powershell],
-  ['install.sh', /curl -fsSL [^\s<`"]*\/install\.sh[^<\n`"]*/g, NEURON_INSTALL.shell],
-  ['Command Prompt', /powershell(?:\.exe)? -NoProfile[^<\n`]*/g, NEURON_INSTALL.cmd],
+  ['install.ps1 (zero-x.live)', /\birm [^\s<`"]*\/install\.ps1(?!\))[^<\n`"]*/g, [NEURON_INSTALL.powershell]],
+  ['install.ps1 (GitHub)', /&(?:amp;)? \(\[scriptblock\]::Create\(\(irm [^)\s]*\/install\.ps1\)\)\)[^<\n`"]*/g, [NEURON_INSTALL.powershellPinned]],
+  ['install.sh', /curl -fsSL [^\s<`"]*\/install\.sh[^<\n`"]*/g, [NEURON_INSTALL.shell, NEURON_INSTALL.shellPinned]],
+  ['Command Prompt', /powershell(?:\.exe)? -(?:NoProfile|ExecutionPolicy)[^<\n`]*/g, [NEURON_INSTALL.cmd]],
 ];
 
 for (const file of files) {
@@ -79,7 +82,7 @@ for (const file of files) {
   for (const [name, pattern, expected] of INSTALLERS) {
     for (const match of text.matchAll(pattern)) {
       const shown = decode(match[0]).trimEnd();
-      if (shown !== expected) report(file, text, match.index, `${name} command differs from src/neuron-release.js:\n    shown:    ${shown}\n    expected: ${expected}`);
+      if (!expected.includes(shown)) report(file, text, match.index, `${name} command differs from src/neuron-release.js:\n    shown:    ${shown}\n    expected: ${expected.join('\n          or: ')}`);
     }
   }
   if (file.endsWith('.html')) {
@@ -110,8 +113,14 @@ assert.equal('version 17.0.0-alpha.2'.match(OTHER_BUILD), null, 'another product
 assert.deepEqual(['python -m pip install neuroncli', 'pip install --upgrade --pre neuroncli</code>'].map(s => s.match(PIP_INSTALL)?.[0]),
   ['pip install neuroncli', 'pip install --upgrade --pre neuroncli']);
 assert.equal('Not on npm or pip yet: npm still serves 6.2.0. Not yet: PyPI 6.2.4.'.match(STALE_WORDING).length, 3);
-assert.ok(NEURON_INSTALL.cmd.startsWith('powershell -NoProfile ') && NEURON_INSTALL.cmd.includes(`"${NEURON_INSTALL.powershell}"`), 'the Command Prompt command runs the PowerShell one');
-assert.ok(NEURON_INSTALL.powershell.endsWith(' -AddToPath'), 'the PowerShell installer puts neuron on PATH');
+assert.ok(NEURON_INSTALL.cmd.startsWith('powershell -ExecutionPolicy Bypass -NoProfile -Command ') && NEURON_INSTALL.cmd.endsWith(`"${NEURON_INSTALL.powershell}"`), 'the Command Prompt command runs the PowerShell one');
+assert.equal(NEURON_INSTALL.powershell, 'irm https://zero-x.live/install.ps1 | iex', 'Windows: the short command, which runs under the default ExecutionPolicy');
+assert.equal(NEURON_INSTALL.shell, 'curl -fsSL https://zero-x.live/install.sh | sh', 'macOS and Linux: the short command');
+assert.ok(NEURON_INSTALL.powershellPinned.endsWith(` -Version ${NEURON_VERSION} -AddToPath`), 'the GitHub PowerShell command names the release and puts neuron on PATH');
+for (const [name, pattern, allowed] of INSTALLERS) {
+  for (const command of allowed) assert.equal(decode([...command.matchAll(pattern)][0]?.[0] || '').trimEnd(), command, `the ${name} pattern reads its whole command`);
+}
+assert.equal([...'& ([scriptblock]::Create((irm https://x/install.ps1))) -Version 1'.matchAll(INSTALLERS[0][1])].length, 0, 'the zero-x.live pattern skips the GitHub command');
 
 assert.equal(problems.length, 0, `${problems.length} stale Neuron install mention(s):\n  ${problems.join('\n  ')}`);
 console.log(`PASS: ${files.length} site files name Neuron ${NEURON_VERSION} only, with the current installers, pip --pre and JSON-LD; manifests offer the same npm and pip commands`);

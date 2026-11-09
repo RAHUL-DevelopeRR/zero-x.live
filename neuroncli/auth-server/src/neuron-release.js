@@ -16,17 +16,24 @@ export const NEURON_RELEASE_URL = `https://github.com/${NEURON_REPOSITORY}/relea
 export const NEURON_PRERELEASE = NEURON_VERSION.includes('-');
 
 const DOWNLOAD = `https://github.com/${NEURON_REPOSITORY}/releases/download/v${NEURON_VERSION}`;
-const POWERSHELL = `& ([scriptblock]::Create((irm ${DOWNLOAD}/install.ps1))) -Version ${NEURON_VERSION} -AddToPath`;
+// https://zero-x.live/install.ps1 and /install.sh (src/install-scripts.js) run this release's installer
+// with its version (and -AddToPath on Windows); NEURON_INSTALL_VERSION in wrangler.toml names it.
+const POWERSHELL = 'irm https://zero-x.live/install.ps1 | iex';
 
-// Every install command the site shows, as plain text (escape & as &amp; in HTML).
+// Every install command the site shows, as plain text (escape & as &amp; in HTML), best first.
 export const NEURON_INSTALL = Object.freeze({
-  npm: 'npm install -g @zero-x.live/neuron',
-  pip: `python -m pip install ${NEURON_PRERELEASE ? '--pre ' : ''}neuroncli`,
-  // macOS and Linux (sh, bash, zsh).
-  shell: `curl -fsSL ${DOWNLOAD}/install.sh | sh -s -- --version ${NEURON_VERSION}`,
-  // Windows PowerShell 5.1 or PowerShell 7. `&` is PowerShell's call operator, which Command
-  // Prompt rejects ("& was unexpected at this time."), hence the separate cmd command.
+  // Windows PowerShell 5.1 or PowerShell 7. Works under the default ExecutionPolicy (Restricted):
+  // the policy applies to script files, not to text run by iex.
   powershell: POWERSHELL,
   // Command Prompt (cmd.exe): the same command, run by PowerShell.
-  cmd: `powershell -NoProfile -ExecutionPolicy Bypass -Command "${POWERSHELL}"`,
+  cmd: `powershell -ExecutionPolicy Bypass -NoProfile -Command "${POWERSHELL}"`,
+  // macOS and Linux (sh, bash, zsh).
+  shell: 'curl -fsSL https://zero-x.live/install.sh | sh',
+  // Other ways: npm (Node.js) and pip (Python).
+  npm: 'npm install -g @zero-x.live/neuron',
+  pip: `python -m pip install ${NEURON_PRERELEASE ? '--pre ' : ''}neuroncli`,
+  // The same release's installers straight from GitHub, with the version named (a pre-release is
+  // never GitHub's latest release). `&` is PowerShell's call operator, which Command Prompt rejects.
+  powershellPinned: `& ([scriptblock]::Create((irm ${DOWNLOAD}/install.ps1))) -Version ${NEURON_VERSION} -AddToPath`,
+  shellPinned: `curl -fsSL ${DOWNLOAD}/install.sh | sh -s -- --version ${NEURON_VERSION}`,
 });

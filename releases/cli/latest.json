@@ -92,7 +92,7 @@
   "install": {
     "npm": "npm install -g @zero-x.live/neuron",
     "pip": "python -m pip install --pre neuroncli",
-    "powershell": "& ([scriptblock]::Create((irm https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.5/install.ps1))) -Version 7.0.0-alpha.5 -AddToPath",
-    "shell": "curl -fsSL https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/v7.0.0-alpha.5/install.sh | sh -s -- --version 7.0.0-alpha.5"
+    "powershell": "irm https://zero-x.live/install.ps1 | iex",
+    "shell": "curl -fsSL https://zero-x.live/install.sh | sh"
   }
 }

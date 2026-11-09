@@ -291,50 +291,6 @@ export function liveText(state, checkedAt, now = Date.now()) {
 
 /* ───────────── Browser wiring ───────────── */
 
-function installTabs(doc) {
-  const root = doc.querySelector('[data-install-tabs]');
-  if (!root) return;
-  const panels = Array.from(root.querySelectorAll('[data-tab-label]'));
-  if (panels.length < 2) return;
-  const list = doc.createElement('div');
-  list.className = 'zx-tabs zx-home-tabs';
-  list.setAttribute('role', 'tablist');
-  list.setAttribute('aria-label', 'Install method');
-  const tabs = panels.map((panel, index) => {
-    const tab = doc.createElement('button');
-    tab.type = 'button';
-    tab.className = 'zx-tab';
-    tab.id = panel.id + '-tab';
-    tab.textContent = panel.dataset.tabLabel;
-    tab.setAttribute('role', 'tab');
-    tab.setAttribute('aria-controls', panel.id);
-    panel.setAttribute('role', 'tabpanel');
-    panel.setAttribute('aria-labelledby', tab.id);
-    tab.addEventListener('click', () => select(index, false));
-    list.append(tab);
-    return tab;
-  });
-  const select = (index, focus) => {
-    tabs.forEach((tab, i) => {
-      const active = i === index;
-      tab.setAttribute('aria-selected', String(active));
-      tab.tabIndex = active ? 0 : -1;
-      panels[i].hidden = !active;
-    });
-    if (focus) tabs[index].focus();
-  };
-  list.addEventListener('keydown', event => {
-    const current = tabs.indexOf(doc.activeElement);
-    if (current < 0) return;
-    const next = { ArrowRight: (current + 1) % tabs.length, ArrowLeft: (current - 1 + tabs.length) % tabs.length, Home: 0, End: tabs.length - 1 }[event.key];
-    if (next === undefined) return;
-    event.preventDefault();
-    select(next, true);
-  });
-  root.prepend(list);
-  select(0, false);
-}
-
 /** The maker badge: the vendored logo when there is one, otherwise a monogram. */
 export function makerBadge(doc, maker) {
   const badge = doc.createElement('span');
@@ -531,7 +487,6 @@ export function liveModels(doc, win, { fetchImpl, clock = () => Date.now() } = {
 
 if (typeof document !== 'undefined' && typeof window !== 'undefined') {
   if (document.querySelector('[data-home]')) {
-    installTabs(document);
   }
   if (document.querySelector('[data-live-models]')) liveModels(document, window);
 }

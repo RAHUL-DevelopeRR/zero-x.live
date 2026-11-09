@@ -20,18 +20,12 @@
   .zx-home-hero .zx-term { margin-top: 28px; }
 }
 
-/* Install box: a tab strip over the command */
-.zx-home-install { margin: var(--zx-s5) 0 var(--zx-s4); border: 1px solid var(--zx-border); border-radius: var(--zx-radius); background: var(--zx-bg); overflow: hidden; }
-.zx-home-install .zx-home-tabs { flex-wrap: wrap; gap: 2px; margin: 0; padding: 4px; border: 0; border-bottom: 1px solid var(--zx-border); background: var(--zx-panel); overflow: visible; }
-.zx-home-install .zx-tab { min-height: 32px; padding: 4px 10px; border: 0; border-radius: var(--zx-radius-sm); font-size: .8125rem; }
-.zx-home-install .zx-tab:hover { color: var(--zx-ink); }
-.zx-home-install .zx-tab[aria-selected="true"] { background: var(--zx-bg); color: var(--zx-ink); box-shadow: 0 0 0 1px var(--zx-border-strong); }
-.zx-home-install .zx-tab:focus-visible { box-shadow: 0 0 0 2px var(--zx-accent-text) inset; }
-.zx-home-install .zx-install { padding: var(--zx-s3) var(--zx-s3) var(--zx-s2); }
-.zx-home-install .zx-code { margin-bottom: var(--zx-s2); }
-.zx-home-install .zx-code pre::before { content: '$ '; color: var(--zx-faint); user-select: none; }
-.zx-home-install .zx-help { padding: 0 2px var(--zx-s2); }
-@media (pointer: coarse) { .zx-home-install .zx-tab { min-height: 40px; } }
+/* Install bar (zx-tokens.css): under the copy on phones, centred across the hero from 1000px */
+.zx-home-hero > .zx-getbar { margin: 0 auto; }
+@media (min-width: 1000px) {
+  .zx-home-hero { row-gap: var(--zx-s6); }
+  .zx-home-hero > .zx-getbar { grid-column: 1 / -1; grid-row: 2; }
+}
 
 /* Terminal illustration: a panel, a header row, mono text. It follows the theme. */
 .zx-term { margin: 0; min-width: 0; border: 1px solid var(--zx-border); border-radius: var(--zx-radius); background: var(--zx-panel); overflow: hidden; }
@@ -89,7 +83,7 @@ a.zx-product:hover { color: inherit; }
 
 /* Closing call to action: a plain panel, left aligned */
 .zx-home-cta { width: calc(100% - 2 * var(--zx-gutter)); margin: var(--zx-s5) auto var(--zx-s7); padding: var(--zx-s6) var(--zx-s5); border: 1px solid var(--zx-border); border-radius: var(--zx-radius); background: var(--zx-panel); }
-.zx-home-cta .zx-code { max-width: 560px; background: var(--zx-bg); }
+.zx-home-cta .zx-getbar { margin-block: var(--zx-s4) var(--zx-s3); }
 .zx-home-cta { max-width: calc(var(--zx-max) - 2 * var(--zx-gutter)); }
 .zx-home-cta .zx-help { margin-bottom: var(--zx-s4); }
 @media (min-width: 960px) { .zx-home-cta { padding: var(--zx-s7) var(--zx-s6); } }

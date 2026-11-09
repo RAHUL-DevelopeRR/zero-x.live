@@ -691,3 +691,50 @@ a.zx-card:hover { border-color: var(--zx-border-strong); background: var(--zx-pa
 .zx-maker[data-maker="moonshot"] { --zx-logo: url("/Assets/makers/moonshot.svg"); }
 .zx-maker[data-maker="mistral"] { --zx-logo: url("/Assets/makers/mistral.svg"); }
 .zx-maker[data-maker="zero-x"]::before { background: url("/Assets/zerox-mark.svg") center / contain no-repeat; -webkit-mask: none; mask: none; width: 20px; height: 20px; }
+
+/* ---------------------------------------------------------------- install bar
+   <div class="zx-getbar" data-install-bar>: one pill holding "Get Neuron" (a menu button that picks
+   the install method, install-bar.js), the chosen command on one line (scrolls inside the pill when
+   it is wider) and a copy button (copy-code.js). Without JavaScript the label is plain text, the pill
+   shows the page's default command and .zx-getbar__list lists every command. */
+.zx-getbar { width: 100%; max-width: 680px; margin: var(--zx-s5) auto var(--zx-s4); text-align: center; }
+.zx-getbar--start { margin-left: 0; text-align: left; }
+.zx-getbar__pill { position: relative; display: flex; align-items: center; gap: 6px; min-width: 0; padding: 5px; border: 1px solid var(--zx-border-strong); border-radius: 999px; background: var(--zx-bg-raised); box-shadow: 0 2px 8px rgba(27, 27, 27, .06); text-align: left; }
+.zx-getbar__picker { position: relative; flex: none; }
+.zx-getbar__pick { display: inline-flex; align-items: center; gap: 6px; min-height: 38px; margin: 0; padding: 0 14px 0 16px; border: 0; border-radius: 999px; background: var(--zx-ink-fill); color: var(--zx-on-ink); font: 500 .875rem/1 var(--zx-font-body); white-space: nowrap; }
+button.zx-getbar__pick { cursor: pointer; transition: opacity .12s ease; }
+button.zx-getbar__pick:hover { opacity: .88; }
+button.zx-getbar__pick:focus-visible { outline: none; box-shadow: var(--zx-focus); }
+.zx-getbar__chevron { transition: transform .12s ease; }
+.zx-getbar__pick[aria-expanded="true"] .zx-getbar__chevron { transform: rotate(180deg); }
+.zx-getbar__scroll { flex: 1 1 auto; min-width: 0; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; border-radius: var(--zx-radius-sm); }
+.zx-getbar__scroll::-webkit-scrollbar { display: none; }
+.zx-getbar__scroll:focus-visible { outline: 2px solid var(--zx-accent-text); outline-offset: 0; }
+.zx-getbar .zx-getbar__cmd { display: block; width: max-content; margin: 0; padding: 8px 6px; border: 0; border-radius: 0; background: none; color: var(--zx-text); font-size: .875rem; line-height: 1.4; white-space: pre; overflow-wrap: normal; }
+.zx-tok-cmd { color: var(--zx-accent-text); font-weight: 500; }
+.zx-tok-op, .zx-tok-run { color: var(--zx-tan-text); font-weight: 500; }
+.zx-tok-flag { color: var(--zx-muted); }
+.zx-getbar .zx-copy { position: static; flex: none; width: 36px; height: 36px; border-radius: 999px; background: transparent; }
+.zx-getbar .zx-copy:hover { background: var(--zx-bg); }
+.zx-getbar__menu { position: absolute; top: calc(100% + 8px); left: 0; z-index: 30; display: flex; flex-direction: column; min-width: 232px; padding: 4px; border: 1px solid var(--zx-border-strong); border-radius: var(--zx-radius); background: var(--zx-bg); box-shadow: var(--zx-shadow); }
+.zx-getbar__item { display: flex; align-items: center; gap: 8px; width: 100%; white-space: nowrap; min-height: 36px; margin: 0; padding: 6px 10px; border: 0; border-radius: var(--zx-radius-sm); background: transparent; color: var(--zx-ink); font: 400 .875rem/1.3 var(--zx-font-body); text-align: left; cursor: pointer; }
+.zx-getbar__item:hover, .zx-getbar__item:focus-visible { outline: none; background: var(--zx-surface-strong); }
+.zx-getbar__item:focus-visible { box-shadow: inset 0 0 0 2px var(--zx-accent-text); }
+.zx-getbar__check { visibility: hidden; color: var(--zx-accent-text); }
+.zx-getbar__item[aria-checked="true"] { font-weight: 500; }
+.zx-getbar__item[aria-checked="true"] .zx-getbar__check { visibility: visible; }
+.zx-getbar__alt { margin: var(--zx-s2) 0 0; font-size: .8125rem; color: var(--zx-faint); }
+.zx-getbar__list { margin: var(--zx-s4) 0 0; padding: 0; list-style: none; text-align: left; }
+.zx-getbar__list li { display: grid; gap: 2px; margin: 0 0 var(--zx-s3); }
+.zx-getbar__name { font-family: var(--zx-font-mono); font-size: var(--zx-fs-label); letter-spacing: var(--zx-tracking-label); text-transform: uppercase; color: var(--zx-faint); }
+.zx-getbar__list code { justify-self: start; overflow-wrap: anywhere; }
+.zx-js .zx-getbar__list { display: none; }
+@media (pointer: coarse) {
+  .zx-getbar__item { min-height: 44px; }
+  .zx-getbar .zx-copy { width: 40px; height: 40px; }
+  .zx-getbar__pick { min-height: 40px; }
+}
+@media (max-width: 479px) {
+  .zx-getbar__pick { padding: 0 10px 0 12px; }
+  .zx-getbar .zx-getbar__cmd { font-size: .8125rem; }
+}
