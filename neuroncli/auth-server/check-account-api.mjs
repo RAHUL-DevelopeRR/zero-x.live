@@ -49,12 +49,13 @@ function fakeDatabase() {
     policy,
     credits: { balance_microusd: account.credit_balance_microusd ?? 0, monthly_grant_microusd: policy.monthly_credit_microusd },
     subscription: account.subscription ?? null,
-    usage_today: { requests: account.daily_requests, tokens: account.daily_tokens_used, resets_at: `${dayOffset(1)}T00:00:00.000Z` },
+    usage_today: { requests: account.daily_requests, tokens: account.daily_tokens_used, resets_at: `${dayOffset(1)}T00:00:00.000Z`,
+      ...(account.today_raw ?? {}) },
     // zerox_account_overview.usage_window (migration 20261102000000): null without a window.
     usage_window: policy.window_tokens && policy.window_seconds ? { window_seconds: policy.window_seconds,
       limit_tokens: policy.window_tokens, tokens: account.window_tokens_used ?? 0,
       remaining_tokens: Math.max(0, policy.window_tokens - (account.window_tokens_used ?? 0)),
-      resets_at: account.window_resets_at ?? null } : null,
+      resets_at: account.window_resets_at ?? null, ...(account.window_raw ?? {}) } : null,
     // zerox_account_overview.usage_month (migration 20261106000600): this month's tokens per sponsored family, the limit
     // from the p_caps the gateway sends.
     usage_month: state.capsMissing ? undefined : state.month.map(row => ({ ...row, limit_tokens: (p_caps ?? []).find(cap => cap.family === row.family)?.month_tokens ?? null,
@@ -521,7 +522,7 @@ try {
 
   // ── 4. GET /api/plans (public, static fallback identical to contract §1) ──
   const expectedPlans = [
-    { id: 'free', name: 'Free', price: { usd_cents: 0, inr_paise: 0 }, limits: { daily_requests: 100, daily_tokens: 5000000, window_tokens: 1000000, window_seconds: 18000, rpm: 10, concurrency: 2 }, monthly_credit_usd: 0, tiers: ['free'] },
+    { id: 'free', name: 'Free', price: { usd_cents: 0, inr_paise: 0 }, limits: { daily_requests: 100, daily_tokens: 5000000, window_tokens: 3000000, window_seconds: 18000, rpm: 10, concurrency: 2 }, monthly_credit_usd: 0, tiers: ['free'] },
     { id: 'athlete', name: 'Athlete', price: { usd_cents: 100, inr_paise: 8900 }, limits: { daily_requests: 300, daily_tokens: 6000000, window_tokens: null, window_seconds: null, rpm: 15, concurrency: 2 }, monthly_credit_usd: 0.75, tiers: ['free', 'paid'] },
     { id: 'speed', name: 'Speed', price: { usd_cents: 500, inr_paise: 44900 }, limits: { daily_requests: 1000, daily_tokens: 8000000, window_tokens: null, window_seconds: null, rpm: 20, concurrency: 3 }, monthly_credit_usd: 4, tiers: ['free', 'paid'] },
     { id: 'pro', name: 'Pro', price: { usd_cents: 1000, inr_paise: 89900 }, limits: { daily_requests: 2000, daily_tokens: 10000000, window_tokens: null, window_seconds: null, rpm: 30, concurrency: 4 }, monthly_credit_usd: 8, tiers: ['free', 'paid'] },
@@ -564,7 +565,7 @@ try {
   // database, not the static catalogue, decides what is enforced).
   {
     const { window_tokens: _tokens, window_seconds: _seconds, ...oldRow } = B1_POLICY_ROWS.find(row => row.plan === 'free');
-    assert.deepEqual([_tokens, _seconds], [1000000, 18000], 'the seeded Free row has the 5-hour window');
+    assert.deepEqual([_tokens, _seconds], [3000000, 18000], 'the seeded Free row has the 5-hour window');
     const oldFree = catalogEntry(PLAN_CATALOG[0], { ...oldRow, daily_tokens: 500000 });
     assert.deepEqual([oldFree.limits.daily_tokens, oldFree.limits.window_tokens, oldFree.limits.window_seconds], [500000, null, null]);
   }
@@ -594,10 +595,10 @@ try {
       image_url: 'https://img.example.test/a.png' },
     session_expires_at: minted.body.expires_at,
     plan: { id: 'free', name: 'Free' },
-    limits: { daily_requests: 100, daily_tokens: 5000000, rpm: 10, concurrency: 2, window_tokens: 1000000, window_seconds: 18000,
+    limits: { daily_requests: 100, daily_tokens: 5000000, rpm: 10, concurrency: 2, window_tokens: 3000000, window_seconds: 18000,
       search: { daily_searches: 40, daily_research_runs: 3 }, colony: { max_workers: 1, max_tokens_per_run: 300000 } },
     usage_today: { requests: 7, tokens: 7000, resets_at: `${dayOffset(1)}T00:00:00.000Z` },
-    usage_window: { tokens: 6000, limit_tokens: 1000000, remaining_tokens: 994000, window_seconds: 18000,
+    usage_window: { tokens: 6000, limit_tokens: 3000000, remaining_tokens: 2994000, window_seconds: 18000,
       resets_at: `${dayOffset(0)}T22:30:00.000Z` },
     usage_month: [],
     credits: { balance_usd: 1.234567, monthly_grant_usd: 0 },
@@ -607,6 +608,21 @@ try {
     policy: { connectors: { allowed: ['catalog:*'], denied: [], required: [], hosted: [], allow_unvetted: true,
       catalog_version: '2026-11-03' } },
   });
+  // Counted tokens and their raw split (migration 20261109000000): a database that reports the split adds
+  // token_split (uncached input, cached input, output); one that does not (above) leaves it out.
+  Object.assign(db.accounts.get(userA.id), { daily_tokens_used: 468000, window_tokens_used: 468000,
+    today_raw: { prompt_tokens: 1000000, cache_read_tokens: 600000, completion_tokens: 8000 },
+    window_raw: { prompt_tokens: '1000000', cache_read_tokens: '600000', completion_tokens: '8000' } });
+  account = await json(await request('/api/account', { token: sessionToken }));
+  assert.deepEqual(account.body.usage_today, { requests: 7, tokens: 468000, resets_at: `${dayOffset(1)}T00:00:00.000Z`,
+    token_split: { input_tokens: 400000, cached_input_tokens: 600000, output_tokens: 8000 } });
+  assert.deepEqual(account.body.usage_window, { tokens: 468000, limit_tokens: 3000000, remaining_tokens: 2532000, window_seconds: 18000,
+    resets_at: `${dayOffset(0)}T22:30:00.000Z`, token_split: { input_tokens: 400000, cached_input_tokens: 600000, output_tokens: 8000 } });
+  Object.assign(db.accounts.get(userA.id), { daily_tokens_used: 7000, window_tokens_used: 6000, today_raw: { prompt_tokens: null,
+    cache_read_tokens: 0, completion_tokens: 0 }, window_raw: undefined });
+  account = await json(await request('/api/account', { token: sessionToken }));
+  assert.equal('token_split' in account.body.usage_today, false, 'a split with a null part is left out');
+  delete db.accounts.get(userA.id).today_raw;
   // Claude Haiku 5.5's monthly allowance (contract section 19.3): the family, its public name, the month's tokens, the limit,
   // what is left and when it renews; the gateway sends the allowances as p_caps.
   db.month = [{ family: 'anthropic/claude-haiku-5-5', tokens: 2500000, requests: 40, resets_at: '2026-12-01T00:00:00+00:00' }];

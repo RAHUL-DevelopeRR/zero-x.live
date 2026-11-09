@@ -470,8 +470,11 @@ try {
   assert.equal(account.usage_today.requests, 1);
   assert.equal(account.usage_today.tokens, settled.prompt_tokens + settled.completion_tokens);
   assert.equal(account.usage_today.resets_at, nextUtcMidnight());
+  // A provider without a cache split: counted tokens are prompt + completion, and token_split shows no cached input.
+  const split = { input_tokens: settled.prompt_tokens, cached_input_tokens: 0, output_tokens: settled.completion_tokens };
+  assert.deepEqual(account.usage_today.token_split, split);
   assert.deepEqual({ ...account.usage_window, resets_at: undefined }, { tokens: account.usage_today.tokens, limit_tokens: 50000,
-    remaining_tokens: 50000 - account.usage_today.tokens, window_seconds: 18000, resets_at: undefined });
+    remaining_tokens: 50000 - account.usage_today.tokens, window_seconds: 18000, resets_at: undefined, token_split: split });
   const windowFrees = Date.parse(account.usage_window.resets_at);
   assert.ok(windowFrees > Date.now() + 17000000 && windowFrees <= Date.now() + 18000000, 'the window frees 5 hours after the request');
   const usage = (await call('/api/usage', { token: ses })).body;
@@ -981,8 +984,10 @@ try {
     assert.deepEqual([event.model, event.tier, event.prompt_tokens, event.completion_tokens, event.cost_usd], [HAIKU_FAMILY, 'free', 20800, 800, 0],
       'the user is charged nothing');
     const haikuAccount = (await call('/api/account', { token: haikuSession })).body;
+    // The month counts counted tokens (20261109000000): 800 uncached + 4,000 cache writes + 10% of 16,000 cache reads
+    // + 800 output = 7,200, not the raw 21,600.
     assert.deepEqual(haikuAccount.usage_month.map(row => [row.family, row.model_name, row.tokens, row.limit_tokens, row.remaining_tokens]),
-      [[HAIKU_FAMILY, 'Claude Haiku 5.5', 21600, HAIKU_MONTH_TOKENS, HAIKU_MONTH_TOKENS - 21600]], '/api/account counts the month');
+      [[HAIKU_FAMILY, 'Claude Haiku 5.5', 7200, HAIKU_MONTH_TOKENS, HAIKU_MONTH_TOKENS - 7200]], '/api/account counts the month');
     assert.equal(haikuAccount.credits.balance_usd, 0);
     const haikuUsage = (await call('/api/usage', { token: haikuSession })).body.by_model.find(row => row.model === HAIKU_FAMILY);
     assert.deepEqual([haikuUsage.cost_usd, haikuUsage.sponsored_cost_microusd], [0, haikuCost], 'what Zero-X paid is recorded');
@@ -1152,8 +1157,8 @@ try {
   // Claude Haiku 5.5: the month rows hold exactly the settled tokens, and nothing was charged or ledgered for them.
   const monthRows = (await ledgerDb.query(`SELECT u.user_id, u.tokens::bigint AS tokens, u.requests::int AS requests,
       u.sponsored_cost_microusd::bigint AS sponsored FROM public.zerox_family_month_usage AS u WHERE u.family = $1`, [HAIKU_FAMILY])).rows;
-  assert.deepEqual(monthRows.filter(row => row.user_id !== haikuCapUserId).map(row => [Number(row.tokens), row.requests]).sort(), [[21600, 1], [21600, 1]],
-    'one Free and one Pro request, each 21,600 settled tokens');
+  assert.deepEqual(monthRows.filter(row => row.user_id !== haikuCapUserId).map(row => [Number(row.tokens), row.requests]).sort(), [[7200, 1], [7200, 1]],
+    'one Free and one Pro request, each 7,200 counted tokens (21,600 raw)');
   assert.deepEqual(monthRows.filter(row => row.user_id === haikuCapUserId).map(row => [Number(row.tokens), row.requests]), [[HAIKU_MONTH_TOKENS - 10, 0]],
     'a refused request holds nothing in the month');
   assert.equal((await ledgerDb.query(`SELECT count(*)::int AS n FROM public.zerox_credit_ledger AS l JOIN public.zerox_reservations AS r

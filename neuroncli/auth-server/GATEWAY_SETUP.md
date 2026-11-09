@@ -324,6 +324,8 @@ and apply the missing ones, in order (the ten catalog and app migrations were re
 23. `20261106000800_plan_features_haiku.sql` (the Haiku line in every plan's features; no restart needed if applied late)
 24. `20261107000000_pool_user_cost_share.sql` (one free account may use at most 25 percent of a sponsored pool's daily spend cap `cpd`; later requests read `user_pool_share` and the gateway tries the next pool; the pool cap itself is unchanged; apply any time, no gateway change)
 25. `20261107000100_pool_share_refunds.sql` (a refunded attempt no longer counts toward the per-user share of a free pool, and a pool with rpd 0 or tpd 0 answers pool_exhausted; replaces `zerox_reserve_v2` again, same arguments; apply any time, no gateway change)
+26. `20261108000000_athlete_speed_plans.sql` (the Athlete and Speed plans)
+27. `20261109000000_cache_weighted_limits.sql` (user token limits count prompt-cache reads at 10%, `zerox_settle_v2` gains `p_counted_tokens`, `zerox_reservations.counted_tokens`, the raw split in `zerox_account_overview`, and Free's window becomes 3,000,000 tokens per 5 hours; **apply before deploying the gateway that sends `p_counted_tokens`**, since until then its settlements with cache reads fail; the gateway before it keeps working against the migration)
 
 **Billing details (`20261106000100_billing_details.sql`).** Two new tables (`zerox_billing_profiles`,
 `zerox_billing_consents`) and four functions; nothing existing changes, and it does not depend on

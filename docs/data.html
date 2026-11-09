@@ -135,7 +135,7 @@
 
         <section id="tokens" aria-labelledby="tokens-title">
           <h2 id="tokens-title">What a token is</h2>
-          <p>A token is a piece of text, roughly three-quarters of a word. Zero-X counts the tokens the provider reports: prompt tokens (everything Neuron sent, including history and files) plus completion tokens (what the model wrote). A coding agent resends its context with every step, so a typical Neuron step uses about 25,000 tokens, and the Free plan's 1,000,000 tokens per 5 hours is roughly 40 steps. Use <code>/compact</code> to shrink the prompt. Limits are on the <a href="/pricing">pricing page</a>.</p>
+          <p>A token is a piece of text, roughly three-quarters of a word. Zero-X counts the tokens the provider reports: prompt tokens (everything Neuron sent, including history and files) plus completion tokens (what the model wrote). Cached input, the part of the conversation the model has already seen, counts at 10% toward your limits. A coding agent resends its context with every step, but most of it is cached, so a typical Neuron step counts about 10,000 tokens, and the Free plan's 3,000,000 tokens per 5 hours is roughly 300 steps. Use <code>/compact</code> to shrink the prompt. Limits are on the <a href="/pricing">pricing page</a>.</p>
         </section>
 
         <section id="control" aria-labelledby="control-title">

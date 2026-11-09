@@ -142,8 +142,11 @@ Nothing below needs Supabase, Razorpay or provider accounts.
   `concurrency_limit`, `allowed_tiers`, `monthly_credit_microusd`, prices and Razorpay plan
   ids). Edits apply to enforcement immediately and to the gateway's cached view within 60 s.
   `window_tokens` and `window_seconds` (set together) give a plan a rolling token window instead
-  of a daily token cap: Free has 1,000,000 tokens every 5 hours (18,000 s), and its
+  of a daily token cap: Free has 3,000,000 tokens every 5 hours (18,000 s), and its
   `daily_tokens` (5,000,000) refuses nothing. Paid plans have none; setting both opts a plan in.
+  Every user token limit counts counted tokens: uncached input plus 10% of prompt-cache reads plus
+  output (`TOKEN_LIMIT_CACHE_READ_WEIGHT`, 0 to 1, default 0.1; migration
+  `20261109000000_cache_weighted_limits.sql`). Pool budgets and credits use raw tokens and cost.
 - Containers: `docker build -t neuron-server .` then `docker run --env-file .env -p 8787:8787
   neuron-server`. Put a TLS proxy in front, and set `EXTRA_WEB_HOSTS` to the public host it
   serves: the image sets `NODE_ENV=production`, under which the server answers only the hosts

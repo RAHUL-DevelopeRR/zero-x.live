@@ -4,7 +4,8 @@
 // without a database keep the session-KV daily allocation.
 import { databaseConfigured, rpc } from './account-store.js';
 import { poolKey } from './catalog.js';
-import { billableUsage, costMicrousd, estimateOutputTokens, reserveCostMicrousd } from './pricing.js';
+import { billableUsage, costMicrousd, countedTokens, estimateOutputTokens, reserveCostMicrousd,
+  TOKEN_LIMIT_CACHE_READ_WEIGHT } from './pricing.js';
 import { billedDailyCapMicrousd, sponsoredTermsFor } from './catalog-guardrails.js';
 import { providerType } from './catalog-types.js';
 
@@ -126,8 +127,8 @@ export function exceedsWindow(row, tokens) {
 // The message for user_window_tokens (zerox_reserve_v2 window_* columns, migration
 // 20261102000000), from the window's count (window_used_tokens, without the refused request) and
 // the request's reserved tokens:
-// - used up: "You've used your 1,000,000 tokens for this 5-hour window; it frees up at 17:05 UTC."
-// - not enough left: "This request needs 30,000 tokens but only 10,000 of your 1,000,000 tokens
+// - used up: "You've used your 3,000,000 tokens for this 5-hour window; it frees up at 17:05 UTC."
+// - not enough left: "This request needs 30,000 tokens but only 10,000 of your 3,000,000 tokens
 //   for this 5-hour window are left; enough frees up at 17:05 UTC."
 // - larger than the window: no time is given, since waiting never makes it fit.
 export function windowQuotaMessage(row, now = Date.now(), tokens = null) {
@@ -258,14 +259,19 @@ export function reserveError(row, now = Date.now(), tokens = null, modelName = u
 // (model, tier and vault key) is the one stored on the reservation. Prompt-cache reads and
 // writes (5-minute and 1-hour writes together) are part of p_prompt_tokens; each is billed at its
 // own rate (migration 20261029000800, the 11-argument zerox_settle_v2).
+// p_counted_tokens (migration 20261109000000_cache_weighted_limits.sql) is what the user's token
+// limits count (pricing.js countedTokens: cache reads at cacheReadWeight); the pool keeps the raw
+// p_prompt_tokens + p_completion_tokens. It is sent only when it differs from the raw sum, so usage
+// without cache reads settles with exactly the arguments it always had.
 export function settlementArgs({ reservationId, entry, pool, usage, promptEstimate = 0, outputBytes = 0,
-  status, latencyMs = 0, errorCode = null }) {
+  status, latencyMs = 0, errorCode = null, cacheReadWeight: weight = TOKEN_LIMIT_CACHE_READ_WEIGHT }) {
   let billed = null;
   if (status !== 'refunded') {
     billed = billableUsage(usage, { prompt_tokens: promptEstimate, completion_tokens: estimateOutputTokens(outputBytes) });
   }
   const prompt = billed?.prompt_tokens ?? 0;
   const completion = billed?.completion_tokens ?? 0;
+  const counted = billed ? countedTokens(billed, weight) : 0;
   return {
     p_reservation_id: reservationId,
     p_prompt_tokens: prompt,
@@ -279,6 +285,7 @@ export function settlementArgs({ reservationId, entry, pool, usage, promptEstima
     p_error_code: errorCode,
     p_cache_read_tokens: billed?.cache_read_tokens ?? 0,
     p_cache_write_tokens: (billed?.cache_write_tokens ?? 0) + (billed?.cache_write_1h_tokens ?? 0),
+    ...(counted !== prompt + completion ? { p_counted_tokens: counted } : {}),
   };
 }
 

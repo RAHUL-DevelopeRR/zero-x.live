@@ -215,6 +215,20 @@ export function lastDaysRange(now, days = 30) {
   return { from: isoDay(today - (days - 1) * DAY_MS), to: isoDay(today) };
 }
 
+// The raw tokens behind counted tokens (GET /api/account token_split): null unless all three are numbers.
+function normalizeSplit(split) {
+  if (!split || typeof split !== 'object') return null;
+  const values = [split.input_tokens, split.cached_input_tokens, split.output_tokens].map(toNumber);
+  if (values.some(value => value === null || value < 0)) return null;
+  return { input: values[0], cached: values[1], output: values[2] };
+}
+
+// "Input 400K · cached 600K (counts 10%) · output 8K", or null without a split or any tokens.
+export function tokenSplitText(split) {
+  if (!split || split.input + split.cached + split.output <= 0) return null;
+  return 'Input ' + formatTokens(split.input) + ' · cached ' + formatTokens(split.cached) + ' (counts 10%) · output ' + formatTokens(split.output);
+}
+
 export function normalizeAccount(data) {
   const source = data && typeof data === 'object' ? data : {};
   const user = source.user && typeof source.user === 'object' ? source.user : {};
@@ -235,10 +249,12 @@ export function normalizeAccount(data) {
       rpm: toNumber(limits.rpm), concurrency: toNumber(limits.concurrency),
       window_tokens: toNumber(limits.window_tokens), window_seconds: toNumber(limits.window_seconds),
     },
-    usage: { requests: toNumber(usage.requests) || 0, tokens: toNumber(usage.tokens) || 0, resets_at: text(usage.resets_at, 40) },
+    usage: { requests: toNumber(usage.requests) || 0, tokens: toNumber(usage.tokens) || 0, resets_at: text(usage.resets_at, 40),
+      split: normalizeSplit(usage.token_split) },
     // Free's rolling token window (GET /api/account usage_window); null for plans without one.
     window: windowLimit && windowSeconds ? {
       tokens: toNumber(win.tokens) || 0, limit: windowLimit, seconds: windowSeconds, resets_at: text(win.resets_at, 40),
+      split: normalizeSplit(win.token_split),
     } : null,
     credits: { balance_usd: toNumber(credits.balance_usd), monthly_grant_usd: toNumber(credits.monthly_grant_usd) },
     subscription: sub ? { status: text(sub.status, 32), current_period_end: text(sub.current_period_end, 40), cancel_at_period_end: sub.cancel_at_period_end === true } : null,
@@ -608,6 +624,10 @@ export function createDashboard({ doc = globalThis.document, win = globalThis.wi
       setProgress('ov-tokens-bar', usage.tokens, tokenLimit, formatCount(usage.tokens) + ' of ' + (tokenLimit !== null ? formatCount(tokenLimit) : 'unknown') + ' tokens used today');
       setText('ov-tokens-detail', tokenLimit !== null ? formatTokens(Math.max(0, tokenLimit - usage.tokens)) + ' tokens left today' : 'Daily token limit unavailable');
     }
+    // What the counted tokens are made of: cached input counts at 10% toward the limit.
+    const splitText = tokenSplitText(win ? win.split : usage.split);
+    setText('ov-tokens-split', splitText || '');
+    $('ov-tokens-split').hidden = !splitText;
 
     const dailyReset = formatResetIn(usage.resets_at, now()) || 'Daily limits reset at 00:00 UTC.';
     setText('ov-reset', win

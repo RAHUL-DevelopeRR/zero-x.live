@@ -321,7 +321,7 @@ neuron</code></pre><button class="zx-copy" type="button" data-copy-target="docs-
             <table class="zx-table">
               <thead><tr><th scope="col">Plan</th><th scope="col" class="zx-num">Requests / day</th><th scope="col" class="zx-num">Tokens</th><th scope="col" class="zx-num">Requests / min</th><th scope="col" class="zx-num">Concurrent</th><th scope="col">Pools</th></tr></thead>
               <tbody>
-                <tr><th scope="row">Free</th><td class="zx-num">100</td><td class="zx-num">1,000,000 per 5 hours</td><td class="zx-num">10</td><td class="zx-num">2</td><td>Free</td></tr>
+                <tr><th scope="row">Free</th><td class="zx-num">100</td><td class="zx-num">3,000,000 per 5 hours</td><td class="zx-num">10</td><td class="zx-num">2</td><td>Free</td></tr>
                 <tr><th scope="row">Athlete</th><td class="zx-num">300</td><td class="zx-num">6,000,000 per day</td><td class="zx-num">15</td><td class="zx-num">2</td><td>Free and paid</td></tr>
                 <tr><th scope="row">Speed</th><td class="zx-num">1,000</td><td class="zx-num">8,000,000 per day</td><td class="zx-num">20</td><td class="zx-num">3</td><td>Free and paid</td></tr>
                 <tr><th scope="row">Pro</th><td class="zx-num">2,000</td><td class="zx-num">10,000,000 per day</td><td class="zx-num">30</td><td class="zx-num">4</td><td>Free and paid</td></tr>
@@ -329,9 +329,10 @@ neuron</code></pre><button class="zx-copy" type="button" data-copy-target="docs-
               </tbody>
             </table>
           </div>
+          <p class="zx-mt">Tokens count input plus output on every model call. Cached input, the part of the conversation the model has already seen, counts at 10%.</p>
           <ul class="zx-mt">
-            <li>Daily caps reset at 00:00 UTC. Tokens are prompt plus completion tokens.</li>
-            <li>Free counts tokens over a rolling 5-hour window: each request's tokens count for 5 hours from when it started, and a running request counts with what it reserved (its prompt plus up to 1,024 output tokens) until it finishes. A request that would take the window past 1,000,000 tokens gets <code>insufficient_quota</code> with <code>resets_at</code> and <code>Retry-After</code> set to when enough of the window frees up; a single request larger than the whole window gets neither, since waiting does not make it fit. <code>GET /api/account</code> reports it as <code>usage_window</code>.</li>
+            <li>Daily caps reset at 00:00 UTC.</li>
+            <li>Free counts tokens over a rolling 5-hour window: each request's tokens count for 5 hours from when it started, and a running request counts with what it reserved (its prompt plus up to 1,024 output tokens) until it finishes. A request that would take the window past 3,000,000 tokens gets <code>insufficient_quota</code> with <code>resets_at</code> and <code>Retry-After</code> set to when enough of the window frees up; a single request larger than the whole window gets neither, since waiting does not make it fit. <code>GET /api/account</code> reports it as <code>usage_window</code>.</li>
             <li>Every free pool also has a global daily budget shared by all users; when it is spent you get <code>capacity_exhausted</code> even if your own cap has room.</li>
             <li>Some free models take small requests only (about 8,000 tokens), so <code>auto</code> sends large prompts to models with more headroom.</li>
             <li>Claude Haiku 5.5 is included on every plan at no charge: up to 10M tokens a month per account, counted from the first of the month (UTC) and inside the plan's own limits. Choose it with <code>model: "claude-haiku-5-5"</code>; <code>auto</code> never picks it. When the allowance is used up the request returns <code>insufficient_quota</code> with <code>resets_at</code> and <code>Retry-After</code> set to the first of next month, without an <code>upgrade_url</code>, and every other model keeps working. Responses to Haiku requests carry <code>x-neuron-quota-month-remaining-tokens</code>, and <code>GET /api/account</code> lists the month's tokens in <code>usage_month</code>.</li>

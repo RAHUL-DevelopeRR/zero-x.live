@@ -683,7 +683,7 @@ const ADDRESS = '6/2, N. Pugalur, Karur 639113, Tamil Nadu, India';
   assert.ok(read('contact.html').includes('id="grievance"'));
   for (const file of PUBLIC_PAGES) assert.ok(read(file).match(/<footer[\s\S]*<\/footer>/)[0].includes('Grievance officer'), file + ': footer names the grievance officer');
   assert.match(text('terms.html'), /Prices are the full amount you pay: no GST is charged on them/);
-  assert.match(text('terms.html'), /currently 1,000,000 tokens, with a daily cap on requests, currently 100/);
+  assert.match(text('terms.html'), /currently 3,000,000 tokens, with a daily cap on requests, currently 100/);
   assert.match(text('terms.html'), /Neuron 7.0.0-alpha.5 and parts of the services are pre-release/);
   assert.match(text('terms.html'), /cancel at any time from the Billing tab/);
   assert.match(text('terms.html'), /danger-full-access mode it runs any command without asking/);
@@ -694,7 +694,7 @@ const ADDRESS = '6/2, N. Pugalur, Karur 639113, Tamil Nadu, India';
   assert.match(text('refund.html'), /5 to 7 business days/);
   assert.match(pricingPage, /No GST is charged, so the price shown is the price you pay/);
   assert.match(pricingPage, /Paid plans renew every month at the price shown until you cancel/);
-  assert.match(pricingPage, /How far does 1M tokens go\?/);
+  assert.match(pricingPage, /How far does 3M tokens go\?/);
   // The owner's rule (2026-11-04): the pricing page does not name the providers behind the free models; the
   // privacy policy and docs/data.html, which disclose who receives requests, still do.
   assert.doesNotMatch(pricingPage, /Groq|NVIDIA|Z\.ai|Gemini|Workers AI|free models on OpenRouter|OpenRouter, free/, 'pricing names no upstream provider of the free models');
@@ -731,8 +731,8 @@ const expectedPlans = ['free', 'athlete', 'speed', 'pro', 'max'].map(id => {
 const expectedTopups = [...contract.matchAll(/`(credits_\d+)` \(\$(\d+) credit, \$(\d+) \/ ₹([\d,]+)\)/g)].map(m => ({id: m[1], credit_usd: Number(m[2]), usd_cents: Number(m[3]) * 100, inr_paise: money(m[4])}));
 assert.equal(expectedPlans.length, 5);
 assert.deepEqual(expectedPlans.map(plan => [plan.id, plan.window_tokens, plan.window_seconds]),
-  [['free', 1000000, 18000], ['athlete', null, null], ['speed', null, null], ['pro', null, null], ['max', null, null]],
-  'contract section 1: Free has 1M tokens per rolling 5 hours, paid plans no window');
+  [['free', 3000000, 18000], ['athlete', null, null], ['speed', null, null], ['pro', null, null], ['max', null, null]],
+  'contract section 1: Free has 3M tokens per rolling 5 hours, paid plans no window');
 assert.equal(expectedTopups.length, 2);
 
 const pricing = await import(new URL('pricing.js', root));
@@ -902,8 +902,20 @@ assert.equal(dash.nextTab('usage', 'Enter'), null);
   assert.equal(account.window, null, 'no usage_window, no window');
   const windowed = dash.normalizeAccount({limits: {window_tokens: 1000000, window_seconds: 18000},
     usage_window: {tokens: '250000', limit_tokens: 1000000, remaining_tokens: 750000, window_seconds: 18000, resets_at: '2026-10-16T23:00:00Z'}});
-  assert.deepEqual(windowed.window, {tokens: 250000, limit: 1000000, seconds: 18000, resets_at: '2026-10-16T23:00:00Z'});
+  assert.deepEqual(windowed.window, {tokens: 250000, limit: 1000000, seconds: 18000, resets_at: '2026-10-16T23:00:00Z', split: null});
   assert.deepEqual([windowed.limits.window_tokens, windowed.limits.window_seconds], [1000000, 18000]);
+  // token_split (GET /api/account, migration 20261109000000): the raw tokens behind the counted ones.
+  const split = dash.normalizeAccount({limits: {window_tokens: 3000000, window_seconds: 18000},
+    usage_today: {tokens: 470000, token_split: {input_tokens: 400000, cached_input_tokens: 600000, output_tokens: 8000}},
+    usage_window: {tokens: 468000, limit_tokens: 3000000, window_seconds: 18000,
+      token_split: {input_tokens: '400000', cached_input_tokens: 600000, output_tokens: 8000}}});
+  assert.deepEqual(split.window.split, {input: 400000, cached: 600000, output: 8000});
+  assert.deepEqual(split.usage.split, {input: 400000, cached: 600000, output: 8000});
+  assert.equal(dash.tokenSplitText(split.window.split), 'Input 400K · cached 600K (counts 10%) · output 8K');
+  assert.equal(dash.tokenSplitText(null), null, 'no split, no line');
+  assert.equal(dash.tokenSplitText({input: 0, cached: 0, output: 0}), null, 'nothing used yet, no line');
+  assert.equal(dash.normalizeAccount({usage_today: {token_split: {input_tokens: 'x', cached_input_tokens: 1, output_tokens: 1}}}).usage.split, null,
+    'an invalid split is ignored');
   assert.equal(dash.normalizeAccount({usage_window: {limit_tokens: 'lots', window_seconds: 18000}}).window, null, 'an invalid window is ignored');
   assert.equal(dash.normalizeAccount({user: {image_url: 'https://lh3.googleusercontent.com/a.png'}}).user.image_url, 'https://lh3.googleusercontent.com/a.png');
 }
@@ -959,8 +971,8 @@ assert.equal(limitLabel(athletePlan, 'daily_requests'), '300');
 assert.equal(formatUsdAmount(athletePlan.monthly_credit_usd), '$0.75', 'Athlete credits show cents');
 assert.equal(formatMoney(athletePlan.price.inr_paise, 'INR'), '₹89');
 assert.equal(limitLabel(proPlan, 'daily_tokens'), '10M');
-assert.equal(limitLabel(PLAN_CATALOG.plans[0], 'token_allowance'), '1M every 5 hours', 'Free: the rolling window');
-assert.equal(limitLabel(PLAN_CATALOG.plans[0], 'window_tokens'), '1M');
+assert.equal(limitLabel(PLAN_CATALOG.plans[0], 'token_allowance'), '3M every 5 hours', 'Free: the rolling window');
+assert.equal(limitLabel(PLAN_CATALOG.plans[0], 'window_tokens'), '3M');
 assert.equal(limitLabel(proPlan, 'token_allowance'), '10M per day');
 assert.equal(limitLabel(proPlan, 'window_tokens'), null, 'no window on Pro');
 assert.equal(pricing.windowLength(3600), 'hour');
@@ -968,13 +980,13 @@ assert.equal(pricing.windowLength(5400), '90 minutes');
 assert.equal(pricing.tokenAllowance({limits: {daily_tokens: 500000, window_tokens: null}}), '500K per day', 'a catalog without a window');
 // Running text carries the whole phrase in one hydrated span, so a database without the window
 // (before migration 20261102000000) turns "1M tokens every 5 hours" into "500K tokens per day".
-assert.equal(limitLabel(PLAN_CATALOG.plans[0], 'token_phrase'), '1M tokens every 5 hours');
+assert.equal(limitLabel(PLAN_CATALOG.plans[0], 'token_phrase'), '3M tokens every 5 hours');
 assert.equal(limitLabel({limits: {daily_tokens: 500000, window_tokens: null, window_seconds: null}}, 'token_phrase'), '500K tokens per day');
 assert.equal(limitLabel(proPlan, 'token_phrase'), '10M tokens per day');
 for (const page of ['index.html', 'neuron-cli.html', 'ai-coding-agent.html', 'free-ai-coding-agent.html', 'claude-code-alternative.html']) {
   const html = read(page);
   assert.doesNotMatch(html, /data-plan-limit="free:window_tokens"/, `${page}: no bare window number next to static "every 5 hours"`);
-  assert.match(html, /<span data-plan-limit="free:token_phrase">1M tokens every 5 hours<\/span>/, `${page}: the whole phrase is hydrated`);
+  assert.match(html, /<span data-plan-limit="free:token_phrase">3M tokens every 5 hours<\/span>/, `${page}: the whole phrase is hydrated`);
 }
 assert.deepEqual(pricing.normalizeCatalog({plans: [{id: 'free', price: {usd_cents: 0, inr_paise: 0}, limits: {window_tokens: 1000000, window_seconds: 18000}}]}).plans[0].limits,
   {daily_requests: null, daily_tokens: null, window_tokens: 1000000, window_seconds: 18000, rpm: null, concurrency: null});

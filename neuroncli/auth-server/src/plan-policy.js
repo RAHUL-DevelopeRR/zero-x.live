@@ -32,8 +32,8 @@ export async function loadPlanLimits(env) {
 // zerox_plan_policy rows (features: migration 20261029000900_plan_features_claude.sql, also the
 // site's pricing.js fallback and pricing.html). Prices are in minor units (cents/paise); credits
 // are micro-USD. Free's tokens are limited per rolling window (window_tokens per window_seconds,
-// migration 20261102000000_free_token_window.sql: 1M every 5 hours; its daily_tokens is the most
-// five windows allow in a UTC day and does not refuse requests); null = no window. Free has the
+// migrations 20261102000000_free_token_window.sql and 20261109000000_cache_weighted_limits.sql: 3M
+// counted tokens every 5 hours; its daily_tokens does not refuse requests); null = no window. Free has the
 // free tier only; Pro and Max add the paid tier (Claude Sonnet 5.5 and Claude Opus 5.5, billed
 // from credits); every plan has the same Neuron features and Claude Haiku 5.5 at no charge, up to
 // 10M tokens a month (migration 20261106000800_plan_features_haiku.sql, contract section 19).
@@ -49,10 +49,10 @@ export const ROW_REQUIRED_PLAN_IDS = Object.freeze(['athlete', 'speed']);
 export const PLAN_CATALOG = Object.freeze([
   Object.freeze({
     id: 'free', name: 'Free', price: { usd_cents: 0, inr_paise: 0 }, interval: 'month',
-    limits: { daily_requests: 100, daily_tokens: 5000000, window_tokens: 1000000, window_seconds: 18000, rpm: 10, concurrency: 2 },
+    limits: { daily_requests: 100, daily_tokens: 5000000, window_tokens: 3000000, window_seconds: 18000, rpm: 10, concurrency: 2 },
     monthly_credit_microusd: 0, tiers: ['free'], highlighted: false,
     features: ['Free models chosen for coding, with tool use', 'Claude Haiku 5.5 included: 10M tokens a month at no charge',
-      '100 requests per day and 1M tokens every 5 hours', '10 requests per minute, 2 at once', 'Every Neuron feature, the same on all plans'],
+      '100 requests per day and 3M tokens every 5 hours', '10 requests per minute, 2 at once', 'Every Neuron feature, the same on all plans'],
   }),
   Object.freeze({
     id: 'athlete', name: 'Athlete', price: { usd_cents: 100, inr_paise: 8900 }, interval: 'month',

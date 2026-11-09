@@ -16,6 +16,14 @@ const count = value => {
   const number = Number(value);
   return Number.isFinite(number) && number > 0 ? Math.round(number) : 0;
 };
+// The raw tokens behind a usage block's counted `tokens` (zerox_account_overview, migration
+// 20261109000000): uncached input (cache writes included), input read from the prompt cache (which
+// counts at 10% toward the limits) and output. null when the database does not report the split.
+export function tokenSplit(usage) {
+  if (!usage || !['prompt_tokens', 'cache_read_tokens', 'completion_tokens'].every(key => Number.isFinite(Number(usage[key] ?? NaN)))) return null;
+  const cached = Math.min(count(usage.cache_read_tokens), count(usage.prompt_tokens));
+  return { input_tokens: count(usage.prompt_tokens) - cached, cached_input_tokens: cached, output_tokens: count(usage.completion_tokens) };
+}
 export const nextUtcMidnight = (now = Date.now()) => new Date((Math.floor(now / DAY_MS) + 1) * DAY_MS).toISOString();
 // Postgres jsonb renders timestamps as '2026-10-17T00:00:00+00:00'; the API always answers in
 // the ISO form the gateway's errors use ('2026-10-17T00:00:00.000Z').
@@ -163,13 +171,16 @@ export async function accountPayload(env, caller, { token = '' } = {}) {
       search: searchLimits(planId),
       colony: colonyLimits(planId),
     },
-    // Kept for released clients (the Neuron CLI shows "Tokens today"): today's UTC usage.
+    // Kept for released clients (the Neuron CLI shows "Tokens today"): today's UTC usage. `tokens`
+    // are counted tokens (cache reads at 10%); token_split, when the database reports it, is the
+    // raw input, cached input and output behind them.
     usage_today: {
       requests: count(usage.requests ?? account.daily_requests),
       tokens: count(usage.tokens ?? usage.tokens_used ?? account.daily_tokens_used),
       resets_at: isoTime(usage.resets_at) ?? nextUtcMidnight(),
+      ...(tokenSplit(usage) ? { token_split: tokenSplit(usage) } : {}),
     },
-    // The current rolling window: tokens counted in it, its limit, what is left and when its
+    // The current rolling window: counted tokens in it, its limit, what is left and when its
     // oldest counted tokens leave it (null while it is empty). null without a window.
     usage_window: windowTokens && windowSeconds ? {
       tokens: count(windowUsage?.tokens),
@@ -177,6 +188,7 @@ export async function accountPayload(env, caller, { token = '' } = {}) {
       remaining_tokens: windowUsage ? count(windowUsage.remaining_tokens) : windowTokens,
       window_seconds: windowSeconds,
       resets_at: isoTime(windowUsage?.resets_at),
+      ...(tokenSplit(windowUsage) ? { token_split: tokenSplit(windowUsage) } : {}),
     } : null,
     // This UTC month's tokens on the models with a monthly allowance (contract section 19.3); empty when unused.
     usage_month: monthUsage(env, row.usage_month),

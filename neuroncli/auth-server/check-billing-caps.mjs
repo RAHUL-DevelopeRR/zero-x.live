@@ -88,8 +88,14 @@ const BASE_FEATURES = {
 BASE_FEATURES.ultrawork = BASE_FEATURES.pro;
 // With 20261106000800_plan_features_haiku.sql: the Haiku line is second on Free and first on the paid plans.
 const HAIKU_LINE = 'Claude Haiku 5.5 included: 10M tokens a month at no charge';
+// 20261109000000_cache_weighted_limits.sql: Free's window line says 3M (its window_tokens is 3,000,000).
+const WINDOW_LINE_1M = '100 requests per day and 1M tokens every 5 hours';
+const WINDOW_LINE_3M = '100 requests per day and 3M tokens every 5 hours';
+const with3M = lines => lines.map(line => line === WINDOW_LINE_1M ? WINDOW_LINE_3M : line);
+// BASE_FEATURES as they read while 20261109000000 is applied (the Haiku line removed by its down script).
+const BASE_FEATURES_3M = { ...BASE_FEATURES, free: with3M(BASE_FEATURES.free) };
 const PLAN_FEATURES = {
-  free: [BASE_FEATURES.free[0], HAIKU_LINE, ...BASE_FEATURES.free.slice(1)],
+  free: with3M([BASE_FEATURES.free[0], HAIKU_LINE, ...BASE_FEATURES.free.slice(1)]),
   pro: [HAIKU_LINE, ...BASE_FEATURES.pro],
   max: [HAIKU_LINE, ...BASE_FEATURES.max],
 };
@@ -119,9 +125,10 @@ try {
   assert.ok(files.indexOf(LINEUP) > files.indexOf(PLANS), 'the Free line is rewritten after the plan features are seeded');
   const settleFns = await functionRows('zerox_settle_v2');
   assert.equal(settleFns.length, 1, 'one zerox_settle_v2, so PostgREST never has to choose between overloads');
-  assert.equal(settleFns[0].pronargs, 11);
-  assert.equal(settleFns[0].pronargdefaults, 2);
-  assert.match(settleFns[0].args, /p_error_code text, p_cache_read_tokens bigint, p_cache_write_tokens bigint$/);
+  // 20261109000000_cache_weighted_limits.sql adds p_counted_tokens (defaulted), so the 11-argument call still resolves.
+  assert.equal(settleFns[0].pronargs, 12);
+  assert.equal(settleFns[0].pronargdefaults, 3);
+  assert.match(settleFns[0].args, /p_error_code text, p_cache_read_tokens bigint, p_cache_write_tokens bigint, p_counted_tokens bigint$/);
   const reserveFns = await functionRows('zerox_reserve_v2');
   assert.deepEqual(reserveFns.map(row => [row.pronargs, row.pronargdefaults]), [[9, 2]],
     'one zerox_reserve_v2: 9 arguments with p_cap defaulted (20261106000600), so the 8-argument call of the deployed gateway still resolves');
@@ -130,7 +137,7 @@ try {
     const columns = await columnsOf(table);
     assert.ok(columns.includes('cache_read_tokens') && columns.includes('cache_write_tokens'), `${table} has the cache columns`);
   }
-  ok('migrations applied in order; one 11-argument zerox_settle_v2 (2 defaults), zerox_reserve_v2 unchanged, cost and cache columns');
+  ok('migrations applied in order; one 12-argument zerox_settle_v2 (3 defaults), zerox_reserve_v2 unchanged, cost and cache columns');
 
   // ---------------------------------------------------------------- per-pool daily spend cap (cpd)
   await clockHeadroom(30);
@@ -358,7 +365,7 @@ try {
     'credits alone do not open paid pools on Free');
   // The Haiku line goes away again with its down script (the PLANS statements below rewrite every plan's features).
   await db.exec(await readFile(join(root, 'migrations', 'down', HAIKU_PLANS), 'utf8'));
-  assert.deepEqual(featuresOf(await rpcRows(env, 'zerox_plan_policies_v2', {})), BASE_FEATURES,
+  assert.deepEqual(featuresOf(await rpcRows(env, 'zerox_plan_policies_v2', {})), BASE_FEATURES_3M,
     'the features down script removes exactly the Haiku line');
   await db.exec(await migrationSql(HAIKU_PLANS));
   await db.exec(await migrationSql(HAIKU_PLANS));
@@ -405,7 +412,9 @@ try {
       has_function_privilege('anon', p.oid, 'EXECUTE') AS anon, has_function_privilege('authenticated', p.oid, 'EXECUTE') AS auth,
       has_function_privilege('service_role', p.oid, 'EXECUTE') AS service
     FROM pg_proc AS p JOIN pg_namespace AS n ON n.oid = p.pronamespace WHERE n.nspname = 'public' AND p.proname = ANY($1) ORDER BY 1, 2`, [names])).rows;
-  // Newest first: 20261108000000 removes the Athlete and Speed rows the baseline never had.
+  // Newest first: 20261109000000 restores the 11-argument zerox_settle_v2 and Free's 1M window, then
+  // 20261108000000 removes the Athlete and Speed rows the baseline never had.
+  await db.exec(await readFile(join(root, 'migrations', 'down', '20261109000000_cache_weighted_limits.sql'), 'utf8'));
   await db.exec(await readFile(join(root, 'migrations', 'down', '20261108000000_athlete_speed_plans.sql'), 'utf8'));
   await db.exec(await readFile(join(root, 'migrations', 'down', '20261106000300_connector_policy.sql'), 'utf8'));
   // 20261104300000 only rewrites a Free feature line; its down script brings the line PLANS wrote back.
