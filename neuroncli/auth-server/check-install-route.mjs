@@ -83,9 +83,8 @@ ok('/install.ps1 and /install.sh answer 200 text/plain bootstraps on every host,
 }
 
 // The Windows bootstrap, run for real under `iex` (Windows only) against a stub installer read through
-// a file: URL. By default it installs neuron.exe alone (NEURON_NO_TUI=1 for the installer, then put
-// back) and prints the one command that adds the UI; NEURON_NO_TUI=0/false/no installs the UI too,
-// with the size warning; any other value skips the UI without either message.
+// a file: URL. By default (and with NEURON_NO_TUI=0/false/no) it installs the UI too, after a size
+// warning, and leaves NEURON_NO_TUI alone; any other value skips the UI without the warning.
 if (process.platform === 'win32') {
   const dir = mkdtempSync(join(tmpdir(), 'zx-bootstrap-'));
   try {
@@ -104,10 +103,9 @@ if (process.platform === 'win32') {
     const SIZE = 'more than 100 MB and shows no progress';
     const ADD = "$env:NEURON_NO_TUI = '0'; irm https://zero-x.live/install.ps1 | iex";
     const plain = run(undefined);
-    assert.ok(plain.includes(`stub version=${NEURON_VERSION} addToPath=True noTui=[1]`), 'default: the installer skips the UI\n' + plain);
-    assert.ok(plain.includes('after=[]'), 'default: NEURON_NO_TUI is put back (unset) afterwards');
-    assert.ok(plain.includes(ADD) && plain.includes(`-Command "${ADD}"`), 'default: prints the PowerShell and Command Prompt commands that add the UI');
-    assert.ok(!plain.includes(SIZE), 'default: no download size warning, the UI is not downloaded');
+    assert.ok(plain.includes(`stub version=${NEURON_VERSION} addToPath=True noTui=[]`), 'default: the installer installs the UI\n' + plain);
+    assert.ok(plain.includes('after=[]'), 'default: NEURON_NO_TUI is left unset');
+    assert.ok(plain.includes(SIZE) && !plain.includes(ADD), 'default: warns about the UI download size and prints no second step');
     for (const value of ['0', 'false', 'No']) {
       const out = run(value);
       assert.ok(out.includes(`noTui=[${value}]`) && out.includes(SIZE) && !out.includes(ADD), `NEURON_NO_TUI=${value}: the UI is installed, with the size warning\n${out}`);
@@ -117,7 +115,7 @@ if (process.platform === 'win32') {
       const out = run(value);
       assert.ok(out.includes(`noTui=[${value}]`) && !out.includes(SIZE) && !out.includes(ADD), `NEURON_NO_TUI=${value}: the UI is skipped, no size warning\n${out}`);
     }
-    ok("Windows bootstrap under iex: neuron.exe first by default with the add-the-UI command; NEURON_NO_TUI follows the installer's rule and is restored");
+    ok("Windows bootstrap under iex: installs the UI by default with a size warning; NEURON_NO_TUI follows the installer's rule");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

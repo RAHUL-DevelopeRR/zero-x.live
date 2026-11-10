@@ -44,9 +44,9 @@ export function windowsInstallScript(version) {
 # Downloads the installer of Neuron ${version} from GitHub Releases and runs it with
 # -Version ${version} -AddToPath. It installs neuron.exe (about 23 MB) to
 # %LOCALAPPDATA%\\Programs\\Neuron\\bin, checks its SHA-256 checksums and adds that folder to your
-# user PATH. The full-screen UI, neuron-tui.exe, is more than 100 MB and this release's installer
-# shows no progress while it downloads it, so it is a second, optional step: set NEURON_NO_TUI=0
-# first to install it too (the command is printed at the end). NEURON_INSTALL_DIR chooses the folder.
+# user PATH. It also installs the full-screen UI, neuron-tui.exe (more than 100 MB; this release's
+# installer shows no progress while it downloads it). Set NEURON_NO_TUI=1 first to skip the UI.
+# NEURON_INSTALL_DIR chooses the folder.
 # The installer itself: ${url}
 & {
     $neuronVersion = '${version}'
@@ -65,30 +65,13 @@ export function windowsInstallScript(version) {
         return
     }
     # NEURON_NO_TUI as the installer reads it: '', 0, false and no install the UI, anything else skips it.
-    # Unset or empty, this bootstrap skips the UI (set for the installer only, then put back).
-    $noTuiBefore = $env:NEURON_NO_TUI
-    $noTui = "$noTuiBefore".Trim().ToLowerInvariant()
-    $uiByDefault = -not $noTui
-    if ($uiByDefault) {
-        $env:NEURON_NO_TUI = '1'
-    } elseif (@('0', 'false', 'no') -contains $noTui) {
-        Write-Host 'The full-screen UI is a download of more than 100 MB and shows no progress. On a slow connection it can take several minutes.'
+    # The UI is installed by default; this release's installer shows no progress while it downloads
+    # it, so say so up front.
+    $noTui = "$env:NEURON_NO_TUI".Trim().ToLowerInvariant()
+    if (@('', '0', 'false', 'no') -contains $noTui) {
+        Write-Host 'The full-screen UI is a download of more than 100 MB and shows no progress. On a slow connection it can take several minutes; let it finish.'
     }
-    try {
-        & ([scriptblock]::Create($installer.TrimStart([char]0xFEFF))) -Version $neuronVersion -AddToPath
-    } finally {
-        if ($null -eq $noTuiBefore) { Remove-Item Env:NEURON_NO_TUI -ErrorAction SilentlyContinue } else { $env:NEURON_NO_TUI = $noTuiBefore }
-    }
-    if ($uiByDefault) {
-        Write-Host ''
-        Write-Host 'Optional: the full-screen UI (neuron-tui.exe, more than 100 MB). neuron works without it, using its line REPL.'
-        Write-Host 'To add it, run this in a new terminal (it shows no progress; let it finish):'
-        # A single-quoted here-string: printed as written, nothing expanded.
-        Write-Host @'
-  PowerShell:      ${NEURON_INSTALL.powershellWithUi}
-  Command Prompt:  ${NEURON_INSTALL.cmdWithUi}
-'@
-    }
+    & ([scriptblock]::Create($installer.TrimStart([char]0xFEFF))) -Version $neuronVersion -AddToPath
 }
 `;
 }
