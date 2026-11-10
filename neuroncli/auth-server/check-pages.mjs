@@ -908,10 +908,15 @@ assert.equal(dash.nextTab('usage', 'Enter'), null);
   const split = dash.normalizeAccount({limits: {window_tokens: 3000000, window_seconds: 18000},
     usage_today: {tokens: 470000, token_split: {input_tokens: 400000, cached_input_tokens: 600000, output_tokens: 8000}},
     usage_window: {tokens: 468000, limit_tokens: 3000000, window_seconds: 18000,
-      token_split: {input_tokens: '400000', cached_input_tokens: 600000, output_tokens: 8000}}});
-  assert.deepEqual(split.window.split, {input: 400000, cached: 600000, output: 8000});
-  assert.deepEqual(split.usage.split, {input: 400000, cached: 600000, output: 8000});
+      token_split: {input_tokens: '400000', cached_input_tokens: 600000, output_tokens: 8000, cached_input_weight: 0.1}}});
+  assert.deepEqual(split.window.split, {input: 400000, cached: 600000, output: 8000, weight: 0.1});
+  assert.deepEqual(split.usage.split, {input: 400000, cached: 600000, output: 8000, weight: 0.1}, 'a gateway without cached_input_weight means 0.1');
   assert.equal(dash.tokenSplitText(split.window.split), 'Input 400K · cached 600K (counts 10%) · output 8K');
+  // The weight the gateway enforces (TOKEN_LIMIT_CACHE_READ_WEIGHT) is the one shown.
+  const quarter = dash.normalizeAccount({usage_today: {token_split: {input_tokens: 400000, cached_input_tokens: 600000, output_tokens: 8000, cached_input_weight: 0.25}}});
+  assert.equal(dash.tokenSplitText(quarter.usage.split), 'Input 400K · cached 600K (counts 25%) · output 8K');
+  assert.equal(dash.normalizeAccount({usage_today: {token_split: {input_tokens: 1, cached_input_tokens: 1, output_tokens: 1, cached_input_weight: 7}}}).usage.split.weight, 0.1,
+    'a weight outside 0 to 1 falls back to 0.1');
   assert.equal(dash.tokenSplitText(null), null, 'no split, no line');
   assert.equal(dash.tokenSplitText({input: 0, cached: 0, output: 0}), null, 'nothing used yet, no line');
   assert.equal(dash.normalizeAccount({usage_today: {token_split: {input_tokens: 'x', cached_input_tokens: 1, output_tokens: 1}}}).usage.split, null,

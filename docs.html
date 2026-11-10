@@ -329,7 +329,7 @@ neuron</code></pre><button class="zx-copy" type="button" data-copy-target="docs-
               </tbody>
             </table>
           </div>
-          <p class="zx-mt">Tokens count input plus output on every model call. Cached input, the part of the conversation the model has already seen, counts at 10%.</p>
+          <p class="zx-mt">Tokens count input plus output on every model call. Cached input, the part of the conversation the model has already seen, counts at 10%. While a request runs, it needs room for its whole input; the cached part counts at 10% once it finishes.</p>
           <ul class="zx-mt">
             <li>Daily caps reset at 00:00 UTC.</li>
             <li>Free counts tokens over a rolling 5-hour window: each request's tokens count for 5 hours from when it started, and a running request counts with what it reserved (its prompt plus up to 1,024 output tokens) until it finishes. A request that would take the window past 3,000,000 tokens gets <code>insufficient_quota</code> with <code>resets_at</code> and <code>Retry-After</code> set to when enough of the window frees up; a single request larger than the whole window gets neither, since waiting does not make it fit. <code>GET /api/account</code> reports it as <code>usage_window</code>.</li>

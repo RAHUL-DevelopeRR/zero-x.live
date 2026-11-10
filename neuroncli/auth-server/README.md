@@ -147,6 +147,8 @@ Nothing below needs Supabase, Razorpay or provider accounts.
   Every user token limit counts counted tokens: uncached input plus 10% of prompt-cache reads plus
   output (`TOKEN_LIMIT_CACHE_READ_WEIGHT`, 0 to 1, default 0.1; migration
   `20261109000000_cache_weighted_limits.sql`). Pool budgets and credits use raw tokens and cost.
+  The site and terms say 10%: keep the override at 0.1 unless they change with it, and give the
+  Worker and EC2 the same value, since both write to the same ledger.
 - Containers: `docker build -t neuron-server .` then `docker run --env-file .env -p 8787:8787
   neuron-server`. Put a TLS proxy in front, and set `EXTRA_WEB_HOSTS` to the public host it
   serves: the image sets `NODE_ENV=production`, under which the server answers only the hosts

@@ -471,7 +471,7 @@ try {
   assert.equal(account.usage_today.tokens, settled.prompt_tokens + settled.completion_tokens);
   assert.equal(account.usage_today.resets_at, nextUtcMidnight());
   // A provider without a cache split: counted tokens are prompt + completion, and token_split shows no cached input.
-  const split = { input_tokens: settled.prompt_tokens, cached_input_tokens: 0, output_tokens: settled.completion_tokens };
+  const split = { input_tokens: settled.prompt_tokens, cached_input_tokens: 0, output_tokens: settled.completion_tokens, cached_input_weight: 0.1 };
   assert.deepEqual(account.usage_today.token_split, split);
   assert.deepEqual({ ...account.usage_window, resets_at: undefined }, { tokens: account.usage_today.tokens, limit_tokens: 50000,
     remaining_tokens: 50000 - account.usage_today.tokens, window_seconds: 18000, resets_at: undefined, token_split: split });
@@ -605,7 +605,7 @@ try {
   assert.ok(Date.parse(cap.resets_at) >= windowFrees && Date.parse(cap.resets_at) <= Date.now() + 18000000,
     `the window frees within 5 hours of the requests it counts (${cap.resets_at})`);
   const fmt = value => value.toLocaleString('en-US');
-  assert.match(cap.message, new RegExp(`^This request needs ${fmt(needed)} tokens but only ${fmt(windowNow.remaining_tokens)} ` +
+  assert.match(cap.message, new RegExp(`^This request holds up to ${fmt(needed)} tokens until it finishes \\(its whole input; cached input counts less after the request finishes\\), but only ${fmt(windowNow.remaining_tokens)} ` +
     'of your 50,000 tokens for this 5-hour window are left; enough frees up at \\d{2}:\\d{2} UTC\\.$'), cap.message);
   assert.ok(cap.retry_after_seconds > 17000 && cap.retry_after_seconds <= 18000, `retry ${cap.retry_after_seconds}`);
   assert.equal(capResponse.headers.get('retry-after'), String(cap.retry_after_seconds), 'Retry-After until the window frees');
@@ -614,7 +614,7 @@ try {
   const bigResponse = await call('/v1/chat/completions', { method: 'POST', token: ses,
     body: { model: 'gemini/gemini-2.5-flash', messages: [{ role: 'user', content: 'word '.repeat(42000) }], max_tokens: 4096 } });
   const big = expectError(bigResponse, 429, 'insufficient_quota');
-  assert.match(big.message, /^This request needs [\d,]+ tokens, more than the 50,000 tokens your plan allows in a 5-hour window, so it cannot run on this plan\./);
+  assert.match(big.message, /^This request holds up to [\d,]+ tokens until it finishes, more than the 50,000 tokens your plan allows in a 5-hour window, so it cannot run on this plan\./);
   assert.ok(!big.resets_at && !big.retry_after_seconds, JSON.stringify(big));
   assert.equal(bigResponse.headers.get('retry-after'), null);
   assert.equal(upstream.calls.length, callsBeforeCap);
@@ -1010,7 +1010,7 @@ try {
     // What an alpha.4-shaped client reads: code, message, retry_after_seconds, resets_at, and nothing else it cannot parse.
     assert.deepEqual(Object.keys(refused.body.error).sort(), ['code', 'message', 'param', 'request_id', 'resets_at', 'retry_after_seconds', 'type']);
     assert.deepEqual([refused.body.error.code, refused.body.error.type, refused.body.error.resets_at], ['insufficient_quota', 'insufficient_quota', firstOfNextMonth.toISOString()]);
-    assert.match(refused.body.error.message, /^This request needs [\d,]+ tokens but only 10 of your 10,000,000 Claude Haiku 5\.5 tokens for [A-Z][a-z]+ are left; the allowance renews on [A-Z][a-z]{2} 1, 00:00 UTC\. Choose another model until then\.$/);
+    assert.match(refused.body.error.message, /^This request holds up to [\d,]+ tokens until it finishes \(its whole input; cached input counts less after the request finishes\), but only 10 of your 10,000,000 Claude Haiku 5\.5 tokens for [A-Z][a-z]+ are left; the allowance renews on [A-Z][a-z]{2} 1, 00:00 UTC\. Choose another model until then\.$/);
     assert.ok(!/anthropic|groq|nvidia/i.test(refused.body.error.message), 'no provider in the message');
     assert.ok(Math.abs(Number(refused.headers.get('retry-after')) - (firstOfNextMonth.getTime() - Date.now()) / 1000) < 5);
     assert.deepEqual([refused.headers.get('x-neuron-quota-family'), refused.headers.get('x-neuron-quota-month-limit-tokens'),

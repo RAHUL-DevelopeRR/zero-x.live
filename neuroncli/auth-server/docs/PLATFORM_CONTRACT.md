@@ -59,8 +59,9 @@ well-formed. `daily_requests`, rpm, concurrency and credits apply as before. A r
 `user_window_tokens` → 429 `insufficient_quota`, `resets_at` and `Retry-After` = when enough of
 the window has expired for that request. The message names the figures: "You've used your
 3,000,000 tokens for this 5-hour window; it frees up at HH:MM UTC." once the window is full, else
-"This request needs N tokens but only R of your 3,000,000 tokens for this 5-hour window are left;
-enough frees up at HH:MM UTC.". A request larger than the whole window never fits: its message
+"This request holds up to N tokens until it finishes (its whole input; cached input counts less after the request finishes), but only R of your
+3,000,000 tokens for this 5-hour window are left; enough frees up at HH:MM UTC.". N is the
+reservation (the raw prompt estimate plus up to 1,024 output tokens), not what the request will count. A request larger than the whole window never fits: its message
 says so and it carries no `resets_at` or `Retry-After`. The window counts every reservation of
 the user made after now minus `window_seconds`, with no upper bound, so a reservation committed
 by a transaction that began later but locked the account first is counted too. Any plan can opt
@@ -81,7 +82,11 @@ counts prompt + completion as before. Reservations still hold the raw prompt plu
 output tokens until they settle. Pool budgets (`zerox_pool_usage`, upstream TPM and TPD caps, the
 per-user pool share), usage events and daily rows stay on raw tokens, and credits stay on cost.
 `/api/account` `usage_today` and `usage_window` carry `token_split` (`input_tokens` uncached,
-`cached_input_tokens`, `output_tokens`) when the database reports it.
+`cached_input_tokens`, `output_tokens`, and `cached_input_weight`, the weight this gateway applies)
+when the database reports it. Against a database without the migration, `zerox_settle_v2` refuses
+`p_counted_tokens` (PGRST202 or 42883): the gateway repeats the call without it, so the attempt
+settles with raw tokens toward the limits and its credits, usage event and pool cost are recorded,
+and it skips `p_counted_tokens` for 10 minutes, logging once.
 
 Released clients: Neuron CLI alpha.2 shows `/api/account` `usage_today.tokens / limits.daily_tokens`
 as "Tokens today" with a 00:00 UTC reset, which for Free reads e.g. "3,000,000 / 5,000,000"
@@ -1706,8 +1711,8 @@ sponsored pool (`upgrade_required`; an anonymous `/v1/models` caller is shown th
   `x-neuron-quota-family`, `x-neuron-quota-month-limit-tokens`, `x-neuron-quota-month-used-tokens`,
   `x-neuron-quota-month-resets-at`. The message names the figures: "You've used your 10,000,000
   Claude Haiku 5.5 tokens for November; the allowance renews on Dec 1, 00:00 UTC. Other models keep
-  working." / "This request needs N tokens but only R of your 10,000,000 Claude Haiku 5.5 tokens
-  for November are left; the allowance renews on Dec 1, 00:00 UTC. Choose another model until
+  working." / "This request holds up to N tokens until it finishes (its whole input; cached input counts less after the request finishes),
+  but only R of your 10,000,000 Claude Haiku 5.5 tokens for November are left; the allowance renews on Dec 1, 00:00 UTC. Choose another model until
   then."; a request larger than the whole allowance carries no `resets_at` or `Retry-After`.
   The refusal is per family: the chat handler skips the family's other candidates and tries the
   rest, failing with it only when nothing else could serve (with the current catalog the Haiku family

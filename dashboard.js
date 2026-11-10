@@ -220,13 +220,20 @@ function normalizeSplit(split) {
   if (!split || typeof split !== 'object') return null;
   const values = [split.input_tokens, split.cached_input_tokens, split.output_tokens].map(toNumber);
   if (values.some(value => value === null || value < 0)) return null;
-  return { input: values[0], cached: values[1], output: values[2] };
+  // cached_input_weight: what a cached token counts toward the limit (0 to 1); 0.1 from a gateway
+  // that does not send it.
+  const weight = toNumber(split.cached_input_weight);
+  return { input: values[0], cached: values[1], output: values[2],
+    weight: weight !== null && weight >= 0 && weight <= 1 ? weight : 0.1 };
 }
 
-// "Input 400K · cached 600K (counts 10%) · output 8K", or null without a split or any tokens.
+// "Input 400K · cached 600K (counts 10%) · output 8K", with the gateway's cached-input weight, or
+// null without a split or any tokens.
 export function tokenSplitText(split) {
   if (!split || split.input + split.cached + split.output <= 0) return null;
-  return 'Input ' + formatTokens(split.input) + ' · cached ' + formatTokens(split.cached) + ' (counts 10%) · output ' + formatTokens(split.output);
+  const weight = Number.isFinite(split.weight) && split.weight >= 0 && split.weight <= 1 ? split.weight : 0.1;
+  const percent = Math.round(weight * 1000) / 10;
+  return 'Input ' + formatTokens(split.input) + ' · cached ' + formatTokens(split.cached) + ' (counts ' + percent + '%) · output ' + formatTokens(split.output);
 }
 
 export function normalizeAccount(data) {
@@ -624,7 +631,7 @@ export function createDashboard({ doc = globalThis.document, win = globalThis.wi
       setProgress('ov-tokens-bar', usage.tokens, tokenLimit, formatCount(usage.tokens) + ' of ' + (tokenLimit !== null ? formatCount(tokenLimit) : 'unknown') + ' tokens used today');
       setText('ov-tokens-detail', tokenLimit !== null ? formatTokens(Math.max(0, tokenLimit - usage.tokens)) + ' tokens left today' : 'Daily token limit unavailable');
     }
-    // What the counted tokens are made of: cached input counts at 10% toward the limit.
+    // What the counted tokens are made of: cached input counts at the gateway's weight (10% by default).
     const splitText = tokenSplitText(win ? win.split : usage.split);
     setText('ov-tokens-split', splitText || '');
     $('ov-tokens-split').hidden = !splitText;

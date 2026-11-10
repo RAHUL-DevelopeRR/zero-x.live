@@ -615,9 +615,13 @@ try {
     window_raw: { prompt_tokens: '1000000', cache_read_tokens: '600000', completion_tokens: '8000' } });
   account = await json(await request('/api/account', { token: sessionToken }));
   assert.deepEqual(account.body.usage_today, { requests: 7, tokens: 468000, resets_at: `${dayOffset(1)}T00:00:00.000Z`,
-    token_split: { input_tokens: 400000, cached_input_tokens: 600000, output_tokens: 8000 } });
+    token_split: { input_tokens: 400000, cached_input_tokens: 600000, output_tokens: 8000, cached_input_weight: 0.1 } });
   assert.deepEqual(account.body.usage_window, { tokens: 468000, limit_tokens: 3000000, remaining_tokens: 2532000, window_seconds: 18000,
-    resets_at: `${dayOffset(0)}T22:30:00.000Z`, token_split: { input_tokens: 400000, cached_input_tokens: 600000, output_tokens: 8000 } });
+    resets_at: `${dayOffset(0)}T22:30:00.000Z`, token_split: { input_tokens: 400000, cached_input_tokens: 600000, output_tokens: 8000, cached_input_weight: 0.1 } });
+  // TOKEN_LIMIT_CACHE_READ_WEIGHT changes what the gateway enforces, and the API reports that weight.
+  const overridden = await json(await request('/api/account', { token: sessionToken, bindings: { ...env, TOKEN_LIMIT_CACHE_READ_WEIGHT: '0.25' } }));
+  assert.equal(overridden.body.usage_window.token_split.cached_input_weight, 0.25);
+  assert.equal(overridden.body.usage_today.token_split.cached_input_weight, 0.25);
   Object.assign(db.accounts.get(userA.id), { daily_tokens_used: 7000, window_tokens_used: 6000, today_raw: { prompt_tokens: null,
     cache_read_tokens: 0, completion_tokens: 0 }, window_raw: undefined });
   account = await json(await request('/api/account', { token: sessionToken }));

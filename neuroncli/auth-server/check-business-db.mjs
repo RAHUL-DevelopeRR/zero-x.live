@@ -19,7 +19,7 @@ import { createChatHandler } from './src/chat-handler.js';
 import { RoutingEngine } from './src/router.js';
 import { ProviderHealthTracker } from './src/provider-health.js';
 import { estimatePromptTokens } from './src/pricing.js';
-import { RESERVED_OUTPUT_TOKENS, sessionDailyTokenCap, settlementArgs } from './src/capacity.js';
+import { RESERVED_OUTPUT_TOKENS, resetCountedUnavailable, sessionDailyTokenCap, settleCapacity, settlementArgs } from './src/capacity.js';
 import { resetPoolBudgets } from './src/pool-budget.js';
 import { v1ModelsPayload } from './src/routes/plans.js';
 
@@ -557,8 +557,59 @@ try {
     assert.ok(raw > 3000000, `raw ${raw}`);
     const sessionOverview = await rpc(env, 'zerox_account_overview', { p_user_id: sessionUser });
     assert.equal(Number(sessionOverview.usage_window.tokens), 96 * 7300, 'each call counts 4,000 + 2,800 + 500');
+
+    // Code before migration (or after its down file): the 11-argument zerox_settle_v2 refuses
+    // p_counted_tokens, and settleCapacity repeats the call without it, so the attempt still settles,
+    // with raw tokens, and its credits and usage event are recorded.
+    const oldDir = await mkdtemp(join(tmpdir(), 'zerox-old-settle-'));
+    const oldEnv = { DATABASE_DRIVER: 'pglite', PGLITE_DATA_DIR: oldDir };
+    try {
+      const oldDb = (await getPgliteHandle(oldEnv)).db;
+      await oldDb.exec(await readFile(join(root, 'migrations/down/20261109000000_cache_weighted_limits.sql'), 'utf8'));
+      const oldSql = async (text, params) => (await oldDb.query(text, params)).rows;
+      assert.equal((await oldSql("SELECT count(*)::int AS n FROM pg_proc WHERE proname = 'zerox_settle_v2' AND 'p_counted_tokens' = ANY(proargnames)"))[0].n, 0,
+        'the rolled-back database has no p_counted_tokens');
+      const [{ id: oldUser }] = await oldSql('INSERT INTO auth.users (email) VALUES ($1) RETURNING id', [`old-${randomUUID().slice(0, 8)}@example.test`]);
+      await rpc(oldEnv, 'zerox_sync_account', { p_user_id: oldUser, p_profile: { email: 'old@example.test', name: 'Old' } });
+      await oldSql("UPDATE public.zerox_accounts SET plan = 'pro', plan_source = 'manual' WHERE clerk_id = $1", [oldUser]);
+      await rpc(oldEnv, 'zerox_credit_grant', { p_user_id: oldUser, p_delta_microusd: 100000, p_reason: 'topup', p_ref: `test:${oldUser}:old` });
+      const oldReserve = () => rpc(oldEnv, 'zerox_reserve_v2', { p_user_id: oldUser, p_request_id: `req_${randomUUID()}`,
+        p_model: 'test/old-settle', p_tier: 'paid', p_tokens: 1000000 + RESERVED_OUTPUT_TOKENS, p_cost_microusd: 5000, p_pool: null });
+      const oldHeld = await oldReserve();
+      assert.equal(oldHeld.status, 'ok');
+      const oldArgs = { ...settlementArgs({ reservationId: oldHeld.reservation_id, entry, pool: freePool, usage: cachedUsage, status: 'ok' }),
+        p_cost_microusd: 3000 };
+      assert.equal(oldArgs.p_counted_tokens, 468000);
+      resetCountedUnavailable(oldEnv);
+      const logged = [];
+      const realError = console.error;
+      console.error = (...line) => logged.push(line.join(' '));
+      let oldSettled;
+      try { oldSettled = await settleCapacity(oldEnv, oldArgs); } finally { console.error = realError; }
+      assert.deepEqual(oldSettled, { status: 'settled', credit_balance_microusd: 97000 }, 'settled and charged without the migration');
+      assert.equal(logged.length, 1, 'the missing argument is logged once');
+      assert.match(logged[0], /20261109000000_cache_weighted_limits/);
+      const oldLedger = await oldSql("SELECT * FROM public.zerox_credit_ledger WHERE user_id = $1 AND reason = 'usage'", [oldUser]);
+      assert.deepEqual(oldLedger.map(row => [Number(row.delta_microusd), row.ref]), [[-3000, `usage:${oldHeld.reservation_id}`]]);
+      const [oldEvent] = await rpcRows(oldEnv, 'zerox_usage_events', { p_user_id: oldUser, p_limit: 1, p_before: null });
+      assert.deepEqual([oldEvent.prompt_tokens, oldEvent.cache_read_tokens, oldEvent.completion_tokens].map(Number), [1000000, 600000, 8000]);
+      assert.equal(Number((await oldSql('SELECT daily_tokens_used FROM public.zerox_accounts WHERE clerk_id = $1', [oldUser]))[0].daily_tokens_used),
+        1008000, 'without the migration the limits count raw tokens, as before');
+      assert.equal((await oldSql('SELECT status FROM public.zerox_reservations WHERE id = $1', [oldHeld.reservation_id]))[0].status, 'settled', 'the reservation is settled');
+      // Once the migration is applied (after the retry window), counted tokens are sent again.
+      await oldDb.exec(migrationScript(await readMigration((await listMigrations()).find(m => m.file === '20261109000000_cache_weighted_limits.sql'))));
+      (await getPgliteHandle(oldEnv)).functions.clear(); // PostgREST reloads its schema cache
+      resetCountedUnavailable(oldEnv);
+      const newHeld = await oldReserve();
+      await settleCapacity(oldEnv, { ...settlementArgs({ reservationId: newHeld.reservation_id, entry, pool: freePool, usage: cachedUsage, status: 'ok' }),
+        p_cost_microusd: 3000 });
+      assert.equal(Number((await oldSql('SELECT counted_tokens FROM public.zerox_reservations WHERE id = $1', [newHeld.reservation_id]))[0].counted_tokens), 468000);
+    } finally {
+      await closePglite(oldEnv);
+      await rm(oldDir, { recursive: true, force: true });
+    }
   }
-  ok('counted tokens: 1M prompt with 600K cache reads and 8K output settles 468K for daily, window and overview; the pool keeps raw 1,008,000; no cache data settles prompt + completion; bounds; refunds; a 3.1M-raw session fits the Free window');
+  ok('counted tokens: 1M prompt with 600K cache reads and 8K output settles 468K for daily, window and overview; the pool keeps raw 1,008,000; no cache data settles prompt + completion; bounds; refunds; a 3.1M-raw session fits the Free window; without the migration the settlement retries with raw tokens and still charges credits');
 
   // ---------------------------------------------------------------- rpm and concurrency
   const rpmUser = await newUser('free');
