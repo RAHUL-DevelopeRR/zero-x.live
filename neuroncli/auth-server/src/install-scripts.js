@@ -30,12 +30,21 @@ export function installVersion(env) {
 export const installerUrl = (version, file) =>
   `https://github.com/${NEURON_REPOSITORY}/releases/download/v${version}/${file}`;
 
+// Releases whose own install.ps1/install.sh predate the progress-bar installer carry a newer copy,
+// stamped with that release's version, under another name (install.ps1 and install.sh are listed in
+// the release's SHA256SUMS, so they are never replaced). Later releases ship it as install.ps1/.sh.
+const PATCHED_INSTALLERS = Object.freeze({
+  '7.0.0-alpha.5': Object.freeze({ ps1: 'install-windows.ps1', sh: 'install-unix.sh' }),
+});
+export const installerFile = (version, kind) =>
+  PATCHED_INSTALLERS[version]?.[kind] ?? (kind === 'ps1' ? 'install.ps1' : 'install.sh');
+
 // Runs under `irm | iex` in the caller's session (Windows PowerShell 5.1 or PowerShell 7+), so it never
 // calls `exit` (that would close the window) and keeps its variables in a child scope. WebClient's
 // DownloadString returns text whatever content type GitHub sends (application/octet-stream), in 5.1 and
 // in 7, where Invoke-RestMethod may hand back bytes for that type.
 export function windowsInstallScript(version) {
-  const url = installerUrl(version, 'install.ps1');
+  const url = installerUrl(version, installerFile(version, 'ps1'));
   return `# Neuron installer for Windows, served by https://zero-x.live/install.ps1
 #
 #   PowerShell:      irm https://zero-x.live/install.ps1 | iex
@@ -44,9 +53,8 @@ export function windowsInstallScript(version) {
 # Downloads the installer of Neuron ${version} from GitHub Releases and runs it with
 # -Version ${version} -AddToPath. It installs neuron.exe (about 23 MB) to
 # %LOCALAPPDATA%\\Programs\\Neuron\\bin, checks its SHA-256 checksums and adds that folder to your
-# user PATH. It also installs the full-screen UI, neuron-tui.exe (more than 100 MB; this release's
-# installer shows no progress while it downloads it). Set NEURON_NO_TUI=1 first to skip the UI.
-# NEURON_INSTALL_DIR chooses the folder.
+# user PATH, then installs the full-screen UI, neuron-tui.exe (more than 100 MB), showing its
+# download progress. Set NEURON_NO_TUI=1 first to skip the UI. NEURON_INSTALL_DIR chooses the folder.
 # The installer itself: ${url}
 & {
     $neuronVersion = '${version}'
@@ -64,13 +72,8 @@ export function windowsInstallScript(version) {
         Write-Host 'Help: https://zero-x.live/docs#troubleshooting'
         return
     }
-    # NEURON_NO_TUI as the installer reads it: '', 0, false and no install the UI, anything else skips it.
-    # The UI is installed by default; this release's installer shows no progress while it downloads
-    # it, so say so up front.
-    $noTui = "$env:NEURON_NO_TUI".Trim().ToLowerInvariant()
-    if (@('', '0', 'false', 'no') -contains $noTui) {
-        Write-Host 'The full-screen UI is a download of more than 100 MB and shows no progress. On a slow connection it can take several minutes; let it finish.'
-    }
+    # The installer installs the UI by default and shows its own download progress;
+    # NEURON_NO_TUI=1 skips the UI.
     & ([scriptblock]::Create($installer.TrimStart([char]0xFEFF))) -Version $neuronVersion -AddToPath
 }
 `;
@@ -78,7 +81,7 @@ export function windowsInstallScript(version) {
 
 // Read whole before anything runs (main is called on the last line), so a cut-off download does nothing.
 export function posixInstallScript(version) {
-  const url = installerUrl(version, 'install.sh');
+  const url = installerUrl(version, installerFile(version, 'sh'));
   return `#!/bin/sh
 # Neuron installer for macOS and Linux, served by https://zero-x.live/install.sh
 #
@@ -101,10 +104,6 @@ main() {
         echo "error: the Neuron installer needs curl or wget" >&2
         exit 1
     fi
-    # NEURON_NO_TUI as install.sh reads it: '', 0, false and no install the UI.
-    case "$(printf '%s' "\${NEURON_NO_TUI:-}" | tr '[:upper:]' '[:lower:]')" in
-        ''|0|false|no) echo "The full-screen UI is a download of more than 100 MB. On a slow connection it can take several minutes." >&2 ;;
-    esac
     printf '%s\\n' "$installer" | sh -s -- --version "$version" "$@"
 }
 

@@ -18,7 +18,7 @@ import { pathToFileURL } from 'node:url';
 import { wranglerVars } from '../../deploy/aws/gateway-env.mjs';
 import app from './src/index.js';
 import {
-  INSTALL_SCRIPT_MAX_AGE_SECONDS, INSTALL_SCRIPT_PATH, installVersion, installerUrl, posixInstallScript, windowsInstallScript,
+  INSTALL_SCRIPT_MAX_AGE_SECONDS, INSTALL_SCRIPT_PATH, installVersion, installerFile, installerUrl, posixInstallScript, windowsInstallScript,
 } from './src/install-scripts.js';
 import { NEURON_INSTALL, NEURON_VERSION } from './src/neuron-release.js';
 
@@ -33,9 +33,15 @@ const env = { SUPABASE_URL: 'https://test.supabase.co', SUPABASE_PUBLISHABLE_KEY
 const get = (url, extra = {}, method = 'GET') => app.fetch(new Request(url, { method }), { ...env, ...extra }, { waitUntil() {}, passThroughOnException() {} });
 
 const tag = `v${NEURON_VERSION}`;
-const PS1_URL = `https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/${tag}/install.ps1`;
-const SH_URL = `https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/${tag}/install.sh`;
-assert.equal(installerUrl(NEURON_VERSION, 'install.ps1'), PS1_URL);
+// 7.0.0-alpha.5 carries the progress-bar installers as install-windows.ps1 and install-unix.sh;
+// later releases ship them as install.ps1 and install.sh.
+assert.equal(installerFile('7.0.0-alpha.5', 'ps1'), 'install-windows.ps1');
+assert.equal(installerFile('7.0.0-alpha.5', 'sh'), 'install-unix.sh');
+assert.equal(installerFile('7.0.0-alpha.6', 'ps1'), 'install.ps1');
+assert.equal(installerFile('7.0.0-alpha.6', 'sh'), 'install.sh');
+const PS1_URL = `https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/${tag}/${installerFile(NEURON_VERSION, 'ps1')}`;
+const SH_URL = `https://github.com/RAHUL-DevelopeRR/neuron-v2/releases/download/${tag}/${installerFile(NEURON_VERSION, 'sh')}`;
+assert.equal(installerUrl(NEURON_VERSION, installerFile(NEURON_VERSION, 'ps1')), PS1_URL);
 
 for (const [path, url, expected] of [
   ['/install.ps1', PS1_URL, `& ([scriptblock]::Create($installer.TrimStart([char]0xFEFF))) -Version $neuronVersion -AddToPath`],
@@ -71,20 +77,20 @@ ok('/install.ps1 and /install.sh answer 200 text/plain bootstraps on every host,
   assert.match(ps1, /^& \{$/m, 'variables stay in a child scope');
   assert.match(ps1, /New-Object System\.Net\.WebClient/, 'downloads as text in PowerShell 5.1 and 7');
   assert.match(ps1, /Write-Host "Installing Neuron \$\{neuronVersion\}\. Downloading the installer from GitHub \.\.\."/, '${} keeps the colon-free text');
-  assert.match(ps1, /more than 100 MB/, 'says the UI download is large');
+  assert.match(ps1, /more than 100 MB/, 'its header says the UI download is large');
   assert.ok(ps1.includes('https://zero-x.live/docs#troubleshooting'), 'points at troubleshooting when the download fails');
   assert.ok(ps1.includes(NEURON_INSTALL.powershell) && ps1.includes(NEURON_INSTALL.cmd), 'its header shows both Windows commands');
   const sh = posixInstallScript(NEURON_VERSION);
   assert.ok(sh.startsWith('#!/bin/sh\n') && sh.includes('\nset -eu\n'), 'sh, stopping at the first error');
   assert.match(sh, /\nmain "\$@"\n$/, 'runs only once fully downloaded');
   assert.ok(sh.includes(NEURON_INSTALL.shell), 'its header shows the command');
-  assert.match(sh, /''\|0\|false\|no\) echo "The full-screen UI is a download of more than 100 MB/, "install.sh warns about the UI size by the installer's own NEURON_NO_TUI rule");
+  assert.doesNotMatch(sh, /shows no progress|several minutes/, 'no stale no-progress warning: the installer shows its own progress');
   ok('bootstraps: no exit under iex, child scope, text download, size note; install.sh runs only when complete');
 }
 
 // The Windows bootstrap, run for real under `iex` (Windows only) against a stub installer read through
-// a file: URL. By default (and with NEURON_NO_TUI=0/false/no) it installs the UI too, after a size
-// warning, and leaves NEURON_NO_TUI alone; any other value skips the UI without the warning.
+// a file: URL. It passes NEURON_NO_TUI through untouched (the installer installs the UI unless it is
+// set to something other than '', 0, false or no) and prints no no-progress warning or second step.
 if (process.platform === 'win32') {
   const dir = mkdtempSync(join(tmpdir(), 'zx-bootstrap-'));
   try {
@@ -100,22 +106,22 @@ if (process.platform === 'win32') {
       assert.equal(result.status, 0, result.stdout + result.stderr);
       return result.stdout;
     };
-    const SIZE = 'more than 100 MB and shows no progress';
+    const SIZE = 'shows no progress';
     const ADD = "$env:NEURON_NO_TUI = '0'; irm https://zero-x.live/install.ps1 | iex";
     const plain = run(undefined);
     assert.ok(plain.includes(`stub version=${NEURON_VERSION} addToPath=True noTui=[]`), 'default: the installer installs the UI\n' + plain);
     assert.ok(plain.includes('after=[]'), 'default: NEURON_NO_TUI is left unset');
-    assert.ok(plain.includes(SIZE) && !plain.includes(ADD), 'default: warns about the UI download size and prints no second step');
+    assert.ok(!plain.includes(SIZE) && !plain.includes(ADD), 'default: no stale no-progress warning and no second step');
     for (const value of ['0', 'false', 'No']) {
       const out = run(value);
-      assert.ok(out.includes(`noTui=[${value}]`) && out.includes(SIZE) && !out.includes(ADD), `NEURON_NO_TUI=${value}: the UI is installed, with the size warning\n${out}`);
+      assert.ok(out.includes(`noTui=[${value}]`) && !out.includes(SIZE) && !out.includes(ADD), `NEURON_NO_TUI=${value} reaches the installer\n${out}`);
       assert.ok(out.includes(`after=[${value}]`), `NEURON_NO_TUI=${value} is kept`);
     }
     for (const value of ['1', 'true', 'yes']) {
       const out = run(value);
-      assert.ok(out.includes(`noTui=[${value}]`) && !out.includes(SIZE) && !out.includes(ADD), `NEURON_NO_TUI=${value}: the UI is skipped, no size warning\n${out}`);
+      assert.ok(out.includes(`noTui=[${value}]`) && !out.includes(SIZE) && !out.includes(ADD), `NEURON_NO_TUI=${value} is passed to the installer\n${out}`);
     }
-    ok("Windows bootstrap under iex: installs the UI by default with a size warning; NEURON_NO_TUI follows the installer's rule");
+    ok("Windows bootstrap under iex: runs the progress-bar installer, NEURON_NO_TUI passed through untouched");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
