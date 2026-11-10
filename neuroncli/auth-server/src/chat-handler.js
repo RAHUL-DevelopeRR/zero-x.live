@@ -15,7 +15,8 @@ import { callerCountry, loadCatalog, loadPlanPolicies, modelIdentity, planPolicy
 import { noteSponsoredFailure } from './sponsored.js';
 import { touchVaultKey } from './provider-keys.js';
 import { jsonNestingExceeds } from './request-limits.js';
-import { billableUsage, estimateOutputTokens, estimatePromptTokens, reserveCostMicrousd, utf8Bytes } from './pricing.js';
+import { billableUsage, cacheReadWeight, countedTokens, estimateOutputTokens, estimatePromptTokens, reserveCostMicrousd,
+  utf8Bytes } from './pricing.js';
 import { exhaustedBudget, notePoolExhausted, notePoolReserved, poolBudgetState } from './pool-budget.js';
 import { loadOffers, offerIdFor } from './oiop/offers.js';
 import { callerPolicy } from './oiop/policy.js';
@@ -381,6 +382,8 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
       kv = { reserved, day: session.usage_day, settled: false };
       setQuotaHeaders(quota.remainingRequests, quota.remainingTokens);
     }
+    // The weight of prompt-cache reads in the user's token limits (pricing.js countedTokens).
+    const limitWeight = cacheReadWeight(env);
     const settleKv = async ({ actualTokens, refundRequest }) => {
       if (!kv || kv.settled) return;
       kv.settled = true;
@@ -436,7 +439,7 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
     const settleDb = (reservation, candidate, outcome, inBackground) => {
       stopLease(reservation.reservation_id);
       const args = settlementArgs({ reservationId: reservation.reservation_id, entry: candidate.entry, pool: candidate.pool,
-        promptEstimate: promptTokens, ...outcome });
+        promptEstimate: promptTokens, cacheReadWeight: limitWeight, ...outcome });
       // Settling is idempotent, so a failed call is retried once. A reservation left unsettled
       // keeps its slot only until its lease lapses.
       const promise = settleCapacity(env, args).catch(() => settleCapacity(env, args)).catch(error => {
@@ -454,7 +457,8 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
       if (kv) {
         const billed = billableUsage(outcome.usage, { prompt_tokens: promptTokens,
           completion_tokens: estimateOutputTokens(outcome.outputBytes) });
-        await background(settleKv({ actualTokens: billed.total_tokens, refundRequest: false }));
+        // The allocation counts counted tokens (cache reads at limitWeight), like the ledger's limits.
+        await background(settleKv({ actualTokens: countedTokens(billed, limitWeight), refundRequest: false }));
       }
     };
     // Every outcome is also published for the whole gateway: to the HealthHub Durable Object,

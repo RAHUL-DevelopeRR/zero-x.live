@@ -1767,7 +1767,7 @@ try {
     // 999,500 used: 500 left, and the request needs its prompt plus the reserved output tokens.
     const needed = rpcCalls('zerox_reserve_v2')[0].body.p_tokens;
     assert.ok(needed > 500, `the request needs more than what is left (${needed})`);
-    assert.equal(error.message, `This request needs ${needed.toLocaleString('en-US')} tokens but only 500 of your 1,000,000 tokens ` +
+    assert.equal(error.message, `This request holds up to ${needed.toLocaleString('en-US')} tokens until it finishes (its whole input; cached input counts less after the request finishes), but only 500 of your 1,000,000 tokens ` +
       `for this 5-hour window are left; enough frees up at ${clock} UTC.`);
     assert.equal(error.resets_at, freesAt);
     assert.equal(error.retry_after_seconds, 10925);
@@ -1779,14 +1779,14 @@ try {
       window_resets_at: '2026-11-02T14:30:20Z', resets_at: '2026-11-02T14:30:20Z', retry_after_seconds: 9020 };
     // A user with 10,000 tokens in the window is not told they used all 1,000,000.
     assert.equal(reserveError({ ...window, window_used_tokens: 10000 }, now, 995000).message,
-      'This request needs 995,000 tokens but only 990,000 of your 1,000,000 tokens for this 5-hour window are left; ' +
+      'This request holds up to 995,000 tokens until it finishes (its whole input; cached input counts less after the request finishes), but only 990,000 of your 1,000,000 tokens for this 5-hour window are left; ' +
       'enough frees up at 14:31 UTC.');
     // The "used your" wording only once the window is full.
     assert.equal(reserveError({ ...window, window_used_tokens: 1000000 }, now, 3000).message,
       "You've used your 1,000,000 tokens for this 5-hour window; it frees up at 14:31 UTC.");
     // Larger than the whole window: waiting never makes it fit, so no time, no resets_at, no Retry-After.
     const tooBig = reserveError({ ...window, resets_at: null, retry_after_seconds: null, window_used_tokens: 10000 }, now, 1200000);
-    assert.equal(tooBig.message, 'This request needs 1,200,000 tokens, more than the 1,000,000 tokens your plan allows in a ' +
+    assert.equal(tooBig.message, 'This request holds up to 1,200,000 tokens until it finishes, more than the 1,000,000 tokens your plan allows in a ' +
       '5-hour window, so it cannot run on this plan. Shorten the conversation or lower max_tokens, or upgrade.');
     assert.deepEqual([tooBig.code, tooBig.resetsAt, tooBig.retryAfterSeconds], ['insufficient_quota', null, undefined]);
     // Through the gateway: no Retry-After header and no resets_at for a request larger than the window.
@@ -2748,13 +2748,13 @@ try {
     assert.equal(rpcCalls('zerox_settle_v2').length, 0, 'nothing to settle');
     reset({ 'rpc:zerox_plan_policies_v2': policiesRpc, 'rpc:zerox_reserve_v2': () => spent(9_988_000) });
     const left = await expectError(await gw.call(env, { model: HAIKU, messages: [{ role: 'user', content: 'x'.repeat(40000) }] }, { token: 'ses_free' }), 429, 'insufficient_quota');
-    assert.match(left.message, /^This request needs [\d,]+ tokens but only 12,000 of your 10,000,000 Claude Haiku 5\.5 tokens for November are left; the allowance renews on Dec 1, 00:00 UTC\. Choose another model until then\.$/);
+    assert.match(left.message, /^This request holds up to [\d,]+ tokens until it finishes \(its whole input; cached input counts less after the request finishes\), but only 12,000 of your 10,000,000 Claude Haiku 5\.5 tokens for November are left; the allowance renews on Dec 1, 00:00 UTC\. Choose another model until then\.$/);
     assert.ok(!/anthropic|groq|nvidia|openrouter/i.test(left.message), 'a model name, never a provider');
     // Larger than the whole allowance: no time makes it fit, so no resets_at and no Retry-After.
     const tooBig = reserveError({ status: 'user_family_month_tokens', cap_family: HAIKU, cap_tokens: 10_000_000, cap_used_tokens: 0,
       cap_resets_at: '2026-12-01T00:00:00+00:00', resets_at: null, retry_after_seconds: null }, Date.parse('2026-11-06T00:00:00Z'), 10_000_001, 'Claude Haiku 5.5');
     assert.deepEqual([tooBig.code, tooBig.resetsAt, tooBig.retryAfterSeconds, tooBig.upgrade], ['insufficient_quota', null, undefined, false]);
-    assert.equal(tooBig.message, 'This request needs 10,000,001 tokens, more than the 10,000,000 Claude Haiku 5.5 tokens your plan allows a month, so it cannot run on this model.');
+    assert.equal(tooBig.message, 'This request holds up to 10,000,001 tokens until it finishes, more than the 10,000,000 Claude Haiku 5.5 tokens your plan allows a month, so it cannot run on this model.');
     // alpha.4 reads code, message, retry_after_seconds and resets_at of an insufficient_quota 429, as for the window.
     assert.deepEqual(Object.keys(outError).sort(), ['code', 'message', 'param', 'request_id', 'resets_at', 'retry_after_seconds', 'type']);
 

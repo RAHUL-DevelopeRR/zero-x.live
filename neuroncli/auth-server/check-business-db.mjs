@@ -19,7 +19,7 @@ import { createChatHandler } from './src/chat-handler.js';
 import { RoutingEngine } from './src/router.js';
 import { ProviderHealthTracker } from './src/provider-health.js';
 import { estimatePromptTokens } from './src/pricing.js';
-import { RESERVED_OUTPUT_TOKENS, sessionDailyTokenCap } from './src/capacity.js';
+import { RESERVED_OUTPUT_TOKENS, resetCountedUnavailable, sessionDailyTokenCap, settleCapacity, settlementArgs } from './src/capacity.js';
 import { resetPoolBudgets } from './src/pool-budget.js';
 import { v1ModelsPayload } from './src/routes/plans.js';
 
@@ -185,7 +185,7 @@ try {
   assert.deepEqual(plans.map(pick), [
     { plan: 'free', name: 'Free', price_usd: 0, price_usd_cents: 0, price_inr_paise: 0, daily_requests: 100, daily_tokens: 5000000,
       rpm_limit: 10, concurrency_limit: 2, allowed_tiers: ['free'], monthly_credit_microusd: 0, listed: true,
-      window_tokens: 1000000, window_seconds: 18000 },
+      window_tokens: 3000000, window_seconds: 18000 },
     { plan: 'athlete', name: 'Athlete', price_usd: 1, price_usd_cents: 100, price_inr_paise: 8900, daily_requests: 300,
       daily_tokens: 6000000, rpm_limit: 15, concurrency_limit: 2, allowed_tiers: ['free', 'paid'],
       monthly_credit_microusd: 750000, listed: true, window_tokens: null, window_seconds: null },
@@ -209,10 +209,10 @@ try {
   assert.deepEqual(Object.keys(legacy).sort(), ['athlete', 'free', 'max', 'pro', 'speed', 'ultrawork'], 'legacy policy RPC includes max, athlete and speed');
   assert.equal(legacy.max.daily_tokens, 50000000);
   // The session-KV allocation (src/capacity.js reserveSessionQuota) reads this map: Free carries its
-  // window, so a session without an account ledger is held to 1M a day, not to daily_tokens (5M).
-  assert.deepEqual([legacy.free.daily_tokens, legacy.free.window_tokens, legacy.free.window_seconds], [5000000, 1000000, 18000]);
+  // window, so a session without an account ledger is held to 3M a day, not to daily_tokens (5M).
+  assert.deepEqual([legacy.free.daily_tokens, legacy.free.window_tokens, legacy.free.window_seconds], [5000000, 3000000, 18000]);
   assert.deepEqual([legacy.pro.window_tokens, legacy.pro.window_seconds], [null, null]);
-  assert.equal(sessionDailyTokenCap(legacy.free), 1000000, 'session-KV cap of Free from the database map');
+  assert.equal(sessionDailyTokenCap(legacy.free), 3000000, 'session-KV cap of Free from the database map');
   assert.equal(sessionDailyTokenCap(legacy.pro), 10000000, 'a plan without a window keeps daily_tokens');
   await assert.rejects(sql(`INSERT INTO public.zerox_plan_policy (plan, name, daily_tokens, daily_requests, price_usd)
     VALUES ('enterprise', 'Enterprise', 1, 1, 1)`), /zerox_plan_policy_plan_check/);
@@ -248,8 +248,8 @@ try {
   assert.match(first.reservation_id, /^[0-9a-f-]{36}$/);
   assert.equal(first.plan, 'free');
   assert.equal(first.remaining_requests, 99);
-  assert.equal(first.remaining_tokens, 999000, 'Free: the rolling window\'s remaining tokens');
-  assert.deepEqual([first.window_tokens, first.window_seconds, first.window_used_tokens], [1000000, 18000, 1000]);
+  assert.equal(first.remaining_tokens, 2999000, 'Free: the rolling window\'s remaining tokens');
+  assert.deepEqual([first.window_tokens, first.window_seconds, first.window_used_tokens], [3000000, 18000, 1000]);
   assert.equal(first.credit_balance_microusd, 0);
   assert.equal(new Date(first.resets_at).toISOString(), nextResets);
   assert.equal(first.retry_after_seconds, null);
@@ -310,7 +310,7 @@ try {
   const reset = await reserve(freeUser, { p_tokens: 1000 });
   assert.equal(reset.status, 'ok', 'UTC daily reset applies before the cap check');
   assert.equal(reset.remaining_requests, 99);
-  assert.equal(reset.remaining_tokens, 999000);
+  assert.equal(reset.remaining_tokens, 2999000);
   const resetRow = await account(freeUser);
   assert.equal(resetRow.last_usage_reset.toISOString().slice(0, 10), todayUtc);
   assert.equal(resetRow.daily_requests, 1);
@@ -336,6 +336,10 @@ try {
   ok('no_account, suspended, upgrade_required, user_daily_requests, user_daily_tokens, UTC reset, cross-day settle');
 
   // ---------------------------------------------------------------- rolling 5-hour token window (Free)
+  // The window mechanics below were written for a 1,000,000-token window; Free has 3,000,000 since
+  // 20261109000000_cache_weighted_limits.sql, so the section runs on a 1M Free row and puts 3M back
+  // after it (the counted-tokens section checks the real 3M window).
+  await sql("UPDATE public.zerox_plan_policy SET window_tokens = 1000000 WHERE plan = 'free'");
   {
     const WINDOW = 18000;
     const shift = (userId, seconds, where = 'true') => sql(`UPDATE public.zerox_reservations SET created_at = created_at - make_interval(secs => $2)
@@ -418,12 +422,13 @@ try {
     // The account overview shows the current window next to today's usage.
     const overview = await rpc(env, 'zerox_account_overview', { p_user_id: rollUser });
     assert.deepEqual({ ...overview.usage_window, resets_at: undefined }, { window_seconds: WINDOW, limit_tokens: 1000000,
-      tokens: 1000000, remaining_tokens: 0, resets_at: undefined });
+      tokens: 1000000, remaining_tokens: 0, resets_at: undefined, prompt_tokens: 900000, cache_read_tokens: 0, completion_tokens: 0 });
     near(overview.usage_window.resets_at, ages[0] + WINDOW * 1000, 'overview: when the oldest counted tokens leave');
     assert.equal(overview.policy.window_tokens, 1000000);
     assert.equal(overview.usage_today.tokens, 1000000, 'usage_today keeps counting the UTC day');
     const fresh = await rpc(env, 'zerox_account_overview', { p_user_id: await newUser('free') });
-    assert.deepEqual(fresh.usage_window, { window_seconds: WINDOW, limit_tokens: 1000000, tokens: 0, remaining_tokens: 1000000, resets_at: null });
+    assert.deepEqual(fresh.usage_window, { window_seconds: WINDOW, limit_tokens: 1000000, tokens: 0, remaining_tokens: 1000000, resets_at: null,
+      prompt_tokens: 0, cache_read_tokens: 0, completion_tokens: 0 });
 
     // A paid plan opts in by setting both columns; they must be set together and in range.
     await assert.rejects(sql("UPDATE public.zerox_plan_policy SET window_tokens = 5 WHERE plan = 'pro'"), /zerox_plan_policy_window_check/);
@@ -456,7 +461,7 @@ try {
     await sql('SET enable_seqscan = off');
     try {
       const plan = (await sql(`EXPLAIN SELECT r.created_at, CASE WHEN r.status = 'settled'
-          THEN coalesce(e.prompt_tokens + e.completion_tokens, r.prompt_tokens + r.completion_tokens, r.reserved_tokens)
+          THEN coalesce(r.counted_tokens, e.prompt_tokens + e.completion_tokens, r.prompt_tokens + r.completion_tokens, r.reserved_tokens)
           ELSE r.reserved_tokens END
         FROM public.zerox_reservations AS r LEFT JOIN public.zerox_usage_events AS e ON e.reservation_id = r.id
         WHERE r.user_id = $1 AND r.created_at > now() - make_interval(secs => 18000)`, [rollUser]))
@@ -466,7 +471,145 @@ try {
       assert.doesNotMatch(plan, /Seq Scan/, plan);
     } finally { await sql('RESET enable_seqscan'); }
   }
+  await sql("UPDATE public.zerox_plan_policy SET window_tokens = 3000000 WHERE plan = 'free'");
   ok('Free 5-hour window: 1M tokens incl. active and released holds, settled usage and refunds, rolling expiry, reset time, daily token cap lifted, request cap kept, overview, index use');
+
+  // ---------------------------------------------------------------- counted tokens (cache reads at 10%)
+  // 20261109000000_cache_weighted_limits.sql: the user's token limits count the uncached prompt, 10%
+  // of the cache reads and the completion (settlementArgs sends p_counted_tokens); the pool's
+  // buckets, the usage events and the daily rows keep raw tokens.
+  {
+    await clockHeadroom();
+    const entry = { provider: 'anthropic', upstream_model: 'claude-test' };
+    const freePool = { tier: 'free' };
+    const cachedUsage = { prompt_tokens: 1000000, completion_tokens: 8000, total_tokens: 1008000,
+      prompt_tokens_details: { cached_tokens: 600000 } };
+    const countedUser = await newUser('free');
+    const model = `test/counted-${randomUUID().slice(0, 8)}`;
+    const held = await reserve(countedUser, { p_model: model, p_tokens: 1000000 + RESERVED_OUTPUT_TOKENS,
+      p_pool: { rpm: null, rpd: null, tpm: null, tpd: 50000000 } });
+    assert.equal(held.status, 'ok');
+    const cachedArgs = settlementArgs({ reservationId: held.reservation_id, entry, pool: freePool, usage: cachedUsage, status: 'ok' });
+    assert.equal(cachedArgs.p_counted_tokens, 468000, '400,000 uncached + 60,000 (10% of 600,000 cached) + 8,000 output');
+    assert.deepEqual([cachedArgs.p_prompt_tokens, cachedArgs.p_completion_tokens, cachedArgs.p_cache_read_tokens], [1000000, 8000, 600000]);
+    assert.deepEqual(await rpc(env, 'zerox_settle_v2', cachedArgs), { status: 'settled', credit_balance_microusd: 0 });
+    const countedRow = await account(countedUser);
+    assert.deepEqual([countedRow.daily_tokens_used, countedRow.total_tokens_used].map(Number), [468000, 468000],
+      'daily and lifetime tokens count 468,000, not 1,008,000');
+    assert.equal(Number((await sql('SELECT counted_tokens FROM public.zerox_reservations WHERE id = $1', [held.reservation_id]))[0].counted_tokens), 468000);
+    for (const bucket of ['minute', 'day']) {
+      assert.equal(Number((await poolRow(model, 'free', bucket)).tokens), 1008000, `the pool's ${bucket} bucket keeps raw tokens`);
+    }
+    const [rawEvent] = await rpcRows(env, 'zerox_usage_events', { p_user_id: countedUser, p_limit: 1, p_before: null });
+    assert.deepEqual([rawEvent.prompt_tokens, rawEvent.cache_read_tokens, rawEvent.completion_tokens].map(Number), [1000000, 600000, 8000],
+      'the usage event keeps the raw split');
+    const next = await reserve(countedUser, { p_tokens: 1000 });
+    assert.equal(Number(next.window_used_tokens), 469000, 'the window counts 468,000 for the settled call plus the new hold');
+    await settle(next.reservation_id, { p_prompt_tokens: 600, p_completion_tokens: 400 });
+    const countedOverview = await rpc(env, 'zerox_account_overview', { p_user_id: countedUser });
+    assert.deepEqual([countedOverview.usage_window.tokens, countedOverview.usage_window.limit_tokens].map(Number), [469000, 3000000]);
+    assert.deepEqual([countedOverview.usage_window.prompt_tokens, countedOverview.usage_window.cache_read_tokens,
+      countedOverview.usage_window.completion_tokens].map(Number), [1000600, 600000, 8400], 'overview: raw split of the window');
+    assert.deepEqual([countedOverview.usage_today.tokens, countedOverview.usage_today.prompt_tokens,
+      countedOverview.usage_today.cache_read_tokens, countedOverview.usage_today.completion_tokens].map(Number),
+    [469000, 1000600, 600000, 8400], 'overview: counted tokens today and their raw split');
+
+    // A provider that reports no cache split settles prompt + completion, with the arguments it always had.
+    const plainUser = await newUser('free');
+    const plain = await reserve(plainUser, { p_tokens: 21024 });
+    const plainArgs = settlementArgs({ reservationId: plain.reservation_id, entry, pool: freePool, status: 'ok',
+      usage: { prompt_tokens: 20000, completion_tokens: 500, total_tokens: 20500 } });
+    assert.equal('p_counted_tokens' in plainArgs, false, 'no cache reads: no p_counted_tokens');
+    await rpc(env, 'zerox_settle_v2', plainArgs);
+    assert.equal(Number((await account(plainUser)).daily_tokens_used), 20500);
+    // Estimated usage (the upstream sent none) counts in full too.
+    const estimated = settlementArgs({ reservationId: plain.reservation_id, entry, pool: freePool, status: 'ok',
+      usage: null, promptEstimate: 700, outputBytes: 35 });
+    assert.equal('p_counted_tokens' in estimated, false);
+
+    // p_counted_tokens may only discount cache reads.
+    const bounds = await reserve(plainUser, { p_tokens: 2000 });
+    await assert.rejects(settle(bounds.reservation_id, { p_prompt_tokens: 1000, p_completion_tokens: 10, p_cache_read_tokens: 500,
+      p_counted_tokens: 1011 }), /invalid_settlement: p_counted_tokens/);
+    await assert.rejects(settle(bounds.reservation_id, { p_prompt_tokens: 1000, p_completion_tokens: 10, p_cache_read_tokens: 500,
+      p_counted_tokens: 509 }), /invalid_settlement: p_counted_tokens/);
+    // A refunded failed_upstream attempt counts nothing for the user, whatever it read from the cache.
+    const refundedUser = await newUser('free');
+    const refunded = await reserve(refundedUser, { p_tokens: 5000 });
+    await settle(refunded.reservation_id, { p_status: 'failed_upstream', p_prompt_tokens: 4000, p_completion_tokens: 0,
+      p_cache_read_tokens: 3000, p_counted_tokens: 1300 });
+    assert.equal(Number((await account(refundedUser)).daily_tokens_used), 0);
+    assert.equal(Number((await sql('SELECT counted_tokens FROM public.zerox_reservations WHERE id = $1', [refunded.reservation_id]))[0].counted_tokens), 0);
+
+    // A Neuron session of 96 cached calls: 3,120,000 raw tokens, more than the 3M window (and far more
+    // than the old 1M), but 700,800 counted. Counting raw tokens, the window refused it at call 93.
+    const sessionUser = await newUser('free');
+    const perCall = { prompt_tokens: 32000, completion_tokens: 500, total_tokens: 32500, prompt_tokens_details: { cached_tokens: 28000 } };
+    let raw = 0;
+    for (let call = 0; call < 96; call += 1) {
+      const row = await reserve(sessionUser, { p_tokens: 32000 + RESERVED_OUTPUT_TOKENS });
+      assert.equal(row.status, 'ok', `call ${call + 1} fits the window (raw so far ${raw})`);
+      await rpc(env, 'zerox_settle_v2', settlementArgs({ reservationId: row.reservation_id, entry, pool: freePool, usage: perCall, status: 'ok' }));
+      raw += 32500;
+      // Out of the per-minute request count, still inside the 5-hour window.
+      await sql("UPDATE public.zerox_reservations SET created_at = created_at - interval '61 seconds' WHERE id = $1", [row.reservation_id]);
+    }
+    assert.ok(raw > 3000000, `raw ${raw}`);
+    const sessionOverview = await rpc(env, 'zerox_account_overview', { p_user_id: sessionUser });
+    assert.equal(Number(sessionOverview.usage_window.tokens), 96 * 7300, 'each call counts 4,000 + 2,800 + 500');
+
+    // Code before migration (or after its down file): the 11-argument zerox_settle_v2 refuses
+    // p_counted_tokens, and settleCapacity repeats the call without it, so the attempt still settles,
+    // with raw tokens, and its credits and usage event are recorded.
+    const oldDir = await mkdtemp(join(tmpdir(), 'zerox-old-settle-'));
+    const oldEnv = { DATABASE_DRIVER: 'pglite', PGLITE_DATA_DIR: oldDir };
+    try {
+      const oldDb = (await getPgliteHandle(oldEnv)).db;
+      await oldDb.exec(await readFile(join(root, 'migrations/down/20261109000000_cache_weighted_limits.sql'), 'utf8'));
+      const oldSql = async (text, params) => (await oldDb.query(text, params)).rows;
+      assert.equal((await oldSql("SELECT count(*)::int AS n FROM pg_proc WHERE proname = 'zerox_settle_v2' AND 'p_counted_tokens' = ANY(proargnames)"))[0].n, 0,
+        'the rolled-back database has no p_counted_tokens');
+      const [{ id: oldUser }] = await oldSql('INSERT INTO auth.users (email) VALUES ($1) RETURNING id', [`old-${randomUUID().slice(0, 8)}@example.test`]);
+      await rpc(oldEnv, 'zerox_sync_account', { p_user_id: oldUser, p_profile: { email: 'old@example.test', name: 'Old' } });
+      await oldSql("UPDATE public.zerox_accounts SET plan = 'pro', plan_source = 'manual' WHERE clerk_id = $1", [oldUser]);
+      await rpc(oldEnv, 'zerox_credit_grant', { p_user_id: oldUser, p_delta_microusd: 100000, p_reason: 'topup', p_ref: `test:${oldUser}:old` });
+      const oldReserve = () => rpc(oldEnv, 'zerox_reserve_v2', { p_user_id: oldUser, p_request_id: `req_${randomUUID()}`,
+        p_model: 'test/old-settle', p_tier: 'paid', p_tokens: 1000000 + RESERVED_OUTPUT_TOKENS, p_cost_microusd: 5000, p_pool: null });
+      const oldHeld = await oldReserve();
+      assert.equal(oldHeld.status, 'ok');
+      const oldArgs = { ...settlementArgs({ reservationId: oldHeld.reservation_id, entry, pool: freePool, usage: cachedUsage, status: 'ok' }),
+        p_cost_microusd: 3000 };
+      assert.equal(oldArgs.p_counted_tokens, 468000);
+      resetCountedUnavailable(oldEnv);
+      const logged = [];
+      const realError = console.error;
+      console.error = (...line) => logged.push(line.join(' '));
+      let oldSettled;
+      try { oldSettled = await settleCapacity(oldEnv, oldArgs); } finally { console.error = realError; }
+      assert.deepEqual(oldSettled, { status: 'settled', credit_balance_microusd: 97000 }, 'settled and charged without the migration');
+      assert.equal(logged.length, 1, 'the missing argument is logged once');
+      assert.match(logged[0], /20261109000000_cache_weighted_limits/);
+      const oldLedger = await oldSql("SELECT * FROM public.zerox_credit_ledger WHERE user_id = $1 AND reason = 'usage'", [oldUser]);
+      assert.deepEqual(oldLedger.map(row => [Number(row.delta_microusd), row.ref]), [[-3000, `usage:${oldHeld.reservation_id}`]]);
+      const [oldEvent] = await rpcRows(oldEnv, 'zerox_usage_events', { p_user_id: oldUser, p_limit: 1, p_before: null });
+      assert.deepEqual([oldEvent.prompt_tokens, oldEvent.cache_read_tokens, oldEvent.completion_tokens].map(Number), [1000000, 600000, 8000]);
+      assert.equal(Number((await oldSql('SELECT daily_tokens_used FROM public.zerox_accounts WHERE clerk_id = $1', [oldUser]))[0].daily_tokens_used),
+        1008000, 'without the migration the limits count raw tokens, as before');
+      assert.equal((await oldSql('SELECT status FROM public.zerox_reservations WHERE id = $1', [oldHeld.reservation_id]))[0].status, 'settled', 'the reservation is settled');
+      // Once the migration is applied (after the retry window), counted tokens are sent again.
+      await oldDb.exec(migrationScript(await readMigration((await listMigrations()).find(m => m.file === '20261109000000_cache_weighted_limits.sql'))));
+      (await getPgliteHandle(oldEnv)).functions.clear(); // PostgREST reloads its schema cache
+      resetCountedUnavailable(oldEnv);
+      const newHeld = await oldReserve();
+      await settleCapacity(oldEnv, { ...settlementArgs({ reservationId: newHeld.reservation_id, entry, pool: freePool, usage: cachedUsage, status: 'ok' }),
+        p_cost_microusd: 3000 });
+      assert.equal(Number((await oldSql('SELECT counted_tokens FROM public.zerox_reservations WHERE id = $1', [newHeld.reservation_id]))[0].counted_tokens), 468000);
+    } finally {
+      await closePglite(oldEnv);
+      await rm(oldDir, { recursive: true, force: true });
+    }
+  }
+  ok('counted tokens: 1M prompt with 600K cache reads and 8K output settles 468K for daily, window and overview; the pool keeps raw 1,008,000; no cache data settles prompt + completion; bounds; refunds; a 3.1M-raw session fits the Free window; without the migration the settlement retries with raw tokens and still charges credits');
 
   // ---------------------------------------------------------------- rpm and concurrency
   const rpmUser = await newUser('free');
@@ -1899,7 +2042,8 @@ try {
     '20261102000000_free_token_window.sql', '20261104000000_health_probes.sql', '20261104300000_free_plan_features_lineup.sql',
     '20261106000000_pool_fair_share.sql', '20261106000300_connector_policy.sql', '20261106000400_connector_accounts.sql',
     '20261106000600_sponsored_pools.sql', '20261106000700_haiku_catalog.sql', '20261106000800_plan_features_haiku.sql',
-    '20261107000000_pool_user_cost_share.sql', '20261107000100_pool_share_refunds.sql', '20261108000000_athlete_speed_plans.sql']);
+    '20261107000000_pool_user_cost_share.sql', '20261107000100_pool_share_refunds.sql', '20261108000000_athlete_speed_plans.sql',
+    '20261109000000_cache_weighted_limits.sql']);
   for (const file of downFiles) {
     const migration = migrations.find(candidate => candidate.file === file);
     assert.ok(migration, `${file} undoes a migration of the same name`);

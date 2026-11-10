@@ -147,6 +147,43 @@ function cacheSplit(usage, promptTokens) {
 
 const NO_CACHE = Object.freeze({ cache_read_tokens: 0, cache_write_tokens: 0, cache_write_1h_tokens: 0 });
 
+// ── Counted tokens: what user-facing token limits count ──
+// A plan's token limits (Free's rolling window, every plan's daily tokens, a session-KV
+// allocation and a sponsored family's monthly allowance) count "counted tokens": the uncached
+// prompt (cache writes included) plus TOKEN_LIMIT_CACHE_READ_WEIGHT of the prompt-cache reads,
+// rounded up, plus the completion. A coding agent re-sends the whole conversation on every step,
+// and most of it is a cache read that the provider bills at about a tenth of the input rate and
+// leaves out of its input rate limits; counting it in full ran out Free's window in one task.
+// Shared pool budgets (zerox_pool_usage, upstream TPM caps) stay on raw tokens, since upstream
+// limits count raw input, and credits stay on costMicrousd. Usage without a cache split counts
+// exactly prompt + completion, as before.
+export const TOKEN_LIMIT_CACHE_READ_WEIGHT = 0.1;
+// Weights are applied in millionths so that 0.1 x 600,000 is exactly 60,000.
+const WEIGHT_SCALE = 1_000_000;
+
+// The cache-read weight for this deployment: env.TOKEN_LIMIT_CACHE_READ_WEIGHT when it is a number
+// from 0 to 1, else the default.
+export function cacheReadWeight(env = {}) {
+  const raw = env?.TOKEN_LIMIT_CACHE_READ_WEIGHT;
+  if (raw === undefined || raw === null || String(raw).trim() === '') return TOKEN_LIMIT_CACHE_READ_WEIGHT;
+  const value = Number(raw);
+  return Number.isFinite(value) && value >= 0 && value <= 1 ? value : TOKEN_LIMIT_CACHE_READ_WEIGHT;
+}
+
+/**
+ * Counted tokens of billed usage (billableUsage's result): prompt - cache reads
+ * + ceil(weight x cache reads) + completion. 1M prompt with 600K cache reads and 8K completion
+ * counts 400,000 + 60,000 + 8,000 = 468,000.
+ */
+export function countedTokens(billed, weight = TOKEN_LIMIT_CACHE_READ_WEIGHT) {
+  const prompt = whole(billed?.prompt_tokens);
+  const completion = whole(billed?.completion_tokens);
+  const read = Math.min(prompt, whole(billed?.cache_read_tokens));
+  const value = Number(weight);
+  const scaled = Math.round((Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : TOKEN_LIMIT_CACHE_READ_WEIGHT) * WEIGHT_SCALE);
+  return prompt - read + Math.ceil(read * scaled / WEIGHT_SCALE) + completion;
+}
+
 // Converts upstream usage into billable prompt/completion tokens. Providers that hide
 // reasoning tokens (Gemini) report them only in total_tokens, so any surplus of the
 // total over prompt+completion is billed as completion (output) tokens. The prompt-cache split

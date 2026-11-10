@@ -12,10 +12,10 @@ export const PLAN_CATALOG = Object.freeze({
   plans: [
     {
       id: 'free', name: 'Free', price: { usd_cents: 0, inr_paise: 0 }, interval: 'month',
-      limits: { daily_requests: 100, daily_tokens: 5000000, window_tokens: 1000000, window_seconds: 18000, rpm: 10, concurrency: 2 },
+      limits: { daily_requests: 100, daily_tokens: 5000000, window_tokens: 3000000, window_seconds: 18000, rpm: 10, concurrency: 2 },
       monthly_credit_usd: 0, tiers: ['free'], highlighted: false,
       features: ['Free models chosen for coding, with tool use', 'Claude Haiku 5.5 included: 10M tokens a month at no charge',
-        '100 requests per day and 1M tokens every 5 hours', '10 requests per minute, 2 at once', 'Every Neuron feature, the same on all plans'],
+        '100 requests per day and 3M tokens every 5 hours', '10 requests per minute, 2 at once', 'Every Neuron feature, the same on all plans'],
     },
     {
       id: 'athlete', name: 'Athlete', price: { usd_cents: 100, inr_paise: 8900 }, interval: 'month',
@@ -186,7 +186,7 @@ export function windowLength(seconds) {
 }
 
 /**
- * A plan's token allowance: "1M every 5 hours" for a plan with a rolling window (Free), else
+ * A plan's token allowance: "3M every 5 hours" for a plan with a rolling window (Free), else
  * "10M per day". With a window the daily token figure is only the most the window allows in a day.
  */
 export function tokenAllowance(plan) {
@@ -197,7 +197,7 @@ export function tokenAllowance(plan) {
 }
 
 /**
- * The token allowance as a phrase for running text: "1M tokens every 5 hours" with a window,
+ * The token allowance as a phrase for running text: "3M tokens every 5 hours" with a window,
  * "500K tokens per day" without one. Static copy wraps the whole phrase in a
  * [data-plan-limit="free:token_phrase"] span, so the hydrated page states what the database
  * enforces (no window before migration 20261102000000 is applied) rather than a bare number.

@@ -26,7 +26,7 @@ change both together.
 
 | id | name | price | daily_requests | daily_tokens | rpm | concurrency | tiers | monthly credits | window_tokens | window_seconds |
 |----|------|-------|----------------|--------------|-----|-------------|-------|-----------------|---------------|----------------|
-| free | Free | $0 | 100 | 5,000,000 | 10 | 2 | free | $0 | 1,000,000 | 18,000 |
+| free | Free | $0 | 100 | 5,000,000 | 10 | 2 | free | $0 | 3,000,000 | 18,000 |
 | athlete | Athlete | $1 / ₹89 per month | 300 | 6,000,000 | 15 | 2 | free, paid | $0.75 | — | — |
 | speed | Speed | $5 / ₹449 per month | 1,000 | 8,000,000 | 20 | 3 | free, paid | $4 | — | — |
 | pro | Pro | $10 / ₹899 per month | 2,000 | 10,000,000 | 30 | 4 | free, paid | $8 | — | — |
@@ -50,17 +50,18 @@ and 15; colony: Athlete 2 workers and 600,000 tokens a run, Speed 3 and 1,000,00
 
 **Rolling token window** (migration `20261102000000_free_token_window.sql`, 2026-11-02). A plan
 with `window_tokens` and `window_seconds` (set together; `—` = none) allows at most
-`window_tokens` tokens in any `window_seconds`, per user: Free gets 1,000,000 tokens every 5
-hours. A window counts each reservation from when it was made for `window_seconds`: settled ones
+`window_tokens` tokens in any `window_seconds`, per user: Free gets 3,000,000 tokens every 5
+hours (1,000,000 until `20261109000000_cache_weighted_limits.sql`). A window counts each reservation from when it was made for `window_seconds`: settled ones
 with the tokens they were charged (refunds count 0), running and released ones with what they
 reserved. With a window, `daily_tokens` refuses nothing; it is the most the window allows in a
 UTC day (five windows, 5,000,000 on Free), kept so clients that show tokens per day stay
 well-formed. `daily_requests`, rpm, concurrency and credits apply as before. A refusal is
 `user_window_tokens` → 429 `insufficient_quota`, `resets_at` and `Retry-After` = when enough of
 the window has expired for that request. The message names the figures: "You've used your
-1,000,000 tokens for this 5-hour window; it frees up at HH:MM UTC." once the window is full, else
-"This request needs N tokens but only R of your 1,000,000 tokens for this 5-hour window are left;
-enough frees up at HH:MM UTC.". A request larger than the whole window never fits: its message
+3,000,000 tokens for this 5-hour window; it frees up at HH:MM UTC." once the window is full, else
+"This request holds up to N tokens until it finishes (its whole input; cached input counts less after the request finishes), but only R of your
+3,000,000 tokens for this 5-hour window are left; enough frees up at HH:MM UTC.". N is the
+reservation (the raw prompt estimate plus up to 1,024 output tokens), not what the request will count. A request larger than the whole window never fits: its message
 says so and it carries no `resets_at` or `Retry-After`. The window counts every reservation of
 the user made after now minus `window_seconds`, with no upper bound, so a reservation committed
 by a transaction that began later but locked the account first is counted too. Any plan can opt
@@ -69,8 +70,26 @@ owned-provider sessions; session-KV allocation) cannot count a rolling window: a
 window holds them to `window_tokens` per UTC day (`zerox_plan_policies` carries the window
 keys).
 
+**Counted tokens** (migration `20261109000000_cache_weighted_limits.sql`, 2026-11-09). Every user
+token limit (the rolling window, `daily_tokens`, the session-KV allocation and a family's monthly
+allowance) counts a settled attempt as its uncached prompt tokens (cache writes included) plus
+ceil(0.1 x cache-read tokens) plus completion tokens: 1,000,000 prompt tokens of which 600,000 are
+cache reads, with 8,000 completion tokens, count 468,000. The weight is
+`TOKEN_LIMIT_CACHE_READ_WEIGHT` (0 to 1, default 0.1; src/pricing.js `countedTokens`). The gateway
+passes it as `zerox_settle_v2` `p_counted_tokens` (only when it differs from prompt + completion),
+which is stored on the reservation (`counted_tokens`) for the window. Usage without a cache split
+counts prompt + completion as before. Reservations still hold the raw prompt plus up to 1,024
+output tokens until they settle. Pool budgets (`zerox_pool_usage`, upstream TPM and TPD caps, the
+per-user pool share), usage events and daily rows stay on raw tokens, and credits stay on cost.
+`/api/account` `usage_today` and `usage_window` carry `token_split` (`input_tokens` uncached,
+`cached_input_tokens`, `output_tokens`, and `cached_input_weight`, the weight this gateway applies)
+when the database reports it. Against a database without the migration, `zerox_settle_v2` refuses
+`p_counted_tokens` (PGRST202 or 42883): the gateway repeats the call without it, so the attempt
+settles with raw tokens toward the limits and its credits, usage event and pool cost are recorded,
+and it skips `p_counted_tokens` for 10 minutes, logging once.
+
 Released clients: Neuron CLI alpha.2 shows `/api/account` `usage_today.tokens / limits.daily_tokens`
-as "Tokens today" with a 00:00 UTC reset, which for Free reads e.g. "1,000,000 / 5,000,000"
+as "Tokens today" with a 00:00 UTC reset, which for Free reads e.g. "3,000,000 / 5,000,000"
 while the window refuses requests. Those fields stay true for the UTC day; clients should show
 `usage_window` (and `limits.window_tokens`) when it is not null. `quota.remaining` of `/auth/me`,
 `/auth/sync`, sign-in, `/auth/session` and `/auth/usage` is what can be spent now (the window's
@@ -1692,8 +1711,8 @@ sponsored pool (`upgrade_required`; an anonymous `/v1/models` caller is shown th
   `x-neuron-quota-family`, `x-neuron-quota-month-limit-tokens`, `x-neuron-quota-month-used-tokens`,
   `x-neuron-quota-month-resets-at`. The message names the figures: "You've used your 10,000,000
   Claude Haiku 5.5 tokens for November; the allowance renews on Dec 1, 00:00 UTC. Other models keep
-  working." / "This request needs N tokens but only R of your 10,000,000 Claude Haiku 5.5 tokens
-  for November are left; the allowance renews on Dec 1, 00:00 UTC. Choose another model until
+  working." / "This request holds up to N tokens until it finishes (its whole input; cached input counts less after the request finishes),
+  but only R of your 10,000,000 Claude Haiku 5.5 tokens for November are left; the allowance renews on Dec 1, 00:00 UTC. Choose another model until
   then."; a request larger than the whole allowance carries no `resets_at` or `Retry-After`.
   The refusal is per family: the chat handler skips the family's other candidates and tries the
   rest, failing with it only when nothing else could serve (with the current catalog the Haiku family

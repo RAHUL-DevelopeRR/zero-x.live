@@ -3,8 +3,10 @@
 // shared pool budget atomically in Postgres (zerox_reserve_v2); anonymous/dev sessions
 // without a database keep the session-KV daily allocation.
 import { databaseConfigured, rpc } from './account-store.js';
+import { missingFunction } from './db/errors.js';
 import { poolKey } from './catalog.js';
-import { billableUsage, costMicrousd, estimateOutputTokens, reserveCostMicrousd } from './pricing.js';
+import { billableUsage, costMicrousd, countedTokens, estimateOutputTokens, reserveCostMicrousd,
+  TOKEN_LIMIT_CACHE_READ_WEIGHT } from './pricing.js';
 import { billedDailyCapMicrousd, sponsoredTermsFor } from './catalog-guardrails.js';
 import { providerType } from './catalog-types.js';
 
@@ -90,13 +92,20 @@ export function monthName(resetsAt, now = Date.now()) {
   return inMonth.toLocaleDateString('en-US', { month: 'long', timeZone: 'UTC' });
 }
 
+// A reservation holds the request's whole input (the byte estimate, cached part included) plus up
+// to RESERVED_OUTPUT_TOKENS until it settles, while the window and month counts hold counted tokens
+// (cache reads at the lower weight, pricing.js countedTokens). The refusal messages therefore say
+// how much the request holds until it finishes, not what it will count.
+const HOLD_NOTE = '(its whole input; cached input counts less after the request finishes)';
+const holds = needed => `This request holds up to ${tokenCount(needed)} tokens until it finishes`;
+
 // The message for user_family_month_tokens (zerox_reserve_v2 cap_* columns, migration
 // 20261106000600), from the month's count (cap_used_tokens, without the refused request) and the
 // request's reserved tokens:
 // - used up: "You've used your 10,000,000 Claude Haiku 5.5 tokens for November; the allowance renews on Dec 1, 00:00 UTC.
 //   Other models keep working."
-// - not enough left: "This request needs 48,200 tokens but only 12,000 of your 10,000,000 Claude Haiku 5.5 tokens for
-//   November are left; the allowance renews on Dec 1, 00:00 UTC. Choose another model until then."
+// - not enough left: "This request holds up to 48,200 tokens until it finishes (its whole input; cached
+//   input counts less after the request finishes), but only 12,000 of your 10,000,000 Claude Haiku 5.5 tokens for November are left; the allowance renews on Dec 1, 00:00 UTC. Choose another model until then."
 // - larger than the whole allowance: no time is given, since waiting never makes it fit.
 export function monthQuotaMessage(row, name = 'this model', tokens = null, now = Date.now()) {
   const limit = Number(row?.cap_tokens);
@@ -104,7 +113,7 @@ export function monthQuotaMessage(row, name = 'this model', tokens = null, now =
   if (!Number.isSafeInteger(limit) || limit < 1) return `You have used this month's allowance of ${label}. Other models keep working.`;
   const needed = Number(tokens);
   if (Number.isSafeInteger(needed) && needed > limit) {
-    return `This request needs ${tokenCount(needed)} tokens, more than the ${tokenCount(limit)} ${label} your plan allows a month, so it cannot run on this model.`;
+    return `${holds(needed)}, more than the ${tokenCount(limit)} ${label} your plan allows a month, so it cannot run on this model.`;
   }
   const month = monthName(row?.cap_resets_at ?? row?.resets_at, now);
   const renews = formatMonthReset(row?.cap_resets_at ?? row?.resets_at);
@@ -112,7 +121,7 @@ export function monthQuotaMessage(row, name = 'this model', tokens = null, now =
   const left = Number.isSafeInteger(used) && used >= 0 ? limit - used : 0;
   const when = renews ? `the allowance renews on ${renews}` : 'the allowance renews next month';
   if (left <= 0) return `You've used your ${tokenCount(limit)} ${label} for ${month}; ${when}. Other models keep working.`;
-  const need = Number.isSafeInteger(needed) && needed > 0 ? `This request needs ${tokenCount(needed)} tokens but only` : 'This request needs more than the';
+  const need = Number.isSafeInteger(needed) && needed > 0 ? `${holds(needed)} ${HOLD_NOTE}, but only` : 'This request needs more than the';
   return `${need} ${tokenCount(left)} of your ${tokenCount(limit)} ${label} for ${month} are left; ${when}. Choose another model until then.`;
 }
 
@@ -126,9 +135,10 @@ export function exceedsWindow(row, tokens) {
 // The message for user_window_tokens (zerox_reserve_v2 window_* columns, migration
 // 20261102000000), from the window's count (window_used_tokens, without the refused request) and
 // the request's reserved tokens:
-// - used up: "You've used your 1,000,000 tokens for this 5-hour window; it frees up at 17:05 UTC."
-// - not enough left: "This request needs 30,000 tokens but only 10,000 of your 1,000,000 tokens
-//   for this 5-hour window are left; enough frees up at 17:05 UTC."
+// - used up: "You've used your 3,000,000 tokens for this 5-hour window; it frees up at 17:05 UTC."
+// - not enough left: "This request holds up to 30,000 tokens until it finishes (its whole input; cached
+//   input counts less after the request finishes), but only 10,000 of your 3,000,000 tokens for this 5-hour
+//   window are left; enough frees up at 17:05 UTC."
 // - larger than the window: no time is given, since waiting never makes it fit.
 export function windowQuotaMessage(row, now = Date.now(), tokens = null) {
   const limit = Number(row?.window_tokens);
@@ -139,7 +149,7 @@ export function windowQuotaMessage(row, now = Date.now(), tokens = null) {
   const needed = Number(tokens);
   const knownNeed = Number.isSafeInteger(needed) && needed > 0;
   if (exceedsWindow(row, tokens)) {
-    return `This request needs ${tokenCount(needed)} tokens, more than the ${tokenCount(limit)} tokens your plan allows in a ` +
+    return `${holds(needed)}, more than the ${tokenCount(limit)} tokens your plan allows in a ` +
       `${length} window, so it cannot run on this plan. Shorten the conversation or lower max_tokens, or upgrade.`;
   }
   const at = formatWindowTime(row?.window_resets_at || row?.resets_at, now);
@@ -150,7 +160,7 @@ export function windowQuotaMessage(row, now = Date.now(), tokens = null) {
       : `You've used your ${tokenCount(limit)} tokens for this ${length} window. Retry after the indicated delay.`;
   }
   const left = tokenCount(limit - used);
-  const need = knownNeed ? `This request needs ${tokenCount(needed)} tokens but only` : 'This request needs more than the';
+  const need = knownNeed ? `${holds(needed)} ${HOLD_NOTE}, but only` : 'This request needs more than the';
   return `${need} ${left} of your ${tokenCount(limit)} tokens for this ${length} window are left; ` +
     (at ? `enough frees up at ${at}.` : 'retry after the indicated delay.');
 }
@@ -258,14 +268,19 @@ export function reserveError(row, now = Date.now(), tokens = null, modelName = u
 // (model, tier and vault key) is the one stored on the reservation. Prompt-cache reads and
 // writes (5-minute and 1-hour writes together) are part of p_prompt_tokens; each is billed at its
 // own rate (migration 20261029000800, the 11-argument zerox_settle_v2).
+// p_counted_tokens (migration 20261109000000_cache_weighted_limits.sql) is what the user's token
+// limits count (pricing.js countedTokens: cache reads at cacheReadWeight); the pool keeps the raw
+// p_prompt_tokens + p_completion_tokens. It is sent only when it differs from the raw sum, so usage
+// without cache reads settles with exactly the arguments it always had.
 export function settlementArgs({ reservationId, entry, pool, usage, promptEstimate = 0, outputBytes = 0,
-  status, latencyMs = 0, errorCode = null }) {
+  status, latencyMs = 0, errorCode = null, cacheReadWeight: weight = TOKEN_LIMIT_CACHE_READ_WEIGHT }) {
   let billed = null;
   if (status !== 'refunded') {
     billed = billableUsage(usage, { prompt_tokens: promptEstimate, completion_tokens: estimateOutputTokens(outputBytes) });
   }
   const prompt = billed?.prompt_tokens ?? 0;
   const completion = billed?.completion_tokens ?? 0;
+  const counted = billed ? countedTokens(billed, weight) : 0;
   return {
     p_reservation_id: reservationId,
     p_prompt_tokens: prompt,
@@ -279,11 +294,39 @@ export function settlementArgs({ reservationId, entry, pool, usage, promptEstima
     p_error_code: errorCode,
     p_cache_read_tokens: billed?.cache_read_tokens ?? 0,
     p_cache_write_tokens: (billed?.cache_write_tokens ?? 0) + (billed?.cache_write_1h_tokens ?? 0),
+    ...(counted !== prompt + completion ? { p_counted_tokens: counted } : {}),
   };
 }
 
-export async function settleCapacity(env, args) {
-  return rpc(env, 'zerox_settle_v2', args);
+// A database without migration 20261109000000 has only the 11-argument zerox_settle_v2, which
+// refuses p_counted_tokens (PGRST202 or 42883), and so does one whose migration was rolled back
+// while this gateway runs. The call is then repeated without it: the attempt settles with raw
+// tokens toward the user's limits, as before the migration, and its credits, usage event and pool
+// cost are still recorded. The gateway then skips p_counted_tokens for COUNTED_RETRY_MS before it
+// tries again, and logs once per window.
+export const COUNTED_RETRY_MS = 10 * 60_000;
+const countedUnavailable = new WeakMap(); // env -> time the retry window ends
+
+export async function settleCapacity(env, args, now = Date.now()) {
+  if (!args || !('p_counted_tokens' in args)) return rpc(env, 'zerox_settle_v2', args);
+  const { p_counted_tokens: _counted, ...raw } = args;
+  const keyed = env && typeof env === 'object';
+  if (keyed && (countedUnavailable.get(env) ?? 0) > now) return rpc(env, 'zerox_settle_v2', raw);
+  try {
+    return await rpc(env, 'zerox_settle_v2', args);
+  } catch (error) {
+    if (!missingFunction(error)) throw error;
+    if (keyed) {
+      console.error('Counted tokens need migration 20261109000000_cache_weighted_limits.sql; settling with raw tokens until it is applied');
+      countedUnavailable.set(env, now + COUNTED_RETRY_MS);
+    }
+    return rpc(env, 'zerox_settle_v2', raw);
+  }
+}
+
+// Test hook.
+export function resetCountedUnavailable(env) {
+  if (env && typeof env === 'object') countedUnavailable.delete(env);
 }
 
 // A reservation holds its user's concurrency slot for a lease (90 s from zerox_reserve_v2) that
