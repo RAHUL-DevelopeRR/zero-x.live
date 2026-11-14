@@ -1813,8 +1813,11 @@ conversation is always held at its byte estimate (3.5 bytes a token): its densit
 request to request, so a request without tools is never held below the byte estimate. Only tool
 schemas are discounted: they count at 4 bytes a token, then, per upstream model, at what settled
 attempts show they cost (the provider's prompt_tokens minus the conversation read at 4.5 bytes a
-token, the sparsest it plausibly is) times 1.15, never above their base and never below half of it.
-Usage the gateway estimated itself (a reply without usage) never teaches. The byte estimate still
+token) times 1.15, never above their base and never below 0.85 of it (4.7 bytes a token; the
+incident's tools cost 5.3). Only attempts whose tool schemas outweigh the conversation teach, so a
+long, sparse or image-bearing conversation cannot read the tools too low, and the ratio is the
+highest sample of the last two 10-minute windows, so no later sample lowers the hold for a request
+the provider recently counted. Usage the gateway estimated itself (a reply without usage) never teaches. The byte estimate still
 decides context windows and credit holds and caps the hold, and settlement still replaces the hold
 with real usage. For turns shaped like the incident's (the fixture in check-routing-v2.mjs, 20.6K
 bytes, Groq counting 4,025): 6,340 held instead of 6,900 for turn one, 5,828 instead of 6,928 for

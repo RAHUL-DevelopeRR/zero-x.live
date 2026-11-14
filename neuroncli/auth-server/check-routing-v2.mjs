@@ -19,7 +19,7 @@ import {
   reserveCostMicrousd, utf8Bytes,
 } from './src/pricing.js';
 import {
-  CALIBRATION_MARGIN, CALIBRATION_FLOOR, budgetPromptBase, budgetPromptTokens, calibrationKey, notePromptUsage, promptCalibration,
+  CALIBRATION_MARGIN, CALIBRATION_FLOOR, LEARNING_WINDOW_MS, budgetPromptBase, budgetPromptTokens, calibrationKey, notePromptUsage, promptCalibration,
   resetPromptCalibration,
 } from './src/prompt-calibration.js';
 import { errorBody, errorResponse } from './src/errors.js';
@@ -2117,10 +2117,9 @@ try {
     // so the hold stays a little above the 15 % margin on the incident's turn.
     assert.ok(learned <= 4025 * 1.2, `within 20 % of the real count (${learned})`);
     assert.ok(learned / 4025 < 1.2 && ceiling / 4025 > 1.4, 'the old estimate was ~46 % high, the calibrated hold is not');
-    // One unusually sparse request moves the hold a fifth of the way; a denser one is taken at once.
+    // A sparser sample does not lower the hold while the higher count is recent; a denser one is taken at once.
     notePromptUsage(key, base, 3000);
-    const eased = budgetPromptTokens(key, base, ceiling);
-    assert.ok(eased < learned && eased > Math.ceil(3000 * CALIBRATION_MARGIN), `eased, not dropped (${eased})`);
+    assert.equal(budgetPromptTokens(key, base, ceiling), learned, 'a sparser sample does not lower a recent count');
     notePromptUsage(key, base, 4800);
     assert.ok(budgetPromptTokens(key, base, ceiling) >= 4800, 'a denser request is held in full at once');
     // Never above the byte estimate, never below CALIBRATION_FLOOR of the tool part; small tool sets teach nothing.
@@ -2128,8 +2127,15 @@ try {
     assert.equal(budgetPromptTokens(key, base, ceiling), base.total);
     assert.equal(budgetPromptTokens(key, { messages: base.messages * 2, tools: base.tools * 2 }, ceiling), ceiling, 'capped at the estimate');
     resetPromptCalibration();
-    notePromptUsage(key, base, 10);
+    notePromptUsage(key, base, Math.ceil(base.messageBytes / 4.5 + base.tools * 0.2));
+    assert.ok(promptCalibration(key).ratio < 0.25, 'a very sparse first sample is learned as it is');
     assert.equal(budgetPromptTokens(key, base, ceiling), base.messages + Math.ceil(base.tools * CALIBRATION_FLOOR));
+    assert.equal(notePromptUsage(key, base, 10), null, 'nothing left for the tools after the conversation: not learned');
+    // Only samples whose tools outweigh the conversation teach.
+    const long = incidentTurn([{ role: 'user', content: 'word '.repeat(4000) }]);
+    const longBase = budgetPromptBase(long, incidentTools);
+    assert.ok(longBase.messages > longBase.tools);
+    assert.equal(notePromptUsage(key, longBase, 9000), null, 'a conversation that outweighs the tools teaches nothing');
     resetPromptCalibration();
     assert.equal(notePromptUsage(key, 100, 50), null, 'a bare number is conversation only: nothing to learn');
     assert.equal(notePromptUsage(key, { messages: 4000, tools: 100 }, 3000), null, 'below MIN_SAMPLE_TOKENS of tools');
@@ -2156,6 +2162,93 @@ try {
     assert.ok(held >= Math.ceil(utf8Bytes(dense) / 3.5) + Math.ceil(denseBase.tools * CALIBRATION_FLOOR), `held ${held}`);
     assert.ok(held - denseBase.messages >= 4025 - Math.ceil(utf8Bytes(incidentTurn([])) / 4.5),
       'the tool part holds at least what the provider counted beyond the sparsest reading of the incident conversation');
+    resetPromptCalibration();
+  });
+
+  await test('prompt calibration: sparse, whitespace and dummy-tool samples never hold the incident first turn below what Groq counted', () => {
+    // Review 2026-11-14: every settled attempt taught the tool ratio, reading the conversation at
+    // 4.5 bytes a token. Long conversations sparser than that (the incident ran at 5.1 bytes a
+    // token overall), whitespace and padded tool schemas dragged the ratio to the 0.5 floor and the
+    // first turn to about 3,350 held tokens, below the 4,025 Groq counts.
+    const key = calibrationKey(catalogEntry('groq/openai/gpt-oss-120b'));
+    const first = incidentTurn([]);
+    const firstBase = budgetPromptBase(first, incidentTools);
+    const ceiling = estimatePromptTokens(first, incidentTools);
+    const t0 = 1_800_000_000_000;
+    const realTools = 4025 - Math.ceil(utf8Bytes(first) / 5.1); // about 3,070; the tools' real share
+    const attack = start => {
+      const results = [];
+      // Six settled long turns: about 60 KB of plain words at the incident's own 5.1 bytes a token.
+      for (let index = 0; index < 6; index += 1) {
+        const messages = incidentTurn([{ role: 'user', content: `sentence ${index} `.repeat(5600) }]);
+        const base = budgetPromptBase(messages, incidentTools);
+        results.push(notePromptUsage(key, base, Math.ceil(base.messageBytes / 5.1) + realTools, start + index));
+      }
+      // Whitespace: 15 KB and 5 KB of spaces, which tokenize to almost nothing.
+      for (const size of [15_000, 5_000, 2_000]) {
+        const messages = incidentTurn([{ role: 'user', content: ' '.repeat(size) }]);
+        const base = budgetPromptBase(messages, incidentTools);
+        results.push(notePromptUsage(key, base, Math.ceil(utf8Bytes(first) / 5.1) + 40 + realTools, start + 10));
+      }
+      // Many dummy tools whose schemas are mostly whitespace: the tool part is sparse itself.
+      const dummies = Array.from({ length: 60 }, (_, index) => ({ type: 'function', function: {
+        name: `pad_${index}`, description: ' '.repeat(2000), parameters: { type: 'object', properties: {} } } }));
+      const dummyBase = budgetPromptBase([{ role: 'user', content: 'hi' }], dummies);
+      for (let index = 0; index < 6; index += 1) {
+        results.push(notePromptUsage(key, dummyBase, Math.ceil(utf8Bytes(dummies) / 40), start + 20 + index));
+      }
+      return results;
+    };
+
+    // 1. After the provider counted the first turn: no later sample lowers its hold.
+    resetPromptCalibration();
+    notePromptUsage(key, firstBase, 4025, t0);
+    const learned = budgetPromptTokens(key, firstBase, ceiling);
+    assert.ok(learned >= 4025 && learned <= 4025 * 1.2, `learned hold ${learned}`);
+    const results = attack(t0 + 1000);
+    assert.deepEqual(results.slice(0, 7), Array(7).fill(null), 'long and 15 KB whitespace conversations teach nothing');
+    assert.ok(results.slice(7).every(state => state === null || state.ratio === promptCalibration(key).ratio));
+    assert.equal(budgetPromptTokens(key, firstBase, ceiling), learned, 'the hold for the counted request is unchanged');
+    // Still so in the next window, when the attack continues and no honest turn came in between.
+    attack(t0 + LEARNING_WINDOW_MS + 5000);
+    assert.equal(budgetPromptTokens(key, firstBase, ceiling), learned, 'the previous window still counts');
+
+    // 2. The counted turn has aged out (two windows) or a fresh process saw only the attack: the
+    // floor (0.85 of the tool base, tools at 4.7 bytes a token) still holds the incident turn above
+    // Groq's 4,025, whatever the samples taught.
+    attack(t0 + 3 * LEARNING_WINDOW_MS);
+    attack(t0 + 4 * LEARNING_WINDOW_MS + 5000);
+    assert.ok(promptCalibration(key).ratio * CALIBRATION_MARGIN < CALIBRATION_FLOOR, 'the attack did lower the ratio');
+    const floored = budgetPromptTokens(key, firstBase, ceiling);
+    assert.equal(floored, firstBase.messages + Math.ceil(firstBase.tools * CALIBRATION_FLOOR));
+    assert.ok(floored >= 4025, `floor hold ${floored}`);
+    // Tools alone at the floor hold more than the 2,947 to 3,070 tokens the incident's tools really cost.
+    assert.ok(Math.ceil(firstBase.tools * CALIBRATION_FLOOR) > realTools && firstBase.tools * CALIBRATION_FLOOR > 2947);
+    resetPromptCalibration();
+    attack(t0);
+    assert.ok(budgetPromptTokens(key, firstBase, ceiling) >= 4025, 'a fresh process taught only by the attack');
+    // A real first turn after that is taken at once.
+    notePromptUsage(key, firstBase, 4025, t0 + 100);
+    assert.equal(budgetPromptTokens(key, firstBase, ceiling), learned);
+
+    // The learned hold stays well below the old byte estimate the incident was held at.
+    assert.ok(ceiling / learned > 1.2, 'still well below the old estimate');
+    resetPromptCalibration();
+  });
+
+  await test('prompt calibration: a lower sample lowers the ratio only once a whole window passed without a higher one', () => {
+    resetPromptCalibration();
+    const key = calibrationKey(catalogEntry('groq/openai/gpt-oss-120b'));
+    const base = budgetPromptBase(incidentTurn([]), incidentTools);
+    const t0 = 1_800_000_000_000;
+    const high = notePromptUsage(key, base, 4025, t0).ratio;
+    const lowCount = Math.ceil(base.messageBytes / 4.5 + base.tools * 0.6);
+    assert.equal(notePromptUsage(key, base, lowCount, t0 + 60_000).ratio, high, 'same window');
+    assert.equal(notePromptUsage(key, base, lowCount, t0 + LEARNING_WINDOW_MS + 1).ratio, high, 'next window: the previous peak counts');
+    assert.equal(notePromptUsage(key, base, lowCount, t0 - 5 * 60_000).ratio, high, 'a clock step back stays in the window');
+    const later = notePromptUsage(key, base, lowCount, t0 + 2 * LEARNING_WINDOW_MS + 2);
+    assert.ok(later.ratio < high && Math.abs(later.ratio - 0.6) < 0.01, `lowered after a quiet window (${later.ratio})`);
+    assert.equal(notePromptUsage(key, base, 4025, t0 + 2 * LEARNING_WINDOW_MS + 3).ratio, high, 'a higher sample is taken at once');
     resetPromptCalibration();
   });
 
@@ -2321,6 +2414,16 @@ try {
     assert.equal(slot.message, 'Model A runs one request at a time on the free tier and is serving another one. Retry in a few seconds, or choose another model.');
     assert.equal(exhaustionError([row('concurrency', { retry_after_seconds: 5 })], ['auto']).message,
       'Model A runs one request at a time on the free tier and is serving another one. Retry in a few seconds, or switch to Auto or another model to continue now. Models that can take it now: auto.');
+    // Auto is named only when it is one of the alternatives (review 2026-11-14): a sibling route of the
+    // family can be open while auto has no open candidate.
+    assert.equal(exhaustionError([row('concurrency', { retry_after_seconds: 5 })], ['nvidia/openai/gpt-oss-20b']).message,
+      'Model A runs one request at a time on the free tier and is serving another one. Retry in a few seconds, or switch to another model to continue now. Models that can take it now: nvidia/openai/gpt-oss-20b.');
+    assert.equal(exhaustionError([row('rpm|tpm', { retry_after_seconds: 44 })], ['nvidia/openai/gpt-oss-20b']).message,
+      'Model A has used its free per-minute budget (shared by every user). It frees up in 44 s. Switch to another model to continue now. ' +
+      'Models that can take it now: nvidia/openai/gpt-oss-20b.');
+    assert.equal(exhaustionError([row('rpm|tpm', { retry_after_seconds: 44 })], ['nvidia/openai/gpt-oss-20b', 'auto']).message,
+      'Model A has used its free per-minute budget (shared by every user). It frees up in 44 s. Switch to Auto or another model to continue now. ' +
+      'Models that can take it now: nvidia/openai/gpt-oss-20b, auto.');
     const share = exhaustionError([{ status: 'user_pool_share', budget: 'share', model: 'Model A', retry_after_seconds: 3000 }]);
     assert.equal(share.reason, 'user_pool_share');
     assert.match(share.message, /^You have used your share of the free capacity/);

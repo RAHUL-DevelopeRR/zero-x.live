@@ -4,7 +4,7 @@
 // without a database keep the session-KV daily allocation.
 import { databaseConfigured, rpc } from './account-store.js';
 import { missingFunction } from './db/errors.js';
-import { poolKey } from './catalog.js';
+import { AUTO_MODEL_ID, poolKey } from './catalog.js';
 import { billableUsage, costMicrousd, countedTokens, estimateOutputTokens, reserveCostMicrousd,
   TOKEN_LIMIT_CACHE_READ_WEIGHT } from './pricing.js';
 import { billedDailyCapMicrousd, sponsoredTermsFor } from './catalog-guardrails.js';
@@ -329,7 +329,10 @@ export function exhaustionError(exhausted, alternatives = []) {
   const names = [...new Set(exhausted.map(row => row.model).filter(Boolean))];
   const one = names.length === 1 ? names[0] : null;
   const others = alternatives.length ? ` Models that can take it now: ${alternatives.join(', ')}.` : '';
-  const switchTo = alternatives.length ? 'Switch to Auto or another model to continue now.' : 'Retry then, or choose another model.';
+  // Auto is named only when it is one of the alternatives (chat-handler.js adds it only while it has an open candidate).
+  const switchTo = !alternatives.length ? 'Retry then, or choose another model.'
+    : alternatives.includes(AUTO_MODEL_ID) ? 'Switch to Auto or another model to continue now.'
+      : 'Switch to another model to continue now.';
   let message;
   if (reason === 'user_pool_share') {
     message = 'You have used your share of the free capacity for these models today. It resets at 00:00 UTC; ' +
