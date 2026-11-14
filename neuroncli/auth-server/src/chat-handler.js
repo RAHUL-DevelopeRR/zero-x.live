@@ -314,8 +314,8 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
     const promptTokens = estimatePromptTokens(body.messages, body.tools);
     // What the pool budgets hold for the prompt (src/prompt-calibration.js): the byte estimate
     // above is the ceiling for context windows and credits, and was 46 % above Groq's own count
-    // for a typical Neuron request.
-    const budgetBase = Math.min(promptTokens, budgetPromptBase(body.messages, body.tools));
+    // for a typical Neuron request (its tool schemas). Reservations cap the hold at promptTokens.
+    const budgetBase = budgetPromptBase(body.messages, body.tools);
     const explicitMax = body.max_completion_tokens ?? body.max_tokens;
     const requestedMax = explicitMax ?? DEFAULT_MAX_TOKENS;
     // phase ('first_byte' | 'idle' | 'response') tells liveness timeouts from slow generations;
@@ -448,9 +448,11 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
     // Settles a committed attempt with real (or estimated) usage.
     const finishAttempt = async ({ reservation, candidate, startedAt }, outcome) => {
       const status = outcome.status === 'ok' ? 'ok' : 'error';
-      // The provider's own prompt count (never the gateway's fallback estimate) calibrates what
-      // later reservations of this model hold (src/prompt-calibration.js).
-      const reported = outcome.usage ? billableUsage(outcome.usage) : null;
+      // The provider's own prompt count calibrates what later reservations of this model hold
+      // (src/prompt-calibration.js); never the gateway's fallback estimate, which billableUsage
+      // reads as real once normalizeCompletion (src/providers.js) has filled in a missing usage
+      // with `estimated: true`.
+      const reported = outcome.usage && outcome.usage.estimated !== true ? billableUsage(outcome.usage) : null;
       if (reported && !reported.estimated) notePromptUsage(calibrationKey(candidate.entry), budgetBase, reported.prompt_tokens);
       if (reservation) {
         await settleDb(reservation, candidate, { status, usage: outcome.usage, outputBytes: outcome.outputBytes,

@@ -297,6 +297,26 @@ const wholeSeconds = value => {
   return Number.isFinite(number) && number > 0 ? Math.max(1, Math.ceil(number)) : null;
 };
 
+// The bracket after "has used its free per-minute budget". zerox_reserve_v2 does not say which
+// minute budget refused, so exhaustedBudget names every one the pool sets ('rpm|tpm' on Groq's free
+// pools): both limits are named, and the request's own size only when the token budget is the
+// plausible cause (the only minute limit, or the request is at least half of it). Otherwise a
+// pool whose requests a minute ran out would tell a small request it needs 1,500 of 8,000 tokens.
+export function minuteBudgetDetail(row) {
+  const names = String(row?.budget || '').split('|');
+  const limit = name => {
+    const value = Number(row?.limits?.[name]);
+    return names.includes(name) && Number.isSafeInteger(value) && value > 0 ? value : null;
+  };
+  const rpm = limit('rpm');
+  const tpm = limit('tpm');
+  if (!rpm && !tpm) return ' (shared by every user)';
+  const limits = [rpm && `${tokenCount(rpm)} requests`, tpm && `${tokenCount(tpm)} tokens`].filter(Boolean).join(' or ');
+  const needed = Number(row?.tokens);
+  const sized = tpm && Number.isSafeInteger(needed) && needed > 0 && (!rpm || needed * 2 >= tpm);
+  return ` (${limits} a minute, shared by every user${sized ? `; this request needs about ${tokenCount(Math.min(needed, tpm))} tokens` : ''})`;
+}
+
 // The client error once every candidate was refused by a shared budget (no upstream attempt
 // failed). `exhausted` rows are reservation rows plus budget, model (display name), tokens (the
 // refused p_tokens) and limits (p_pool); `alternatives` are model ids that can take this request
@@ -319,15 +339,7 @@ export function exhaustionError(exhausted, alternatives = []) {
   } else if (reason === 'minute_budget') {
     const wait = retry ? `It frees up in ${retry} s.` : 'It frees up within a minute.';
     if (one) {
-      const row = relevant[0];
-      const tpm = Number(row?.limits?.tpm);
-      const needed = Number(row?.tokens);
-      let size = '';
-      if (Number.isSafeInteger(tpm) && tpm > 0) {
-        const share = Number.isSafeInteger(needed) && needed > 0 ? `; this request needs about ${tokenCount(Math.min(needed, tpm))} of them` : '';
-        size = ` (${tokenCount(tpm)} tokens a minute, shared by every user${share})`;
-      }
-      message = `${one} has used its free per-minute budget${size}. ${wait} ${switchTo}`;
+      message = `${one} has used its free per-minute budget${minuteBudgetDetail(relevant[0])}. ${wait} ${switchTo}`;
     } else {
       message = `Every free model that can take this request has used its per-minute budget. ${wait} ${switchTo}`;
     }

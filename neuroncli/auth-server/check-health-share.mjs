@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { publicStatus, resetSharedHealthCache, shareHealth, withHealth } from './src/health-share.js';
 import { HealthState, ProviderHealthTracker, FailureKind } from './src/provider-health.js';
-import { v1ModelsPayload, v1ModelStatusPayload } from './src/routes/plans.js';
+import { statusFrameAt, v1ModelsPayload, v1ModelStatusPayload } from './src/routes/plans.js';
 import { AGENT_MIN_CONTEXT, catalogEntry, poolKey } from './src/catalog.js';
 import { notePoolExhausted, notePoolReserved, poolBudgetState, resetPoolBudgets } from './src/pool-budget.js';
 
@@ -252,6 +252,17 @@ console.log('ok - slow_until: kept while it lasts, published to KV and cleared b
     family: 'openai/gpt-oss-120b', maker: 'openai', display_name: 'GPT-OSS 120B', context_window: 8000, native_context_window: 131072,
     available: true, unavailable_reason: null, status: 'busy', availability: 'busy', available_again_at: new Date(at + 40_000).toISOString(),
     checked_at: new Date(at).toISOString(), latency_ms: null, last_success_at: null, last_failure_class: null, stale_after_seconds: 1200 });
+  // A stream frame counts the wait from when it is sent, not from when the shared payload was built
+  // (it is reused for up to half a stream interval); the frame keeps its id (the ETag).
+  const frame = statusFrameAt({ ...status, frame: 'cached' }, at + 10_000);
+  assert.ok(frame.startsWith(`id: ${status.etag}
+event: catalog.updated
+data: `));
+  const sent = JSON.parse(frame.split('data: ')[1]).data;
+  assert.equal(sent.find(model => model.id === 'openai/gpt-oss-120b').available_again_in_seconds, 30, '40 s from `at`, sent 10 s later');
+  assert.equal(statusFrameAt({ ...status, frame: 'cached' }, at + 41_000).includes('"available_again_in_seconds":30'), false);
+  assert.equal(statusFrameAt({ etag: 'e', frame: 'cached', body: { data: [{ id: 'm', available_again_in_seconds: null }] } }), 'cached',
+    'no countdown: the shared frame as it is');
 
   // A caller that can also use the paid pool still has a way through it.
   const both = { object: 'list', data: [{ id: 'gpt-oss', available: true }] };

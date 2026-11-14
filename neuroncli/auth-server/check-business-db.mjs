@@ -21,7 +21,7 @@ import { ProviderHealthTracker } from './src/provider-health.js';
 import { estimatePromptTokens } from './src/pricing.js';
 import { RESERVED_OUTPUT_TOKENS, resetCountedUnavailable, sessionDailyTokenCap, settleCapacity, settlementArgs } from './src/capacity.js';
 import { resetPoolBudgets } from './src/pool-budget.js';
-import { budgetPromptTokens, resetPromptCalibration } from './src/prompt-calibration.js';
+import { budgetPromptBase, budgetPromptTokens, resetPromptCalibration } from './src/prompt-calibration.js';
 import { v1ModelsPayload } from './src/routes/plans.js';
 
 const root = dirname(fileURLToPath(import.meta.url));
@@ -955,12 +955,12 @@ try {
     assert.deepEqual(upstreamMax, Array(4).fill(8000 - prompt), 'the upstream max_tokens still fits the 8K minute');
     assert.deepEqual(statuses, [200, 200, 200, 200, 503], 'four turns fit in one minute; the fifth exceeds 8K TPM');
     const reserved = await sql('SELECT reserved_tokens FROM public.zerox_reservations WHERE user_id = $1 ORDER BY created_at', [groqUser]);
-    // The first turn holds the byte estimate; the next ones the provider's count (1,200) plus the
-    // calibration margin (src/prompt-calibration.js), never more than the estimate.
-    const calibrated = budgetPromptTokens('groq:openai/gpt-oss-120b', prompt, prompt);
-    assert.ok(calibrated < prompt && calibrated >= 1200, `calibrated hold ${calibrated}`);
-    assert.deepEqual(reserved.map(row => Number(row.reserved_tokens)),
-      [prompt + RESERVED_OUTPUT_TOKENS, ...Array(3).fill(calibrated + RESERVED_OUTPUT_TOKENS)],
+    // A request without tools is held at its byte estimate on every turn: only tool schemas are
+    // calibrated against the provider's count (src/prompt-calibration.js), since a conversation's
+    // density changes from request to request.
+    const calibrated = budgetPromptTokens('groq:openai/gpt-oss-120b', budgetPromptBase(turn), prompt);
+    assert.equal(calibrated, prompt, `tools-free hold ${calibrated}`);
+    assert.deepEqual(reserved.map(row => Number(row.reserved_tokens)), Array(4).fill(calibrated + RESERVED_OUTPUT_TOKENS),
       `each turn holds its prompt plus ${RESERVED_OUTPUT_TOKENS} output tokens, not the whole 8,000-token minute it held before`);
     const minute = await poolRow('groq/openai/gpt-oss-120b', 'free', 'minute');
     assert.deepEqual([Number(minute.requests), Number(minute.tokens)], [4, 6000], 'settled to the real usage (4 x 1,500)');

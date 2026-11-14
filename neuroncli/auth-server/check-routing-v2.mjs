@@ -2107,29 +2107,56 @@ try {
     const first = incidentTurn([]);
     const ceiling = estimatePromptTokens(first, incidentTools);
     const base = budgetPromptBase(first, incidentTools);
-    assert.ok(base < ceiling, 'tool schemas at 4 bytes a token hold less than the 3.5 byte estimate');
-    assert.equal(budgetPromptTokens(key, base, ceiling), base, 'nothing learned yet: the base');
+    assert.equal(base.messages, Math.ceil(utf8Bytes(first) / 3.5), 'the conversation stays at 3.5 bytes a token');
+    assert.ok(base.total < ceiling, 'tool schemas at 4 bytes a token hold less than the 3.5 byte estimate');
+    assert.equal(budgetPromptTokens(key, base, ceiling), base.total, 'nothing learned yet: the base');
     notePromptUsage(key, base, 4025);
     const learned = budgetPromptTokens(key, base, ceiling);
     assert.ok(learned >= 4025, `never below what the provider counted (${learned})`);
-    assert.ok(learned <= Math.ceil(4025 * CALIBRATION_MARGIN), `within the margin of the real count (${learned})`);
+    // The tool share is read with the conversation as sparse as English gets (4.5 bytes a token),
+    // so the hold stays a little above the 15 % margin on the incident's turn.
+    assert.ok(learned <= 4025 * 1.2, `within 20 % of the real count (${learned})`);
     assert.ok(learned / 4025 < 1.2 && ceiling / 4025 > 1.4, 'the old estimate was ~46 % high, the calibrated hold is not');
-    // One unusually sparse prompt moves the hold a fifth of the way; a denser one is taken at once.
-    notePromptUsage(key, base, 2000);
+    // One unusually sparse request moves the hold a fifth of the way; a denser one is taken at once.
+    notePromptUsage(key, base, 3000);
     const eased = budgetPromptTokens(key, base, ceiling);
-    assert.ok(eased < learned && eased > Math.ceil(2000 * CALIBRATION_MARGIN), `eased, not dropped (${eased})`);
+    assert.ok(eased < learned && eased > Math.ceil(3000 * CALIBRATION_MARGIN), `eased, not dropped (${eased})`);
     notePromptUsage(key, base, 4800);
-    assert.ok(budgetPromptTokens(key, base, ceiling) >= 4800, 'a denser prompt is held in full at once');
-    // Never above the byte estimate, never below CALIBRATION_FLOOR of the base; tiny prompts teach nothing.
-    notePromptUsage(key, base, base * 3);
-    assert.equal(budgetPromptTokens(key, base, ceiling), base);
-    assert.equal(budgetPromptTokens(key, base * 2, ceiling), ceiling, 'capped at the estimate');
+    assert.ok(budgetPromptTokens(key, base, ceiling) >= 4800, 'a denser request is held in full at once');
+    // Never above the byte estimate, never below CALIBRATION_FLOOR of the tool part; small tool sets teach nothing.
+    notePromptUsage(key, base, base.total * 3);
+    assert.equal(budgetPromptTokens(key, base, ceiling), base.total);
+    assert.equal(budgetPromptTokens(key, { messages: base.messages * 2, tools: base.tools * 2 }, ceiling), ceiling, 'capped at the estimate');
     resetPromptCalibration();
     notePromptUsage(key, base, 10);
-    assert.equal(budgetPromptTokens(key, base, ceiling), Math.ceil(base * CALIBRATION_FLOOR));
+    assert.equal(budgetPromptTokens(key, base, ceiling), base.messages + Math.ceil(base.tools * CALIBRATION_FLOOR));
     resetPromptCalibration();
-    assert.equal(notePromptUsage(key, 100, 50), null, 'below MIN_SAMPLE_TOKENS');
+    assert.equal(notePromptUsage(key, 100, 50), null, 'a bare number is conversation only: nothing to learn');
+    assert.equal(notePromptUsage(key, { messages: 4000, tools: 100 }, 3000), null, 'below MIN_SAMPLE_TOKENS of tools');
     assert.equal(promptCalibration(key), null);
+  });
+
+  await test('prompt calibration: what a tool-heavy turn taught never lowers a tools-free or denser conversation', () => {
+    resetPromptCalibration();
+    const key = calibrationKey(catalogEntry('groq/openai/gpt-oss-120b'));
+    notePromptUsage(key, budgetPromptBase(incidentTurn([]), incidentTools), 4025);
+    assert.ok(promptCalibration(key).ratio < 1, 'learned a discount from the incident turn');
+    // A tools-free request of the same 20.6K bytes (code, or non-English text): held at its byte
+    // estimate, as before the calibration (review 2026-11-14: one ratio per model held it 13 % low).
+    const plain = [{ role: 'user', content: 'const value = compute(input);\n'.repeat(680) }];
+    assert.ok(Math.abs(utf8Bytes(plain) - 20564) < 600, `same size as the incident request (${utf8Bytes(plain)})`);
+    const plainCeiling = estimatePromptTokens(plain);
+    assert.equal(budgetPromptTokens(key, budgetPromptBase(plain), plainCeiling), plainCeiling);
+    assert.ok(budgetPromptTokens(key, budgetPromptBase(plain), plainCeiling) >= Math.ceil(utf8Bytes(plain) / 3.5));
+    // The same tools with a long dense conversation: the conversation part is held in full, only
+    // the tools are discounted.
+    const dense = incidentTurn([{ role: 'user', content: 'const value = compute(input);\n'.repeat(300) }]);
+    const denseBase = budgetPromptBase(dense, incidentTools);
+    const held = budgetPromptTokens(key, denseBase, estimatePromptTokens(dense, incidentTools));
+    assert.ok(held >= Math.ceil(utf8Bytes(dense) / 3.5) + Math.ceil(denseBase.tools * CALIBRATION_FLOOR), `held ${held}`);
+    assert.ok(held - denseBase.messages >= 4025 - Math.ceil(utf8Bytes(incidentTurn([])) / 4.5),
+      'the tool part holds at least what the provider counted beyond the sparsest reading of the incident conversation');
+    resetPromptCalibration();
   });
 
   await test('incident: a named free model refused by its per-minute budget says so, keeps 503 + Retry-After, lists alternatives, records the refusal', async () => {
@@ -2169,7 +2196,9 @@ try {
     assert.equal(error.retry_after_seconds, 44);
     assert.equal(error.type, 'server_error');
     assert.equal(error.reason, 'minute_budget');
-    assert.match(error.message, /^GPT-OSS 120B \(Groq\) has used its free per-minute budget \(8,000 tokens a minute, shared by every user; this request needs about [\d,]+ of them\)\. It frees up in 44 s\. Switch to Auto or another model to continue now\. Models that can take it now: auto, /);
+    // Groq's free pool sets both minute budgets and zerox_reserve_v2 does not say which refused: both
+    // are named, and the request's size because it is more than half the token budget.
+    assert.match(error.message, /^GPT-OSS 120B \(Groq\) has used its free per-minute budget \(30 requests or 8,000 tokens a minute, shared by every user; this request needs about [\d,]+ tokens\)\. It frees up in 44 s\. Switch to Auto or another model to continue now\. Models that can take it now: auto, /);
     assert.doesNotMatch(error.message, /—/, 'no em dash');
     assert.equal(error.alternatives[0], 'auto');
     assert.ok(!error.alternatives.includes('groq/openai/gpt-oss-120b'), 'never the refused model');
@@ -2222,6 +2251,56 @@ try {
     assert.equal(error.alternatives, undefined);
     assert.equal(error.message, 'Every free model that can take this request has used its per-minute budget. It frees up in 30 s. Retry then, or choose another model.');
     resetPoolBudgets();
+  });
+
+  await test('minute_budget messages: name the request and token budgets; the request size only when tokens can explain it', () => {
+    const minute = (budget, limits, tokens) => exhaustionError([{ status: 'pool_exhausted', budget, model: 'GPT-OSS 120B (Groq)',
+      retry_after_seconds: 30, limits, tokens }]).message;
+    const groq = { rpm: 30, rpd: 1000, tpm: 8000, tpd: 200000 };
+    // An agent loop of small calls spent the 30 requests a minute: a 1,500-token request plainly
+    // fits 8,000 tokens, so its size is not given as the reason.
+    assert.equal(minute('rpm|tpm', groq, 1500), 'GPT-OSS 120B (Groq) has used its free per-minute budget ' +
+      '(30 requests or 8,000 tokens a minute, shared by every user). It frees up in 30 s. Retry then, or choose another model.');
+    assert.equal(minute('rpm|tpm', groq, 5828), 'GPT-OSS 120B (Groq) has used its free per-minute budget ' +
+      '(30 requests or 8,000 tokens a minute, shared by every user; this request needs about 5,828 tokens). It frees up in 30 s. ' +
+      'Retry then, or choose another model.');
+    // A pool with only a request budget a minute (exhaustedBudget names 'rpm').
+    assert.equal(minute(exhaustedBudget({ rpm: 30, rpd: 1000 }, 30), { rpm: 30, rpd: 1000 }, 1500),
+      'GPT-OSS 120B (Groq) has used its free per-minute budget (30 requests a minute, shared by every user). ' +
+      'It frees up in 30 s. Retry then, or choose another model.');
+    // Only a token budget a minute: the size is the explanation even for a small request.
+    assert.equal(minute(exhaustedBudget({ tpm: 8000 }, 30), { tpm: 8000 }, 1500),
+      'GPT-OSS 120B (Groq) has used its free per-minute budget (8,000 tokens a minute, shared by every user; this request ' +
+      'needs about 1,500 tokens). It frees up in 30 s. Retry then, or choose another model.');
+    // No limits known: neutral.
+    assert.equal(minute('rpm|tpm', null, 1500), 'GPT-OSS 120B (Groq) has used its free per-minute budget (shared by every user). ' +
+      'It frees up in 30 s. Retry then, or choose another model.');
+  });
+
+  await test('prompt calibration ignores the usage the gateway made up for a non-streaming reply without usage', async () => {
+    resetPromptCalibration();
+    const gw = gateway();
+    gw.addSession('ses_free', { account_backed: true, user_id: ACCOUNT, plan: 'free' });
+    let withUsage = true;
+    reset({ 'rpc:zerox_plan_policies_v2': policiesRpc,
+      'rpc:zerox_reserve_v2': () => Response.json([okReserve({ plan: 'free' })]),
+      'rpc:zerox_settle_v2': () => Response.json([{ status: 'settled' }]),
+      groq: () => (withUsage ? completion({ content: 'Hello!' }, { prompt_tokens: 3500, completion_tokens: 5, total_tokens: 3505 })
+        : Response.json({ id: 'up-2', choices: [{ index: 0, message: { role: 'assistant', content: 'Hello!' }, finish_reason: 'stop' }] })) });
+    const key = calibrationKey(catalogEntry('groq/openai/gpt-oss-120b'));
+    const request = { model: 'groq/openai/gpt-oss-120b', messages: incidentTurn([]), tools: incidentTools, stream: false };
+    const first = await gw.call(accountEnv(), request, { token: 'ses_free' });
+    assert.equal(first.status, 200);
+    await first.json();
+    const learned = promptCalibration(key);
+    assert.equal(learned?.samples, 1, 'the provider count teaches');
+    withUsage = false;
+    const second = await gw.call(accountEnv(), request, { token: 'ses_free' });
+    assert.equal(second.status, 200);
+    const body = await second.json();
+    assert.equal(body.usage?.estimated, true, 'the reply carries the gateway estimate');
+    assert.deepEqual(promptCalibration(key), learned, 'the estimate does not reset the calibration');
+    resetPromptCalibration();
   });
 
   await test('refusal reasons and messages: minute, day, spend cap, slot, fair share, mixed', () => {

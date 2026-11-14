@@ -146,6 +146,8 @@ export async function v1ModelStatusPayload(c, session = {}, options = {}) {
   // checked_at, latency_ms and last_success_at move with every observation, so they stay out of
   // the ETag (as the top-level checked_at did): a 304 means the verdicts did not change.
   // available_again_in_seconds counts down every second; available_again_at carries the same verdict.
+  // So a 304 or an unchanged stream tick leaves the client's copy as it was served: clients count it
+  // down from when they received it, or read available_again_at (contract section 20.3).
   const stable = data.map(({ checked_at: _checked, latency_ms: _latency, last_success_at: _success,
     available_again_in_seconds: _seconds, ...row }) => row);
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify({ v: catalogVersion, data: stable })));
@@ -153,6 +155,25 @@ export async function v1ModelStatusPayload(c, session = {}, options = {}) {
   const checked = models.data.map(model => model.checked_at).filter(Boolean).sort().at(-1) ?? null;
   return { etag, body: { object: 'list', checked_at: checked, poll_interval_seconds: 30,
     stale_after_seconds: floorSeconds, catalog_version: catalogVersion, data } };
+}
+
+// The SSE frame of a shared status payload with available_again_in_seconds counted from now: the
+// shared payload may be up to ttlMs old when a connection sends it. Re-serialised only for a body
+// that has a countdown, and only when the ETag changed (a frame is sent), so it stays cheap.
+const secondsUntil = (value, now) => {
+  const until = Date.parse(value || '');
+  return Number.isFinite(until) && until > now ? Math.max(1, Math.ceil((until - now) / 1000)) : null;
+};
+export function statusFrameAt(shared, now = Date.now()) {
+  const rows = shared?.body?.data;
+  if (!Array.isArray(rows) || !rows.some(row => row?.available_again_in_seconds != null)) return shared.frame;
+  const body = { ...shared.body, data: rows.map(row => (row?.available_again_in_seconds == null ? row
+    : { ...row, available_again_in_seconds: secondsUntil(row.available_again_at, now) })) };
+  return `id: ${shared.etag}
+event: catalog.updated
+data: ${JSON.stringify(body)}
+
+`;
 }
 
 // One status payload and one serialised SSE frame per view per tick (security audit 2026-11-05, F2):
