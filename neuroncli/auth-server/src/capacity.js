@@ -4,7 +4,7 @@
 // without a database keep the session-KV daily allocation.
 import { databaseConfigured, rpc } from './account-store.js';
 import { missingFunction } from './db/errors.js';
-import { poolKey } from './catalog.js';
+import { AUTO_MODEL_ID, poolKey } from './catalog.js';
 import { billableUsage, costMicrousd, countedTokens, estimateOutputTokens, reserveCostMicrousd,
   TOKEN_LIMIT_CACHE_READ_WEIGHT } from './pricing.js';
 import { billedDailyCapMicrousd, sponsoredTermsFor } from './catalog-guardrails.js';
@@ -189,7 +189,11 @@ export function reservedTokens(promptTokens, maxTokens) {
 // A free pool of a provider type with free_concurrency (src/catalog-types.js) carries it as
 // p_pool.concurrency: Postgres refuses with pool_exhausted while that many requests of the pool
 // key run (contract section 8.6).
-export function reservationArgs({ env = {}, session, requestId, entry, pool, promptTokens, maxTokens }) {
+//
+// `budgetPromptTokens` (src/prompt-calibration.js) is the prompt the reservation holds against the
+// user's tokens and the pool budget (p_tokens); `promptTokens`, the byte estimate, still sets the
+// credit hold (p_cost_microusd). Without it both use promptTokens.
+export function reservationArgs({ env = {}, session, requestId, entry, pool, promptTokens, maxTokens, budgetPromptTokens = null }) {
   const { limits } = pool;
   const paid = pool.tier === 'paid';
   // A sponsored pool (free tier, operator-paid key slot; catalog-types.js SPONSORED_FREE_MODELS) is priced
@@ -209,7 +213,8 @@ export function reservationArgs({ env = {}, session, requestId, entry, pool, pro
     p_request_id: requestId,
     p_model: entry.id,
     p_tier: pool.tier,
-    p_tokens: reservedTokens(promptTokens, maxTokens),
+    p_tokens: reservedTokens(Number.isSafeInteger(budgetPromptTokens) && budgetPromptTokens > 0
+      ? Math.min(budgetPromptTokens, promptTokens) : promptTokens, maxTokens),
     p_cost_microusd: paid || sponsored ? reserveCostMicrousd(pool.price, promptTokens, maxTokens) : 0,
     p_pool: budget,
     ...(pool.key_id ? { p_pool_key: poolKey(entry, pool) } : {}),
@@ -261,6 +266,155 @@ export function reserveError(row, now = Date.now(), tokens = null, modelName = u
   if (code === 'rate_limited') options.retryAfterSeconds = retry > 0 ? retry : status === 'user_rpm' ? 60 : 5;
   if (code === 'capacity_exhausted') options.retryAfterSeconds = retry > 0 ? retry : 60;
   return options;
+}
+
+// ── Shared-budget refusals: reasons, messages and records ──
+// zerox_reserve_v2 answers pool_exhausted for any spent shared budget and user_pool_share for a
+// spent fair share. The client error keeps code capacity_exhausted, HTTP 503 and Retry-After
+// (Neuron alpha.5 retries on exactly those, rust/crates/api/src/retry.rs, and ignores fields it
+// does not know) and adds a `reason` naming the limit that refused the request:
+// - minute_budget: the pool's per-minute request or token budget (rpm, tpm), shared by every user;
+//   it frees at the next minute.
+// - daily_budget: its daily request or token budget (rpd, tpd), until 00:00 UTC.
+// - spend_cap: a paid or sponsored pool's daily spend cap (cpd), until 00:00 UTC.
+// - concurrency: a pool that runs one request at a time is serving another one.
+// - user_pool_share: this caller's fair share of the free pool today (others are unaffected).
+// - pool_budgets: several of these at once (an `auto` request refused everywhere).
+// A request larger than a pool's whole per-minute budget never reaches a reservation: the router
+// answers context_length_exceeded with reason request_over_minute_budget.
+export function refusalReason(status, budget) {
+  if (status === 'user_pool_share' || budget === 'share') return 'user_pool_share';
+  const names = String(budget || '').split('|').filter(Boolean);
+  if (names.length === 1 && names[0] === 'concurrency') return 'concurrency';
+  if (names.includes('rpm') || names.includes('tpm')) return 'minute_budget';
+  if (names.includes('cpd')) return 'spend_cap';
+  if (names.includes('concurrency')) return 'concurrency';
+  return 'daily_budget';
+}
+
+const wholeSeconds = value => {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? Math.max(1, Math.ceil(number)) : null;
+};
+
+// The bracket after "has used its free per-minute budget". zerox_reserve_v2 does not say which
+// minute budget refused, so exhaustedBudget names every one the pool sets ('rpm|tpm' on Groq's free
+// pools): both limits are named, and the request's own size only when the token budget is the
+// plausible cause (the only minute limit, or the request is at least half of it). Otherwise a
+// pool whose requests a minute ran out would tell a small request it needs 1,500 of 8,000 tokens.
+export function minuteBudgetDetail(row) {
+  const names = String(row?.budget || '').split('|');
+  const limit = name => {
+    const value = Number(row?.limits?.[name]);
+    return names.includes(name) && Number.isSafeInteger(value) && value > 0 ? value : null;
+  };
+  const rpm = limit('rpm');
+  const tpm = limit('tpm');
+  if (!rpm && !tpm) return ' (shared by every user)';
+  const limits = [rpm && `${tokenCount(rpm)} requests`, tpm && `${tokenCount(tpm)} tokens`].filter(Boolean).join(' or ');
+  const needed = Number(row?.tokens);
+  const sized = tpm && Number.isSafeInteger(needed) && needed > 0 && (!rpm || needed * 2 >= tpm);
+  return ` (${limits} a minute, shared by every user${sized ? `; this request needs about ${tokenCount(Math.min(needed, tpm))} tokens` : ''})`;
+}
+
+// The client error once every candidate was refused by a shared budget (no upstream attempt
+// failed). `exhausted` rows are reservation rows plus budget, model (display name), tokens (the
+// refused p_tokens) and limits (p_pool); `alternatives` are model ids that can take this request
+// now (chat-handler.js), offered when the request named its model.
+export function exhaustionError(exhausted, alternatives = []) {
+  const reasons = exhausted.map(row => refusalReason(row.status, row.budget));
+  const reason = reasons.length && reasons.every(value => value === reasons[0]) ? reasons[0] : 'pool_budgets';
+  const relevant = exhausted.filter((row, index) => reason === 'pool_budgets' || reasons[index] === reason);
+  const retry = wholeSeconds(Math.min(...relevant.map(row => Number(row.retry_after_seconds) > 0 ? Number(row.retry_after_seconds) : Infinity)));
+  const names = [...new Set(exhausted.map(row => row.model).filter(Boolean))];
+  const one = names.length === 1 ? names[0] : null;
+  const others = alternatives.length ? ` Models that can take it now: ${alternatives.join(', ')}.` : '';
+  // Auto is named only when it is one of the alternatives (chat-handler.js adds it only while it has an open candidate).
+  const switchTo = !alternatives.length ? 'Retry then, or choose another model.'
+    : alternatives.includes(AUTO_MODEL_ID) ? 'Switch to Auto or another model to continue now.'
+      : 'Switch to another model to continue now.';
+  let message;
+  if (reason === 'user_pool_share') {
+    message = 'You have used your share of the free capacity for these models today. It resets at 00:00 UTC; ' +
+      'try another model, or upgrade for dedicated capacity.';
+  } else if (reason === 'spend_cap') {
+    message = `${one || 'This model'} has reached today's spending limit on Zero-X. It resets at 00:00 UTC; choose another model until then.`;
+  } else if (reason === 'minute_budget') {
+    const wait = retry ? `It frees up in ${retry} s.` : 'It frees up within a minute.';
+    if (one) {
+      message = `${one} has used its free per-minute budget${minuteBudgetDetail(relevant[0])}. ${wait} ${switchTo}`;
+    } else {
+      message = `Every free model that can take this request has used its per-minute budget. ${wait} ${switchTo}`;
+    }
+  } else if (reason === 'daily_budget') {
+    message = `${one ? `${one} has` : 'Every free model that can take this request has'} used its free daily budget. ` +
+      'It resets at 00:00 UTC; choose another model until then.';
+  } else if (reason === 'concurrency') {
+    message = `${one || 'This model'} runs one request at a time on the free tier and is serving another one. ` +
+      (alternatives.length ? `Retry in a few seconds, or ${switchTo.charAt(0).toLowerCase()}${switchTo.slice(1)}`
+        : 'Retry in a few seconds, or choose another model.');
+  } else {
+    message = 'Every free model that can take this request is at a shared limit right now. ' +
+      `${retry ? `Retry in ${retry} s, ` : 'Retry later, '}or choose another model.`;
+  }
+  // A wait of seconds is where naming the way out matters; the daily messages already say to choose another model.
+  const named = reason === 'minute_budget' || reason === 'concurrency' ? others : '';
+  return { code: 'capacity_exhausted', retryAfterSeconds: retry ?? 60, message: message + named, reason,
+    ...(alternatives.length ? { alternatives } : {}) };
+}
+
+// Records each refusal (migration 20261114000000_pool_refusals.sql, zerox_note_pool_refusal) so a
+// refused request leaves a queryable row: time, pool, reason, needed tokens and the pool's buckets
+// at that moment. Best effort and off the response path: without the migration (PGRST202 or
+// 42883), or after any other failure, records stop for REFUSAL_RETRY_MS with one warning. At most
+// REFUSALS_PER_MINUTE rows per process and minute, so a burst of refusals cannot load the database.
+export const REFUSAL_RETRY_MS = 10 * 60_000;
+export const REFUSALS_PER_MINUTE = 60;
+const refusalState = new WeakMap(); // env -> { offUntil, minute, count }
+
+export function refusalArgs({ args, status, budget, retryAfterSeconds, requestId }) {
+  return {
+    p_model: args.p_model,
+    p_tier: args.p_tier,
+    p_pool_key: args.p_pool_key ?? '',
+    p_status: status,
+    p_reason: refusalReason(status, budget),
+    p_budget: budget === 'share' ? null : budget ?? null,
+    p_needed_tokens: Number.isSafeInteger(args.p_tokens) ? args.p_tokens : null,
+    p_retry_after_seconds: wholeSeconds(retryAfterSeconds),
+    p_limits: args.p_pool ?? null,
+    p_request_id: requestId ?? null,
+  };
+}
+
+// A promise that never rejects (true when recorded), or null when nothing was sent.
+export function recordPoolRefusal(env, refusal, now = Date.now()) {
+  if (!env || typeof env !== 'object' || !refusal) return null;
+  let state = refusalState.get(env);
+  if (!state) refusalState.set(env, state = { offUntil: 0, minute: 0, count: 0 });
+  if (state.offUntil > now) return null;
+  const minute = Math.floor(now / 60_000);
+  if (state.minute !== minute) Object.assign(state, { minute, count: 0 });
+  if (state.count >= REFUSALS_PER_MINUTE) return null;
+  state.count++;
+  let call;
+  try {
+    call = rpc(env, 'zerox_note_pool_refusal', refusal);
+  } catch (error) {
+    call = Promise.reject(error);
+  }
+  return call.then(() => true, error => {
+    state.offUntil = Date.now() + REFUSAL_RETRY_MS;
+    console.warn(missingFunction(error)
+      ? 'Pool refusals are not recorded until migration 20261114000000_pool_refusals.sql is applied'
+      : 'Pool refusal not recorded', { name: error?.name, code: error?.code ?? null });
+    return false;
+  });
+}
+
+// Test hook.
+export function resetPoolRefusals(env) {
+  if (env && typeof env === 'object') refusalState.delete(env);
 }
 
 // zerox_settle_v2 arguments. Refunds bill nothing; otherwise real usage (Gemini: from

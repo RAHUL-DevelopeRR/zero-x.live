@@ -911,6 +911,7 @@ function describeFamily(identity, routes) {
     const best = [...observed].sort((a, b) => rank(a) - rank(b)
       || time(a.available_again_at) - time(b.available_again_at) || time(b.checked_at) - time(a.checked_at))[0];
     Object.assign(family, { status: best.status, available_again_at: best.available_again_at ?? null,
+      available_again_in_seconds: best.available_again_in_seconds ?? null,
       checked_at: best.checked_at ?? null, latency_ms: best.latency_ms ?? null, last_success_at: best.last_success_at ?? null,
       last_failure_class: best.last_failure_class ?? null,
       ...(best.stale_after_seconds != null ? { stale_after_seconds: best.stale_after_seconds } : {}) });

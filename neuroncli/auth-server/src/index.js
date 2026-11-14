@@ -23,7 +23,7 @@ import { registerAccountRoutes } from './routes/account.js';
 import { registerAdminRoutes, runScheduledMaintenance } from './routes/admin.js';
 import { registerBillingRoutes } from './routes/billing.js';
 import { registerKeyRoutes } from './routes/keys.js';
-import { registerPlanRoutes, sharedStatusFrame, v1ModelsPayload, v1ModelStatusPayload } from './routes/plans.js';
+import { registerPlanRoutes, sharedStatusFrame, statusFrameAt, v1ModelsPayload, v1ModelStatusPayload } from './routes/plans.js';
 import { bodyLimitFor, bodyReadTimeoutMs, bodyTooLargeResponse, clientAddress, declaredBodyOver, isWebhookPath, modelStreamSlots, readBodyWithin } from './request-limits.js';
 import { boundedRequest } from './bounded-request.js';
 import { rejectedRecently } from './auth-cache.js';
@@ -1005,7 +1005,7 @@ api.get('/v1/models/stream', async (c) => {
             const shared = await sharedStatusFrame(c, caller.session, Math.floor(intervalMs / 2));
             if (shared.etag !== last) {
               last = shared.etag;
-              send(shared.frame);
+              send(statusFrameAt(shared));
             } else {
               send(': keepalive\n\n');
             }

@@ -21,6 +21,7 @@ import { ProviderHealthTracker } from './src/provider-health.js';
 import { estimatePromptTokens } from './src/pricing.js';
 import { RESERVED_OUTPUT_TOKENS, resetCountedUnavailable, sessionDailyTokenCap, settleCapacity, settlementArgs } from './src/capacity.js';
 import { resetPoolBudgets } from './src/pool-budget.js';
+import { budgetPromptBase, budgetPromptTokens, resetPromptCalibration } from './src/prompt-calibration.js';
 import { v1ModelsPayload } from './src/routes/plans.js';
 
 const root = dirname(fileURLToPath(import.meta.url));
@@ -905,6 +906,7 @@ try {
   await clockHeadroom(20);
   {
     resetPoolBudgets();
+    resetPromptCalibration();
     // An unused minute for the model: the RPC section above reserved on it and the admin overview
     // section below counts that, so its counters are set aside and put back afterwards.
     await db.exec(`CREATE TEMP TABLE groq_pool_saved AS SELECT * FROM public.zerox_pool_usage
@@ -952,8 +954,13 @@ try {
     assert.ok(prompt > 1000 && prompt < 2400, `a Neuron-sized prompt (${prompt} tokens)`);
     assert.deepEqual(upstreamMax, Array(4).fill(8000 - prompt), 'the upstream max_tokens still fits the 8K minute');
     assert.deepEqual(statuses, [200, 200, 200, 200, 503], 'four turns fit in one minute; the fifth exceeds 8K TPM');
-    const reserved = await sql('SELECT reserved_tokens FROM public.zerox_reservations WHERE user_id = $1', [groqUser]);
-    assert.deepEqual(reserved.map(row => Number(row.reserved_tokens)), Array(4).fill(prompt + RESERVED_OUTPUT_TOKENS),
+    const reserved = await sql('SELECT reserved_tokens FROM public.zerox_reservations WHERE user_id = $1 ORDER BY created_at', [groqUser]);
+    // A request without tools is held at its byte estimate on every turn: only tool schemas are
+    // calibrated against the provider's count (src/prompt-calibration.js), since a conversation's
+    // density changes from request to request.
+    const calibrated = budgetPromptTokens('groq:openai/gpt-oss-120b', budgetPromptBase(turn), prompt);
+    assert.equal(calibrated, prompt, `tools-free hold ${calibrated}`);
+    assert.deepEqual(reserved.map(row => Number(row.reserved_tokens)), Array(4).fill(calibrated + RESERVED_OUTPUT_TOKENS),
       `each turn holds its prompt plus ${RESERVED_OUTPUT_TOKENS} output tokens, not the whole 8,000-token minute it held before`);
     const minute = await poolRow('groq/openai/gpt-oss-120b', 'free', 'minute');
     assert.deepEqual([Number(minute.requests), Number(minute.tokens)], [4, 6000], 'settled to the real usage (4 x 1,500)');
@@ -962,7 +969,23 @@ try {
     const logged = warnings.filter(([message]) => message === 'Neuron pool budget exhausted');
     assert.equal(logged.length, 1);
     assert.deepEqual({ ...logged[0][1], request_id: undefined }, { pool: 'groq:openai/gpt-oss-120b:free',
-      model: 'groq/openai/gpt-oss-120b', budget: 'rpm|tpm', retry_after_seconds: refused.retry_after_seconds, request_id: undefined });
+      model: 'groq/openai/gpt-oss-120b', budget: 'rpm|tpm', reason: 'minute_budget', needed_tokens: calibrated + RESERVED_OUTPUT_TOKENS,
+      tpm: 8000, retry_after_seconds: refused.retry_after_seconds, request_id: undefined });
+    assert.equal(refused.reason, 'minute_budget');
+    // The refusal leaves a row (migration 20261114000000_pool_refusals.sql), written after the answer.
+    let refusals = [];
+    for (let wait = 0; wait < 50 && !refusals.length; wait++) {
+      refusals = await sql(`SELECT * FROM public.zerox_pool_refusals WHERE model = 'groq/openai/gpt-oss-120b' AND request_id = $1`,
+        [logged[0][1].request_id]);
+      if (!refusals.length) await sleep(20);
+    }
+    assert.equal(refusals.length, 1, 'one refusal row');
+    const [noted] = refusals;
+    assert.deepEqual([noted.tier, noted.pool_key, noted.status, noted.reason, noted.budget, Number(noted.needed_tokens),
+      noted.retry_after_seconds, Number(noted.limits.tpm), Number(noted.minute_requests), Number(noted.minute_tokens)],
+    ['free', '', 'pool_exhausted', 'minute_budget', 'rpm|tpm', calibrated + RESERVED_OUTPUT_TOKENS, refused.retry_after_seconds, 8000, 4, 6000],
+    'needed tokens next to what the minute had used (6,000 of 8,000)');
+    assert.ok(Date.now() - Date.parse(noted.created_at) < 60000);
     assert.ok(!JSON.stringify(warnings).includes('groq-free-test-key'), 'no key in the logs');
     // /v1/models shows the spent budget until the next minute.
     const listed = await v1ModelsPayload({ env: chatEnv, req: { raw: new Request('http://127.0.0.1/v1/models') } }, session);
@@ -974,7 +997,8 @@ try {
     await db.exec(`DELETE FROM public.zerox_pool_usage WHERE model = 'groq/openai/gpt-oss-120b' AND tier = 'free';
       INSERT INTO public.zerox_pool_usage SELECT * FROM groq_pool_saved; DROP TABLE groq_pool_saved;`);
   }
-  ok('Groq free pool: four Neuron-sized turns in one minute (prompt + 1,024 held, settled to usage); the fifth is refused, logged with its pool and budget, and shown busy');
+  resetPromptCalibration();
+  ok('Groq free pool: four Neuron-sized turns in one minute (prompt + 1,024 held, then calibrated, settled to usage); the fifth is refused with reason minute_budget, logged and recorded with its pool, budget and buckets, and shown busy');
 
   // ---------------------------------------------------------------- concurrency leases through the chat handler
   // E2E finding (2026-10-27): when Cloudflare killed an isolate mid-stream (exceededCpu, 1102),
@@ -2043,7 +2067,7 @@ try {
     '20261106000000_pool_fair_share.sql', '20261106000300_connector_policy.sql', '20261106000400_connector_accounts.sql',
     '20261106000600_sponsored_pools.sql', '20261106000700_haiku_catalog.sql', '20261106000800_plan_features_haiku.sql',
     '20261107000000_pool_user_cost_share.sql', '20261107000100_pool_share_refunds.sql', '20261108000000_athlete_speed_plans.sql',
-    '20261109000000_cache_weighted_limits.sql']);
+    '20261109000000_cache_weighted_limits.sql', '20261114000000_pool_refusals.sql']);
   for (const file of downFiles) {
     const migration = migrations.find(candidate => candidate.file === file);
     assert.ok(migration, `${file} undoes a migration of the same name`);

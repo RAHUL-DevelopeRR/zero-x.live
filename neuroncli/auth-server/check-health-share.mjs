@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { publicStatus, resetSharedHealthCache, shareHealth, withHealth } from './src/health-share.js';
 import { HealthState, ProviderHealthTracker, FailureKind } from './src/provider-health.js';
-import { v1ModelsPayload, v1ModelStatusPayload } from './src/routes/plans.js';
+import { statusFrameAt, v1ModelsPayload, v1ModelStatusPayload } from './src/routes/plans.js';
 import { AGENT_MIN_CONTEXT, catalogEntry, poolKey } from './src/catalog.js';
 import { notePoolExhausted, notePoolReserved, poolBudgetState, resetPoolBudgets } from './src/pool-budget.js';
 
@@ -204,7 +204,7 @@ console.log('ok - slow_until: kept while it lasts, published to KV and cleared b
   assert.equal(first.body.poll_interval_seconds, 30);
   const row = first.body.data.find(model => model.id === 'google/gemini-3.6-flash');
   assert.equal(first.body.stale_after_seconds, 1200);
-  assert.deepEqual(Object.keys(row).sort(), ['availability', 'available', 'available_again_at', 'checked_at', 'context_window', 'display_name',
+  assert.deepEqual(Object.keys(row).sort(), ['availability', 'available', 'available_again_at', 'available_again_in_seconds', 'checked_at', 'context_window', 'display_name',
     'family', 'id', 'last_failure_class', 'last_success_at', 'latency_ms', 'maker', 'native_context_window', 'stale_after_seconds', 'status',
     'unavailable_reason']);
   assert.deepEqual([row.availability, row.status, row.family, row.maker, row.display_name],
@@ -239,15 +239,30 @@ console.log('ok - slow_until: kept while it lasts, published to KV and cleared b
   assert.deepEqual(gptOss.tiers, ['free', 'paid'], 'the paid pool is configured');
   assert.equal(gptOss.status, 'busy', 'a free caller cannot use the paid pool, so the spent free budget decides');
   assert.equal(gptOss.available_again_at, new Date(at + 40_000).toISOString());
+  assert.ok(gptOss.available_again_in_seconds >= 38 && gptOss.available_again_in_seconds <= 40, 'busy: seconds until the minute frees');
+  assert.equal(byId['groq/qwen/qwen3.8-27b'].available_again_in_seconds > 3500, true, 'blurred: seconds until the daily budget resets');
   assert.equal(gptOss.checked_at, new Date(at).toISOString());
   assert.deepEqual([byId['groq/qwen/qwen3.8-27b'].availability, byId['groq/qwen/qwen3.8-27b'].status], ['unavailable', 'blurred']);
   assert.equal(byId['groq/qwen/qwen3.8-27b'].available_again_at, new Date(at + 3_600_000).toISOString());
   assert.equal(byId['groq/openai/gpt-oss-20b'].status, 'unknown', 'a budget that has reset no longer counts');
   const status = await v1ModelStatusPayload(c, {});
-  assert.deepEqual(status.body.data.find(model => model.id === 'openai/gpt-oss-120b'), { id: 'openai/gpt-oss-120b',
+  const { available_again_in_seconds: countdown, ...statusRow } = status.body.data.find(model => model.id === 'openai/gpt-oss-120b');
+  assert.ok(countdown >= 38 && countdown <= 40, `the family row counts down too (${countdown})`);
+  assert.deepEqual(statusRow, { id: 'openai/gpt-oss-120b',
     family: 'openai/gpt-oss-120b', maker: 'openai', display_name: 'GPT-OSS 120B', context_window: 8000, native_context_window: 131072,
     available: true, unavailable_reason: null, status: 'busy', availability: 'busy', available_again_at: new Date(at + 40_000).toISOString(),
     checked_at: new Date(at).toISOString(), latency_ms: null, last_success_at: null, last_failure_class: null, stale_after_seconds: 1200 });
+  // A stream frame counts the wait from when it is sent, not from when the shared payload was built
+  // (it is reused for up to half a stream interval); the frame keeps its id (the ETag).
+  const frame = statusFrameAt({ ...status, frame: 'cached' }, at + 10_000);
+  assert.ok(frame.startsWith(`id: ${status.etag}
+event: catalog.updated
+data: `));
+  const sent = JSON.parse(frame.split('data: ')[1]).data;
+  assert.equal(sent.find(model => model.id === 'openai/gpt-oss-120b').available_again_in_seconds, 30, '40 s from `at`, sent 10 s later');
+  assert.equal(statusFrameAt({ ...status, frame: 'cached' }, at + 41_000).includes('"available_again_in_seconds":30'), false);
+  assert.equal(statusFrameAt({ etag: 'e', frame: 'cached', body: { data: [{ id: 'm', available_again_in_seconds: null }] } }), 'cached',
+    'no countdown: the shared frame as it is');
 
   // A caller that can also use the paid pool still has a way through it.
   const both = { object: 'list', data: [{ id: 'gpt-oss', available: true }] };

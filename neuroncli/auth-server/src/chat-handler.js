@@ -11,20 +11,23 @@ import { FailureKind, globalHealthTracker } from './provider-health.js';
 import { hubHealthForRouting, hubHealthRows, publishHealth } from './health-hub-client.js';
 import { readShared } from './health-share.js';
 import { probeRoutingRows } from './health-probes.js';
-import { callerCountry, loadCatalog, loadPlanPolicies, modelIdentity, planPolicy, poolSecret, resolveModelId } from './catalog.js';
+import {
+  AUTO_MODEL_ID, callerCountry, familyOf, loadCatalog, loadPlanPolicies, modelIdentity, offeredEntries, planPolicy, poolSecret, resolveModelId,
+} from './catalog.js';
 import { noteSponsoredFailure } from './sponsored.js';
 import { touchVaultKey } from './provider-keys.js';
 import { jsonNestingExceeds } from './request-limits.js';
 import { billableUsage, cacheReadWeight, countedTokens, estimateOutputTokens, estimatePromptTokens, reserveCostMicrousd,
   utf8Bytes } from './pricing.js';
 import { exhaustedBudget, notePoolExhausted, notePoolReserved, poolBudgetState } from './pool-budget.js';
+import { budgetPromptBase, budgetPromptTokens, calibrationKey, notePromptUsage } from './prompt-calibration.js';
 import { loadOffers, offerIdFor } from './oiop/offers.js';
 import { callerPolicy } from './oiop/policy.js';
 import { scrubMode, scrubRequest, scrubsOffer, SecretRestorer } from './oiop/scrub.js';
 import {
   PAID_DENIED_STATUSES, RESERVATION_LEASE_SECONDS, RESERVATION_RENEW_MS, RESERVE_ERRORS, TERMINAL_RESERVE_STATUSES,
-  renewCapacity, reservationArgs, reserveCapacity, reserveError, reserveSessionQuota, runInBackground, sessionTiers,
-  settleCapacity, settleSessionQuota, settlementArgs, usesLedger,
+  exhaustionError, recordPoolRefusal, refusalArgs, refusalReason, renewCapacity, reservationArgs, reserveCapacity, reserveError,
+  reserveSessionQuota, runInBackground, sessionTiers, settleCapacity, settleSessionQuota, settlementArgs, usesLedger,
 } from './capacity.js';
 
 const ROLES = new Set(['system', 'developer', 'user', 'assistant', 'tool']);
@@ -231,30 +234,17 @@ async function orderBySharedHealth(env, candidates, tracker, sharedHealth = null
     .map(item => item.candidate);
 }
 
-// A paid or sponsored model whose daily spend cap (p_pool.cpd) is spent for every user until 00:00 UTC. A sponsored
-// pool also sets daily request and token budgets, so its refusal names them too ('rpd|tpd|cpd'): all reset at 00:00 UTC.
-function spendLimitMessage(exhausted) {
-  if (exhausted.length && exhausted.every(row => row.budget === 'share')) {
-    return 'You have used your share of the free capacity for these models today. It resets at 00:00 UTC; ' +
-      'try another model, or upgrade for dedicated capacity.';
-  }
-  if (!exhausted.length || !exhausted.every(row => String(row.budget).split('|').includes('cpd'))) return undefined;
-  const names = [...new Set(exhausted.map(row => row.model))];
-  return `${names.length === 1 ? names[0] : 'This model'} has reached today's spending limit on Zero-X. ` +
-    'It resets at 00:00 UTC; choose another model until then.';
-}
-
-// The client-facing error once every candidate failed (contract §3.3).
-function finalError({ failures, exhausted, paidDenied, monthDenied = null }) {
+// The client-facing error once every candidate failed (contract §3.3). A request refused only by
+// shared budgets says which one (capacity.js exhaustionError: a reason, an honest message and, for a
+// request that named its model, the `alternatives` that can take it now). A paid or sponsored
+// pool's spent daily spend cap (p_pool.cpd, 'rpd|tpd|cpd' for a sponsored one) reads spend_cap.
+function finalError({ failures, exhausted, paidDenied, monthDenied = null, alternatives = () => [] }) {
   const paid = paidDenied ? reserveError(paidDenied) : null;
   if (!failures.length) {
     if (paid) return paid;
     // The caller's own monthly allowance of a sponsored model (contract section 19.3): nothing else could serve.
     if (monthDenied) return reserveError(monthDenied.row, Date.now(), monthDenied.tokens, monthDenied.name);
-    if (exhausted.length) {
-      return { code: 'capacity_exhausted', retryAfterSeconds: minimum(exhausted.map(row => row.retry_after_seconds)) ?? 60,
-        message: spendLimitMessage(exhausted) };
-    }
+    if (exhausted.length) return exhaustionError(exhausted, alternatives(exhausted));
     return { code: 'service_unavailable' };
   }
   const kinds = failures.map(failure => failure.kind);
@@ -274,6 +264,7 @@ function finalError({ failures, exhausted, paidDenied, monthDenied = null }) {
     code: 'capacity_exhausted',
     retryAfterSeconds: minimum([...failures.map(failure => failure.retryAfterSeconds),
       ...exhausted.map(row => row.retry_after_seconds)]) ?? 30,
+    reason: exhausted.length ? 'pool_budgets' : 'upstream_rate_limited',
   };
 }
 
@@ -321,6 +312,10 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
     const sharedHealth = hubRows ?? probeRoutingRows();
     headers['x-neuron-plan'] = policy.id;
     const promptTokens = estimatePromptTokens(body.messages, body.tools);
+    // What the pool budgets hold for the prompt (src/prompt-calibration.js): the byte estimate
+    // above is the ceiling for context windows and credits, and was 46 % above Groq's own count
+    // for a typical Neuron request (its tool schemas). Reservations cap the hold at promptTokens.
+    const budgetBase = budgetPromptBase(body.messages, body.tools);
     const explicitMax = body.max_completion_tokens ?? body.max_tokens;
     const requestedMax = explicitMax ?? DEFAULT_MAX_TOKENS;
     // phase ('first_byte' | 'idle' | 'response') tells liveness timeouts from slow generations;
@@ -330,8 +325,9 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
     if (isSet(body.prompt_cache_key)) body = { ...body, prompt_cache_key: await scopedPromptCacheKey(caller, body.prompt_cache_key) };
 
     let route;
+    let routeArgs;
     try {
-      route = router.route({
+      routeArgs = {
         env,
         requestedModel: body.model,
         needs: requestNeeds(body, c.req.header('x-neuron-route')),
@@ -347,7 +343,8 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
         policy: callerPolicy(c.req.raw.headers),
         sharedHealth,
         budgetState: poolBudgetState,
-      });
+      };
+      route = router.route(routeArgs);
     } catch (error) {
       console.error('Neuron routing failed', { name: error?.name, request_id: requestId });
       return fail('service_unavailable');
@@ -358,7 +355,8 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
         console.warn('Neuron pools rate limited upstream', { pools: route.pools, model: resolveModelId(body.model, env),
           retry_after_seconds: route.retryAfterSeconds ?? null, request_id: requestId });
       }
-      return fail(route.error, { message: route.message, retryAfterSeconds: route.retryAfterSeconds, upgrade: route.upgrade });
+      return fail(route.error, { message: route.message, retryAfterSeconds: route.retryAfterSeconds, upgrade: route.upgrade,
+        reason: route.reason });
     }
 
     const setQuotaHeaders = (requests, tokens) => {
@@ -450,6 +448,12 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
     // Settles a committed attempt with real (or estimated) usage.
     const finishAttempt = async ({ reservation, candidate, startedAt }, outcome) => {
       const status = outcome.status === 'ok' ? 'ok' : 'error';
+      // The provider's own prompt count calibrates what later reservations of this model hold
+      // (src/prompt-calibration.js); never the gateway's fallback estimate, which billableUsage
+      // reads as real once normalizeCompletion (src/providers.js) has filled in a missing usage
+      // with `estimated: true`.
+      const reported = outcome.usage && outcome.usage.estimated !== true ? billableUsage(outcome.usage) : null;
+      if (reported && !reported.estimated) notePromptUsage(calibrationKey(candidate.entry), budgetBase, reported.prompt_tokens);
       if (reservation) {
         await settleDb(reservation, candidate, { status, usage: outcome.usage, outputBytes: outcome.outputBytes,
           latencyMs: Date.now() - startedAt, errorCode: outcome.errorCode ?? null }, true);
@@ -677,6 +681,40 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
     // A Claude attempt the client aborted before message_start never reached the model.
     const abortedUnreached = () => Boolean(pending && pending.reported == null && reportsUsageAtStart(pending.candidate.entry));
 
+    // Each refused pool is recorded once per request (a full slot is polled every second while
+    // the request waits for it), after the answer on Workers and detached on Node.
+    const refusalsNoted = new Set();
+    const noteRefusal = (candidate, args, status, budget, retryAfterSeconds) => {
+      if (refusalsNoted.has(candidate.key)) return;
+      refusalsNoted.add(candidate.key);
+      const recorded = recordPoolRefusal(env, refusalArgs({ args, status, budget, retryAfterSeconds, requestId }));
+      if (recorded) runInBackground(c, recorded);
+    };
+    // Models that can take this request now, for a request that named a model every pool of which
+    // refused it: other routes of the same model first, then `auto` and its first candidates. A
+    // model the caller chose is never switched silently; the client gets these ids to choose from.
+    // "Now" is what this process knows: healthy pools whose shared budget it has not seen refused.
+    const alternativesFor = refused => {
+      const refusedIds = new Set(refused.map(row => row.model_id).filter(Boolean));
+      const now = Date.now();
+      const open = result => (result?.ok ? result.candidates : []).filter(next => !refusedIds.has(next.entry.id)
+        && !((poolBudgetState(next.key, now)?.until || 0) > now));
+      const routeTo = model => {
+        try { return router.route({ ...routeArgs, requestedModel: model }); } catch { return null; }
+      };
+      const ids = [];
+      const add = id => { if (id && !ids.includes(id) && ids.length < 5) ids.push(id); };
+      const families = new Set(queue.filter(next => refusedIds.has(next.entry.id)).map(next => familyOf(next.entry)));
+      for (const entry of offeredEntries(env)) {
+        if (!refusedIds.has(entry.id) && families.has(familyOf(entry)) && open(routeTo(entry.id)).length) add(entry.id);
+      }
+      const auto = open(routeTo(AUTO_MODEL_ID));
+      if (auto.length) {
+        add(AUTO_MODEL_ID);
+        for (const next of auto) add(next.entry.id);
+      }
+      return ids;
+    };
     const failoverStart = Date.now();
     const commitBy = failoverStart + failoverBudgetMs;
     const paidCommitBy = commitBy - paidReserveMs;
@@ -727,7 +765,8 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
           let args;
           try {
             args = reservationArgs({ env, session, entry: candidate.entry, pool: candidate.pool,
-              requestId: reservations ? `${requestId}.${reservations}` : requestId, promptTokens, maxTokens: candidate.maxTokens });
+              requestId: reservations ? `${requestId}.${reservations}` : requestId, promptTokens, maxTokens: candidate.maxTokens,
+              budgetPromptTokens: budgetPromptTokens(calibrationKey(candidate.entry), budgetBase, promptTokens) });
             row = await reserveCapacity(env, args);
           } catch (error) {
             // A sponsored pool needs the p_cap migration: without it the pool is skipped (and reads
@@ -759,7 +798,9 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
             if (row.status === 'user_pool_share') {
               // This caller has used its fair share of the pool (audit F6). Other users are not
               // affected, so the pool is not noted as spent; the next candidate is tried.
-              exhausted.push({ ...row, budget: 'share', model: candidate.entry.display_name });
+              exhausted.push({ ...row, budget: 'share', model: candidate.entry.display_name, model_id: candidate.entry.id,
+                tokens: args.p_tokens, limits: args.p_pool });
+              noteRefusal(candidate, args, row.status, 'share', row.retry_after_seconds);
               if (!paidLeft(index)) releaseHeld(index);
               continue;
             }
@@ -786,10 +827,13 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
               const retryAfter = budget === 'concurrency'
                 ? Math.min(Number(row.retry_after_seconds) || CONCURRENCY_RETRY_SECONDS, CONCURRENCY_RETRY_SECONDS)
                 : row.retry_after_seconds;
-              exhausted.push({ ...row, retry_after_seconds: retryAfter, budget, model: candidate.entry.display_name });
+              exhausted.push({ ...row, retry_after_seconds: retryAfter, budget, model: candidate.entry.display_name,
+                model_id: candidate.entry.id, tokens: args.p_tokens, limits: args.p_pool });
               notePoolExhausted(candidate.key, { budget, retryAfterSeconds: retryAfter });
+              noteRefusal(candidate, args, row.status, budget, retryAfter);
               console.warn('Neuron pool budget exhausted', { pool: candidate.key, model: candidate.entry.id,
-                budget, retry_after_seconds: retryAfter ?? null, request_id: requestId });
+                budget, reason: refusalReason(row.status, budget), needed_tokens: args.p_tokens, tpm: args.p_pool?.tpm ?? null,
+                retry_after_seconds: retryAfter ?? null, request_id: requestId });
               if (!paidLeft(index)) releaseHeld(index);
             }
             continue;
@@ -857,7 +901,8 @@ export function createChatHandler({ validateSession, setSession, getSession, pla
     // upstream_error; a client error (a slow 400 or 413), a cancellation or a capacity refusal
     // (with its Retry-After) still answers as such.
     const budgetSpent = outOfTime || failures.some(failure => failure.budgetCut);
-    let final = finalError({ failures, exhausted, paidDenied, monthDenied });
+    let final = finalError({ failures, exhausted, paidDenied, monthDenied,
+      alternatives: refused => (route.auto ? [] : alternativesFor(refused)) });
     if (budgetSpent && !aborted && final.code === 'upstream_error') final = { code: 'upstream_timeout' };
     if (aborted || outOfTime) {
       console.warn(aborted ? 'Neuron client disconnected before the first byte' : 'Neuron failover budget spent',
