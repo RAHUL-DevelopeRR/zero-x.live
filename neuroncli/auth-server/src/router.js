@@ -277,7 +277,8 @@ export class RoutingEngine {
       const retryAfterSeconds = Math.max(1, Math.ceil(Math.min(...waits) / 1000));
       const limited = unhealthy.some(item => [HealthState.RATE_LIMITED, HealthState.QUOTA_EXHAUSTED]
         .includes(this.healthTracker.getRecord(item.key).status));
-      return failure(limited ? 'capacity_exhausted' : 'upstream_error', { retryAfterSeconds, pools: unhealthy.map(item => item.key) });
+      return failure(limited ? 'capacity_exhausted' : 'upstream_error', { retryAfterSeconds, pools: unhealthy.map(item => item.key),
+        ...(limited ? { reason: 'upstream_rate_limited' } : {}) });
     }
     const locked = configured.filter(item => item.fits && !(item.inPlan && item.region));
     const paidWouldFit = locked.some(item => !item.inPlan && item.region);
@@ -288,6 +289,8 @@ export class RoutingEngine {
       const budget = Math.max(...overBudget.map(item => item.pool.limits.tpm));
       return failure('context_length_exceeded', {
         upgrade: paidWouldFit,
+        // Not a full budget: the request alone is larger than the pool's whole minute (capacity.js refusalReason).
+        reason: 'request_over_minute_budget',
         message: `This request is too large for the free per-minute token budget (${budget.toLocaleString('en-US')} tokens, prompt plus max_tokens). ` +
           `Shorten the conversation or lower max_tokens${paidWouldFit ? ', or upgrade for paid capacity' : ''}.`,
       });

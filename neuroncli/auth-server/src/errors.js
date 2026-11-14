@@ -56,8 +56,14 @@ export function errorStatus(code) {
   return (ERROR_CODES[code] || ERROR_CODES.service_unavailable).status;
 }
 
+const REASON = /^[a-z][a-z0-9_]{0,63}$/;
+
 // `upgrade` overrides whether the code carries an upgrade_url; `upgradeUrl` sets it explicitly.
-export function errorBody(code, { message, requestId = null, env, retryAfterSeconds, resetsAt, upgradeUrl, upgrade } = {}) {
+// `reason` (a snake_case word) says which limit answered, e.g. minute_budget for capacity_exhausted
+// (src/capacity.js refusalReason); `alternatives` lists model ids that can take the request now.
+// Both are additions to the contract body: clients that do not know them ignore them.
+export function errorBody(code, { message, requestId = null, env, retryAfterSeconds, resetsAt, upgradeUrl, upgrade,
+  reason, alternatives } = {}) {
   const spec = ERROR_CODES[code] || ERROR_CODES.service_unavailable;
   const error = {
     message: message || spec.message,
@@ -71,6 +77,11 @@ export function errorBody(code, { message, requestId = null, env, retryAfterSeco
   if (retry) error.retry_after_seconds = retry;
   const resets = resetsAt ? new Date(resetsAt) : null;
   if (resets && !Number.isNaN(resets.getTime())) error.resets_at = resets.toISOString();
+  if (typeof reason === 'string' && REASON.test(reason)) error.reason = reason;
+  if (Array.isArray(alternatives)) {
+    const ids = alternatives.filter(id => typeof id === 'string' && id && id.length <= 200).slice(0, 8);
+    if (ids.length) error.alternatives = ids;
+  }
   return { error };
 }
 

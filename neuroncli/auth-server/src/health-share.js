@@ -119,6 +119,8 @@ export async function readShared(env, keys) {
  * healthy. Public statuses: available | degraded | busy | unknown | unavailable (the pool rows'
  * `blurred`).
  */
+const untilSeconds = (until, now) => (until && until > now ? Math.max(1, Math.ceil((until - now) / 1000)) : null);
+
 export async function withHealth(env, payload, poolKeysFor,
   { tracker, autoId = null, isAutoCandidate = () => false, readRows = null, probeRows = null, staleMs = healthStaleMs(env),
     staleMsFor = null, budgetState = () => null, now = Date.now() } = {}) {
@@ -173,6 +175,9 @@ export async function withHealth(env, payload, poolKeysFor,
     const state = describe(keys);
     model.status = PUBLIC_STATUS[state.status] ?? 'unknown';
     model.available_again_at = state.until ? new Date(state.until).toISOString() : null;
+    // Seconds until a busy or blurred model takes requests again (a spent per-minute budget: the
+    // next minute), so a client can show "busy, 44 s" without its own clock.
+    model.available_again_in_seconds = untilSeconds(state.until, now);
     model.checked_at = state.at ? new Date(state.at).toISOString() : null;
     model.latency_ms = Number.isFinite(state.latency_ms) ? state.latency_ms : null;
     model.last_success_at = state.last_success_at ? new Date(state.last_success_at).toISOString() : null;
@@ -185,6 +190,7 @@ export async function withHealth(env, payload, poolKeysFor,
     const best = candidates.sort((a, b) => PUBLIC_RANK[a.status] - PUBLIC_RANK[b.status])[0];
     auto.status = best ? best.status : 'unavailable';
     auto.available_again_at = best?.available_again_at ?? null;
+    auto.available_again_in_seconds = best?.available_again_in_seconds ?? null;
     auto.checked_at = best?.checked_at ?? null;
     auto.latency_ms = best?.latency_ms ?? null;
     auto.last_success_at = best?.last_success_at ?? null;

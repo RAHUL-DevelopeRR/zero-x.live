@@ -16,10 +16,17 @@ import {
 import { cleanModelName, MAKERS } from './src/model-families.js';
 import {
   LIST_PRICES, billableUsage, costMicrousd, dailyCapMicrousd, estimatePromptTokens, priceFromCost, priceFromList, publicPricing,
-  reserveCostMicrousd,
+  reserveCostMicrousd, utf8Bytes,
 } from './src/pricing.js';
+import {
+  CALIBRATION_MARGIN, CALIBRATION_FLOOR, budgetPromptBase, budgetPromptTokens, calibrationKey, notePromptUsage, promptCalibration,
+  resetPromptCalibration,
+} from './src/prompt-calibration.js';
 import { errorBody, errorResponse } from './src/errors.js';
-import { RESERVED_OUTPUT_TOKENS, reservationArgs, reservedTokens, reserveError, settlementArgs } from './src/capacity.js';
+import {
+  REFUSALS_PER_MINUTE, RESERVED_OUTPUT_TOKENS, exhaustionError, recordPoolRefusal, refusalArgs, refusalReason, reservationArgs, reservedTokens,
+  reserveError, resetPoolRefusals, settlementArgs,
+} from './src/capacity.js';
 import { exhaustedBudget, poolBudgetState, resetPoolBudgets } from './src/pool-budget.js';
 import { PROVIDER_PARAMS, buildUpstreamPayload, classifyUpstreamFailure, listModelsForSession, retryAfterSeconds } from './src/providers.js';
 import { resetHubClientCache } from './src/health-hub-client.js';
@@ -60,7 +67,8 @@ globalThis.fetch = async (input, options = {}) => {
   const body = options.body ? JSON.parse(options.body) : null;
   const call = { target, url, body, headers: options.headers || {}, signal: options.signal, redirect: options.redirect };
   calls.push(call);
-  const handler = handlers[target];
+  // Refusal records (capacity.js recordPoolRefusal) are best effort and asserted where they matter.
+  const handler = handlers[target] ?? (target === 'rpc:zerox_note_pool_refusal' ? () => Response.json(crypto.randomUUID()) : null);
   if (!handler) throw new Error(`Unexpected fetch to ${target}: ${url}`);
   return handler(call);
 };
@@ -1989,9 +1997,13 @@ try {
     assert.equal(paid.p_cost_microusd, reserveCostMicrousd(catalogEntry('groq/openai/gpt-oss-120b').pools[1].price, prompt, 2048),
       'credits are held for the full max_tokens');
     assert.equal(paid.p_cost_microusd, costMicrousd(catalogEntry('groq/openai/gpt-oss-120b').pools[1].price, prompt, 2048));
-    assert.equal(waited.length, 1, 'settlement runs in waitUntil');
+    assert.equal(waited.length, 2, 'the refusal record of the free pool and the settlement run in waitUntil');
     await Promise.all(waited);
     assert.equal(settled.length, 1);
+    assert.deepEqual(rpcCalls('zerox_note_pool_refusal').map(call => call.body), [{ p_model: 'groq/openai/gpt-oss-120b', p_tier: 'free',
+      p_pool_key: '', p_status: 'pool_exhausted', p_reason: 'minute_budget', p_budget: 'rpm|tpm', p_needed_tokens: prompt + RESERVED_OUTPUT_TOKENS,
+      p_retry_after_seconds: 5, p_limits: { rpm: 30, rpd: 1000, tpm: 8000, tpd: 200000 }, p_request_id: requestId }],
+    'the refusal is recorded with its pool, reason, needed tokens and limits');
     const settle = settled[0];
     assert.equal(settle.p_status, 'ok');
     assert.equal(settle.p_prompt_tokens, 1000);
@@ -2029,6 +2041,7 @@ try {
     const refusals = logs.warn.filter(([message]) => message === 'Neuron pool budget exhausted');
     assert.equal(refusals.length, 1, 'one line per refused pool');
     assert.deepEqual(refusals[0][1], { pool: 'groq:openai/gpt-oss-120b:free', model: 'groq/openai/gpt-oss-120b', budget: 'rpm|tpm',
+      reason: 'minute_budget', needed_tokens: estimatePromptTokens(messages) + RESERVED_OUTPUT_TOKENS, tpm: 8000,
       retry_after_seconds: 42, request_id: response.headers.get('x-request-id') });
     assert.ok(!JSON.stringify(logs).includes('groq-free-key') && !JSON.stringify(logs).includes('ses_pro'), 'no keys or tokens');
     const spent = poolBudgetState('groq:openai/gpt-oss-120b:free');
@@ -2067,6 +2080,204 @@ try {
     assert.deepEqual(cooled?.[1], { pools: ['groq:openai/gpt-oss-20b:free'], model: 'openai/gpt-oss-20b',
       retry_after_seconds: 20, request_id: parked.result.headers.get('x-request-id') });
     resetPoolBudgets();
+  });
+
+  // ── Capacity clarity (incident 2026-11-13) ──
+  // Neuron's first turn ("hi") on GPT-OSS 120B (Groq free pool, 8,000 tokens a minute) was 20.6K
+  // request bytes: the byte estimate said 5,882 prompt tokens, Groq counted 4,025. The reservation
+  // held 6,906; the next turn, 10 s later, needed about 6,953 on a minute already at 4,064 and got
+  // pool_exhausted with a 44 s retry, which the gateway answered as a bare capacity_exhausted.
+  const incidentTools = Array.from({ length: 24 }, (_, index) => ({ type: 'function', function: {
+    name: `tool_${index}`, description: `Tool number ${index}: ${'reads and edits files in the workspace, '.repeat(9)}`,
+    parameters: { type: 'object', properties: { path: { type: 'string', description: 'Workspace-relative path of the file' },
+      content: { type: 'string', description: 'New content for the file' } }, required: ['path'] } } }));
+  const incidentSystem = { role: 'system', content: 'You are Neuron, a coding agent. '.repeat(150) };
+  const incidentTurn = extra => [incidentSystem, { role: 'user', content: 'hi' }, ...extra];
+
+  await test('incident fixture: about 20.6K request bytes, estimated near 5,882 prompt tokens', () => {
+    const bytes = utf8Bytes(incidentTurn([])) + utf8Bytes(incidentTools);
+    assert.ok(bytes > 20000 && bytes < 21200, `request bytes ${bytes}`);
+    const estimate = estimatePromptTokens(incidentTurn([]), incidentTools);
+    assert.ok(estimate > 5700 && estimate < 6050, `byte estimate ${estimate}`);
+  });
+
+  await test('prompt calibration: JSON tools count at 4 bytes a token, then the provider count with a 15 % margin, never above the estimate', () => {
+    resetPromptCalibration();
+    const key = calibrationKey(catalogEntry('groq/openai/gpt-oss-120b'));
+    const first = incidentTurn([]);
+    const ceiling = estimatePromptTokens(first, incidentTools);
+    const base = budgetPromptBase(first, incidentTools);
+    assert.ok(base < ceiling, 'tool schemas at 4 bytes a token hold less than the 3.5 byte estimate');
+    assert.equal(budgetPromptTokens(key, base, ceiling), base, 'nothing learned yet: the base');
+    notePromptUsage(key, base, 4025);
+    const learned = budgetPromptTokens(key, base, ceiling);
+    assert.ok(learned >= 4025, `never below what the provider counted (${learned})`);
+    assert.ok(learned <= Math.ceil(4025 * CALIBRATION_MARGIN), `within the margin of the real count (${learned})`);
+    assert.ok(learned / 4025 < 1.2 && ceiling / 4025 > 1.4, 'the old estimate was ~46 % high, the calibrated hold is not');
+    // One unusually sparse prompt moves the hold a fifth of the way; a denser one is taken at once.
+    notePromptUsage(key, base, 2000);
+    const eased = budgetPromptTokens(key, base, ceiling);
+    assert.ok(eased < learned && eased > Math.ceil(2000 * CALIBRATION_MARGIN), `eased, not dropped (${eased})`);
+    notePromptUsage(key, base, 4800);
+    assert.ok(budgetPromptTokens(key, base, ceiling) >= 4800, 'a denser prompt is held in full at once');
+    // Never above the byte estimate, never below CALIBRATION_FLOOR of the base; tiny prompts teach nothing.
+    notePromptUsage(key, base, base * 3);
+    assert.equal(budgetPromptTokens(key, base, ceiling), base);
+    assert.equal(budgetPromptTokens(key, base * 2, ceiling), ceiling, 'capped at the estimate');
+    resetPromptCalibration();
+    notePromptUsage(key, base, 10);
+    assert.equal(budgetPromptTokens(key, base, ceiling), Math.ceil(base * CALIBRATION_FLOOR));
+    resetPromptCalibration();
+    assert.equal(notePromptUsage(key, 100, 50), null, 'below MIN_SAMPLE_TOKENS');
+    assert.equal(promptCalibration(key), null);
+  });
+
+  await test('incident: a named free model refused by its per-minute budget says so, keeps 503 + Retry-After, lists alternatives, records the refusal', async () => {
+    resetPromptCalibration();
+    resetPoolBudgets();
+    const gw = gateway();
+    gw.addSession('ses_free', { account_backed: true, user_id: ACCOUNT, plan: 'free' });
+    const env = accountEnv();
+    const reserved = [];
+    let bucket = 0;
+    reset({ 'rpc:zerox_plan_policies_v2': policiesRpc,
+      // A minute bucket of 8,000 tokens, as zerox_reserve_v2 keeps it.
+      'rpc:zerox_reserve_v2': call => {
+        reserved.push(call.body.p_tokens);
+        if (call.body.p_model !== 'groq/openai/gpt-oss-120b') return Response.json([okReserve({ plan: 'free' })]);
+        if (bucket + call.body.p_tokens > 8000) return Response.json([{ status: 'pool_exhausted', reservation_id: null, plan: 'free', retry_after_seconds: 44 }]);
+        bucket += call.body.p_tokens;
+        return Response.json([okReserve({ plan: 'free' })]);
+      },
+      'rpc:zerox_settle_v2': call => { bucket += call.body.p_prompt_tokens + call.body.p_completion_tokens - reserved[0]; return Response.json([{ status: 'settled' }]); },
+      groq: () => completion({ content: 'Hello!' }, { prompt_tokens: 4025, completion_tokens: 39, total_tokens: 4064 }) });
+    const first = await gw.call(env, { model: 'groq/openai/gpt-oss-120b', messages: incidentTurn([]), tools: incidentTools }, { token: 'ses_free' });
+    assert.equal(first.status, 200);
+    await first.json();
+    const oldHold = estimatePromptTokens(incidentTurn([]), incidentTools) + RESERVED_OUTPUT_TOKENS;
+    assert.ok(reserved[0] < oldHold, `the first turn holds less than the old ${oldHold} (${reserved[0]})`);
+    assert.equal(bucket, 4064, 'settlement leaves the real usage in the minute');
+    // Turn two needs about 4.1K real prompt tokens: with 4,064 used it still cannot fit 8,000 a
+    // minute (4,064 + 4,100 > 8,000), so the refusal is right; what was wrong was how it read.
+    const second = incidentTurn([{ role: 'assistant', content: 'Hello! How can I help?' }, { role: 'user', content: 'list the files' }]);
+    const response = await gw.call(env, { model: 'groq/openai/gpt-oss-120b', messages: second, tools: incidentTools }, { token: 'ses_free' });
+    const held = reserved[1] - RESERVED_OUTPUT_TOKENS;
+    assert.ok(held >= 4025 && held <= 4025 * 1.2, `turn two holds near the provider count (${held}), not ~5,930`);
+    const error = await expectError(response, 503, 'capacity_exhausted');
+    // Neuron alpha.5 (rust/crates/api/src/error.rs, retry.rs) retries capacity_exhausted on HTTP 503 after Retry-After.
+    assert.equal(response.headers.get('Retry-After'), '44');
+    assert.equal(error.retry_after_seconds, 44);
+    assert.equal(error.type, 'server_error');
+    assert.equal(error.reason, 'minute_budget');
+    assert.match(error.message, /^GPT-OSS 120B \(Groq\) has used its free per-minute budget \(8,000 tokens a minute, shared by every user; this request needs about [\d,]+ of them\)\. It frees up in 44 s\. Switch to Auto or another model to continue now\. Models that can take it now: auto, /);
+    assert.doesNotMatch(error.message, /—/, 'no em dash');
+    assert.equal(error.alternatives[0], 'auto');
+    assert.ok(!error.alternatives.includes('groq/openai/gpt-oss-120b'), 'never the refused model');
+    assert.ok(error.alternatives.length > 1 && error.alternatives.length <= 5);
+    assert.equal(upstreamCalls().filter(call => call.target === 'groq').length, 1, 'the named model is never switched silently');
+    const records = rpcCalls('zerox_note_pool_refusal').map(call => call.body);
+    assert.equal(records.length, 1);
+    assert.equal(records[0].p_reason, 'minute_budget');
+    assert.equal(records[0].p_needed_tokens, reserved[1]);
+    assert.equal(records[0].p_retry_after_seconds, 44);
+    assert.deepEqual(records[0].p_limits, { rpm: 30, rpd: 1000, tpm: 8000, tpd: 200000 });
+    resetPoolBudgets();
+    resetPromptCalibration();
+  });
+
+  await test('auto skips a pool whose per-minute budget is spent and serves from the next one at once', async () => {
+    resetPoolBudgets();
+    const gw = gateway();
+    gw.addSession('ses_free', { account_backed: true, user_id: ACCOUNT, plan: 'free' });
+    let first = true;
+    reset({ 'rpc:zerox_plan_policies_v2': policiesRpc,
+      'rpc:zerox_reserve_v2': () => {
+        const refuse = first;
+        first = false;
+        return Response.json([refuse ? { status: 'pool_exhausted', reservation_id: null, plan: 'free', retry_after_seconds: 44 } : okReserve({ plan: 'free' })]);
+      },
+      'rpc:zerox_settle_v2': () => Response.json([{ status: 'settled' }]),
+      groq: () => completion({ content: 'served' }), gemini: () => completion({ content: 'served' }) });
+    const started = Date.now();
+    const response = await gw.call(accountEnv(), { model: 'auto', messages, tools }, { token: 'ses_free', country: 'US' });
+    assert.equal(response.status, 200);
+    assert.ok(Date.now() - started < 5000, 'no wait for the minute to turn');
+    const [refused, served] = rpcCalls('zerox_reserve_v2').map(call => call.body.p_model);
+    assert.notEqual(refused, served);
+    assert.equal(response.headers.get('x-neuron-model'), served);
+    assert.match(response.headers.get('x-oiop-fallback'), /reason=pool_exhausted$/);
+    // And the next auto request starts with a pool that has budget: the spent one goes last.
+    reset({ 'rpc:zerox_plan_policies_v2': policiesRpc, 'rpc:zerox_reserve_v2': () => Response.json([okReserve({ plan: 'free' })]),
+      'rpc:zerox_settle_v2': () => Response.json([{ status: 'settled' }]),
+      groq: () => completion({ content: 'served' }), gemini: () => completion({ content: 'served' }) });
+    const next = await gw.call(accountEnv(), { model: 'auto', messages, tools }, { token: 'ses_free', country: 'US' });
+    assert.equal(next.status, 200);
+    assert.notEqual(rpcCalls('zerox_reserve_v2')[0].body.p_model, refused, 'the spent pool is not tried first');
+    // Refused everywhere: one reason for all, no alternatives (auto already tried them).
+    resetPoolBudgets();
+    reset({ 'rpc:zerox_plan_policies_v2': policiesRpc,
+      'rpc:zerox_reserve_v2': () => Response.json([{ status: 'pool_exhausted', reservation_id: null, plan: 'free', retry_after_seconds: 30 }]) });
+    const error = await expectError(await gw.call(accountEnv(), { model: 'auto', messages, tools }, { token: 'ses_free', country: 'US' }), 503, 'capacity_exhausted');
+    assert.equal(error.reason, 'minute_budget');
+    assert.equal(error.alternatives, undefined);
+    assert.equal(error.message, 'Every free model that can take this request has used its per-minute budget. It frees up in 30 s. Retry then, or choose another model.');
+    resetPoolBudgets();
+  });
+
+  await test('refusal reasons and messages: minute, day, spend cap, slot, fair share, mixed', () => {
+    assert.equal(refusalReason('pool_exhausted', 'rpm|tpm'), 'minute_budget');
+    assert.equal(refusalReason('pool_exhausted', 'rpm|tpm|rpd|tpd'), 'minute_budget', 'the last minute of a day');
+    assert.equal(refusalReason('pool_exhausted', 'rpd|tpd'), 'daily_budget');
+    assert.equal(refusalReason('pool_exhausted', 'cpd'), 'spend_cap');
+    assert.equal(refusalReason('pool_exhausted', 'rpd|tpd|cpd'), 'spend_cap', 'a sponsored pool');
+    assert.equal(refusalReason('pool_exhausted', 'concurrency'), 'concurrency');
+    assert.equal(refusalReason('user_pool_share', 'share'), 'user_pool_share');
+    const row = (budget, extra = {}) => ({ status: 'pool_exhausted', budget, model: 'Model A', retry_after_seconds: 30, ...extra });
+    const daily = exhaustionError([row('rpd|tpd', { retry_after_seconds: 7200 })], ['auto']);
+    assert.equal(daily.reason, 'daily_budget');
+    assert.equal(daily.retryAfterSeconds, 7200);
+    assert.equal(daily.message, 'Model A has used its free daily budget. It resets at 00:00 UTC; choose another model until then.');
+    assert.deepEqual(daily.alternatives, ['auto']);
+    const slot = exhaustionError([row('concurrency', { retry_after_seconds: 5 })], []);
+    assert.equal(slot.message, 'Model A runs one request at a time on the free tier and is serving another one. Retry in a few seconds, or choose another model.');
+    assert.equal(exhaustionError([row('concurrency', { retry_after_seconds: 5 })], ['auto']).message,
+      'Model A runs one request at a time on the free tier and is serving another one. Retry in a few seconds, or switch to Auto or another model to continue now. Models that can take it now: auto.');
+    const share = exhaustionError([{ status: 'user_pool_share', budget: 'share', model: 'Model A', retry_after_seconds: 3000 }]);
+    assert.equal(share.reason, 'user_pool_share');
+    assert.match(share.message, /^You have used your share of the free capacity/);
+    const mixed = exhaustionError([row('rpm|tpm', { retry_after_seconds: 20 }), row('rpd|tpd', { model: 'Model B', retry_after_seconds: 7200 })]);
+    assert.equal(mixed.reason, 'pool_budgets');
+    assert.equal(mixed.retryAfterSeconds, 20);
+    assert.equal(mixed.message, 'Every free model that can take this request is at a shared limit right now. Retry in 20 s, or choose another model.');
+    for (const result of [daily, slot, share, mixed]) assert.doesNotMatch(result.message, /—|Claude|Anthropic/);
+    // The error body carries reason and alternatives as additions; anything malformed is dropped.
+    const body = errorBody('capacity_exhausted', { reason: 'minute_budget', alternatives: ['auto', 7, '', 'groq/x'], retryAfterSeconds: 44 }).error;
+    assert.equal(body.code, 'capacity_exhausted');
+    assert.equal(body.reason, 'minute_budget');
+    assert.deepEqual(body.alternatives, ['auto', 'groq/x']);
+    const plain = errorBody('capacity_exhausted', { reason: 'Not A Reason!' }).error;
+    assert.ok(!('reason' in plain) && !('alternatives' in plain));
+  });
+
+  await test('refusal records stop for a while without the migration, and are capped per minute', async () => {
+    const env = { ...DB };
+    resetPoolRefusals(env);
+    const args = { p_model: 'm', p_tier: 'free', p_tokens: 10, p_pool: { tpm: 8000 } };
+    const refusal = refusalArgs({ args, status: 'pool_exhausted', budget: 'rpm|tpm', retryAfterSeconds: 44, requestId: 'req_x' });
+    assert.equal(refusal.p_pool_key, '');
+    reset({ 'rpc:zerox_note_pool_refusal': () => Response.json({ code: 'PGRST202', message: 'Could not find the function' }, { status: 404 }) });
+    const quiet = await captureLogs(() => recordPoolRefusal(env, refusal));
+    assert.equal(quiet.result, false);
+    assert.match(quiet.logs.warn[0][0], /20261114000000_pool_refusals\.sql/);
+    assert.equal(recordPoolRefusal(env, refusal), null, 'skipped while the migration is missing');
+    assert.equal(rpcCalls('zerox_note_pool_refusal').length, 1);
+    resetPoolRefusals(env);
+    reset({});
+    const now = Date.now();
+    const sent = Array.from({ length: REFUSALS_PER_MINUTE + 5 }, () => recordPoolRefusal(env, refusal, now)).filter(Boolean);
+    assert.equal(sent.length, REFUSALS_PER_MINUTE);
+    await Promise.all(sent);
+    resetPoolRefusals(env);
   });
 
   await test('failed attempts are refunded before failover and the final failure is refunded too', async () => {
@@ -2643,6 +2854,7 @@ try {
     const error = await expectError(await gw.call({ ...KEYS }, { model: 'gemini/gemini-2.5-flash', messages: large, max_tokens: 4096 },
       { country: 'US' }), 400, 'context_length_exceeded');
     assert.match(error.message, /^This request is too large for the free per-minute token budget \(120,000 tokens/);
+    assert.equal(error.reason, 'request_over_minute_budget', 'too large for the whole minute, not a full budget');
     assert.equal(error.upgrade_url, 'https://zero-x.live/pricing');
     assert.equal(error.type, 'invalid_request_error');
     const noPaid = await expectError(await gw.call({ GEMINI_API_KEY: 'g' }, { model: 'gemini/gemini-2.5-flash', messages: large },

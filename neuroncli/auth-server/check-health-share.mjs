@@ -204,7 +204,7 @@ console.log('ok - slow_until: kept while it lasts, published to KV and cleared b
   assert.equal(first.body.poll_interval_seconds, 30);
   const row = first.body.data.find(model => model.id === 'google/gemini-3.6-flash');
   assert.equal(first.body.stale_after_seconds, 1200);
-  assert.deepEqual(Object.keys(row).sort(), ['availability', 'available', 'available_again_at', 'checked_at', 'context_window', 'display_name',
+  assert.deepEqual(Object.keys(row).sort(), ['availability', 'available', 'available_again_at', 'available_again_in_seconds', 'checked_at', 'context_window', 'display_name',
     'family', 'id', 'last_failure_class', 'last_success_at', 'latency_ms', 'maker', 'native_context_window', 'stale_after_seconds', 'status',
     'unavailable_reason']);
   assert.deepEqual([row.availability, row.status, row.family, row.maker, row.display_name],
@@ -239,12 +239,16 @@ console.log('ok - slow_until: kept while it lasts, published to KV and cleared b
   assert.deepEqual(gptOss.tiers, ['free', 'paid'], 'the paid pool is configured');
   assert.equal(gptOss.status, 'busy', 'a free caller cannot use the paid pool, so the spent free budget decides');
   assert.equal(gptOss.available_again_at, new Date(at + 40_000).toISOString());
+  assert.ok(gptOss.available_again_in_seconds >= 38 && gptOss.available_again_in_seconds <= 40, 'busy: seconds until the minute frees');
+  assert.equal(byId['groq/qwen/qwen3.8-27b'].available_again_in_seconds > 3500, true, 'blurred: seconds until the daily budget resets');
   assert.equal(gptOss.checked_at, new Date(at).toISOString());
   assert.deepEqual([byId['groq/qwen/qwen3.8-27b'].availability, byId['groq/qwen/qwen3.8-27b'].status], ['unavailable', 'blurred']);
   assert.equal(byId['groq/qwen/qwen3.8-27b'].available_again_at, new Date(at + 3_600_000).toISOString());
   assert.equal(byId['groq/openai/gpt-oss-20b'].status, 'unknown', 'a budget that has reset no longer counts');
   const status = await v1ModelStatusPayload(c, {});
-  assert.deepEqual(status.body.data.find(model => model.id === 'openai/gpt-oss-120b'), { id: 'openai/gpt-oss-120b',
+  const { available_again_in_seconds: countdown, ...statusRow } = status.body.data.find(model => model.id === 'openai/gpt-oss-120b');
+  assert.ok(countdown >= 38 && countdown <= 40, `the family row counts down too (${countdown})`);
+  assert.deepEqual(statusRow, { id: 'openai/gpt-oss-120b',
     family: 'openai/gpt-oss-120b', maker: 'openai', display_name: 'GPT-OSS 120B', context_window: 8000, native_context_window: 131072,
     available: true, unavailable_reason: null, status: 'busy', availability: 'busy', available_again_at: new Date(at + 40_000).toISOString(),
     checked_at: new Date(at).toISOString(), latency_ms: null, last_success_at: null, last_failure_class: null, stale_after_seconds: 1200 });

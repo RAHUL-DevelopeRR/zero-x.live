@@ -366,7 +366,7 @@ try {
 
   // ── 3. /v1/models with plan-aware availability ──
   // One entry per model family (contract section 14), named by its maker: no route or provider.
-  const modelKeys = ['availability', 'available', 'available_again_at', 'capabilities', 'checked_at', 'context_length', 'context_window',
+  const modelKeys = ['availability', 'available', 'available_again_at', 'available_again_in_seconds', 'capabilities', 'checked_at', 'context_length', 'context_window',
     'created', 'display_name', 'facts', 'family', 'id', 'last_failure_class', 'last_success_at', 'latency_ms', 'maker', 'maker_name',
     'max_output_tokens', 'model_name', 'models_dev_id', 'native_context_window', 'object', 'offers', 'owned_by', 'pricing',
     'provider', 'reasoning_efforts', 'stale_after_seconds', 'status', 'tiers', 'unavailable_reason'];

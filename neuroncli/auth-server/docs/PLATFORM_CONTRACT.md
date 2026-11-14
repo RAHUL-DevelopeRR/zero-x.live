@@ -1771,3 +1771,56 @@ of Pro, Max and ultrawork).
 | `zerox_account_overview` | `+ p_caps jsonb = null` (array of `{family, month_tokens}`); `+ usage_month jsonb` |
 | `zerox_usage_by_model` | `+ sponsored_cost_microusd` |
 | `zerox_release_stale_reservations` | also deletes month rows older than 13 months |
+
+## 20. v1.12 amendments (capacity clarity, 2026-11-14)
+
+Incident 2026-11-13: Neuron's first turn ("hi") on GPT-OSS 120B (Groq free pool, 8,000 tokens a
+minute) was 20.6K request bytes. The byte estimate said 5,882 prompt tokens; Groq counted 4,025.
+The reservation held 6,906 tokens of the minute, the next turn (10 s later) needed about 6,953 on
+a minute already at 4,064, and zerox_reserve_v2 answered `pool_exhausted` with a 44 s retry. The
+client saw a bare `capacity_exhausted` and waited 45 s; Groq never returned 429, no context
+overflowed, and the refusal left no database row.
+
+### 20.1 Errors: `reason` and `alternatives`
+
+- Every shared-budget refusal still answers HTTP 503 `capacity_exhausted` with `Retry-After` and
+  `retry_after_seconds` (Neuron alpha.5 retries exactly that). The error object adds:
+  - `reason`: `minute_budget` (the pool's per-minute request or token budget, shared by every
+    user; frees at the next minute), `daily_budget` (rpd/tpd, 00:00 UTC), `spend_cap` (cpd),
+    `concurrency` (a one-at-a-time pool serving another request), `user_pool_share` (the caller's
+    fair share today), `pool_budgets` (several of these), `upstream_rate_limited` (providers
+    answered 429). `context_length_exceeded` adds `reason: request_over_minute_budget` when the
+    request alone is larger than the free pool's whole minute (prompt plus max_tokens).
+  - `alternatives`: for a request that named its model (or family), up to 5 model ids that can
+    take this request now as far as the gateway knows (healthy pools whose budget it has not seen
+    refused): other routes of the same family first, then `auto` and its first candidates. A model
+    the caller chose is never switched silently; family ids are the opt-in to failover between routes.
+  - `message` for `minute_budget` on one model: "GPT-OSS 120B (Groq) has used its free per-minute
+    budget (8,000 tokens a minute, shared by every user; this request needs about 5,678 of them).
+    It frees up in 44 s. Switch to Auto or another model to continue now. Models that can take it
+    now: auto, ...". Clients that do not know the new fields ignore them.
+- `auto` never waits for a minute: a refused pool is skipped at once and the next candidate tried
+  (only a one-at-a-time slot is waited for, when nothing else is left), and pools this process saw
+  refused go after the others until their budget frees.
+
+### 20.2 Reservation estimate
+
+`p_tokens` holds the prompt as the pool budgets should see it (src/prompt-calibration.js): tool
+schemas at 4 bytes a token (the conversation stays at 3.5), then, per upstream model, the
+provider's own prompt_tokens from settled attempts times 1.15, never above the byte estimate and
+never below half of it. The byte estimate still decides context windows and credit holds, and
+settlement still replaces the hold with real usage. For turns shaped like the incident's (the fixture in
+check-routing-v2.mjs, 20.6K bytes, Groq counting 4,025): 6,340 held instead of
+6,906 for turn one, 5,678 instead of 6,928 for turn two (still refused: 4,064 + about 4,050 real
+tokens is more than 8,000 a minute, which Groq would refuse too).
+
+### 20.3 /v1/models
+
+Each model (and `/v1/models/status` row) adds `available_again_in_seconds`: the seconds until a
+`busy` or `blurred` model takes requests again (null otherwise). It is left out of the status ETag.
+
+### 20.4 RPCs (migration 20261114000000_pool_refusals.sql)
+
+| RPC | change |
+|---|---|
+| `zerox_note_pool_refusal` | new: `(p_model, p_tier, p_pool_key, p_status, p_reason, p_budget = null, p_needed_tokens = null, p_retry_after_seconds = null, p_limits jsonb = null, p_request_id = null)` → the new row's id. Writes one `zerox_pool_refusals` row with the pool's minute and day buckets at that moment (`minute_requests, minute_tokens, day_requests, day_tokens`) and deletes rows older than 14 days. The gateway calls it once per refused pool and request, after answering, at most 60 times a minute per process; without the migration it skips the record for 10 minutes. |
