@@ -65,7 +65,7 @@ const TRUSTED_PREFIX = 'x-zerox-';
 // Header values that need no encoding: visible ASCII, no control characters.
 const PLAIN_VALUE = /^[\x21-\x7e](?:[\x20-\x7e]*[\x21-\x7e])?$/;
 // The Worker's Custom Domains (wrangler.toml [[routes]]): a forward to one of them comes back here.
-export const WORKER_HOSTS = Object.freeze(['zero-x.live', 'www.zero-x.live', 'dashboard.zero-x.live', 'neuron.zero-x.live']);
+export const WORKER_HOSTS = Object.freeze(['zero-x.live', 'www.zero-x.live', 'dashboard.zero-x.live', 'neuron.zero-x.live', 'services.zero-x.live']);
 // Seconds a client waits before retrying: an operator fixes a misconfiguration, while a tunnel or
 // a VM comes back by itself.
 const RETRY_MISCONFIGURED = 30;

@@ -166,6 +166,10 @@ async function notFoundPage(c) {
   } catch { return null; }
 }
 
+// The studio services page (services.html) has its own host: https://services.zero-x.live/ is its
+// only address, and /services on the other hosts redirects there. One origin serves it at /services.
+const SERVICES_HOST = 'services.zero-x.live';
+
 // Pages served from https://zero-x.live/<page> (clean URLs).
 const SITE_PAGES = ['/about', '/privacy', '/terms', '/find-files-by-content', '/wheres-that-file',
   '/pricing', '/neuron-cli', '/docs', '/docs/trust', '/docs/data', '/download', '/changelog', '/refund', '/contact', '/shipping',
@@ -188,7 +192,7 @@ app.use('*', async (c, next) => {
     return next();
   }
 
-  if (url.protocol === 'http:' && ['zero-x.live','www.zero-x.live','neuron.zero-x.live','dashboard.zero-x.live'].includes(hostname)) {
+  if (url.protocol === 'http:' && ['zero-x.live','www.zero-x.live','neuron.zero-x.live','dashboard.zero-x.live',SERVICES_HOST].includes(hostname)) {
     url.protocol = 'https:';
     return c.redirect(url.toString(), 308);
   }
@@ -239,6 +243,10 @@ app.use('*', async (c, next) => {
     else if (clean === '/start') { target = site + '/neuron-cli'; fragment = '#install'; }
     else if (clean === '/features') { target = site + '/neucockpit'; fragment = '#features'; }
     else if (clean === '/dashboard') target = 'https://dashboard.zero-x.live/';
+    else if (clean === '/services') {
+      if (!oneOrigin) target = `https://${SERVICES_HOST}/`;
+      else if (path !== clean) target = clean;
+    }
     else if (['/index','/index2'].includes(clean)) target = oneOrigin ? '/' : `https://${hostname === 'www.zero-x.live' ? 'zero-x.live' : hostname}/`;
     else if (SITE_PAGES.includes(clean)) {
       if (oneOrigin ? path !== clean : hostname !== 'zero-x.live' || path !== clean) target = site + clean;
@@ -249,6 +257,9 @@ app.use('*', async (c, next) => {
   }
 
   // Resolve host-specific index pages before generic static assets.
+  if (c.env?.ASSETS && ((hostname === SERVICES_HOST && path === '/') || (oneOrigin && path === '/services'))) {
+    return c.env.ASSETS.fetch(new Request(new URL('/services.html', c.req.url), c.req.raw));
+  }
   if (hostname === 'dashboard.zero-x.live') {
     if (path === '/' || path === '/index.html') {
       if (c.env && c.env.ASSETS) {

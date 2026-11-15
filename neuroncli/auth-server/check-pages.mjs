@@ -10,9 +10,9 @@ const root = new URL('../../', import.meta.url);
 const read = file => readFileSync(new URL(file, root), 'utf8');
 const isFile = file => existsSync(new URL(file, root)) && statSync(new URL(file, root)).isFile();
 
-const PUBLIC_PAGES = ['index.html', 'pricing.html', 'neuron-cli.html', 'docs.html', 'ai-coding-agent.html', 'free-ai-coding-agent.html', 'claude-code-alternative.html', 'docs/trust.html', 'docs/data.html', 'download.html', 'changelog.html', 'refund.html', 'contact.html', 'shipping.html', 'privacy.html', 'terms.html'];
+const PUBLIC_PAGES = ['index.html', 'pricing.html', 'neuron-cli.html', 'docs.html', 'ai-coding-agent.html', 'free-ai-coding-agent.html', 'claude-code-alternative.html', 'docs/trust.html', 'docs/data.html', 'download.html', 'changelog.html', 'refund.html', 'contact.html', 'shipping.html', 'privacy.html', 'terms.html', 'services.html'];
 const PRIVATE_PAGES = ['dashboard.html', '404.html', 'neuroncli/index.html'];
-const SITE_SCRIPTS = ['dashboard.js', 'pricing.js', 'billing-checkout.js', 'home.js', 'download.js', 'billing-details.js', 'changelog.js', 'site-nav.js', 'announce.js', 'copy-code.js', 'install-bar.js'];
+const SITE_SCRIPTS = ['dashboard.js', 'pricing.js', 'billing-checkout.js', 'home.js', 'download.js', 'billing-details.js', 'changelog.js', 'site-nav.js', 'announce.js', 'copy-code.js', 'install-bar.js', 'services.js'];
 const RELEASE_MANIFESTS = ['releases/cli/latest.json', 'releases/desktop/latest.json'];
 const SITE_FILES = [...PUBLIC_PAGES, ...PRIVATE_PAGES, ...SITE_SCRIPTS, ...RELEASE_MANIFESTS, 'zx-tokens.css', 'home.css', 'content.css', 'zerox-auth.js', 'neuroncli/login/index.html', 'neuroncli/callback/index.html'];
 const BASES = {'dashboard.html': 'https://dashboard.zero-x.live/', '404.html': 'https://zero-x.live/404', 'neuroncli/index.html': 'https://zero-x.live/neuroncli/'};
@@ -133,7 +133,7 @@ for (const file of [...PUBLIC_PAGES, ...PRIVATE_PAGES]) {
 // sibling page once marked Privacy Policy as current on three pages). Every site page is checked.
 for (const file of [...PUBLIC_PAGES, 'about.html', 'neucockpit.html', 'find-files-by-content.html', 'wheres-that-file.html', 'start.html']) {
   for (const link of tags(stripScripts(read(file)), 'a').filter(a => a['aria-current'] === 'page' && a.href)) {
-    const own = file === 'index.html' ? '/' : '/' + file.replace(/\.html$/, '');
+    const own = file === 'index.html' ? '/' : file === 'services.html' ? 'https://services.zero-x.live/' : '/' + file.replace(/\.html$/, '');
     assert.equal(link.href.replace(/#.*$/, ''), own, file + ': aria-current marks ' + link.href + ', not this page');
   }
 }
@@ -286,7 +286,7 @@ function resolveLink(file, html, value) {
   if (value.startsWith('#')) { assert.ok(ids(html).includes(value.slice(1)), `${file}: broken fragment ${value}`); return; }
   const base = BASES[file] || seoPages.find(page => page.file === file)?.url;
   const url = new URL(value, base);
-  if (!['zero-x.live', 'neuron.zero-x.live', 'dashboard.zero-x.live'].includes(url.hostname)) {
+  if (!['zero-x.live', 'neuron.zero-x.live', 'dashboard.zero-x.live', 'services.zero-x.live'].includes(url.hostname)) {
     assert.equal(url.protocol, 'https:', `${file}: insecure external link ${value}`);
     assert.ok(!url.hostname.endsWith('zero-x.live'), `${file}: unknown zero-x host ${value}`);
     return;
@@ -318,8 +318,9 @@ for (const file of SITE_SCRIPTS) {
    three landing pages so each one has an internal link from every indexable page */
 for (const file of PUBLIC_PAGES) {
   const footer = read(file).match(/<footer[\s\S]*<\/footer>/)[0];
-  for (const path of ['/terms', '/privacy', '/refund', '/shipping', '/contact', '/pricing', '/ai-coding-agent', '/free-ai-coding-agent', '/claude-code-alternative']) assert.ok(footer.includes(`href="${path}"`), `${file}: footer links ${path}`);
+  for (const path of ['/terms', '/privacy', '/refund', '/shipping', '/contact', '/pricing', '/ai-coding-agent', '/free-ai-coding-agent', '/claude-code-alternative']) assert.ok(footer.includes(`href="${path}"`) || footer.includes(`href="https://zero-x.live${path}"`), `${file}: footer links ${path}`);
   assert.ok(footer.includes('support@zero-x.live'), file + ': footer support email');
+  assert.ok(footer.includes('href="https://services.zero-x.live/"'), file + ': footer links the services page');
 }
 
 /* ───────────── No secrets, no unsafe sinks ───────────── */
@@ -414,7 +415,7 @@ for (const m of read('site-fonts.css').matchAll(/url\(['"]?(https:[^'")]+)/g)) a
 for (const file of [...SITE_SCRIPTS, 'zerox-auth.js']) {
   for (const m of read(file).matchAll(/'(https:\/\/[^'\s]+)'/g)) {
     const host = new URL(m[1].replace(/'.*$/, '')).hostname;
-    assert.ok(['checkout.razorpay.com', 'cdn.jsdelivr.net', 'zero-x.live', 'dashboard.zero-x.live', 'www.w3.org'].includes(host), `${file}: unexpected origin ${m[1]}`);
+    assert.ok(['checkout.razorpay.com', 'cdn.jsdelivr.net', 'zero-x.live', 'dashboard.zero-x.live', 'www.w3.org', 'wa.me'].includes(host), `${file}: unexpected origin ${m[1]}`);
   }
 }
 assert.match(read('zerox-auth.js'), /SUPABASE_JS_VERSION = '\d+\.\d+\.\d+'/, 'zerox-auth pins supabase-js');
@@ -734,6 +735,26 @@ assert.deepEqual(expectedPlans.map(plan => [plan.id, plan.window_tokens, plan.wi
   [['free', 3000000, 18000], ['athlete', null, null], ['speed', null, null], ['pro', null, null], ['max', null, null]],
   'contract section 1: Free has 3M tokens per rolling 5 hours, paid plans no window');
 assert.equal(expectedTopups.length, 2);
+
+/* ───────────── Services page (services.zero-x.live) ───────────── */
+// WhatsApp buttons stay hidden until <body data-whatsapp> holds a real international number.
+{
+  const {whatsappHref} = await import(new URL('services.js', root));
+  assert.equal(whatsappHref('919876543210', 'Hi Zero-X, I need a site & more?'), 'https://wa.me/919876543210?text=Hi%20Zero-X%2C%20I%20need%20a%20site%20%26%20more%3F');
+  for (const bad of ['', ' ', '+91 98765 43210', '98765', '91987654321012345', 'abc919876543210', null, undefined])
+    assert.equal(whatsappHref(bad, 'x'), null, `whatsappHref rejects ${JSON.stringify(bad)}`);
+  const html = read('services.html');
+  assert.match(html, /<body[^>]*\sdata-whatsapp="[0-9]*"/, 'services.html: body carries data-whatsapp');
+  for (const a of tags(html, 'a').filter(a => 'data-wa-text' in a)) assert.ok('hidden' in a && !a.href, 'services.html: WhatsApp links start hidden with no href');
+  // Prices: the JSON-LD offers equal the prices on the cards.
+  const graph = JSON.parse(html.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/)[1]);
+  const offers = JSON.stringify(graph).match(/"price":"?(\d+)/g).map(m => Number(m.replace(/\D/g, '')));
+  assert.ok(offers.length >= 6, 'services.html: an offer per bundle');
+  const shown = stripScripts(html).replace(/,/g, '');
+  for (const price of offers) assert.ok(shown.includes('₹' + price), `services.html: offer ₹${price} is shown on the page`);
+  assert.match(stripScripts(html), /No GST is charged/, 'services.html: same GST statement as /pricing');
+  for (const a of tags(html, 'a').filter(a => a.href?.startsWith('mailto:'))) assert.match(a.href, /^mailto:support@zero-x\.live(\?|$)/, 'services.html: enquiries go to support@');
+}
 
 const pricing = await import(new URL('pricing.js', root));
 const {PLAN_CATALOG, formatMoney, formatTokens, formatCount, formatUsdAmount, limitLabel} = pricing;
