@@ -17,6 +17,7 @@
 - [Neuron compared](https://zero-x.live/claude-code-alternative): Neuron next to Claude Code, OpenAI Codex CLI and Aider on licence, models and cost, and when another tool is the better choice
 - [Docs](https://zero-x.live/docs): quickstart, CLI commands, configuration, the OpenAI-compatible Zero-X API, error codes and limits
 - [Pricing](https://zero-x.live/pricing): Free, Athlete, Speed, Pro and Max plans and credit top-ups
+- [Services](https://services.zero-x.live/): Zero-X Studio fixed-price bundles for websites, online stores, AI assistants and web apps, in INR
 - [Source code and releases](https://github.com/RAHUL-DevelopeRR/neuron-v2): Rust source, changelog and release binaries
 
 ## NeuCockpit, local AI file search

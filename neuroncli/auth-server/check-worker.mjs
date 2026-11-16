@@ -92,6 +92,46 @@ for (const [path, file] of [['/free-ai-coding-agent', '/free-ai-coding-agent.htm
     assert.equal((await app.request(url, {}, env)).headers.get('x-robots-tag'), null, url + ' stays indexable');
   assert.equal((await app.request(stray + '/', {}, { ...env, NEURON_RUNTIME: 'node' })).headers.get('x-robots-tag'), null, 'Node server');
 }
+// services.zero-x.live is the studio services page (services.html): its home is the page, every
+// other spelling of it redirects there, and the site's other pages on that host go to zero-x.live.
+{
+  for (const url of ['https://services.zero-x.live/', 'https://services.zero-x.live/?utm_source=test']) {
+    const page = await app.request(url, {}, env);
+    assert.equal(page.status, 200, url);
+    assert.equal(await page.text(), '/services.html', url);
+    assert.equal(page.headers.get('x-robots-tag'), null, url + ' is indexable');
+  }
+  for (const [url, target] of [
+    ['https://zero-x.live/services', 'https://services.zero-x.live/'],
+    ['https://zero-x.live/services/', 'https://services.zero-x.live/'],
+    ['https://zero-x.live/services.html?utm_source=test', 'https://services.zero-x.live/?utm_source=test'],
+    ['https://www.zero-x.live/services', 'https://services.zero-x.live/'],
+    ['https://neuron.zero-x.live/services', 'https://services.zero-x.live/'],
+    ['https://services.zero-x.live/services', 'https://services.zero-x.live/'],
+    ['https://services.zero-x.live/services.html', 'https://services.zero-x.live/'],
+    ['https://services.zero-x.live/index.html', 'https://services.zero-x.live/'],
+    ['https://services.zero-x.live/pricing', 'https://zero-x.live/pricing'],
+    ['https://services.zero-x.live/contact', 'https://zero-x.live/contact'],
+  ]) {
+    const response = await app.request(url, {}, env);
+    assert.equal(response.status, 301, url);
+    assert.equal(response.headers.get('location'), target, url);
+  }
+  const insecure = await app.request('http://services.zero-x.live/', {}, env);
+  assert.equal(insecure.status, 308, 'http services host');
+  assert.equal(insecure.headers.get('location'), 'https://services.zero-x.live/');
+  assert.equal(await (await app.request('https://services.zero-x.live/zx-tokens.css', {}, env)).text(), '/zx-tokens.css');
+  assert.equal(await (await app.request('https://services.zero-x.live/services.js', {}, env)).text(), '/services.js');
+  // One origin (the local Node server or a test host) serves it at /services.
+  const local = await app.request('http://127.0.0.1:8787/services', {}, env);
+  assert.equal(local.status, 200, 'local /services');
+  assert.equal(await local.text(), '/services.html');
+  for (const path of ['/services/', '/services.html']) {
+    const response = await app.request('http://127.0.0.1:8787' + path, {}, env);
+    assert.equal(response.status, 301, 'local ' + path);
+    assert.equal(response.headers.get('location'), '/services', 'local ' + path);
+  }
+}
 const neucockpit = await app.request('https://zero-x.live/neucockpit', {}, env);
 assert.equal(neucockpit.status, 200);
 assert.equal(await neucockpit.text(), '/neucockpit.html');

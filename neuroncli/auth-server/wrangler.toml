@@ -28,6 +28,11 @@ custom_domain = true
 pattern = "neuron.zero-x.live"
 custom_domain = true
 
+# The studio services page (services.html, see SERVICES_HOST in src/index.js).
+[[routes]]
+pattern = "services.zero-x.live"
+custom_domain = true
+
 
 [vars]
 

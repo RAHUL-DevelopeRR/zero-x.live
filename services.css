@@ -1,0 +1,65 @@
+/* Zero-X Studio services page (services.html, served at services.zero-x.live). Builds on zx-tokens.css
+   and content.css: the plan cards, tiles, flow, FAQ and call-to-action come from there, and every colour
+   here is a token, so the dark theme follows data-theme and the system setting. */
+
+/* Hero: the headline gets a little more measure than the NeuCockpit hero it borrows. */
+.zx-svc-hero h1 { max-width: 20ch; }
+
+/* Hero: bundles at a glance, one row per bundle linking to its card. */
+.zx-svc-index { padding: var(--zx-s4) var(--zx-s5); }
+.zx-svc-index .zx-label { margin: var(--zx-s1) 0 var(--zx-s2); }
+.zx-svc-index ul { list-style: none; margin: 0; padding: 0; }
+.zx-svc-index li { margin: 0; border-bottom: 1px solid var(--zx-border); }
+.zx-svc-index li:last-child { border-bottom: 0; }
+.zx-svc-index a { display: flex; align-items: center; justify-content: space-between; gap: var(--zx-s3); min-height: 48px; padding: 8px 0; color: var(--zx-ink); text-decoration: none; overflow-wrap: normal; }
+.zx-svc-index a:hover .zx-svc-index__name { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; }
+.zx-svc-index a:focus-visible { outline: none; box-shadow: var(--zx-focus); border-radius: var(--zx-radius-xs); }
+.zx-svc-index__name { min-width: 0; font-weight: 500; }
+.zx-svc-index__meta { display: flex; align-items: baseline; gap: var(--zx-s3); flex: none; font-size: var(--zx-fs-small); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.zx-svc-index__days { color: var(--zx-faint); font-family: var(--zx-font-mono); font-size: var(--zx-fs-label); }
+.zx-svc-index__price { min-width: 7.5em; text-align: right; color: var(--zx-ink); }
+@media (max-width: 400px) { .zx-svc-index__days { display: none; } .zx-svc-index__price { min-width: 0; } }
+
+/* Bundles: the pricing page's plan grid, but three columns on wide screens (six cards, two rows). */
+@media (min-width: 1100px) {
+  .zx-grid--plans.zx-svc-bundles { grid-template-columns: repeat(3, minmax(0, 1fr)); grid-template-rows: none; grid-auto-flow: row; grid-auto-columns: auto; }
+  .zx-grid--plans.zx-svc-bundles > * { grid-row: auto; }
+}
+/* Cards in a row share their rows (heading, price, facts, list, actions), so a tagline that wraps in
+   one card does not push its price below the others. Phones keep one plain column. */
+@supports (grid-template-rows: subgrid) {
+  @media (min-width: 640px) {
+    .zx-grid.zx-svc-bundles > .zx-plan { display: grid; grid-template-rows: subgrid; grid-row: span 5; row-gap: var(--zx-s4); }
+    .zx-grid.zx-svc-bundles > .zx-plan > .zx-svc-actions { align-self: end; }
+    .zx-grid.zx-svc-care > .zx-plan { display: grid; grid-template-rows: subgrid; grid-row: span 3; row-gap: var(--zx-s4); }
+  }
+}
+.zx-svc-bundles .zx-plan__price small:first-child { margin-right: 2px; }
+.zx-svc-care .zx-plan > div:first-child > p:last-child { margin-bottom: 0; }
+
+/* Delivery, revisions and support: a compact panel of three facts under the price. */
+.zx-svc-facts { margin: 0; padding: 2px var(--zx-s3); border-radius: var(--zx-radius-sm); background: var(--zx-panel); }
+.zx-svc-facts > div { display: flex; align-items: baseline; justify-content: space-between; gap: var(--zx-s3); padding: 7px 0; border-bottom: 1px solid var(--zx-border); }
+.zx-svc-facts > div:last-child { border-bottom: 0; }
+.zx-svc-facts dt { font-size: .8125rem; color: var(--zx-muted); }
+.zx-svc-facts dd { margin: 0; text-align: right; font-size: var(--zx-fs-small); font-weight: 500; color: var(--zx-ink); font-variant-numeric: tabular-nums; }
+.zx-svc-bundles .zx-plan > div:first-child > p:last-child { margin-bottom: 0; }
+
+.zx-svc-note { margin: var(--zx-s3) 0 0; font-size: .8125rem; line-height: 1.5; color: var(--zx-muted); }
+.zx-svc-actions { display: grid; gap: var(--zx-s2); margin-top: auto; }
+.zx-svc-actions .zx-btn { margin-top: 0; }
+
+/* Add-ons and care plans sit on a full-width panel band. */
+.zx-svc-band { background: var(--zx-panel); border-block: 1px solid var(--zx-border); }
+.zx-svc-band .zx-section + .zx-section { padding-top: 0; }
+@media (min-width: 960px) {
+  .zx-svc-split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.7fr); gap: var(--zx-s8); align-items: start; }
+  .zx-svc-split .zx-section-head { position: sticky; top: 88px; margin-bottom: 0; }
+}
+.zx-svc-addons tbody th span { display: block; margin-top: 2px; font-weight: 400; font-size: .8125rem; color: var(--zx-muted); }
+.zx-svc-addons td.zx-num { color: var(--zx-ink); font-weight: 500; }
+.zx-svc-callout { display: flex; flex-wrap: wrap; align-items: center; gap: var(--zx-s2); margin: var(--zx-s4) 0 0; font-size: var(--zx-fs-small); color: var(--zx-ink); }
+
+.zx-services #faq { padding-top: 0; }
+/* The contact block closes the page; the footer brings its own top margin. */
+.zx-services #contact { padding-bottom: 0; }
