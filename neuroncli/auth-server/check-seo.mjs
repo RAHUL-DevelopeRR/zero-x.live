@@ -60,6 +60,18 @@ assert.ok(llms.includes(graph.find(n=>n['@id']==='https://zero-x.live/#neuron').
 const keyFiles=(await readdir(root)).filter(name=>/^[0-9a-f]{32}\.txt$/.test(name));
 assert.equal(keyFiles.length,1,'one IndexNow key file');
 assert.equal((await readFile(new URL(keyFiles[0],root),'utf8')).trim(),keyFiles[0].slice(0,-4),'IndexNow key file content');
+// IndexNow takes one host per request: every URL in a request is on its host, and its key file is on that host too
+// (services.zero-x.live was once sent under host zero-x.live, which IndexNow does not accept for that URL).
+{
+  const {execFileSync}=await import('node:child_process');
+  const bodies=JSON.parse(execFileSync(process.execPath,['submit-indexnow.mjs','--dry-run'],{cwd:new URL('.',import.meta.url),encoding:'utf8'}));
+  assert.deepEqual(bodies.map(b=>b.host).sort(),[...new Set(pages.map(p=>new URL(p.url).hostname))].sort(),'IndexNow: one request per public host');
+  for(const b of bodies){
+    assert.ok(b.urlList.length&&b.urlList.every(u=>new URL(u).hostname===b.host),'IndexNow: every URL on its request host '+b.host);
+    assert.equal(b.keyLocation,`https://${b.host}/${keyFiles[0]}`,'IndexNow: key file on '+b.host);
+  }
+  assert.equal(bodies.reduce((n,b)=>n+b.urlList.length,0),pages.length,'IndexNow: every public page is sent once');
+}
 if (process.argv.includes('--live')) {
   for (const page of pages) {const r=await fetch(page.url);assert.equal(r.status,200,page.url);assert.equal(r.url,page.url);assert.ok(!r.headers.get('x-robots-tag')?.includes('noindex'));const html=await r.text();assert.equal(metadata(html)['og:url'],page.url);assert.ok(html.includes(`rel="canonical" href="${page.url}"`));}
   for (const [url,target] of [
