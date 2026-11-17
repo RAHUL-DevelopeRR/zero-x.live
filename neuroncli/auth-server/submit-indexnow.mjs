@@ -24,11 +24,23 @@ if (since && !/^0+$/.test(since)) {
 }
 if (!urls.length) { console.log('IndexNow: no public pages changed.'); process.exit(0); }
 
-const body = {host: 'zero-x.live', key, keyLocation: `https://zero-x.live/${key}.txt`, urlList: urls};
-if (process.argv.includes('--dry-run')) { console.log(JSON.stringify(body, null, 2)); process.exit(0); }
-const response = await fetch('https://api.indexnow.org/indexnow', {
-  method: 'POST', headers: {'Content-Type': 'application/json; charset=utf-8'}, body: JSON.stringify(body),
-});
-// 200 = accepted, 202 = accepted while the key is being verified.
-console.log(`IndexNow: ${response.status} for ${urls.length} URL(s)`);
-if (!response.ok) process.exit(1);
+// IndexNow takes one host per request, with the key file on that host: zero-x.live and
+// services.zero-x.live are sent separately (the Worker serves the key file on every host).
+const byHost = new Map();
+for (const url of urls) {
+  const host = new URL(url).hostname;
+  if (!byHost.has(host)) byHost.set(host, []);
+  byHost.get(host).push(url);
+}
+const bodies = [...byHost].map(([host, urlList]) => ({host, key, keyLocation: `https://${host}/${key}.txt`, urlList}));
+if (process.argv.includes('--dry-run')) { console.log(JSON.stringify(bodies, null, 2)); process.exit(0); }
+let failed = false;
+for (const body of bodies) {
+  const response = await fetch('https://api.indexnow.org/indexnow', {
+    method: 'POST', headers: {'Content-Type': 'application/json; charset=utf-8'}, body: JSON.stringify(body),
+  });
+  // 200 = accepted, 202 = accepted while the key is being verified.
+  console.log(`IndexNow: ${response.status} for ${body.urlList.length} URL(s) on ${body.host}`);
+  if (!response.ok) failed = true;
+}
+if (failed) process.exit(1);

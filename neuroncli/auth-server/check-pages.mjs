@@ -748,10 +748,28 @@ assert.equal(expectedTopups.length, 2);
   for (const a of tags(html, 'a').filter(a => 'data-wa-text' in a)) assert.ok('hidden' in a && !a.href, 'services.html: WhatsApp links start hidden with no href');
   // Prices: the JSON-LD offers equal the prices on the cards.
   const graph = JSON.parse(html.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/)[1]);
-  const offers = JSON.stringify(graph).match(/"price":"?(\d+)/g).map(m => Number(m.replace(/\D/g, '')));
-  assert.ok(offers.length >= 6, 'services.html: an offer per bundle');
+  const catalog = graph['@graph'].find(n => n['@type'] === 'Service').hasOfferCatalog.itemListElement;
+  assert.equal(catalog.length, 6, 'services.html: an offer per bundle');
   const shown = stripScripts(html).replace(/,/g, '');
-  for (const price of offers) assert.ok(shown.includes('₹' + price), `services.html: offer ₹${price} is shown on the page`);
+  for (const offer of catalog) {
+    // A card that says "from ₹…" is a minimum price in the data, never an exact one.
+    const min = offer.priceSpecification?.minPrice;
+    const card = html.match(new RegExp(`id="${offer.url.split('#')[1]}"[\\s\\S]*?</article>`))[0];
+    if (/>from</i.test(stripScripts(card))) assert.ok(min && !('price' in offer), `services.html: ${offer.name} is a "from" price in the data`);
+    else assert.ok(offer.price && !min, `services.html: ${offer.name} has an exact price`);
+    const price = Number(String(offer.price ?? min).replace(/\.00$/, ''));
+    assert.ok(shown.includes('₹' + price), `services.html: offer ₹${price} is shown on the page`);
+  }
+  // The studio's address is the one on the contact page; the FAQ data repeats the visible questions word for word.
+  const studio = graph['@graph'].find(n => n['@type'] === 'ProfessionalService');
+  assert.ok(studio, 'services.html: a ProfessionalService for local search');
+  const contact = read('contact.html').match(/<address>([\s\S]*?)<\/address>/)[1].replace(/<br>/g, '|');
+  for (const part of [studio.address.streetAddress, studio.address.postalCode, studio.address.addressLocality, studio.address.addressRegion])
+    assert.ok(contact.includes(part), `services.html: studio address "${part}" matches contact.html`);
+  assert.equal(studio.parentOrganization['@id'], 'https://zero-x.live/#organization');
+  const faq = graph['@graph'].find(n => n['@type'] === 'FAQPage');
+  const summaries = [...stripScripts(html).matchAll(/<summary>([\s\S]*?)<\/summary>/g)].map(m => m[1].trim());
+  assert.deepEqual(faq?.mainEntity.map(q => q.name), summaries, 'services.html: FAQ data matches the visible questions');
   assert.match(stripScripts(html), /No GST is charged/, 'services.html: same GST statement as /pricing');
   for (const a of tags(html, 'a').filter(a => a.href?.startsWith('mailto:'))) assert.match(a.href, /^mailto:support@zero-x\.live(\?|$)/, 'services.html: enquiries go to support@');
 }
