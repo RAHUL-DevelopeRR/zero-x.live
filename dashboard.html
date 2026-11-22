@@ -245,7 +245,14 @@
 
       <section class="zx-tabpanel" role="tabpanel" id="panel-keys" aria-labelledby="tab-keys" tabindex="0" hidden>
         <div class="dash-panel-head"><h2>API keys</h2></div>
-        <p class="zx-muted dash-intro">Use an API key to run Neuron in CI or on a server without a browser: set <code>NEURON_TOKEN</code> to the key. Keys can call <code>/v1</code> and read usage; they cannot manage keys, sessions or billing.</p>
+        <p class="zx-muted dash-intro">Use an API key to call the Zero-X API from your own code, or to run Neuron in CI or on a server without a browser. Keys can call <code>/v1</code> and read usage; they cannot manage keys, sessions or billing.</p>
+        <div class="zx-card zx-card--flat zx-mb" id="api-endpoint" aria-labelledby="api-endpoint-title">
+          <h3 id="api-endpoint-title">API endpoint</h3>
+          <p class="zx-muted">OpenAI-compatible (Chat Completions). Send your key as a bearer token; any OpenAI SDK works with this base URL.</p>
+          <div class="zx-code zx-code--copy"><span class="zx-code__label">Base URL</span><pre><code id="api-base-url">https://zero-x.live/v1</code></pre><button class="zx-copy" type="button" data-copy-target="api-base-url" data-copy-label="Base URL" aria-label="Copy base URL" title="Copy"><svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="/icons.svg#copy"/></svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="/icons.svg#check"/></svg></button></div>
+          <div class="zx-code zx-code--copy zx-mt"><span class="zx-code__label">Header</span><pre><code id="api-auth-header">Authorization: Bearer nzx_your_key</code></pre><button class="zx-copy" type="button" data-copy-target="api-auth-header" data-copy-label="Authorization header" aria-label="Copy authorization header" title="Copy"><svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="/icons.svg#copy"/></svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="/icons.svg#check"/></svg></button></div>
+          <p class="zx-help">Endpoints: <code>POST /v1/chat/completions</code> (set <code>"stream": true</code> for server-sent events) and <code>GET /v1/models</code>. Use <code>"model": "auto"</code> or any id from <code>/v1/models</code>. Requests count toward your plan's limits. Example requests are below the key list; the full reference is in the <a href="https://zero-x.live/docs#api" data-site-path="/docs#api">API docs</a>.</p>
+        </div>
         <div id="keys-error" class="zx-alert zx-alert--error zx-mb" role="alert"></div>
         <form id="key-form" class="zx-card zx-card--flat" novalidate>
           <div class="zx-form-row">
@@ -260,7 +267,7 @@
         </form>
         <div id="key-secret" class="zx-alert zx-alert--success zx-mt" hidden>
           <h3>Copy your new key now</h3>
-          <p>This is the only time the full key is shown. Store it as a secret, for example in your CI settings.</p>
+          <p>This is the only time the full key is shown. Store it as a secret, for example in your CI settings, then try it with the <a href="#api-examples-title">example requests</a> below.</p>
           <code class="zx-secret" id="key-secret-value"></code>
           <div class="zx-row zx-mt">
             <button id="key-secret-copy" class="zx-btn zx-btn--primary zx-btn--sm" type="button">Copy key</button>
@@ -274,7 +281,34 @@
             <tbody id="keys-list"><tr><td colspan="6" class="zx-empty">Loading keys…</td></tr></tbody>
           </table>
         </div>
-        <div class="zx-code zx-code--copy zx-mt"><span class="zx-code__label">Headless example</span><pre><code id="qs-headless">export NEURON_TOKEN=nzx_your_key
+        <h3 class="zx-mt" id="api-examples-title">Example requests</h3>
+        <p class="zx-muted">Put your key in <code>NEURON_TOKEN</code> first (for example <code>export NEURON_TOKEN=nzx_your_key</code>, or <code>$env:NEURON_TOKEN = "nzx_your_key"</code> in PowerShell), then run one of these. Keep the key out of code you commit.</p>
+        <div class="zx-code zx-code--copy zx-mt"><span class="zx-code__label">curl (macOS, Linux)</span><pre><code id="api-curl">curl https://zero-x.live/v1/chat/completions \
+  -H "Authorization: Bearer $NEURON_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"auto","messages":[{"role":"user","content":"Say hello in one sentence."}]}'</code></pre><button class="zx-copy" type="button" data-copy-target="api-curl" data-copy-label="curl request" aria-label="Copy curl request" title="Copy"><svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="/icons.svg#copy"/></svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="/icons.svg#check"/></svg></button></div>
+        <div class="zx-code zx-code--copy zx-mt"><span class="zx-code__label">PowerShell (Windows)</span><pre><code id="api-powershell">Invoke-RestMethod https://zero-x.live/v1/chat/completions -Method Post `
+  -Headers @{ Authorization = "Bearer $env:NEURON_TOKEN" } -ContentType "application/json" `
+  -Body '{"model":"auto","messages":[{"role":"user","content":"Say hello in one sentence."}]}'</code></pre><button class="zx-copy" type="button" data-copy-target="api-powershell" data-copy-label="PowerShell request" aria-label="Copy PowerShell request" title="Copy"><svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="/icons.svg#copy"/></svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="/icons.svg#check"/></svg></button></div>
+        <div class="zx-code zx-code--copy zx-mt"><span class="zx-code__label">Python (pip install openai)</span><pre><code id="api-python">import os
+from openai import OpenAI
+
+client = OpenAI(base_url="https://zero-x.live/v1", api_key=os.environ["NEURON_TOKEN"])
+reply = client.chat.completions.create(
+    model="auto",
+    messages=[{"role": "user", "content": "Say hello in one sentence."}],
+)
+print(reply.choices[0].message.content)</code></pre><button class="zx-copy" type="button" data-copy-target="api-python" data-copy-label="Python example" aria-label="Copy Python example" title="Copy"><svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="/icons.svg#copy"/></svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="/icons.svg#check"/></svg></button></div>
+        <div class="zx-code zx-code--copy zx-mt"><span class="zx-code__label">JavaScript (npm install openai)</span><pre><code id="api-javascript">import OpenAI from "openai";
+
+const client = new OpenAI({ baseURL: "https://zero-x.live/v1", apiKey: process.env.NEURON_TOKEN });
+const reply = await client.chat.completions.create({
+  model: "auto",
+  messages: [{ role: "user", content: "Say hello in one sentence." }],
+});
+console.log(reply.choices[0].message.content);</code></pre><button class="zx-copy" type="button" data-copy-target="api-javascript" data-copy-label="JavaScript example" aria-label="Copy JavaScript example" title="Copy"><svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="/icons.svg#copy"/></svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="/icons.svg#check"/></svg></button></div>
+        <div class="zx-code zx-code--copy zx-mt"><span class="zx-code__label">List the models your plan can use</span><pre><code id="api-models">curl https://zero-x.live/v1/models -H "Authorization: Bearer $NEURON_TOKEN"</code></pre><button class="zx-copy" type="button" data-copy-target="api-models" data-copy-label="models request" aria-label="Copy models request" title="Copy"><svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="/icons.svg#copy"/></svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="/icons.svg#check"/></svg></button></div>
+        <div class="zx-code zx-code--copy zx-mt"><span class="zx-code__label">Neuron CLI, headless</span><pre><code id="qs-headless">export NEURON_TOKEN=nzx_your_key
 neuron -p "Run the tests and summarise failures"</code></pre><button class="zx-copy" type="button" data-copy-target="qs-headless" data-copy-label="Headless example" aria-label="Copy headless example" title="Copy"><svg class="zx-icon zx-copy__idle" aria-hidden="true"><use href="/icons.svg#copy"/></svg><svg class="zx-icon zx-copy__done" aria-hidden="true"><use href="/icons.svg#check"/></svg></button></div>
         <p class="zx-help">Without a terminal nobody can approve commands, so test and build commands are denied and <code>neuron</code> exits with code 2 unless <code>~/.neuron/settings.json</code> allows them. See <a href="https://zero-x.live/neuron-cli#first-run" data-site-path="/neuron-cli#first-run">headless runs</a>.</p>
       </section>

@@ -46,6 +46,8 @@
 .zx-card__head figcaption { overflow-wrap: anywhere; }
 .zx-tabpanel { min-width: 0; }
 .zx-tabpanel > .zx-card { margin-bottom: 0; }
+/* The API endpoint card sits above the key form card: keep a gap between them. */
+#api-endpoint { margin-bottom: var(--zx-s4); }
 .zx-tabpanel .zx-secret { margin: var(--zx-s3) 0 0; }
 details summary { cursor: pointer; font-size: var(--zx-fs-small); color: var(--zx-muted); }
 details summary:hover { color: var(--zx-ink); }
